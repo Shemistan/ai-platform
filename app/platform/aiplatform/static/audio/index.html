@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Аудио — AI Platform</title>
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+  <header class="page-head">
+    <h1>Аудио</h1>
+    <p class="muted">Текст → озвучка. Пустая строка — новый абзац, <code># </code> в начале строки — заголовок с паузой.</p>
+  </header>
+
+  <main class="layout">
+    <form class="panel" id="composer" novalidate>
+      <h2>Новая озвучка</h2>
+      <label class="field">
+        <span class="field-label">Текст</span>
+        <textarea id="text" rows="14" placeholder="Вставь текст: цифры, даты и латиницу narrator прочитает сам."></textarea>
+        <span class="hint" id="text-count">0 знаков</span>
+      </label>
+
+      <div class="settings">
+        <label class="field">
+          <span class="field-label">Движок</span>
+          <select id="engine"></select>
+        </label>
+        <label class="field">
+          <span class="field-label">Голос</span>
+          <select id="voice"></select>
+        </label>
+        <label class="field" id="speed-field">
+          <span class="field-label">Скорость</span>
+          <span class="range-row">
+            <input type="range" id="speed" min="0.7" max="2" step="0.05" value="1">
+            <output id="speed-out">1</output>
+          </span>
+        </label>
+      </div>
+      <p class="hint" id="engine-note"></p>
+
+      <p class="form-error" id="form-error" role="alert" hidden></p>
+      <button type="submit" class="primary" id="submit">Озвучить</button>
+    </form>
+
+    <div class="side">
+      <section class="panel" aria-live="polite">
+        <h2>Результат</h2>
+        <div id="job"><p class="muted">Здесь появится озвучка.</p></div>
+      </section>
+      <section class="panel">
+        <h2>История</h2>
+        <ul class="history" id="history"></ul>
+      </section>
+    </div>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

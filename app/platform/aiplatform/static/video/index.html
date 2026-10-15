@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Видео — AI Platform</title>
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Видео</h1>
+    <span class="chip" id="model-chip">…</span>
+  </header>
+  <div class="banner" id="banner" hidden></div>
+
+  <main class="layout">
+   <div class="main-col">
+    <div class="tabs" role="tablist" aria-label="Режим">
+      <button type="button" class="tab" role="tab" id="tab-video" aria-controls="composer" aria-selected="true">Видео по промпту</button>
+      <button type="button" class="tab" role="tab" id="tab-living" aria-controls="living" aria-selected="false">Живое фото</button>
+    </div>
+
+    <form class="panel composer" id="composer" role="tabpanel" aria-labelledby="tab-video" novalidate>
+      <h2>Новое видео</h2>
+
+      <label class="field">
+        <span class="field-label">Промпт</span>
+        <textarea id="prompt" rows="5" placeholder="Что происходит в кадре: кто, где, как движется камера, какой свет…"></textarea>
+      </label>
+
+      <section class="field" aria-labelledby="frames-title">
+        <div class="field-head">
+          <span class="field-label" id="frames-title">Кадры <span class="muted">— необязательно</span></span>
+          <button type="button" class="link" id="even-btn" hidden>Расставить равномерно</button>
+        </div>
+        <p class="hint" id="frames-hint"></p>
+        <ol class="strip" id="strip"></ol>
+        <div class="ruler" id="ruler" hidden>
+          <div class="ruler-track" id="ruler-track"></div>
+          <div class="ruler-ticks" id="ruler-ticks"></div>
+        </div>
+        <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp" multiple hidden>
+      </section>
+
+      <div class="settings">
+        <label class="field">
+          <span class="field-label">Модель</span>
+          <select id="model"></select>
+          <span class="muted small" id="model-note"></span>
+        </label>
+        <fieldset class="field">
+          <legend class="field-label">Длительность</legend>
+          <div class="segmented" id="durations"></div>
+        </fieldset>
+        <label class="field">
+          <span class="field-label">Размер кадра</span>
+          <select id="preset"></select>
+        </label>
+        <label class="field">
+          <span class="field-label">Seed</span>
+          <input type="number" id="seed" min="0" max="2147483647" step="1" placeholder="случайный">
+        </label>
+        <label class="check">
+          <input type="checkbox" id="audio" checked>
+          <span>Со звуком</span>
+        </label>
+      </div>
+
+      <p class="form-error" id="form-error" role="alert" hidden></p>
+      <button type="submit" class="primary" id="submit">Сгенерировать</button>
+    </form>
+
+    <form class="panel composer" id="living" role="tabpanel" aria-labelledby="tab-living" novalidate hidden>
+      <h2>Живое фото</h2>
+      <p class="hint">Загрузи фото — оно оживёт, как портрет из «Гарри Поттера»: ролик на 8 секунд, где снимок стоит ровно посередине. Модель дорисует 4 секунды до него и 4 секунды после.</p>
+
+      <div class="photo" id="living-photo"></div>
+      <input type="file" id="living-input" accept="image/png,image/jpeg,image/webp" hidden>
+
+      <div class="settings wide">
+        <label class="field">
+          <span class="field-label">Модель</span>
+          <select id="living-model"></select>
+        </label>
+        <fieldset class="field">
+          <legend class="field-label">Ориентация</legend>
+          <div class="segmented" id="living-orientations"></div>
+        </fieldset>
+        <fieldset class="field">
+          <legend class="field-label">Качество</legend>
+          <div class="segmented" id="living-qualities"></div>
+        </fieldset>
+      </div>
+      <p class="hint" id="living-note"></p>
+
+      <div class="moment" aria-hidden="true">
+        <span class="moment-side" id="moment-before"></span>
+        <span class="moment-now">снимок</span>
+        <span class="moment-side" id="moment-after"></span>
+      </div>
+
+      <p class="form-error" id="living-error" role="alert" hidden></p>
+      <button type="submit" class="primary" id="living-submit">Оживить фото</button>
+    </form>
+   </div>
+
+    <div class="side">
+      <section class="panel" id="job-panel" aria-live="polite">
+        <h2>Генерация</h2>
+        <div id="job"></div>
+      </section>
+      <section class="panel">
+        <h2>История</h2>
+        <ul class="history" id="history"></ul>
+      </section>
+    </div>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

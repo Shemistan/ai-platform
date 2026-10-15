@@ -1,0 +1,395 @@
+"""Вкладки сценариев «Дайджест новостей» и «Видео по статье»: API под /api/studio/."""
+
+from __future__ import annotations
+
+import json
+import mimetypes
+import re
+from http import HTTPStatus
+
+from aiplatform.audio import voices
+from aiplatform.core import uploads as uploads_module
+from aiplatform.core.http import HttpError, Request, bad_request, not_found
+from aiplatform.photo import models as photo_models
+from aiplatform.studio import config as studio_config
+from aiplatform.studio import news, publish, slides, steps
+from aiplatform.studio.llm import StudioError
+from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio
+from aiplatform.studio.render import Renderer
+
+PREFIX = "studio"
+URL_BASE = f"/api/{PREFIX}"
+SCENARIOS = {"digest": "Дайджест новостей", "article": "Видео по статье"}
+MAX_TEXT = 100_000
+MAX_BODY = 4 * MAX_TEXT + 64 * 1024
+POSTER_MODES = ("local", "upload")
+VOICE_MODES = ("tts", "upload")
+# Настройка → шаг, который она меняет (его и зависящие — заново).
+SETTING_STEPS = {
+    "poster_mode": "poster",
+    "draw_images": "images",
+    "image_model": "images",
+    "voice_mode": "voice",
+    "engine": "voice",
+    "voice": "voice",
+    "speed": "voice",
+    "shorts": "short",
+    "channels": "publish",
+    "auto_publish": "publish",
+    "review_text": None,
+}
+# Правка файла на странице → (файл, шаг, чей это результат).
+ARTIFACTS = {
+    "text": (steps.TEXT, "text"),
+    "post": (steps.POST, "publish"),
+    "poster_prompt": (steps.POSTER_PROMPT, "poster_prompt"),
+    "plan": (steps.PLAN, "plan"),
+    "short": (steps.SHORT, "short"),
+}
+_FILE = re.compile(
+    r"^(poster\.(png|jpg|webp)|voice\.(mp3|wav|m4a)|video\.mp4|short\.mp4|short/voice\.mp3"
+    r"|images/\d{2}\.png|publish/[a-z0-9_-]+/(video\.mp4|title\.txt|description\.txt))$"
+)
+
+
+class StudioModule:
+    prefix = PREFIX
+    label = "Сценарии"
+
+    def __init__(self, ctx) -> None:
+        self.ctx = ctx
+        self.config = studio_config.load(ctx.config)
+        self.studio = Studio(self.config.projects_dir, steps.STEPS)
+
+    def bind(self) -> None:
+        """Соседние вкладки готовы — сценарии будут ставить задачи в их очереди."""
+        self.studio.services = steps.Services(
+            config=self.config,
+            photo=self.ctx.modules["photo"].jobs,
+            audio=self.ctx.modules["audio"].jobs,
+            renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
+        )
+
+    # --- описание ---
+
+    def channels(self) -> list[publish.Channel]:
+        try:
+            return publish.load_channels(self.config.channels_file)
+        except ValueError:
+            return []
+
+    def image_models(self) -> list[dict]:
+        found = self.ctx.modules["photo"].config.models()
+        return [
+            {"id": m.id, "label": m.label, "installed": m.installed}
+            for m in found
+            if photo_models.TXT2IMG in m.model.modes
+        ]
+
+    def defaults(self) -> dict:
+        audio = self.ctx.modules["audio"].config
+        return {
+            "poster_mode": "local",
+            "draw_images": True,
+            "image_model": self.config.image_model,
+            "voice_mode": "tts",
+            "engine": audio.default_engine,
+            "voice": "",
+            "speed": None,
+            "shorts": False,
+            "review_text": False,
+            "auto_publish": False,
+            "channels": [],
+        }
+
+    def describe(self) -> dict:
+        return {
+            "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
+            "steps": [{"id": s, "label": LABELS[s]} for s in STEP_IDS],
+            "defaults": self.defaults(),
+            "engines": [e.public() for e in voices.ENGINES.values()],
+            "image_models": self.image_models(),
+            "channels": [c.public() for c in self.channels()],
+            "channels_file": str(self.config.channels_file),
+            "llm": {
+                "cmd": self.config.llm_cmd[0] if not self.config.fake else "fake",
+                "ok": self.config.llm_available(),
+            },
+            "narrator_dir": str(self.config.narrator_dir),
+        }
+
+    def problems(self) -> list[str]:
+        out = []
+        if not self.config.llm_available():
+            out.append(f"Сценарии: LLM-команда «{self.config.llm_cmd[0]}» не найдена — задай AIP_LLM_CMD.")
+        try:
+            publish.load_channels(self.config.channels_file)
+        except ValueError as exc:
+            out.append(f"Каналы: {exc}")
+        return out
+
+    # --- настройки ---
+
+    def check_settings(self, raw: object, base: dict) -> dict:
+        if raw is None:
+            return dict(base)
+        if not isinstance(raw, dict):
+            raise bad_request("settings — объект.")
+        out = dict(base)
+        for key, value in raw.items():
+            if key not in SETTING_STEPS:
+                raise bad_request(f"Неизвестная настройка {key}.")
+            out[key] = value
+        if out["poster_mode"] not in POSTER_MODES:
+            raise bad_request("poster_mode — local или upload.")
+        if out["voice_mode"] not in VOICE_MODES:
+            raise bad_request("voice_mode — tts или upload.")
+        for key in ("draw_images", "shorts", "review_text", "auto_publish"):
+            if not isinstance(out[key], bool):
+                raise bad_request(f"{key} — true или false.")
+        engine = voices.ENGINES.get(out["engine"])
+        if engine is None:
+            raise bad_request("Неизвестный движок озвучки.")
+        if out["voice"] and out["voice"] not in engine.voices:
+            raise bad_request(f"У движка {engine.label} нет голоса {out['voice']}.")
+        speed = out["speed"]
+        if speed not in (None, "") and (isinstance(speed, bool) or not isinstance(speed, int | float)):
+            raise bad_request("speed — число или null.")
+        if speed not in (None, ""):
+            low, high = voices.SPEED_RANGE
+            if not low <= speed <= high:
+                raise bad_request(f"Скорость — от {low:g} до {high:g}.")
+        else:
+            out["speed"] = None
+        if out["image_model"] not in {m["id"] for m in self.image_models()}:
+            raise bad_request("Неизвестная модель картинок.")
+        known = {c.id for c in self.channels()}
+        if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
+            raise bad_request("channels — список id каналов.")
+        unknown = [c for c in out["channels"] if c not in known]
+        if unknown:
+            raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
+        return out
+
+    # --- проекты ---
+
+    def create(self, payload: object) -> dict:
+        if not isinstance(payload, dict):
+            raise bad_request("Тело запроса — не объект JSON.")
+        scenario = payload.get("scenario")
+        if scenario not in SCENARIOS:
+            raise bad_request("Сценарий — digest или article.")
+        settings = self.check_settings(payload.get("settings"), self.defaults())
+        title = " ".join(str(payload.get("title") or "").split())[:200]
+        extra: dict = {"auto_title": not title}
+        if scenario == "digest":
+            try:
+                day = news.parse_day(payload.get("day"))
+            except ValueError as exc:
+                raise bad_request(str(exc)) from exc
+            extra["day"] = day.isoformat()
+            title = title or f"Дайджест новостей за {day.strftime('%d.%m.%Y')}"
+            extra["auto_title"] = False
+            project = self.studio.create(scenario, title, settings, extra)
+        else:
+            text = payload.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise bad_request("Вставь текст статьи.")
+            if len(text) > MAX_TEXT:
+                raise bad_request(f"Текст длиннее {MAX_TEXT} знаков.")
+            paras = slides.paragraphs(text)
+            title = title or (paras[0][:90] if paras else "Видео по статье")
+            project = self.studio.create(scenario, title, settings, extra)
+            (self.studio.project_dir(project["id"]) / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
+        if payload.get("run"):
+            self.studio.run(project["id"])
+        return self.view(project["id"])
+
+    def view(self, project_id: str) -> dict:
+        project = self.studio.get(project_id)
+        if project is None:
+            raise not_found("Проект не найден.")
+        folder = self.studio.project_dir(project_id)
+
+        def read(name: str) -> str:
+            try:
+                return (folder / name).read_text(encoding="utf-8")
+            except OSError:
+                return ""
+
+        def as_json(name: str) -> object:
+            try:
+                return json.loads(read(name)) if read(name) else None
+            except json.JSONDecodeError:
+                return None
+
+        def url(path) -> str | None:
+            if path is None or not path.is_file():
+                return None
+            rel = path.relative_to(folder).as_posix()
+            return f"{URL_BASE}/projects/{project_id}/files/{rel}?v={path.stat().st_mtime_ns}"
+
+        images = sorted((folder / "images").glob("*.png")) if (folder / "images").is_dir() else []
+        project["scenario_label"] = SCENARIOS[project["scenario"]]
+        project["steps"] = [{"id": s, "label": LABELS[s], **project["steps"][s]} for s in STEP_IDS]
+        project["artifacts"] = {
+            "text": read(steps.TEXT),
+            "post": read(steps.POST),
+            "poster_prompt": read(steps.POSTER_PROMPT),
+            "plan": as_json(steps.PLAN),
+            "short": as_json(steps.SHORT),
+        }
+        project["files"] = {
+            "poster": url(steps.find(folder, "poster", steps.IMAGE_EXT)),
+            "images": {p.stem: url(p) for p in images},
+            "voice": url(steps.find(folder, "voice", steps.AUDIO_EXT)),
+            "video": url(folder / steps.VIDEO),
+            "short_voice": url(folder / "short" / "voice.mp3"),
+            "short_video": url(folder / steps.SHORT_VIDEO),
+        }
+        project["published"] = as_json(steps.PUBLISHED)
+        return project
+
+    def save_artifact(self, project_id: str, name: str, payload: object) -> dict:
+        if name not in ARTIFACTS:
+            raise not_found("Нет такого результата.")
+        if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
+            raise bad_request("Нужно поле text.")
+        filename, step = ARTIFACTS[name]
+        folder = self.studio.project_dir(project_id)
+        text = payload["text"]
+        if len(text) > MAX_TEXT:
+            raise bad_request(f"Длиннее {MAX_TEXT} знаков.")
+        if name == "text" and not text.strip():
+            raise bad_request("Текст пуст.")
+        if name == "plan":
+            try:
+                data = json.loads(text)
+                count = len(slides.paragraphs((folder / steps.TEXT).read_text(encoding="utf-8")))
+                plan = slides.parse_plan(data, count)
+            except (json.JSONDecodeError, OSError, StudioError) as exc:
+                raise bad_request(f"План не годится: {exc}") from exc
+            data = data if isinstance(data, dict) else {"slides": data}
+            text = json.dumps(data | {"slides": [s.to_dict() for s in plan]}, ensure_ascii=False, indent=2)
+        if name == "short":
+            try:
+                beats = steps.parse_short(json.loads(text))
+            except (json.JSONDecodeError, StudioError) as exc:
+                raise bad_request(f"Сценарий шортса не годится: {exc}") from exc
+            text = json.dumps({"beats": beats}, ensure_ascii=False, indent=2)
+        self._guard(project_id)
+        path = folder / filename
+        path.write_text(text.strip() + "\n", encoding="utf-8")
+        if name == "short":
+
+            def keep_script(project: dict) -> set[str]:
+                project["steps"]["short"]["keep"] = True
+                return {"short"}
+
+            self.studio.update(project_id, keep_script)
+        elif name == "post":
+            self.studio.update(project_id, lambda project: {"publish"})
+        else:
+            self.studio.mark_done(project_id, step, note="Поправлено вручную.")
+        return self.view(project_id)
+
+    def upload(self, project_id: str, what: str, data: bytes) -> dict:
+        kinds = {"poster": (uploads_module.IMAGE,), "voice": (uploads_module.AUDIO,)}.get(what)
+        if kinds is None:
+            raise not_found("Загружать можно poster или voice.")
+        ext = uploads_module.sniff(data) if data else None
+        if ext is None or uploads_module.kind_of(ext) not in kinds:
+            raise bad_request(uploads_module._accepted(kinds))
+        self._guard(project_id)
+        folder = self.studio.project_dir(project_id)
+        stems = steps.IMAGE_EXT if what == "poster" else steps.AUDIO_EXT
+        for old in (folder / f"{what}{e}" for e in stems):
+            old.unlink(missing_ok=True)
+        (folder / f"{what}.{ext}").write_bytes(data)
+        self.studio.mark_done(project_id, what, note="Загружено вручную.")
+        return self.view(project_id)
+
+    def _guard(self, project_id: str) -> None:
+        project = self.studio.get(project_id)
+        if project is None:
+            raise not_found("Проект не найден.")
+        if project["running"]:
+            raise HttpError(HTTPStatus.CONFLICT, "Проект сейчас выполняется — дождись или останови его.")
+
+    def update_settings(self, project_id: str, payload: object) -> dict:
+        project = self.studio.get(project_id)
+        if project is None:
+            raise not_found("Проект не найден.")
+        new = self.check_settings(payload, project["settings"])
+        changed = {k for k in new if new[k] != project["settings"].get(k)}
+
+        def apply(p: dict) -> set[str]:
+            p["settings"] = new
+            return {SETTING_STEPS[k] for k in changed if SETTING_STEPS[k]}
+
+        self.studio.update(project_id, apply)
+        return self.view(project_id)
+
+    # --- HTTP ---
+
+    def handle(self, req: Request) -> None:
+        try:
+            self._route(req)
+        except Conflict as exc:
+            raise HttpError(HTTPStatus.CONFLICT, str(exc)) from exc
+        except KeyError as exc:
+            raise not_found("Проект не найден.") from exc
+
+    def _route(self, req: Request) -> None:
+        match (req.method, req.sub):
+            case ("GET", ["config"]):
+                return req.send_json(self.describe())
+            case ("GET", ["projects"]):
+                return req.send_json({"projects": self.studio.list(req.arg("scenario"))})
+            case ("POST", ["projects"]):
+                return req.send_json(self.create(req.json(MAX_BODY)), HTTPStatus.CREATED)
+            case ("GET", ["projects", pid]):
+                return req.send_json(self.view(pid))
+            case ("POST", ["projects", pid, "settings"]):
+                return req.send_json(self.update_settings(pid, req.json()))
+            case ("POST", ["projects", pid, "run"]):
+                payload = req.json() or {}
+                only = payload.get("step") if isinstance(payload, dict) else None
+                if only is not None and only not in STEP_IDS:
+                    raise bad_request("Нет такого шага.")
+                self.studio.run(pid, only)
+                return req.send_json(self.view(pid))
+            case ("POST", ["projects", pid, "cancel"]):
+                self.studio.cancel(pid)
+                return req.send_json(self.view(pid))
+            case ("POST", ["projects", pid, "approve"]):
+                payload = req.json() or {}
+                step = payload.get("step") if isinstance(payload, dict) else None
+                if step not in STEP_IDS:
+                    raise bad_request("Нет такого шага.")
+                self.studio.approve(pid, step)
+                return req.send_json(self.view(pid))
+            case ("POST", ["projects", pid, "artifacts", name]):
+                return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
+            case ("POST", ["projects", pid, "upload", what]):
+                data = req.body(uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
+                return req.send_json(self.upload(pid, what, data))
+            case ("GET", ["projects", pid, "files", *rest]):
+                return self._send_file(req, pid, "/".join(rest))
+        raise not_found()
+
+    def _send_file(self, req: Request, project_id: str, rel: str) -> None:
+        if self.studio.get(project_id) is None or not _FILE.match(rel):
+            raise not_found("Файл не найден.")
+        folder = self.studio.project_dir(project_id).resolve()
+        path = (folder / rel).resolve()
+        if folder not in path.parents or not path.is_file():
+            raise not_found("Файл не найден.")
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if ctype.startswith("text/"):
+            ctype += "; charset=utf-8"
+        attachment = f"{project_id}-{rel.replace('/', '-')}" if "download" in req.query else None
+        req.send_file(path, ctype, ranged=True, attachment=attachment, cache="no-cache")
+
+    def close(self) -> None:
+        self.studio.close()

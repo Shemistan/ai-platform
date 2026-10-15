@@ -1,0 +1,30 @@
+[
+  {
+    "id": "tg-news",
+    "label": "Telegram: канал новостей",
+    "type": "telegram",
+    "format": "landscape",
+    "chat_id": "@my_news_channel",
+    "token_env": "AIP_TELEGRAM_TOKEN"
+  },
+  {
+    "id": "tg-shorts",
+    "label": "Telegram: вертикальные",
+    "type": "telegram",
+    "format": "vertical",
+    "chat_id": "@my_news_channel",
+    "token_env": "AIP_TELEGRAM_TOKEN"
+  },
+  {
+    "id": "youtube",
+    "label": "YouTube / VK (файл 16:9)",
+    "type": "manual",
+    "format": "landscape"
+  },
+  {
+    "id": "shorts",
+    "label": "YouTube Shorts / TikTok / Reels (файл 9:16)",
+    "type": "manual",
+    "format": "vertical"
+  }
+]

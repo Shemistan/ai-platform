@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Сценарии — AI Platform</title>
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="page-head">
+    <h1 id="scenario-title">Сценарий</h1>
+    <p class="muted" id="scenario-hint"></p>
+  </header>
+
+  <main class="studio">
+    <aside class="side">
+      <form class="panel" id="create" novalidate>
+        <h2>Новый выпуск</h2>
+        <div id="source-fields"></div>
+        <details class="settings-box" open>
+          <summary>Настройки</summary>
+          <div id="create-settings"></div>
+        </details>
+        <p class="form-error" id="create-error" role="alert" hidden></p>
+        <button type="submit" class="primary" id="create-btn">Создать и запустить</button>
+      </form>
+      <section class="panel">
+        <h2>Выпуски</h2>
+        <ul class="history" id="projects"></ul>
+      </section>
+    </aside>
+
+    <section class="project" id="project" aria-live="polite">
+      <div class="panel empty-state">
+        <p class="muted">Создай выпуск слева или выбери из списка — здесь появятся шаги: текст, постер, слайды, озвучка, видео и публикация.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

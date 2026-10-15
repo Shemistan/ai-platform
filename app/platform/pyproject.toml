@@ -1,0 +1,13 @@
+[project]
+name = "aiplatform"
+version = "0.1.0"
+description = "Локальная AI-платформа: фото, видео, озвучка и сценарии (дайджест, видео по статье)"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]

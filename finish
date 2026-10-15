@@ -1,0 +1,74 @@
+#!/bin/sh
+# Завершить подзадачу: ./finish ["заголовок PR"]
+# check → push ветки задачи → staging fast-forward на HEAD → push staging →
+# PR staging → main (создать или обновить). Запускать из ветки задачи
+# (любой, кроме main/master/staging); обычно это делает агент.
+# Дизайн: docs/superpowers/specs/2026-09-07-staging-flow-design.md
+set -e
+cd "$(dirname "$0")" || exit 1
+fail() { echo "⛔ finish: $1" >&2; exit 1; }
+warn() { echo "⚠ finish: $1" >&2; }
+
+BR=$(git symbolic-ref --quiet --short HEAD) || fail "detached HEAD"
+case "$BR" in
+  main|master|staging) fail "запускай из ветки задачи, сейчас: $BR" ;;
+esac
+[ -z "$(git status --porcelain)" ] || fail "рабочее дерево не чистое — закоммить всё"
+
+DEFAULT=main
+git show-ref -q --verify refs/heads/main || \
+  { git show-ref -q --verify refs/heads/master && DEFAULT=master; }
+
+# staging — интеграционная ветка агента; создаётся при первом finish.
+if ! git show-ref -q --verify refs/heads/staging; then
+  BASE="$DEFAULT"
+  git show-ref -q --verify refs/remotes/origin/staging && BASE=origin/staging
+  git branch staging "$BASE"
+  echo "✓ создана ветка staging от $BASE"
+fi
+
+if [ -x ./check ]; then
+  ./check || fail "./check красный"
+fi
+
+REMOTE=""
+git remote get-url origin >/dev/null 2>&1 && REMOTE=origin
+
+# 1. Подтянуть staging с origin: если она ушла вперёд — обычный merge.
+if [ -n "$REMOTE" ]; then
+  git fetch -q origin
+  if git show-ref -q --verify refs/remotes/origin/staging; then
+    git merge --no-edit origin/staging >/dev/null || \
+      fail "конфликт с origin/staging — разреши и повтори ./finish"
+  fi
+  git push -q -u origin "$BR"
+  echo "✓ $BR запушена"
+fi
+
+# 2. staging → HEAD, только fast-forward (история staging не переписывается).
+git merge-base --is-ancestor staging HEAD || \
+  fail "staging не предок HEAD — влей её (git merge staging) и повтори"
+git branch -f staging HEAD >/dev/null || \
+  fail "staging занята другим checkout — освободи её (git checkout $DEFAULT там)"
+echo "✓ staging → $(git rev-parse --short HEAD)"
+
+[ -n "$REMOTE" ] || { warn "origin нет — push и PR пропущены"; exit 0; }
+git push -q origin staging:staging
+echo "✓ staging запушена"
+
+# 3. PR staging → main: создать или обновить тело.
+command -v gh >/dev/null 2>&1 || { warn "gh не установлен — PR открой руками"; exit 0; }
+gh auth status >/dev/null 2>&1 || \
+  { warn "gh не авторизован (gh auth login -h github.com) — PR открой руками"; exit 0; }
+
+TITLE="${1:-staging → $DEFAULT: $BR}"
+BODY=$(git log --no-merges --format='- %s' "origin/$DEFAULT..staging")
+NUM=$(gh pr list --base "$DEFAULT" --head staging --state open \
+  --json number -q '.[0].number' 2>/dev/null || true)
+if [ -n "$NUM" ]; then
+  gh pr edit "$NUM" --body "$BODY" >/dev/null
+  echo "✓ PR #$NUM обновлён: $(gh pr view "$NUM" --json url -q .url)"
+else
+  URL=$(gh pr create --base "$DEFAULT" --head staging --title "$TITLE" --body "$BODY")
+  echo "✓ PR создан: $URL"
+fi
