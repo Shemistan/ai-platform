@@ -446,7 +446,7 @@ function upscaleBlock(job) {
     ...targets.map((t) =>
       h("button", { type: "button", onclick: () => upscaleJob(job.id, t.id) }, `до ${t.label}`),
     ),
-    h("span", { class: "muted small" }, "4K — несколько минут; первый запуск докачает ~7 ГБ весов."),
+    h("span", { class: "muted small" }, "2K — ~20 с, 4K — ~1,5 мин, ~18 ГБ памяти; первый запуск докачает ~7 ГБ весов."),
   );
 }
 
