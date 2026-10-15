@@ -1,0 +1,4 @@
+data/
+data-demo/
+.ruff_cache/
+local.mk
