@@ -83,5 +83,11 @@ def resolve(*, models_dir: Path | None, explicit: str, fake: bool) -> list[Avail
     return found
 
 
+DEFAULT_ID = "ltx-2.5-q4"  # модель по умолчанию везде: вкладка «Видео», живое фото, ролики сценариев
+
+
 def default(found: list[Available]) -> Available:
-    return next((m for m in found if m.installed), found[0])
+    """Заданная в VIDEOGEN_MODEL, иначе DEFAULT_ID, иначе первая установленная."""
+    installed = [m for m in found if m.installed]
+    preferred = [m for m in installed if m.id in (CUSTOM_ID, DEFAULT_ID)]
+    return (preferred or installed or found)[0]

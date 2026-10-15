@@ -55,5 +55,5 @@ ENGINES: dict[str, Engine] = {
         Engine("chatterbox", "Chatterbox (MLX)", "клон голоса на Apple Silicon", CLONES, "Charon"),
     )
 }
-DEFAULT_ENGINE = "espeech"
+DEFAULT_ENGINE = "higgs"  # голос по умолчанию у Higgs — Charon
 SPEED_RANGE = (0.7, 2.0)  # как speed_arg в narrator/cli.py
