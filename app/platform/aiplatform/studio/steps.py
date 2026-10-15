@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import shutil
 from dataclasses import dataclass
@@ -41,6 +40,8 @@ MEDIA = {IMAGES: (IMAGE_EXT, "картинки"), CLIPS: (CLIP_EXT, "видео"
 IMAGE_SIZE = "1344x768"  # 16:9 из размеров вкладки «Фото»
 CLIP_PRESET = "landscape-m"  # 704×448 из пресетов вкладки «Видео»: быстрее, а ffmpeg растянет до кадра
 CLIP_DURATION_S = 5  # есть у всех видеомоделей; длиннее слайд — ролик идёт по кругу
+MAX_CLIPS = 3  # роликов на выпуск: ключевые моменты, остальные слайды — картинка с наездом
+UPSCALE_TARGETS = ("2k", "4k")
 SHORT_WORDS = 140
 POLL_S = 0.3
 
@@ -50,8 +51,7 @@ class Services:
     config: StudioConfig
     photo: object  # photo.jobs.JobManager: create / wait / image_path
     audio: object  # audio.jobs.AudioJobs: create / wait / audio_path
-    video: object  # video.jobs.JobManager: create / get / cancel / video_path / pick
-    uploads: object  # core.uploads.UploadStore: картинка слайда — первый кадр ролика
+    video: object  # video.jobs.JobManager: create / get / cancel / video_path
     renderer: Renderer
 
 
@@ -102,7 +102,8 @@ def wait_job(ctx: StepContext, tab: str, jobs: object, job: dict, what: str) -> 
     return current
 
 
-def generate_image(ctx: StepContext, prompt: str, target: Path, what: str) -> Path:
+def generate_image(ctx: StepContext, prompt: str, target: Path, what: str) -> str:
+    """Картинка во вкладке «Фото» (и увеличение, если включено). Возвращает id исходной задачи."""
     svc = services(ctx)
     payload = {"mode": "txt2img", "prompt": prompt, "size": IMAGE_SIZE, "model": ctx.settings["image_model"]}
     try:
@@ -110,25 +111,32 @@ def generate_image(ctx: StepContext, prompt: str, target: Path, what: str) -> Pa
     except ValueError as exc:
         raise StudioError(f"{what}: {exc}") from exc
     done = wait_job(ctx, "photo", svc.photo, job, what)
-    source = svc.photo.image_path(done["id"])
+    finish_image(ctx, done["id"], target, what)
+    return done["id"]
+
+
+def finish_image(ctx: StepContext, job_id: str, target: Path, what: str) -> None:
+    """Положить картинку задачи «Фото» в проект; с настройкой «увеличить» — через апскейл вкладки."""
+    svc = services(ctx)
+    upscale = ctx.settings.get("upscale_images")
+    if upscale in UPSCALE_TARGETS:
+        try:
+            job = svc.photo.upscale(job_id, {"target": upscale})
+        except ValueError as exc:
+            raise StudioError(f"{what}: увеличить до {upscale.upper()} не вышло: {exc}") from exc
+        if job is None:
+            raise StudioError(f"{what}: исходная задача «Фото» пропала — перезапусти шаг.")
+        job_id = wait_job(ctx, "photo", svc.photo, job, f"{what}, увеличение до {upscale.upper()}")["id"]
+    source = svc.photo.image_path(job_id)
     if source is None:
         raise StudioError(f"{what}: картинка не найдена.")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
-    return target
 
 
-def generate_clip(ctx: StepContext, prompt: str, target: Path, what: str, first_frame: Path | None = None) -> Path:
+def generate_clip(ctx: StepContext, prompt: str, target: Path, what: str) -> Path:
     svc = services(ctx)
-    frames = []
-    if first_frame is not None:
-        try:
-            upload_id = svc.uploads.save(first_frame.read_bytes())
-        except (OSError, ValueError) as exc:
-            raise StudioError(f"{what}: картинку слайда не взять первым кадром: {exc}") from exc
-        frames = [{"upload_id": upload_id, "frame_idx": 0}]
     payload = {
-        "frames": frames,
         "prompt": prompt,
         "duration_s": CLIP_DURATION_S,
         "preset": CLIP_PRESET,
@@ -167,17 +175,11 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
     return target
 
 
-def clip_prompt(slide: slides.Slide) -> str:
-    """Промпт видео-фона: из плана, а у старых планов — из промпта картинки."""
-    if slide.video_prompt:
-        return slide.video_prompt
-    return f"{slide.image_prompt}, slow cinematic camera movement, 5 seconds" if slide.image_prompt else ""
-
-
 def media_prompts(kind: str, plan: list[slides.Slide]) -> list[tuple[int, str]]:
-    """(номер слайда, промпт) для слайдов, которым нужна картинка или видео."""
-    pick = (lambda s: s.image_prompt) if kind == IMAGES else clip_prompt
-    return [(n, pick(s)) for n, s in enumerate(plan, start=1) if pick(s)]
+    """(номер слайда, промпт) для слайдов, которым нужна картинка или ролик. Роликов — не больше MAX_CLIPS."""
+    if kind == IMAGES:
+        return [(n, s.image_prompt) for n, s in enumerate(plan, start=1) if s.image_prompt]
+    return [(n, s.video_prompt) for n, s in enumerate(plan, start=1) if s.video_prompt][:MAX_CLIPS]
 
 
 def read_meta(path: Path) -> dict:
@@ -279,10 +281,27 @@ def step_poster(ctx: StepContext) -> None:
     prompt = ctx.read(POSTER_PROMPT).strip()
     if not prompt:
         raise StudioError("Нет промпта постера.")
-    ctx.progress("Ставлю в очередь «Фото»…")
-    for old in (ctx.dir / f"poster{ext}" for ext in IMAGE_EXT):
-        old.unlink(missing_ok=True)
-    generate_image(ctx, prompt, ctx.path("poster.png"), "Постер")
+    model, upscale = ctx.settings["image_model"], ctx.settings.get("upscale_images") or "none"
+    meta_path, target = ctx.path("poster.json"), ctx.path("poster.png")
+    meta = read_meta(meta_path)
+    job_id = meta.get("job")
+    only_upscale = (
+        meta.get("prompt") == prompt
+        and meta.get("model") == model
+        and meta.get("upscale", "none") != upscale
+        and job_id
+        and services(ctx).photo.image_path(job_id) is not None
+        and existing == target
+    )
+    if only_upscale:
+        finish_image(ctx, job_id, target, "Постер")  # тот же постер, другое увеличение
+    else:
+        ctx.progress("Ставлю в очередь «Фото»…")
+        for old in (ctx.dir / f"poster{ext}" for ext in IMAGE_EXT):
+            old.unlink(missing_ok=True)
+        job_id = generate_image(ctx, prompt, target, "Постер")
+    want = {"prompt": prompt, "model": model, "job": job_id, "upscale": upscale}
+    meta_path.write_text(json.dumps(want, ensure_ascii=False), encoding="utf-8")
 
 
 def step_plan(ctx: StepContext) -> None:
@@ -314,24 +333,32 @@ def step_images(ctx: StepContext) -> None:
         uploads_ready(ctx, IMAGES, todo)
         return
     model = ctx.settings["image_model"]
+    upscale = ctx.settings.get("upscale_images") or "none"
+    photo = services(ctx).photo
     for i, (n, prompt) in enumerate(todo, start=1):
-        meta = read_meta(folder / f"{n:02d}.json")
+        meta_path = folder / f"{n:02d}.json"
+        meta = read_meta(meta_path)
         if meta.get("uploaded") and slide_media(folder, n, IMAGES, prompt):
             continue  # свою картинку человек положил сам — не перерисовываем
-        target = folder / f"{n:02d}.png"
-        if meta == {"prompt": prompt, "model": model} and target.is_file():
+        target, what = folder / f"{n:02d}.png", f"Картинка слайда {n}"
+        same = meta.get("prompt") == prompt and meta.get("model") == model and target.is_file()
+        if same and meta.get("upscale", "none") == upscale:
             continue
         ctx.progress(f"Картинка {i} из {len(todo)}", 100.0 * (i - 1) / len(todo))
-        for old in (folder / f"{n:02d}{ext}" for ext in IMAGE_EXT):
-            old.unlink(missing_ok=True)
-        generate_image(ctx, prompt, target, f"Картинка слайда {n}")
-        meta_text = json.dumps({"prompt": prompt, "model": model}, ensure_ascii=False)
-        (folder / f"{n:02d}.json").write_text(meta_text, encoding="utf-8")
+        job_id = meta.get("job")
+        if same and job_id and photo.image_path(job_id) is not None:
+            finish_image(ctx, job_id, target, what)  # поменялось только увеличение — не перерисовываем
+        else:
+            for old in (folder / f"{n:02d}{ext}" for ext in IMAGE_EXT):
+                old.unlink(missing_ok=True)
+            job_id = generate_image(ctx, prompt, target, what)
+        want = {"prompt": prompt, "model": model, "job": job_id, "upscale": upscale}
+        meta_path.write_text(json.dumps(want, ensure_ascii=False), encoding="utf-8")
 
 
 def step_clips(ctx: StepContext) -> None:
     if not ctx.settings.get("clips"):
-        raise Skip("Видео на слайдах выключены: фон слайдов — картинки.")
+        raise Skip("Ролики выключены: фон слайдов — картинки с медленным наездом.")
     _, plan = load_plan(ctx)
     todo = media_prompts(CLIPS, plan)
     folder = ctx.path(CLIPS)
@@ -341,28 +368,18 @@ def step_clips(ctx: StepContext) -> None:
         uploads_ready(ctx, CLIPS, todo)
         return
     model = ctx.settings["video_model"]
-    try:
-        frames_ok = services(ctx).video.pick(model).limits.max_keyframes != 0  # Wan — только по промпту
-    except ValueError as exc:
-        raise StudioError(f"Видео для слайдов: {exc}") from exc
-    from_images = bool(ctx.settings.get("clips_from_images", True)) and ctx.settings["draw_images"] and frames_ok
-    if ctx.settings.get("clips_from_images", True) and not frames_ok:
-        ctx.log("эта модель видео не берёт кадры — ролики только по промпту")
     for i, (n, prompt) in enumerate(todo, start=1):
         meta = read_meta(folder / f"{n:02d}.json")
         if meta.get("uploaded") and slide_media(folder, n, CLIPS, prompt):
             continue  # свой ролик человек положил сам — не перегенерируем
-        image = find(ctx.path(IMAGES), f"{n:02d}", IMAGE_EXT) if from_images else None
         want = {"prompt": prompt, "model": model}
-        if image is not None:
-            want["image"] = hashlib.sha1(image.read_bytes()).hexdigest()[:16]  # новая картинка — новый ролик
         target = folder / f"{n:02d}.mp4"
         if meta == want and target.is_file():
             continue
-        ctx.progress(f"Видео {i} из {len(todo)}", 100.0 * (i - 1) / len(todo))
+        ctx.progress(f"Ролик {i} из {len(todo)}", 100.0 * (i - 1) / len(todo))
         for old in (folder / f"{n:02d}{ext}" for ext in CLIP_EXT):
             old.unlink(missing_ok=True)
-        generate_clip(ctx, prompt, target, f"Видео слайда {n}", first_frame=image)
+        generate_clip(ctx, prompt, target, f"Ролик слайда {n}")
         meta_text = json.dumps(want, ensure_ascii=False)
         (folder / f"{n:02d}.json").write_text(meta_text, encoding="utf-8")
 
