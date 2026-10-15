@@ -2,8 +2,10 @@
 
 PYTHON ?= python3
 
-# local.mk — свои пути и команды (AIP_*), не в git. Пример — README.md, раздел «Настройка».
+# local.mk — свои пути и команды (AIP_*), не в git. Пример — local.mk.example.
 -include local.mk
+# Переменные из local.mk должны дойти до сервиса: экспортируем все.
+export
 
 # Платформа на настоящих моделях: нужны установленные пайплайны photogen/videogen и narrator (см. README).
 run:

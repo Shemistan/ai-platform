@@ -1,0 +1,26 @@
+# Скопируй в local.mk (он не в git) и поправь пути под свою машину: cp local.mk.example local.mk
+# Пути ниже — те, что ставят setup-model.sh photogen/videogen и narrator по умолчанию.
+
+# Веса фото- и видеомоделей (общие с photogen и videogen).
+AIP_MODELS_DIR=/Volumes/External SSD/local_models
+
+# Фото: окружение mflux и Flux2CLI из 11_photo_generator/app/photogen/setup-model.sh.
+AIP_PHOTO_MFLUX_BIN=$(HOME)/.local/share/photogen/mflux-0.22.0/bin
+AIP_PHOTO_FLUX2_CMD=$(HOME)/.local/share/photogen/flux2cli-v3.1.0/Flux2CLI
+
+# Видео: команды из 10_video_generator/app/videogen/setup-model.sh.
+AIP_VIDEO_LTX_CMD=uv run --project $(HOME)/.local/share/videogen/ltx-2-mlx-v0.16.2 ltx-2-mlx
+AIP_VIDEO_WAN_CMD=uv run --project $(HOME)/.local/share/videogen/wan-video-mlx-86bfc98 pocketai-wan-video
+
+# Озвучка и новости: репозиторий narrator.
+AIP_NARRATOR_DIR=$(HOME)/my_track/07_offline_text-to-word
+AIP_AUDIO_ENGINE=espeech
+
+# LLM для промптов постера, слайдов и шортса.
+AIP_LLM_CMD=claude -p
+
+# Модель постера и картинок слайдов по умолчанию.
+AIP_STUDIO_IMAGE_MODEL=z-image-turbo
+
+# Экономия памяти для фото и видео (раскомментируй, если 16–24 ГБ).
+# AIP_LOW_RAM=1
