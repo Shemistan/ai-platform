@@ -35,6 +35,7 @@ SETTING_STEPS = {
     "image_model": "images",
     "clips": "clips",
     "clips_mode": "clips",
+    "clips_from_images": "clips",
     "video_model": "clips",
     "voice_mode": "voice",
     "engine": "voice",
@@ -77,6 +78,7 @@ class StudioModule:
             photo=self.ctx.modules["photo"].jobs,
             audio=self.ctx.modules["audio"].jobs,
             video=self.ctx.modules["video"].jobs,
+            uploads=self.ctx.uploads,
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
         )
 
@@ -109,6 +111,7 @@ class StudioModule:
             "image_model": self.config.image_model,
             "clips": False,
             "clips_mode": "local",
+            "clips_from_images": True,
             "video_model": video_models.default(self.ctx.modules["video"].config.models()).id,
             "voice_mode": "tts",
             "engine": audio.default_engine,
@@ -167,7 +170,7 @@ class StudioModule:
             raise bad_request("clips_mode — local или upload.")
         if out["voice_mode"] not in VOICE_MODES:
             raise bad_request("voice_mode — tts или upload.")
-        for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish"):
+        for key in ("draw_images", "clips", "clips_from_images", "shorts", "review_text", "auto_publish"):
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
         engine = voices.ENGINES.get(out["engine"])

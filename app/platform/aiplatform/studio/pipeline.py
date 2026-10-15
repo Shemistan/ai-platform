@@ -45,7 +45,7 @@ STEPS = (
     Step("poster", "Постер — первый кадр", ("poster_prompt",)),
     Step("plan", "Слайды и промпты картинок", ("text",)),
     Step("images", "Картинки слайдов", ("plan",)),
-    Step("clips", "Видео для слайдов", ("plan",)),
+    Step("clips", "Видео для слайдов", ("plan", "images")),  # картинка слайда — первый кадр ролика
     Step("voice", "Озвучка", ("text",)),
     Step("render", "Сборка видео 16:9", ("poster", "plan", "images", "clips", "voice")),
     Step("short", "Шортс 9:16", ("text", "poster", "images", "clips")),

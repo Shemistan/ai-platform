@@ -112,6 +112,12 @@ function settingsForm(values, prefix) {
         radio("clips_mode", "local", "Сгенерировать локальной моделью", values.clips_mode !== "upload"),
         radio("clips_mode", "upload", "Сделаю сам по промптам во внешней модели", values.clips_mode === "upload"),
       ),
+      check(
+        "clips_from_images",
+        "Начинать ролик с картинки слайда",
+        "Локальная модель оживляет картинку слайда — ролики в одном стиле с картинками. Нужны включённые картинки; Wan 2.2 так не умеет — у неё ролик только по промпту.",
+        values.clips_from_images,
+      ),
       h(
         "label",
         { class: "field" },
@@ -164,6 +170,7 @@ function readSettings(prefix) {
     image_model: get("image_model").value,
     clips: get("clips").checked,
     clips_mode: radio("clips_mode"),
+    clips_from_images: get("clips_from_images").checked,
     video_model: get("video_model").value,
     voice_mode: radio("voice_mode"),
     engine: get("engine").value,

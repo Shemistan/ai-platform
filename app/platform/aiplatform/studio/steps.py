@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass
@@ -49,7 +50,8 @@ class Services:
     config: StudioConfig
     photo: object  # photo.jobs.JobManager: create / wait / image_path
     audio: object  # audio.jobs.AudioJobs: create / wait / audio_path
-    video: object  # video.jobs.JobManager: create / get / cancel / video_path
+    video: object  # video.jobs.JobManager: create / get / cancel / video_path / pick
+    uploads: object  # core.uploads.UploadStore: картинка слайда — первый кадр ролика
     renderer: Renderer
 
 
@@ -116,9 +118,17 @@ def generate_image(ctx: StepContext, prompt: str, target: Path, what: str) -> Pa
     return target
 
 
-def generate_clip(ctx: StepContext, prompt: str, target: Path, what: str) -> Path:
+def generate_clip(ctx: StepContext, prompt: str, target: Path, what: str, first_frame: Path | None = None) -> Path:
     svc = services(ctx)
+    frames = []
+    if first_frame is not None:
+        try:
+            upload_id = svc.uploads.save(first_frame.read_bytes())
+        except (OSError, ValueError) as exc:
+            raise StudioError(f"{what}: картинку слайда не взять первым кадром: {exc}") from exc
+        frames = [{"upload_id": upload_id, "frame_idx": 0}]
     payload = {
+        "frames": frames,
         "prompt": prompt,
         "duration_s": CLIP_DURATION_S,
         "preset": CLIP_PRESET,
@@ -331,18 +341,29 @@ def step_clips(ctx: StepContext) -> None:
         uploads_ready(ctx, CLIPS, todo)
         return
     model = ctx.settings["video_model"]
+    try:
+        frames_ok = services(ctx).video.pick(model).limits.max_keyframes != 0  # Wan — только по промпту
+    except ValueError as exc:
+        raise StudioError(f"Видео для слайдов: {exc}") from exc
+    from_images = bool(ctx.settings.get("clips_from_images", True)) and ctx.settings["draw_images"] and frames_ok
+    if ctx.settings.get("clips_from_images", True) and not frames_ok:
+        ctx.log("эта модель видео не берёт кадры — ролики только по промпту")
     for i, (n, prompt) in enumerate(todo, start=1):
         meta = read_meta(folder / f"{n:02d}.json")
         if meta.get("uploaded") and slide_media(folder, n, CLIPS, prompt):
             continue  # свой ролик человек положил сам — не перегенерируем
+        image = find(ctx.path(IMAGES), f"{n:02d}", IMAGE_EXT) if from_images else None
+        want = {"prompt": prompt, "model": model}
+        if image is not None:
+            want["image"] = hashlib.sha1(image.read_bytes()).hexdigest()[:16]  # новая картинка — новый ролик
         target = folder / f"{n:02d}.mp4"
-        if meta == {"prompt": prompt, "model": model} and target.is_file():
+        if meta == want and target.is_file():
             continue
         ctx.progress(f"Видео {i} из {len(todo)}", 100.0 * (i - 1) / len(todo))
         for old in (folder / f"{n:02d}{ext}" for ext in CLIP_EXT):
             old.unlink(missing_ok=True)
-        generate_clip(ctx, prompt, target, f"Видео слайда {n}")
-        meta_text = json.dumps({"prompt": prompt, "model": model}, ensure_ascii=False)
+        generate_clip(ctx, prompt, target, f"Видео слайда {n}", first_frame=image)
+        meta_text = json.dumps(want, ensure_ascii=False)
         (folder / f"{n:02d}.json").write_text(meta_text, encoding="utf-8")
 
 

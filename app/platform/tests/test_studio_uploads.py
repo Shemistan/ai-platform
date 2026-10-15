@@ -225,6 +225,33 @@ class UploadWhileRunningTest(StudioCase):
 class LocalClipsTest(StudioCase):
     process_env = StudioCase.process_env | {"FAKE_LTX_STEP_DELAY": "0.01"}
 
+    def test_clips_start_from_slide_images(self):
+        project = self.create(scenario="article", text=ARTICLE, settings={"clips": True}, run=True)
+        done = self.settle(project["id"], timeout=180)
+        self.assertEqual(self.statuses(done)["render"], "done", done["log"])
+        _, videos = self.json("GET", "/api/video/jobs")
+        self.assertEqual(len(videos["jobs"]), 4)
+        for job in videos["jobs"]:
+            self.assertEqual(len(job["frames"]), 1, job)
+            self.assertEqual(job["frames"][0]["frame_idx"], 0, "картинка слайда — первый кадр")
+
+        # Новая картинка слайда — ролик этого слайда перегенерируется, остальные нет.
+        pid = project["id"]
+        status, _ = self.json("POST", f"/api/studio/projects/{pid}/upload/images/02", png_bytes())
+        self.assertEqual(status, 200)
+        rebuilt = self.settle(pid, timeout=180)
+        self.assertEqual(self.statuses(rebuilt)["render"], "done", rebuilt["log"])
+        self.assertEqual(len(self.json("GET", "/api/video/jobs")[1]["jobs"]), 5)
+
+    def test_wan_makes_clips_from_prompt_only(self):
+        settings = {"clips": True, "video_model": "wan-2.2-t2v-q4"}
+        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
+        done = self.settle(project["id"], timeout=180)
+        self.assertEqual(self.statuses(done)["clips"], "done", done["log"])
+        self.assertTrue(any("только по промпту" in line for line in done["log"]), done["log"])
+        _, videos = self.json("GET", "/api/video/jobs")
+        self.assertTrue(all(not j["frames"] for j in videos["jobs"]))
+
     def test_clips_generated_on_video_tab(self):
         settings = {"clips": True, "draw_images": False}
         project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
@@ -259,7 +286,7 @@ class OldProjectTest(StudioCase):
         path = self.folder(project["id"]) / "project.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         del data["steps"]["clips"]
-        for key in ("clips", "images_mode", "clips_mode", "video_model"):
+        for key in ("clips", "images_mode", "clips_mode", "video_model", "clips_from_images"):
             del data["settings"][key]
         path.write_text(json.dumps(data), encoding="utf-8")
         from aiplatform import server as server_module
