@@ -76,7 +76,13 @@ function settingsForm(values, prefix) {
       "fieldset",
       {},
       h("legend", {}, "Картинки слайдов"),
-      check("draw_images", "Рисовать картинки по промптам", "Иначе фон слайдов — градиент.", values.draw_images),
+      check("draw_images", "Картинки на слайдах", "Иначе фон слайдов — градиент.", values.draw_images),
+      h(
+        "div",
+        { class: "radio-row" },
+        radio("images_mode", "local", "Сгенерировать локальной моделью", values.images_mode !== "upload"),
+        radio("images_mode", "upload", "Сделаю сам по промптам во внешней модели", values.images_mode === "upload"),
+      ),
       h(
         "label",
         { class: "field" },
@@ -88,6 +94,17 @@ function settingsForm(values, prefix) {
             h("option", { value: m.id, selected: m.id === values.image_model }, m.label + (m.installed ? "" : " — не установлена")),
           ),
         ),
+      ),
+    ),
+    h(
+      "fieldset",
+      {},
+      h("legend", {}, "Видео для слайдов"),
+      check(
+        "clips",
+        "Видео-фон слайдов — сделаю сам по промптам во внешней модели",
+        "На шаге «Видео для слайдов» будут промпты и окна, куда перетащить готовые ролики (MP4, MOV, WebM). Ролик заменяет картинку слайда и крутится по кругу без своего звука.",
+        values.clips,
       ),
     ),
     h(
@@ -125,7 +142,9 @@ function readSettings(prefix) {
   return {
     poster_mode: radio("poster_mode"),
     draw_images: get("draw_images").checked,
+    images_mode: radio("images_mode"),
     image_model: get("image_model").value,
+    clips: get("clips").checked,
     voice_mode: radio("voice_mode"),
     engine: get("engine").value,
     voice: get("voice").value,
@@ -279,6 +298,94 @@ function uploader(what, accept, label) {
   );
 }
 
+async function uploadSlide(kind, key, file) {
+  try {
+    show(await api("POST", `${API}/projects/${state.project.id}/upload/${kind}/${key}`, file));
+  } catch (err) {
+    alertBox(err.message);
+  }
+}
+
+const MEDIA = {
+  images: { accept: "image/png,image/jpeg,image/webp", hint: "Перетащи картинку (PNG, JPEG, WebP) или нажми" },
+  clips: { accept: "video/mp4,video/quicktime,video/webm", hint: "Перетащи видео (MP4, MOV, WebM) или нажми" },
+  poster: { accept: "image/png,image/jpeg,image/webp", hint: "Перетащи постер (PNG, JPEG, WebP) или нажми" },
+};
+
+// Окно для готового файла: перетащить или выбрать. Внутри — превью того, что уже лежит.
+function dropZone(kind, url, onFile) {
+  const busy = state.project.running;
+  const input = h("input", { type: "file", accept: MEDIA[kind].accept, hidden: true, onchange: (e) => e.target.files[0] && onFile(e.target.files[0]) });
+  let preview = h("span", { class: "drop-hint" }, MEDIA[kind].hint);
+  if (url && kind === "clips") {
+    preview = h("video", { src: url, loop: true, autoplay: true, playsinline: true, preload: "metadata" });
+    preview.muted = true; // атрибут muted у созданного скриптом элемента автоплей не разрешает
+  } else if (url) {
+    preview = h("img", { src: url, alt: "" });
+  }
+  const zone = h(
+    "div",
+    {
+      class: `drop-zone${url ? " filled" : ""}${busy ? " disabled" : ""}`,
+      role: "button",
+      tabindex: busy ? "-1" : "0",
+      title: url ? "Перетащи другой файл, чтобы заменить" : null,
+      onclick: () => !busy && input.click(),
+      onkeydown: (e) => (e.key === "Enter" || e.key === " ") && !busy && (e.preventDefault(), input.click()),
+      ondragover: (e) => {
+        if (busy) return;
+        e.preventDefault();
+        zone.classList.add("over");
+      },
+      ondragleave: () => zone.classList.remove("over"),
+      ondrop: (e) => {
+        e.preventDefault();
+        zone.classList.remove("over");
+        const file = e.dataTransfer.files[0];
+        if (file && !busy) onFile(file);
+      },
+    },
+    preview,
+    input,
+  );
+  return zone;
+}
+
+function copyButton(text) {
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "link",
+      onclick: async (e) => {
+        await navigator.clipboard?.writeText(text);
+        e.target.textContent = "Скопировано";
+        setTimeout(() => (e.target.textContent = "Скопировать промпт"), 1500);
+      },
+    },
+    "Скопировать промпт",
+  );
+}
+
+// Строка «промпт слева — окно для готового файла справа».
+function promptRow(label, prompt, zone) {
+  return h(
+    "div",
+    { class: "prompt-row" },
+    h("div", { class: "prompt-side" }, h("strong", {}, label), h("p", { class: "prompt-text" }, prompt), copyButton(prompt)),
+    zone,
+  );
+}
+
+function mediaRows(kind) {
+  const field = kind === "clips" ? "video_prompt" : "image_prompt";
+  const fileField = kind === "clips" ? "clip" : "image";
+  const rows = state.project.slides
+    .filter((s) => s[field])
+    .map((s) => promptRow(`Слайд ${Number(s.key)} · ${s.title}`, s[field], dropZone(kind, s[fileField], (file) => uploadSlide(kind, s.key, file))));
+  return rows.length ? [h("div", { class: "prompt-rows" }, ...rows)] : [];
+}
+
 function jobLink(step) {
   if (!step.job) return null;
   return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${step.job.tab === "photo" ? "Фото" : "Аудио"}»`);
@@ -299,6 +406,9 @@ function stepBody(step) {
           ]
         : [];
     case "poster":
+      if (p.settings.poster_mode === "upload" && a.poster_prompt) {
+        return [h("div", { class: "prompt-rows" }, promptRow("Постер — первый кадр", a.poster_prompt, dropZone("poster", f.poster, (file) => upload("poster", file))))];
+      }
       return [
         f.poster ? h("img", { class: "poster-img", src: f.poster, alt: "Постер" }) : null,
         h("div", { class: "actions" }, uploader("poster", "image/png,image/jpeg,image/webp", f.poster ? "Заменить своей картинкой" : "Загрузить постер"), jobLink(step)),
@@ -322,7 +432,10 @@ function stepBody(step) {
       ];
     }
     case "images":
-      return [step.status === "running" ? jobLink(step) : null];
+      if (!p.settings.draw_images) return [];
+      return [step.status === "running" ? jobLink(step) : null, ...mediaRows("images")];
+    case "clips":
+      return p.settings.clips ? mediaRows("clips") : [];
     case "voice":
       return [
         f.voice ? h("audio", { controls: true, src: f.voice, preload: "metadata" }) : null,
@@ -372,7 +485,8 @@ function stepBody(step) {
 
 function renderStep(step) {
   const p = state.project;
-  const canApprove = step.status === "waiting" && step.id === "text";
+  const approveLabel = { text: "Продолжить", images: "Продолжить без недостающих", clips: "Продолжить без недостающих" }[step.id];
+  const canApprove = step.status === "waiting" && approveLabel && !(step.id === "images" && p.settings.images_mode !== "upload");
   return h(
     "article",
     { class: `step ${step.status}` },
@@ -388,7 +502,7 @@ function renderStep(step) {
     step.status === "running" ? progressBar(step.progress || { stage: "…", percent: 0 }) : null,
     step.error ? h("p", { class: "job-error" }, step.error) : null,
     step.note ? h("p", { class: "step-note" }, step.note) : null,
-    canApprove ? h("button", { type: "button", class: "primary", onclick: () => act("approve", { step: "text" }) }, "Продолжить") : null,
+    canApprove ? h("button", { type: "button", class: "primary", onclick: () => act("approve", { step: step.id }) }, approveLabel) : null,
     h("div", { class: "step-body" }, ...stepBody(step)),
   );
 }

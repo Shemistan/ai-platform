@@ -6,7 +6,8 @@
   poster_prompt.md   — промпт постера (первого кадра)
   poster.png|jpg|webp — постер: сгенерирован локально или загружен
   plan.json          — {title, post, slides: [{para, title, bullets, image_prompt}]}
-  images/NN.png      — картинки слайдов (+ NN.json — каким промптом)
+  images/NN.png|jpg|webp — картинки слайдов (+ NN.json — каким промптом, uploaded — загрузил человек)
+  clips/NN.mp4|mov|webm  — видео-фоны слайдов, сделанные во внешней модели (+ NN.json)
   voice.mp3|wav|m4a  — озвучка
   video.mp4          — 16:9
   short.json, short/voice.mp3, short.mp4 — шортс 9:16
@@ -32,6 +33,10 @@ TEXT, POST, POSTER_PROMPT, PLAN, SHORT = "text.md", "post.md", "poster_prompt.md
 VIDEO, SHORT_VIDEO, PUBLISHED = "video.mp4", "short.mp4", "published.json"
 IMAGE_EXT = (".png", ".jpg", ".webp")
 AUDIO_EXT = (".mp3", ".wav", ".m4a")
+CLIP_EXT = (".mp4", ".mov", ".webm")
+IMAGES, CLIPS = "images", "clips"
+# Что лежит в каталоге слайдов: расширения и что показать в сообщениях.
+MEDIA = {IMAGES: (IMAGE_EXT, "картинки"), CLIPS: (CLIP_EXT, "видео")}
 IMAGE_SIZE = "1344x768"  # 16:9 из размеров вкладки «Фото»
 SHORT_WORDS = 140
 POLL_S = 0.3
@@ -127,6 +132,71 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
     return target
 
 
+def clip_prompt(slide: slides.Slide) -> str:
+    """Промпт видео-фона: из плана, а у старых планов — из промпта картинки."""
+    if slide.video_prompt:
+        return slide.video_prompt
+    return f"{slide.image_prompt}, slow cinematic camera movement, 5 seconds" if slide.image_prompt else ""
+
+
+def media_prompts(kind: str, plan: list[slides.Slide]) -> list[tuple[int, str]]:
+    """(номер слайда, промпт) для слайдов, которым нужна картинка или видео."""
+    pick = (lambda s: s.image_prompt) if kind == IMAGES else clip_prompt
+    return [(n, pick(s)) for n, s in enumerate(plan, start=1) if pick(s)]
+
+
+def read_meta(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def slide_media(folder: Path, n: int, kind: str, prompt: str) -> Path | None:
+    """Файл слайда n, если он сделан по текущему промпту (после смены промпта старый не годится)."""
+    path = find(folder, f"{n:02d}", MEDIA[kind][0])
+    if path is None or read_meta(folder / f"{n:02d}.json").get("prompt") != prompt:
+        return None
+    return path
+
+
+def save_slide_media(folder: Path, n: int, ext: str, data: bytes, prompt: str, kind: str) -> Path:
+    """Файл слайда от человека: прежний вариант (любого формата) заменяется."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for old in (folder / f"{n:02d}{e}" for e in MEDIA[kind][0]):
+        old.unlink(missing_ok=True)
+    path = folder / f"{n:02d}.{ext}"
+    path.write_bytes(data)
+    meta = json.dumps({"prompt": prompt, "uploaded": True}, ensure_ascii=False)
+    (folder / f"{n:02d}.json").write_text(meta, encoding="utf-8")
+    return path
+
+
+def prune(folder: Path, keep: set[str]) -> None:
+    """Убрать файлы слайдов, которых больше нет в плане."""
+    for old in folder.glob("*"):
+        if old.is_file() and old.stem not in keep:
+            old.unlink()
+
+
+def uploads_ready(ctx: StepContext, kind: str, items: list[tuple[int, str]]) -> None:
+    """Ждать файлы от человека; «Продолжить» — собрать без недостающих."""
+    folder = ctx.path(kind)
+    missing = [n for n, prompt in items if slide_media(folder, n, kind, prompt) is None]
+    what = MEDIA[kind][1]
+    have = len(items) - len(missing)
+    if missing and not ctx.state.get("approved"):
+        rest = "картинка или градиент" if kind == CLIPS else "градиентный фон"
+        raise Waiting(
+            f"Сделай {what} по промптам во внешней модели и перетащи их в окна справа: готово {have} из "
+            f"{len(items)}. «Продолжить» соберёт видео без недостающих — у них будет {rest}."
+        )
+    if missing:
+        ctx.log(f"без {what}: слайды {', '.join(str(n) for n in missing)}")
+    ctx.log(f"{what}: {have} из {len(items)}")
+
+
 def load_plan(ctx: StepContext) -> tuple[dict, list[slides.Slide]]:
     raw = ctx.read(PLAN)
     if not raw:
@@ -201,26 +271,38 @@ def step_images(ctx: StepContext) -> None:
     if not ctx.settings["draw_images"]:
         raise Skip("Картинки выключены: фон слайдов — градиент.")
     _, plan = load_plan(ctx)
-    todo = [(n, s) for n, s in enumerate(plan, start=1) if s.image_prompt]
-    folder = ctx.path("images")
+    todo = media_prompts(IMAGES, plan)
+    folder = ctx.path(IMAGES)
     folder.mkdir(exist_ok=True)
-    keep = {f"{n:02d}" for n, _ in todo}
-    for old in folder.glob("*"):
-        if old.stem not in keep:
-            old.unlink()
+    prune(folder, {f"{n:02d}" for n, _ in todo})
+    if ctx.settings.get("images_mode") == "upload":
+        uploads_ready(ctx, IMAGES, todo)
+        return
     model = ctx.settings["image_model"]
-    for i, (n, slide) in enumerate(todo, start=1):
-        target, meta = folder / f"{n:02d}.png", folder / f"{n:02d}.json"
-        want = {"prompt": slide.image_prompt, "model": model}
-        try:
-            same = json.loads(meta.read_text(encoding="utf-8")) == want and target.is_file()
-        except (OSError, json.JSONDecodeError):
-            same = False
-        if same:
+    for i, (n, prompt) in enumerate(todo, start=1):
+        meta = read_meta(folder / f"{n:02d}.json")
+        if meta.get("uploaded") and slide_media(folder, n, IMAGES, prompt):
+            continue  # свою картинку человек положил сам — не перерисовываем
+        target = folder / f"{n:02d}.png"
+        if meta == {"prompt": prompt, "model": model} and target.is_file():
             continue
         ctx.progress(f"Картинка {i} из {len(todo)}", 100.0 * (i - 1) / len(todo))
-        generate_image(ctx, slide.image_prompt, target, f"Картинка слайда {n}")
-        meta.write_text(json.dumps(want, ensure_ascii=False), encoding="utf-8")
+        for old in (folder / f"{n:02d}{ext}" for ext in IMAGE_EXT):
+            old.unlink(missing_ok=True)
+        generate_image(ctx, prompt, target, f"Картинка слайда {n}")
+        meta_text = json.dumps({"prompt": prompt, "model": model}, ensure_ascii=False)
+        (folder / f"{n:02d}.json").write_text(meta_text, encoding="utf-8")
+
+
+def step_clips(ctx: StepContext) -> None:
+    if not ctx.settings.get("clips"):
+        raise Skip("Видео для слайдов выключены: фон слайдов — картинки.")
+    _, plan = load_plan(ctx)
+    todo = media_prompts(CLIPS, plan)
+    folder = ctx.path(CLIPS)
+    folder.mkdir(exist_ok=True)
+    prune(folder, {f"{n:02d}" for n, _ in todo})
+    uploads_ready(ctx, CLIPS, todo)
 
 
 def step_voice(ctx: StepContext) -> None:
@@ -236,14 +318,41 @@ def step_voice(ctx: StepContext) -> None:
     speak(ctx, text, ctx.path("voice.mp3"), "Озвучка")
 
 
-def scenes(images_dir: Path, plan: list[slides.Slide], durations: list[float], cycle: bool = False) -> list[dict]:
-    images = sorted(images_dir.glob("*.png")) if images_dir.is_dir() else []
+def _media_files(folder: Path, exts: tuple[str, ...]) -> list[Path]:
+    return sorted(p for p in folder.glob("*") if p.suffix in exts) if folder.is_dir() else []
+
+
+def scenes(
+    folder: Path,
+    plan: list[slides.Slide],
+    durations: list[float],
+    cycle: bool = False,
+    *,
+    images: bool = True,
+    clips: bool = False,
+) -> list[dict]:
+    """Сцены слайдов. Фон: видео (если включены), иначе картинка (если включены), иначе градиент.
+    cycle — у шортса свой план: файлы слайдов идут по кругу."""
+    enabled = {IMAGES: images, CLIPS: clips}
+    found = {kind: _media_files(folder / kind, MEDIA[kind][0]) if enabled[kind] else [] for kind in MEDIA}
+
+    def pick(kind: str, n: int) -> Path | None:
+        own = find(folder / kind, f"{n:02d}", MEDIA[kind][0]) if found[kind] else None
+        if own is None and cycle and found[kind]:
+            own = found[kind][(n - 1) % len(found[kind])]
+        return own
+
     out = []
     for n, (slide, seconds) in enumerate(zip(plan, durations, strict=True), start=1):
-        image = images_dir / f"{n:02d}.png"
-        if not image.is_file():
-            image = images[(n - 1) % len(images)] if cycle and images else None
-        out.append({"title": slide.title, "bullets": slide.bullets, "image": image, "seconds": seconds})
+        out.append(
+            {
+                "title": slide.title,
+                "bullets": slide.bullets,
+                "image": pick(IMAGES, n),
+                "clip": pick(CLIPS, n),
+                "seconds": seconds,
+            }
+        )
     return out
 
 
@@ -257,7 +366,10 @@ def render_video(
     poster = find(ctx.dir, "poster", IMAGE_EXT)
     intro = INTRO_S if poster is not None and audio_s > INTRO_S + 1 else 0.0
     durations = slides.durations(slides.paragraphs(text), plan, audio_s, intro)
-    scene_list = scenes(ctx.path("images"), plan, durations, cycle)
+    settings = ctx.settings
+    scene_list = scenes(
+        ctx.dir, plan, durations, cycle, images=settings["draw_images"], clips=bool(settings.get("clips"))
+    )
 
     def on_progress(done: int, total: int) -> None:
         ctx.progress(f"Кадры: {done} из {total}", 90.0 * done / total)
@@ -363,6 +475,7 @@ STEPS = {
     "poster": step_poster,
     "plan": step_plan,
     "images": step_images,
+    "clips": step_clips,
     "voice": step_voice,
     "render": step_render,
     "short": step_short,
