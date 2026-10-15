@@ -95,15 +95,27 @@ function settingsForm(values, prefix) {
           ),
         ),
       ),
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "hint" }, "Увеличить сгенерированные картинки и постер (SeedVR2: 2K ~20 с, 4K ~1,5 мин на картинку)"),
+        h(
+          "select",
+          { id: id("upscale_images") },
+          ...[["none", "Не увеличивать"], ["2k", "До 2K"], ["4k", "До 4K"]].map(([v, label]) =>
+            h("option", { value: v, selected: v === values.upscale_images }, label),
+          ),
+        ),
+      ),
     ),
     h(
       "fieldset",
       {},
-      h("legend", {}, "Видео для слайдов"),
+      h("legend", {}, "Ролики"),
       check(
         "clips",
-        "Видео на слайдах",
-        "Ролик заменяет картинку слайда и крутится по кругу без своего звука. Иначе фон — картинка.",
+        "Добавить ролики в ключевые моменты",
+        "LLM выберет до 3 самых динамичных слайдов — там вместо картинки будет ролик (крутится по кругу без своего звука). Остальные слайды — картинка с медленным наездом.",
         values.clips,
       ),
       h(
@@ -112,16 +124,10 @@ function settingsForm(values, prefix) {
         radio("clips_mode", "local", "Сгенерировать локальной моделью", values.clips_mode !== "upload"),
         radio("clips_mode", "upload", "Сделаю сам по промптам во внешней модели", values.clips_mode === "upload"),
       ),
-      check(
-        "clips_from_images",
-        "Начинать ролик с картинки слайда",
-        "Локальная модель оживляет картинку слайда — ролики в одном стиле с картинками. Нужны включённые картинки; Wan 2.2 так не умеет — у неё ролик только по промпту.",
-        values.clips_from_images,
-      ),
       h(
         "label",
         { class: "field" },
-        h("span", { class: "hint" }, "Модель видео (ролик 5 с, 704×448 на слайд)"),
+        h("span", { class: "hint" }, "Модель видео (ролик 5 с, 704×448)"),
         h(
           "select",
           { id: id("video_model") },
@@ -168,9 +174,9 @@ function readSettings(prefix) {
     draw_images: get("draw_images").checked,
     images_mode: radio("images_mode"),
     image_model: get("image_model").value,
+    upscale_images: get("upscale_images").value,
     clips: get("clips").checked,
     clips_mode: radio("clips_mode"),
-    clips_from_images: get("clips_from_images").checked,
     video_model: get("video_model").value,
     voice_mode: radio("voice_mode"),
     engine: get("engine").value,

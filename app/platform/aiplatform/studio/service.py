@@ -26,6 +26,7 @@ MAX_BODY = 4 * MAX_TEXT + 64 * 1024
 POSTER_MODES = ("local", "upload")
 IMAGES_MODES = ("local", "upload")
 CLIPS_MODES = ("local", "upload")
+UPSCALE_CHOICES = ("none", *steps.UPSCALE_TARGETS)
 VOICE_MODES = ("tts", "upload")
 # Настройка → шаг, который она меняет (его и зависящие — заново).
 SETTING_STEPS = {
@@ -33,9 +34,9 @@ SETTING_STEPS = {
     "draw_images": "images",
     "images_mode": "images",
     "image_model": "images",
+    "upscale_images": ("poster", "images"),
     "clips": "clips",
     "clips_mode": "clips",
-    "clips_from_images": "clips",
     "video_model": "clips",
     "voice_mode": "voice",
     "engine": "voice",
@@ -78,7 +79,6 @@ class StudioModule:
             photo=self.ctx.modules["photo"].jobs,
             audio=self.ctx.modules["audio"].jobs,
             video=self.ctx.modules["video"].jobs,
-            uploads=self.ctx.uploads,
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
         )
 
@@ -109,9 +109,9 @@ class StudioModule:
             "draw_images": True,
             "images_mode": "local",
             "image_model": self.config.image_model,
+            "upscale_images": "none",
             "clips": False,
             "clips_mode": "local",
-            "clips_from_images": True,
             "video_model": video_models.default(self.ctx.modules["video"].config.models()).id,
             "voice_mode": "tts",
             "engine": audio.default_engine,
@@ -170,7 +170,9 @@ class StudioModule:
             raise bad_request("clips_mode — local или upload.")
         if out["voice_mode"] not in VOICE_MODES:
             raise bad_request("voice_mode — tts или upload.")
-        for key in ("draw_images", "clips", "clips_from_images", "shorts", "review_text", "auto_publish"):
+        if out["upscale_images"] not in UPSCALE_CHOICES:
+            raise bad_request("upscale_images — none, 2k или 4k.")
+        for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish"):
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
         engine = voices.ENGINES.get(out["engine"])
@@ -302,8 +304,10 @@ class StudioModule:
     def _slides(self, folder, url) -> list[dict]:
         """Слайды для страницы: промпты картинки и видео и файлы, сделанные по ним."""
         out = []
-        for n, slide in enumerate(self._plan(folder), start=1):
-            image_prompt, video_prompt = slide.image_prompt, steps.clip_prompt(slide)
+        plan = self._plan(folder)
+        chosen = dict(steps.media_prompts(steps.CLIPS, plan))  # роликов — не больше MAX_CLIPS
+        for n, slide in enumerate(plan, start=1):
+            image_prompt, video_prompt = slide.image_prompt, chosen.get(n, "")
             out.append(
                 {
                     "key": f"{n:02d}",
@@ -402,6 +406,7 @@ class StudioModule:
         for old in (folder / f"{what}{e}" for e in stems):
             old.unlink(missing_ok=True)
         (folder / f"{what}.{ext}").write_bytes(data)
+        (folder / f"{what}.json").unlink(missing_ok=True)  # постер больше не из задачи «Фото»
         self.studio.mark_done(project_id, what, note="Загружено вручную.", resume=True)
         return self.view(project_id)
 
@@ -425,12 +430,15 @@ class StudioModule:
         project = self.studio.get(project_id)
         if project is None:
             raise not_found("Проект не найден.")
-        new = self.check_settings(payload, self.defaults() | project["settings"])
-        changed = {k for k in new if new[k] != project["settings"].get(k)}
+        # Выпуск из прошлой версии: недостающие настройки — по умолчанию, отменённые — выбрасываем.
+        base = {k: v for k, v in (self.defaults() | project["settings"]).items() if k in SETTING_STEPS}
+        new = self.check_settings(payload, base)
+        changed = {k for k in new if new[k] != base[k]}
 
         def apply(p: dict) -> set[str]:
             p["settings"] = new
-            return {SETTING_STEPS[k] for k in changed if SETTING_STEPS[k]}
+            touched = (SETTING_STEPS[k] for k in changed)
+            return {s for v in touched if v for s in ((v,) if isinstance(v, str) else v)}
 
         self.studio.update(project_id, apply)
         return self.view(project_id)

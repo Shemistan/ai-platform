@@ -46,10 +46,11 @@ class SlideMediaTest(unittest.TestCase):
         steps.save_slide_media(folder, 1, "png", b"png", "a wolf", steps.IMAGES)
         self.assertEqual(sorted(p.name for p in folder.iterdir()), ["01.json", "01.png"], "прежний формат удалён")
 
-    def test_clip_prompt_falls_back_to_image_prompt(self):
-        self.assertEqual(steps.clip_prompt(slides.Slide(0, "t", video_prompt="pan left")), "pan left")
-        self.assertIn("a fox", steps.clip_prompt(slides.Slide(0, "t", image_prompt="a fox")))
-        self.assertEqual(steps.clip_prompt(slides.Slide(0, "t")), "")
+    def test_clips_only_for_chosen_slides_and_capped(self):
+        plan = [slides.Slide(n, f"s{n}", image_prompt="img", video_prompt="vid" if n % 2 else "") for n in range(9)]
+        clips = steps.media_prompts(steps.CLIPS, plan)
+        self.assertEqual([n for n, _ in clips], [2, 4, 6], "только слайды с video_prompt, не больше MAX_CLIPS")
+        self.assertEqual(len(steps.media_prompts(steps.IMAGES, plan)), 9)
 
     def test_scenes_prefer_clip_then_image(self):
         plan = [slides.Slide(0, "a"), slides.Slide(1, "b"), slides.Slide(2, "c")]
@@ -79,7 +80,10 @@ class ExternalImagesTest(StudioCase):
 
         rows = waiting["slides"]
         self.assertEqual([s["key"] for s in rows], ["01", "02", "03", "04"])
-        self.assertTrue(all(s["image_prompt"] and s["video_prompt"] for s in rows))
+        self.assertTrue(all(s["image_prompt"] for s in rows))
+        self.assertEqual(
+            [bool(s["video_prompt"]) for s in rows], [False, True, True, True], "ролики — ключевые моменты"
+        )
         self.assertIsNone(rows[0]["image"])
 
         status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/01", png_bytes())
@@ -130,15 +134,15 @@ class ExternalClipsTest(StudioCase):
         waiting = self.settle(pid)
         self.assertEqual(self.statuses(waiting)["clips"], "waiting", waiting["log"])
         clips_step = next(s for s in waiting["steps"] if s["id"] == "clips")
-        self.assertIn("готово 0 из 4", clips_step["note"])
+        self.assertIn("готово 0 из 3", clips_step["note"])
 
         clip = clip_bytes()
-        for key in ("01", "02", "03", "04"):
+        for key in ("02", "03", "04"):
             status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/clips/{key}", clip)
             self.assertEqual(status, 200, view)
         self.assertEqual(self.statuses(view)["clips"], "done")
-        self.assertIsNotNone(view["slides"][0]["clip"])
-        self.assertEqual(self.call("GET", view["slides"][0]["clip"])[0], 200)
+        self.assertIsNone(view["slides"][0]["clip"], "первому слайду ролик не нужен")
+        self.assertEqual(self.call("GET", view["slides"][1]["clip"])[0], 200)
 
         self.json("POST", f"/api/studio/projects/{pid}/run", {})
         done = self.settle(pid)
@@ -225,33 +229,6 @@ class UploadWhileRunningTest(StudioCase):
 class LocalClipsTest(StudioCase):
     process_env = StudioCase.process_env | {"FAKE_LTX_STEP_DELAY": "0.01"}
 
-    def test_clips_start_from_slide_images(self):
-        project = self.create(scenario="article", text=ARTICLE, settings={"clips": True}, run=True)
-        done = self.settle(project["id"], timeout=180)
-        self.assertEqual(self.statuses(done)["render"], "done", done["log"])
-        _, videos = self.json("GET", "/api/video/jobs")
-        self.assertEqual(len(videos["jobs"]), 4)
-        for job in videos["jobs"]:
-            self.assertEqual(len(job["frames"]), 1, job)
-            self.assertEqual(job["frames"][0]["frame_idx"], 0, "картинка слайда — первый кадр")
-
-        # Новая картинка слайда — ролик этого слайда перегенерируется, остальные нет.
-        pid = project["id"]
-        status, _ = self.json("POST", f"/api/studio/projects/{pid}/upload/images/02", png_bytes())
-        self.assertEqual(status, 200)
-        rebuilt = self.settle(pid, timeout=180)
-        self.assertEqual(self.statuses(rebuilt)["render"], "done", rebuilt["log"])
-        self.assertEqual(len(self.json("GET", "/api/video/jobs")[1]["jobs"]), 5)
-
-    def test_wan_makes_clips_from_prompt_only(self):
-        settings = {"clips": True, "video_model": "wan-2.2-t2v-q4"}
-        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
-        done = self.settle(project["id"], timeout=180)
-        self.assertEqual(self.statuses(done)["clips"], "done", done["log"])
-        self.assertTrue(any("только по промпту" in line for line in done["log"]), done["log"])
-        _, videos = self.json("GET", "/api/video/jobs")
-        self.assertTrue(all(not j["frames"] for j in videos["jobs"]))
-
     def test_clips_generated_on_video_tab(self):
         settings = {"clips": True, "draw_images": False}
         project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
@@ -260,15 +237,15 @@ class LocalClipsTest(StudioCase):
         steps_now = self.statuses(done)
         self.assertEqual((steps_now["clips"], steps_now["render"]), ("done", "done"), done["log"])
         _, videos = self.json("GET", "/api/video/jobs")
-        self.assertEqual(len(videos["jobs"]), 4, "по ролику на слайд во вкладке «Видео»")
+        self.assertEqual(len(videos["jobs"]), 3, "ролики — только в ключевых моментах, не на каждый слайд")
         job = videos["jobs"][0]
-        self.assertEqual((job["duration_s"], job["width"], job["height"]), (5, 704, 448))
-        self.assertTrue(all(s["clip"] for s in done["slides"]))
+        self.assertEqual((job["duration_s"], job["width"], job["height"], job["frames"]), (5, 704, 448, []))
+        self.assertEqual([bool(s["clip"]) for s in done["slides"]], [False, True, True, True])
 
         # Повторный запуск шага не перегенерирует готовые ролики.
         self.json("POST", f"/api/studio/projects/{project['id']}/run", {"step": "clips"})
         self.settle(project["id"])
-        self.assertEqual(len(self.json("GET", "/api/video/jobs")[1]["jobs"]), 4)
+        self.assertEqual(len(self.json("GET", "/api/video/jobs")[1]["jobs"]), 3)
 
     def test_bad_video_model(self):
         status, body = self.json(
@@ -280,13 +257,48 @@ class LocalClipsTest(StudioCase):
         self.assertIn("ltx-2.3-q4", [m["id"] for m in cfg["video_models"]])
 
 
+@NEEDS_FFMPEG
+class UpscaleImagesTest(StudioCase):
+    def photo_jobs(self):
+        jobs = self.json("GET", "/api/photo/jobs")[1]["jobs"]
+        return [j for j in jobs if j["mode"] != "upscale"], [j for j in jobs if j["mode"] == "upscale"]
+
+    def test_generated_images_upscaled(self):
+        project = self.create(scenario="article", text=ARTICLE, settings={"upscale_images": "2k"}, run=True)
+        pid = project["id"]
+        done = self.settle(pid)
+        self.assertEqual(self.statuses(done)["render"], "done", done["log"])
+        made, upscaled = self.photo_jobs()
+        self.assertEqual((len(made), len(upscaled)), (5, 5), "постер и 4 картинки — каждая увеличена")
+        folder = self.folder(pid)
+        for path in [folder / "poster.png", *sorted((folder / "images").glob("*.png"))]:
+            self.assertEqual(uploads.png_size(path.read_bytes()), (2048, 1170), path.name)
+
+        # Сменили только увеличение — картинки не перерисовываются, а увеличиваются из тех же задач.
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/settings", {"upscale_images": "4k"})
+        self.assertEqual(status, 200, view)
+        self.json("POST", f"/api/studio/projects/{pid}/run", {})
+        again = self.settle(pid)
+        self.assertEqual(self.statuses(again)["render"], "done", again["log"])
+        made, upscaled = self.photo_jobs()
+        self.assertEqual((len(made), len(upscaled)), (5, 10), "ничего не перерисовано — только увеличено заново")
+        for path in [folder / "poster.png", folder / "images" / "01.png"]:
+            self.assertEqual(uploads.png_size(path.read_bytes()), (4096, 2340), path.name)
+
+    def test_bad_upscale_setting(self):
+        payload = {"scenario": "article", "text": "т", "settings": {"upscale_images": "8k"}}
+        status, body = self.json("POST", "/api/studio/projects", payload)
+        self.assertEqual(status, 400, body)
+        self.assertIn("upscale_images", body["error"])
+
+
 class OldProjectTest(StudioCase):
     def test_project_without_clips_step_loads(self):
         project = self.create(scenario="article", text="Абзац.")
         path = self.folder(project["id"]) / "project.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         del data["steps"]["clips"]
-        for key in ("clips", "images_mode", "clips_mode", "video_model", "clips_from_images"):
+        for key in ("clips", "images_mode", "clips_mode", "video_model", "upscale_images"):
             del data["settings"][key]
         path.write_text(json.dumps(data), encoding="utf-8")
         from aiplatform import server as server_module
