@@ -1,0 +1,62 @@
+.studio {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 16px 24px 48px;
+}
+@media (max-width: 960px) {
+  .studio { grid-template-columns: minmax(0, 1fr); padding-inline: 16px; }
+}
+.project { display: grid; gap: 16px; min-width: 0; }
+.empty-state { min-height: 160px; display: grid; place-items: center; text-align: center; }
+
+.settings-box summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.settings-box[open] summary { margin-bottom: 12px; }
+.settings-form { display: grid; gap: 14px; }
+.settings-form fieldset { display: grid; gap: 6px; }
+.settings-form legend { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.radio-row { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.radio-row label, .channel { display: flex; gap: 6px; align-items: center; font-size: 14px; cursor: pointer; }
+.channel .muted { font-size: 12px; }
+
+.project-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.project-head h2 { margin: 0; font-size: 18px; flex: 1 1 280px; }
+
+.steps { display: grid; gap: 12px; counter-reset: step; }
+.step {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.step.running { border-left-color: var(--accent); }
+.step.done { border-left-color: var(--ok); }
+.step.waiting { border-left-color: var(--warn); }
+.step.failed { border-left-color: var(--bad); }
+.step.skipped { opacity: 0.7; }
+.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.step-head h3 { font-size: 15px; margin: 0; flex: 1 1 auto; }
+.step-head h3::before { counter-increment: step; content: counter(step) ". "; color: var(--muted); }
+.step-note { font-size: 14px; background: var(--warn-bg); color: var(--warn); padding: 8px 12px; border-radius: 8px; }
+.step.skipped .step-note, .step.done .step-note { background: var(--sunken); color: var(--muted); }
+.step-body { display: grid; gap: 10px; min-width: 0; }
+.step-body textarea { min-height: 120px; }
+.slides-list { display: grid; gap: 8px; }
+.slide-card { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px; background: var(--sunken); border-radius: 8px; }
+.slide-card img, .slide-card .ph { width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--line); }
+.slide-card ul { list-style: disc; padding-left: 18px; font-size: 13px; color: var(--muted); }
+.slide-card .para { font-size: 12px; color: var(--muted); }
+.poster-img { max-width: 100%; max-height: 320px; border-radius: 8px; justify-self: start; }
+.videos { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.vertical-video { max-height: 520px; width: auto; max-width: 100%; }
+.upload { display: inline-flex; align-items: center; gap: 8px; }
+.upload input { font-size: 13px; }
+.results li { font-size: 14px; }
+.copy-row { display: flex; gap: 8px; align-items: center; }

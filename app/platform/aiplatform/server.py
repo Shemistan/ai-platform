@@ -57,9 +57,10 @@ def default_modules(ctx: Context) -> list[Module]:
     """Все вкладки платформы в порядке шапки; сценарии — после вкладок, которыми пользуются."""
     from aiplatform.audio.service import AudioModule
     from aiplatform.photo.service import PhotoModule
+    from aiplatform.studio.service import StudioModule
     from aiplatform.video.service import VideoModule
 
-    return [PhotoModule(ctx), VideoModule(ctx), AudioModule(ctx)]
+    return [PhotoModule(ctx), VideoModule(ctx), AudioModule(ctx), StudioModule(ctx)]
 
 
 class App:
@@ -68,6 +69,10 @@ class App:
         self.ctx = Context(config=config, gate=Gate(), uploads=UploadStore(config.uploads_dir))
         for module in modules(self.ctx):
             self.ctx.modules[module.prefix] = module
+        for module in self.ctx.modules.values():  # модулю нужны соседи — они уже созданы
+            bind = getattr(module, "bind", None)
+            if bind:
+                bind()
 
     @property
     def modules(self) -> dict[str, Module]:
