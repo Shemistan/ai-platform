@@ -1,0 +1,74 @@
+#!/bin/sh
+# Запуск автономной задачи: ./ai <task-name> ["стартовый промпт"]
+# Worktree задачи создаётся от ветки staging (см. docs/superpowers/specs/
+# 2026-09-07-staging-flow-design.md); повторный запуск открывает существующий.
+set -e
+cd "$(dirname "$0")" || exit 1
+
+TASK="$1"
+if [ -z "$TASK" ]; then
+  echo "usage: ./ai <task-name> [\"стартовый промпт\"]" >&2
+  exit 1
+fi
+shift
+
+fail() { echo "⛔ doctor: $1" >&2; exit 1; }
+
+GUARD="$HOME/.claude/hooks/guard.py"
+[ -f "$GUARD" ] || fail "guard не установлен — запусти install-global.sh из скелета"
+
+if [ -f global/hooks/guard.py ]; then
+  v_repo=$(grep -m1 '^GUARD_VERSION' global/hooks/guard.py)
+  v_inst=$(grep -m1 '^GUARD_VERSION' "$GUARD")
+  [ "$v_repo" = "$v_inst" ] || \
+    fail "версия guard устарела ($v_inst ≠ $v_repo) — запусти install-global.sh"
+fi
+
+grep -q 'guard\.py' "$HOME/.claude/settings.json" 2>/dev/null || \
+  fail "PreToolUse-хук guard не подключён в ~/.claude/settings.json — install-global.sh"
+
+[ "$(git config core.hooksPath 2>/dev/null)" = ".githooks" ] || \
+  fail "git-хуки не включены — запусти ./bootstrap.sh"
+
+git rev-parse HEAD >/dev/null 2>&1 || \
+  fail "в репозитории нет ни одного коммита — worktree не создать"
+
+# --- staging: интеграционная ветка агента (создаётся от main/master) ---
+DEFAULT=main
+git show-ref -q --verify refs/heads/main || \
+  { git show-ref -q --verify refs/heads/master && DEFAULT=master; }
+if ! git show-ref -q --verify refs/heads/staging; then
+  BASE="$DEFAULT"
+  git show-ref -q --verify refs/remotes/origin/staging && BASE=origin/staging
+  git branch staging "$BASE"
+  echo "✓ создана ветка staging от $BASE"
+fi
+
+# --- worktree задачи от staging ---
+WT=".claude/worktrees/$TASK"
+BR="worktree-$TASK"
+if [ ! -d "$WT" ]; then
+  if git show-ref -q --verify "refs/heads/$BR"; then
+    git worktree add -q "$WT" "$BR"
+  else
+    git worktree add -q "$WT" -b "$BR" staging
+  fi
+  # .worktreeinclude: файлы вне git (например .env), нужные в worktree.
+  if [ -f .worktreeinclude ]; then
+    while IFS= read -r pat; do
+      case "$pat" in ''|'#'*) continue ;; esac
+      for f in $pat; do
+        [ -f "$f" ] || continue
+        mkdir -p "$WT/$(dirname "$f")"
+        cp "$f" "$WT/$f"
+      done
+    done < .worktreeinclude
+  fi
+  echo "✓ worktree $WT на ветке $BR от staging"
+fi
+
+if [ -n "$AI_DRY" ]; then
+  echo "claude --worktree $TASK --permission-mode dontAsk $*"
+  exit 0
+fi
+exec claude --worktree "$TASK" --permission-mode dontAsk "$@"

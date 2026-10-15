@@ -1,0 +1,19 @@
+#!/bin/sh
+# 1. Коммит агента в main/master — запрещён на git-уровне (не регексом guard'а):
+#    закрывает составные команды вида `git switch main && git commit`.
+#    Человеку (без CLAUDECODE) коммит в main оставлен — см. README, шаг 5.
+if [ -n "$CLAUDECODE" ]; then
+  BR=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  case "$BR" in
+    main|master)
+      echo "⛔ коммит в $BR запрещён: работай в ветке задачи," >&2
+      echo "   в main вливает человек через PR staging → main." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# 2. Проектные проверки перед коммитом. Красный → коммит отменяется.
+if [ -x ./check ]; then
+  ./check || exit 1
+fi

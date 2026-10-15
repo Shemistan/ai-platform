@@ -1,0 +1,13 @@
+.DS_Store
+.idea/
+__pycache__/
+*.pyc
+.env
+.env.*
+.mcp.json
+tmp/
+.claude/worktrees/
+.claude/settings.local.json
+.superpowers/
+global/backup/claude-home/skills/**/__pycache__/
+global/backup/claude-home/skills/**/*.pyc

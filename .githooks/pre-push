@@ -1,0 +1,13 @@
+#!/bin/sh
+# Запрет push в main/master. stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
+fail=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/master)
+      echo "⛔ push в $remote_ref запрещён: работай в ветке (./ai <task>)," >&2
+      echo "   в main вливай сам — через PR или merge руками." >&2
+      fail=1
+      ;;
+  esac
+done
+exit $fail
