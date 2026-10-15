@@ -38,6 +38,21 @@ def sniff(data: bytes) -> str | None:
     return None
 
 
+VIDEO_EXT = ("mp4", "mov", "webm")
+
+
+def sniff_video(data: bytes) -> str | None:
+    """Видеоролик по сигнатуре: MP4/MOV (контейнер ISO, кроме аудио M4A) или WebM."""
+    if data[4:8] == b"ftyp":
+        brand = data[8:12]
+        if brand in (b"M4A ", b"M4B ", b"M4P "):
+            return None
+        return "mov" if brand == b"qt  " else "mp4"
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return "webm"
+    return None
+
+
 def kind_of(ext: str) -> str:
     return IMAGE if ext in IMAGE_MIME else AUDIO
 

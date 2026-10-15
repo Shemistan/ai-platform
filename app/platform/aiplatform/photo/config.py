@@ -10,7 +10,7 @@ from pathlib import Path
 
 from aiplatform import config as platform_config
 from aiplatform.config import Config, pick
-from aiplatform.photo import models
+from aiplatform.photo import models, upscale
 
 DEFAULT_FLUX2_CMD = "Flux2CLI"
 FAKE_GEN = Path(__file__).resolve().parent.parent / "fakes" / "fake_gen.py"
@@ -47,8 +47,13 @@ class PhotoConfig:
             return True
         if backend == models.FLUX2:
             return shutil.which(self.flux2_cmd[0]) is not None
-        probe = "mflux-generate-qwen"
-        return shutil.which(str(self.mflux_bin / probe) if self.mflux_bin else probe) is not None
+        return self._mflux_has("mflux-generate-qwen")
+
+    def upscale_available(self) -> bool:
+        return self.fake or self._mflux_has(upscale.COMMAND)
+
+    def _mflux_has(self, command: str) -> bool:
+        return shutil.which(str(self.mflux_bin / command) if self.mflux_bin else command) is not None
 
     def models(self) -> list[models.Available]:
         return models.resolve(models_dir=self.models_dir, fake=self.fake)

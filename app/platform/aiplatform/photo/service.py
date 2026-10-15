@@ -6,7 +6,7 @@ from http import HTTPStatus
 
 from aiplatform.core.http import Request, bad_request, found, handle_uploads, not_found
 from aiplatform.photo import config as photo_config
-from aiplatform.photo import models, params
+from aiplatform.photo import models, params, upscale
 from aiplatform.photo.jobs import INSTALL_HINT, JobManager
 
 PREFIX = "photo"
@@ -47,6 +47,13 @@ class PhotoModule:
             "default_detail": params.DEFAULT_DETAIL,
             "default_strength": params.DEFAULT_STRENGTH,
             "min_strength": params.MIN_STRENGTH,
+            "upscale": {
+                "available": self.config.upscale_available(),
+                "mode_label": upscale.MODE_LABEL,
+                "targets": [
+                    {"id": key, "long_side": side, "label": label} for key, (side, label) in upscale.TARGETS.items()
+                ],
+            },
         }
 
     def problems(self) -> list[str]:
@@ -80,6 +87,13 @@ class PhotoModule:
                 return req.send_json(found(self.jobs.get(job_id)))
             case ("POST", ["jobs", job_id, "cancel"]):
                 return req.send_json(found(self.jobs.cancel(job_id)))
+            case ("POST", ["jobs", job_id, "upscale"]):
+                payload = req.json()
+                try:
+                    job = found(self.jobs.upscale(job_id, payload))
+                except params.ValidationError as exc:
+                    raise bad_request(str(exc)) from exc
+                return req.send_json(job, HTTPStatus.CREATED)
             case ("GET", ["jobs", job_id, "image"]):
                 path = self.jobs.image_path(job_id)
                 if path is None:

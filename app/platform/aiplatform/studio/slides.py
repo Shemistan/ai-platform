@@ -19,6 +19,7 @@ class Slide:
     title: str
     bullets: list[str] = field(default_factory=list)
     image_prompt: str = ""
+    video_prompt: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -69,6 +70,7 @@ def parse_plan(obj: object, count: int) -> list[Slide]:
             title=title,
             bullets=[_short(b, MAX_BULLET) for b in bullets if str(b or "").strip()][:MAX_BULLETS],
             image_prompt=_short(item.get("image_prompt"), 600),
+            video_prompt=_short(item.get("video_prompt"), 600),
         )
     if not slides:
         raise StudioError("В плане ни одного слайда с заголовком.")

@@ -16,9 +16,10 @@ from pathlib import Path
 from aiplatform.core import runner
 from aiplatform.core.gate import Gate
 from aiplatform.core.uploads import UploadStore
-from aiplatform.photo import flux2, mflux, models, params
+from aiplatform.photo import flux2, mflux, models, params, upscale
 from aiplatform.photo.config import PhotoConfig
 from aiplatform.photo.params import MAX_SEED, GenerationSpec, ValidationError
+from aiplatform.photo.upscale import UpscaleSpec
 
 ACTIVE = ("queued", "running")
 INSTALL_HINT = "Поставь модели фото: ./setup-model.sh в 11_photo_generator/app/photogen (см. README платформы)."
@@ -41,8 +42,8 @@ class JobManager:
         self._lock = threading.Lock()
         self._jobs: dict[str, dict] = {}
         self._cancels: dict[str, threading.Event] = {}
-        self._specs: dict[str, GenerationSpec] = {}
-        self._models: dict[str, models.Available] = {}
+        self._specs: dict[str, GenerationSpec | UpscaleSpec] = {}
+        self._models: dict[str, models.Available | None] = {}
         self._queue: queue.Queue[str | None] = queue.Queue()
         config.jobs_dir.mkdir(parents=True, exist_ok=True)
         self._load()
@@ -82,6 +83,8 @@ class JobManager:
         end = job["finished_at"] or time.time()
         view["elapsed_s"] = round(end - job["started_at"], 1) if job["started_at"] else 0.0
         view["image_url"] = f"{self._url}/jobs/{job['id']}/image" if job["status"] == "done" else None
+        done = job["status"] == "done" and self._config.upscale_available()
+        view["upscale_targets"] = upscale.targets_for(job["width"], job["height"]) if done else []
         return view
 
     # --- для сценариев ---
@@ -115,16 +118,10 @@ class JobManager:
             raise ValidationError("Модель недоступна — обнови страницу.")
         if spec.seed < 0:
             spec = replace(spec, seed=random.randrange(MAX_SEED + 1))
-        job_id = uuid.uuid4().hex[:12]
         job = {
-            "id": job_id,
-            "status": "queued",
-            "created_at": time.time(),
-            "started_at": None,
-            "finished_at": None,
+            "id": uuid.uuid4().hex[:12],
             "model": model.id,
             "model_label": model.label,
-            "backend": self._config.backend,
             "mode": spec.mode,
             "prompt": spec.prompt,
             "negative_prompt": spec.negative_prompt,
@@ -140,10 +137,57 @@ class JobManager:
             "source_url": f"{self._url}/uploads/{spec.source}" if spec.source else None,
             "mask_url": f"{self._url}/uploads/{spec.mask}" if spec.mask else None,
             "padding": asdict(spec.padding) if spec.padding.any() else None,
-            "progress": {"stage": "В очереди", "step": None, "steps": None, "percent": 0.0},
-            "error": None,
-            "log": [],
         }
+        return self._enqueue(job, spec, model)
+
+    def upscale(self, parent_id: str, payload: object) -> dict | None:
+        """Увеличить готовую картинку задачи parent_id. None — нет такой задачи."""
+        with self._lock:
+            parent = self._jobs.get(parent_id)
+            if parent is None:
+                return None
+            parent = copy.deepcopy(parent)
+        if self.image_path(parent_id) is None:
+            raise ValidationError("Увеличить можно только готовую картинку.")
+        if not self._config.upscale_available():
+            raise ValidationError(f"Апскейлер {upscale.COMMAND} не найден. {INSTALL_HINT}")
+        spec = upscale.build_spec(payload, parent_id, parent["width"], parent["height"], parent["seed"])
+        job = {
+            "id": uuid.uuid4().hex[:12],
+            "model": upscale.MODEL_ID,
+            "model_label": upscale.MODEL_LABEL,
+            "mode": upscale.MODE,
+            "prompt": parent["prompt"],
+            "negative_prompt": "",
+            "style": None,
+            "detail": None,
+            "width": spec.width,
+            "height": spec.height,
+            "steps": 1,
+            "preset": None,
+            "guidance": None,
+            "strength": None,
+            "seed": spec.seed,
+            "parent_id": parent_id,
+            "source_size": [parent["width"], parent["height"]],
+            "source_url": f"{self._url}/jobs/{parent_id}/image",
+            "mask_url": None,
+            "padding": None,
+        }
+        return self._enqueue(job, spec, None)
+
+    def _enqueue(self, job: dict, spec: GenerationSpec | UpscaleSpec, model: models.Available | None) -> dict:
+        job.update(
+            status="queued",
+            created_at=time.time(),
+            started_at=None,
+            finished_at=None,
+            backend=self._config.backend,
+            progress={"stage": "В очереди", "step": None, "steps": None, "percent": 0.0},
+            error=None,
+            log=[],
+        )
+        job_id = job["id"]
         with self._lock:
             self._jobs[job_id] = job
             self._cancels[job_id] = threading.Event()
@@ -227,7 +271,17 @@ class JobManager:
             with self._lock:
                 self._cancels.pop(job_id, None)
 
-    def _command(self, spec: GenerationSpec, model: models.Available, output: Path) -> tuple[list[str], object]:
+    def _command(
+        self, spec: GenerationSpec | UpscaleSpec, model: models.Available | None, output: Path
+    ) -> tuple[list[str], object]:
+        if isinstance(spec, UpscaleSpec):
+            source = self._dir(spec.parent) / OUTPUT
+            if not source.is_file():
+                raise runner.RunFailed("Исходная картинка удалена с диска до начала увеличения.")
+            argv = upscale.build_argv(
+                self._config.mflux_cmd(upscale.COMMAND), spec, source, output, low_ram=self._config.low_ram
+            )
+            return argv, mflux.ProgressParser()
         source = self._uploads.path(spec.source) if spec.source else None
         mask = self._uploads.path(spec.mask) if spec.mask else None
         if (spec.source and source is None) or (spec.mask and mask is None):
@@ -253,7 +307,9 @@ class JobManager:
         cache = root / models.CACHE_DIR
         return {"HF_HOME": str(cache / "hf"), "MFLUX_CACHE_DIR": str(cache / "mflux")}
 
-    def _run(self, job: dict, spec: GenerationSpec, model: models.Available, cancel: threading.Event) -> None:
+    def _run(
+        self, job: dict, spec: GenerationSpec | UpscaleSpec, model: models.Available | None, cancel: threading.Event
+    ) -> None:
         output = self._dir(job["id"]) / OUTPUT
 
         try:

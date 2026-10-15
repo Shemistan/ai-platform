@@ -65,7 +65,8 @@ class ArticleFlowTest(StudioCase):
         done = self.settle(project["id"])
         steps = self.statuses(done)
         self.assertEqual(steps["publish"], "waiting", done["log"])
-        self.assertTrue(all(v == "done" for k, v in steps.items() if k != "publish"), steps)
+        self.assertEqual(steps["clips"], "skipped", "видео для слайдов по умолчанию выключены")
+        self.assertTrue(all(v == "done" for k, v in steps.items() if k not in ("publish", "clips")), steps)
 
         folder = self.folder(project["id"])
         voice_s = media.duration(folder / "voice.mp3")
