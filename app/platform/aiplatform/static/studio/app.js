@@ -102,9 +102,33 @@ function settingsForm(values, prefix) {
       h("legend", {}, "Видео для слайдов"),
       check(
         "clips",
-        "Видео-фон слайдов — сделаю сам по промптам во внешней модели",
-        "На шаге «Видео для слайдов» будут промпты и окна, куда перетащить готовые ролики (MP4, MOV, WebM). Ролик заменяет картинку слайда и крутится по кругу без своего звука.",
+        "Видео на слайдах",
+        "Ролик заменяет картинку слайда и крутится по кругу без своего звука. Иначе фон — картинка.",
         values.clips,
+      ),
+      h(
+        "div",
+        { class: "radio-row" },
+        radio("clips_mode", "local", "Сгенерировать локальной моделью", values.clips_mode !== "upload"),
+        radio("clips_mode", "upload", "Сделаю сам по промптам во внешней модели", values.clips_mode === "upload"),
+      ),
+      check(
+        "clips_from_images",
+        "Начинать ролик с картинки слайда",
+        "Локальная модель оживляет картинку слайда — ролики в одном стиле с картинками. Нужны включённые картинки; Wan 2.2 так не умеет — у неё ролик только по промпту.",
+        values.clips_from_images,
+      ),
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "hint" }, "Модель видео (ролик 5 с, 704×448 на слайд)"),
+        h(
+          "select",
+          { id: id("video_model") },
+          ...cfg.video_models.map((m) =>
+            h("option", { value: m.id, selected: m.id === values.video_model }, m.label + (m.installed ? "" : " — не установлена")),
+          ),
+        ),
       ),
     ),
     h(
@@ -145,6 +169,9 @@ function readSettings(prefix) {
     images_mode: radio("images_mode"),
     image_model: get("image_model").value,
     clips: get("clips").checked,
+    clips_mode: radio("clips_mode"),
+    clips_from_images: get("clips_from_images").checked,
+    video_model: get("video_model").value,
     voice_mode: radio("voice_mode"),
     engine: get("engine").value,
     voice: get("voice").value,
@@ -294,7 +321,7 @@ function uploader(what, accept, label) {
     "label",
     { class: "upload secondary" },
     label,
-    h("input", { type: "file", accept, hidden: true, disabled: state.project.running, onchange: (e) => e.target.files[0] && upload(what, e.target.files[0]) }),
+    h("input", { type: "file", accept, hidden: true, disabled: stepLocked(what), onchange: (e) => e.target.files[0] && upload(what, e.target.files[0]) }),
   );
 }
 
@@ -314,7 +341,7 @@ const MEDIA = {
 
 // Окно для готового файла: перетащить или выбрать. Внутри — превью того, что уже лежит.
 function dropZone(kind, url, onFile) {
-  const busy = state.project.running;
+  const busy = stepLocked(kind);
   const input = h("input", { type: "file", accept: MEDIA[kind].accept, hidden: true, onchange: (e) => e.target.files[0] && onFile(e.target.files[0]) });
   let preview = h("span", { class: "drop-hint" }, MEDIA[kind].hint);
   if (url && kind === "clips") {
@@ -386,9 +413,13 @@ function mediaRows(kind) {
   return rows.length ? [h("div", { class: "prompt-rows" }, ...rows)] : [];
 }
 
+// Файлы шагу можно класть и во время запуска — пока сам шаг и зависящие от него не выполняются.
+const stepLocked = (id) => Boolean(state.project.steps.find((s) => s.id === id)?.locked);
+
 function jobLink(step) {
   if (!step.job) return null;
-  return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${step.job.tab === "photo" ? "Фото" : "Аудио"}»`);
+  const tab = { photo: "Фото", video: "Видео", audio: "Аудио" }[step.job.tab] || step.job.tab;
+  return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${tab}»`);
 }
 
 function stepBody(step) {
@@ -435,7 +466,8 @@ function stepBody(step) {
       if (!p.settings.draw_images) return [];
       return [step.status === "running" ? jobLink(step) : null, ...mediaRows("images")];
     case "clips":
-      return p.settings.clips ? mediaRows("clips") : [];
+      if (!p.settings.clips) return [];
+      return [step.status === "running" ? jobLink(step) : null, ...mediaRows("clips")];
     case "voice":
       return [
         f.voice ? h("audio", { controls: true, src: f.voice, preload: "metadata" }) : null,
@@ -486,7 +518,8 @@ function stepBody(step) {
 function renderStep(step) {
   const p = state.project;
   const approveLabel = { text: "Продолжить", images: "Продолжить без недостающих", clips: "Продолжить без недостающих" }[step.id];
-  const canApprove = step.status === "waiting" && approveLabel && !(step.id === "images" && p.settings.images_mode !== "upload");
+  const localMode = (step.id === "images" && p.settings.images_mode !== "upload") || (step.id === "clips" && p.settings.clips_mode !== "upload");
+  const canApprove = step.status === "waiting" && approveLabel && !localMode;
   return h(
     "article",
     { class: `step ${step.status}` },
@@ -502,6 +535,9 @@ function renderStep(step) {
     step.status === "running" ? progressBar(step.progress || { stage: "…", percent: 0 }) : null,
     step.error ? h("p", { class: "job-error" }, step.error) : null,
     step.note ? h("p", { class: "step-note" }, step.note) : null,
+    step.status === "pending" && step.blocked_by.length
+      ? h("p", { class: "hint" }, `Начнётся, когда будет готово: ${step.blocked_by.join(", ")}.`)
+      : null,
     canApprove ? h("button", { type: "button", class: "primary", onclick: () => act("approve", { step: step.id }) }, approveLabel) : null,
     h("div", { class: "step-body" }, ...stepBody(step)),
   );
@@ -556,8 +592,12 @@ function schedule() {
   state.timer = setTimeout(refresh, state.project?.running ? 1000 : 5000);
 }
 
+// Пока человек тащит файл, страницу не перерисовываем — иначе окно под курсором пропадёт.
+document.addEventListener("dragover", () => (state.dragging = Date.now()));
+
 async function refresh() {
   try {
+    if (state.project && Date.now() - (state.dragging || 0) < 1500) return schedule();
     if (state.project) {
       const editing = document.activeElement?.tagName === "TEXTAREA" || document.activeElement?.tagName === "SELECT";
       const fresh = await api("GET", `${API}/projects/${state.project.id}`);

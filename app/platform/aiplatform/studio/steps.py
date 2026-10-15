@@ -7,7 +7,7 @@
   poster.png|jpg|webp — постер: сгенерирован локально или загружен
   plan.json          — {title, post, slides: [{para, title, bullets, image_prompt}]}
   images/NN.png|jpg|webp — картинки слайдов (+ NN.json — каким промптом, uploaded — загрузил человек)
-  clips/NN.mp4|mov|webm  — видео-фоны слайдов, сделанные во внешней модели (+ NN.json)
+  clips/NN.mp4|mov|webm  — видео-фоны слайдов: из вкладки «Видео» или от человека (+ NN.json)
   voice.mp3|wav|m4a  — озвучка
   video.mp4          — 16:9
   short.json, short/voice.mp3, short.mp4 — шортс 9:16
@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass
@@ -38,6 +39,8 @@ IMAGES, CLIPS = "images", "clips"
 # Что лежит в каталоге слайдов: расширения и что показать в сообщениях.
 MEDIA = {IMAGES: (IMAGE_EXT, "картинки"), CLIPS: (CLIP_EXT, "видео")}
 IMAGE_SIZE = "1344x768"  # 16:9 из размеров вкладки «Фото»
+CLIP_PRESET = "landscape-m"  # 704×448 из пресетов вкладки «Видео»: быстрее, а ffmpeg растянет до кадра
+CLIP_DURATION_S = 5  # есть у всех видеомоделей; длиннее слайд — ролик идёт по кругу
 SHORT_WORDS = 140
 POLL_S = 0.3
 
@@ -47,6 +50,8 @@ class Services:
     config: StudioConfig
     photo: object  # photo.jobs.JobManager: create / wait / image_path
     audio: object  # audio.jobs.AudioJobs: create / wait / audio_path
+    video: object  # video.jobs.JobManager: create / get / cancel / video_path / pick
+    uploads: object  # core.uploads.UploadStore: картинка слайда — первый кадр ролика
     renderer: Renderer
 
 
@@ -108,6 +113,36 @@ def generate_image(ctx: StepContext, prompt: str, target: Path, what: str) -> Pa
     source = svc.photo.image_path(done["id"])
     if source is None:
         raise StudioError(f"{what}: картинка не найдена.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    return target
+
+
+def generate_clip(ctx: StepContext, prompt: str, target: Path, what: str, first_frame: Path | None = None) -> Path:
+    svc = services(ctx)
+    frames = []
+    if first_frame is not None:
+        try:
+            upload_id = svc.uploads.save(first_frame.read_bytes())
+        except (OSError, ValueError) as exc:
+            raise StudioError(f"{what}: картинку слайда не взять первым кадром: {exc}") from exc
+        frames = [{"upload_id": upload_id, "frame_idx": 0}]
+    payload = {
+        "frames": frames,
+        "prompt": prompt,
+        "duration_s": CLIP_DURATION_S,
+        "preset": CLIP_PRESET,
+        "model": ctx.settings["video_model"],
+        "audio": False,  # звук ролика всё равно не идёт в видео: под слайдом — озвучка
+    }
+    try:
+        job = svc.video.create(payload)
+    except ValueError as exc:
+        raise StudioError(f"{what}: {exc}") from exc
+    done = wait_job(ctx, "video", svc.video, job, what)
+    source = svc.video.video_path(done["id"])
+    if source is None:
+        raise StudioError(f"{what}: mp4 не найден.")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
     return target
@@ -296,13 +331,40 @@ def step_images(ctx: StepContext) -> None:
 
 def step_clips(ctx: StepContext) -> None:
     if not ctx.settings.get("clips"):
-        raise Skip("Видео для слайдов выключены: фон слайдов — картинки.")
+        raise Skip("Видео на слайдах выключены: фон слайдов — картинки.")
     _, plan = load_plan(ctx)
     todo = media_prompts(CLIPS, plan)
     folder = ctx.path(CLIPS)
     folder.mkdir(exist_ok=True)
     prune(folder, {f"{n:02d}" for n, _ in todo})
-    uploads_ready(ctx, CLIPS, todo)
+    if ctx.settings.get("clips_mode") == "upload":
+        uploads_ready(ctx, CLIPS, todo)
+        return
+    model = ctx.settings["video_model"]
+    try:
+        frames_ok = services(ctx).video.pick(model).limits.max_keyframes != 0  # Wan — только по промпту
+    except ValueError as exc:
+        raise StudioError(f"Видео для слайдов: {exc}") from exc
+    from_images = bool(ctx.settings.get("clips_from_images", True)) and ctx.settings["draw_images"] and frames_ok
+    if ctx.settings.get("clips_from_images", True) and not frames_ok:
+        ctx.log("эта модель видео не берёт кадры — ролики только по промпту")
+    for i, (n, prompt) in enumerate(todo, start=1):
+        meta = read_meta(folder / f"{n:02d}.json")
+        if meta.get("uploaded") and slide_media(folder, n, CLIPS, prompt):
+            continue  # свой ролик человек положил сам — не перегенерируем
+        image = find(ctx.path(IMAGES), f"{n:02d}", IMAGE_EXT) if from_images else None
+        want = {"prompt": prompt, "model": model}
+        if image is not None:
+            want["image"] = hashlib.sha1(image.read_bytes()).hexdigest()[:16]  # новая картинка — новый ролик
+        target = folder / f"{n:02d}.mp4"
+        if meta == want and target.is_file():
+            continue
+        ctx.progress(f"Видео {i} из {len(todo)}", 100.0 * (i - 1) / len(todo))
+        for old in (folder / f"{n:02d}{ext}" for ext in CLIP_EXT):
+            old.unlink(missing_ok=True)
+        generate_clip(ctx, prompt, target, f"Видео слайда {n}", first_frame=image)
+        meta_text = json.dumps(want, ensure_ascii=False)
+        (folder / f"{n:02d}.json").write_text(meta_text, encoding="utf-8")
 
 
 def step_voice(ctx: StepContext) -> None:

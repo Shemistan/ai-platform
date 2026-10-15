@@ -14,8 +14,9 @@ from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import news, publish, slides, steps
 from aiplatform.studio.llm import StudioError
-from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio
+from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, blockers, dependents
 from aiplatform.studio.render import Renderer
+from aiplatform.video import models as video_models
 
 PREFIX = "studio"
 URL_BASE = f"/api/{PREFIX}"
@@ -24,6 +25,7 @@ MAX_TEXT = 100_000
 MAX_BODY = 4 * MAX_TEXT + 64 * 1024
 POSTER_MODES = ("local", "upload")
 IMAGES_MODES = ("local", "upload")
+CLIPS_MODES = ("local", "upload")
 VOICE_MODES = ("tts", "upload")
 # Настройка → шаг, который она меняет (его и зависящие — заново).
 SETTING_STEPS = {
@@ -32,6 +34,9 @@ SETTING_STEPS = {
     "images_mode": "images",
     "image_model": "images",
     "clips": "clips",
+    "clips_mode": "clips",
+    "clips_from_images": "clips",
+    "video_model": "clips",
     "voice_mode": "voice",
     "engine": "voice",
     "voice": "voice",
@@ -72,6 +77,8 @@ class StudioModule:
             config=self.config,
             photo=self.ctx.modules["photo"].jobs,
             audio=self.ctx.modules["audio"].jobs,
+            video=self.ctx.modules["video"].jobs,
+            uploads=self.ctx.uploads,
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
         )
 
@@ -91,6 +98,10 @@ class StudioModule:
             if photo_models.TXT2IMG in m.model.modes
         ]
 
+    def video_models(self) -> list[dict]:
+        found = self.ctx.modules["video"].config.models()
+        return [{"id": m.id, "label": m.label, "installed": m.installed} for m in found]
+
     def defaults(self) -> dict:
         audio = self.ctx.modules["audio"].config
         return {
@@ -99,6 +110,9 @@ class StudioModule:
             "images_mode": "local",
             "image_model": self.config.image_model,
             "clips": False,
+            "clips_mode": "local",
+            "clips_from_images": True,
+            "video_model": video_models.default(self.ctx.modules["video"].config.models()).id,
             "voice_mode": "tts",
             "engine": audio.default_engine,
             "voice": "",
@@ -116,6 +130,7 @@ class StudioModule:
             "defaults": self.defaults(),
             "engines": [e.public() for e in voices.ENGINES.values()],
             "image_models": self.image_models(),
+            "video_models": self.video_models(),
             "channels": [c.public() for c in self.channels()],
             "channels_file": str(self.config.channels_file),
             "llm": {
@@ -151,9 +166,11 @@ class StudioModule:
             raise bad_request("poster_mode — local или upload.")
         if out["images_mode"] not in IMAGES_MODES:
             raise bad_request("images_mode — local или upload.")
+        if out["clips_mode"] not in CLIPS_MODES:
+            raise bad_request("clips_mode — local или upload.")
         if out["voice_mode"] not in VOICE_MODES:
             raise bad_request("voice_mode — tts или upload.")
-        for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish"):
+        for key in ("draw_images", "clips", "clips_from_images", "shorts", "review_text", "auto_publish"):
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
         engine = voices.ENGINES.get(out["engine"])
@@ -172,6 +189,8 @@ class StudioModule:
             out["speed"] = None
         if out["image_model"] not in {m["id"] for m in self.image_models()}:
             raise bad_request("Неизвестная модель картинок.")
+        if out["video_model"] not in {m["id"] for m in self.video_models()}:
+            raise bad_request("Неизвестная модель видео.")
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
             raise bad_request("channels — список id каналов.")
@@ -240,7 +259,18 @@ class StudioModule:
 
         project["settings"] = self.defaults() | project["settings"]  # выпуски из версий без новых настроек
         project["scenario_label"] = SCENARIOS[project["scenario"]]
-        project["steps"] = [{"id": s, "label": LABELS[s], **project["steps"][s]} for s in STEP_IDS]
+        raw = project["steps"]
+        project["steps"] = [
+            {
+                "id": s,
+                "label": LABELS[s],
+                **raw[s],
+                # Чего шаг ждёт от других шагов и можно ли сейчас класть ему файлы.
+                "blocked_by": [LABELS[b] for b in blockers(project, s)],
+                "locked": any(raw[d]["status"] == "running" for d in [s, *dependents(s)]),
+            }
+            for s in STEP_IDS
+        ]
         project["artifacts"] = {
             "text": read(steps.TEXT),
             "post": read(steps.POST),
@@ -300,7 +330,7 @@ class StudioModule:
             ext = uploads_module.sniff_video(data) if data else None
             if ext is None:
                 raise bad_request("Поддерживаются только видео MP4, MOV, WebM.")
-        self._guard(project_id)
+        self._guard_step(project_id, kind)
         folder = self.studio.project_dir(project_id)
         n = int(key)
         prompts = dict(steps.media_prompts(kind, self._plan(folder)))
@@ -311,14 +341,9 @@ class StudioModule:
         note = f"Загружено вручную: {have} из {len(prompts)}."
         state = (self.studio.get(project_id) or {}).get("steps", {}).get(kind, {})
         if have == len(prompts) or state.get("status") == "done":
-            self.studio.mark_done(project_id, kind, note=note)
+            self.studio.mark_done(project_id, kind, note=note, resume=True)
         else:
-
-            def remember(project: dict) -> set[str]:
-                project["steps"][kind]["note"] = note
-                return set()
-
-            self.studio.update(project_id, remember)
+            self.studio.note(project_id, kind, note)
         return self.view(project_id)
 
     def save_artifact(self, project_id: str, name: str, payload: object) -> dict:
@@ -371,13 +396,13 @@ class StudioModule:
         ext = uploads_module.sniff(data) if data else None
         if ext is None or uploads_module.kind_of(ext) not in kinds:
             raise bad_request(uploads_module._accepted(kinds))
-        self._guard(project_id)
+        self._guard_step(project_id, what)
         folder = self.studio.project_dir(project_id)
         stems = steps.IMAGE_EXT if what == "poster" else steps.AUDIO_EXT
         for old in (folder / f"{what}{e}" for e in stems):
             old.unlink(missing_ok=True)
         (folder / f"{what}.{ext}").write_bytes(data)
-        self.studio.mark_done(project_id, what, note="Загружено вручную.")
+        self.studio.mark_done(project_id, what, note="Загружено вручную.", resume=True)
         return self.view(project_id)
 
     def _guard(self, project_id: str) -> None:
@@ -386,6 +411,15 @@ class StudioModule:
             raise not_found("Проект не найден.")
         if project["running"]:
             raise HttpError(HTTPStatus.CONFLICT, "Проект сейчас выполняется — дождись или останови его.")
+
+    def _guard_step(self, project_id: str, step_id: str) -> None:
+        """Файл для шага можно класть и во время запуска — если шаг и зависящие от него не выполняются."""
+        if self.studio.get(project_id) is None:
+            raise not_found("Проект не найден.")
+        try:
+            self.studio.check_idle(project_id, step_id)
+        except Conflict as exc:
+            raise HttpError(HTTPStatus.CONFLICT, str(exc)) from exc
 
     def update_settings(self, project_id: str, payload: object) -> dict:
         project = self.studio.get(project_id)

@@ -97,9 +97,14 @@ class ExternalImagesTest(StudioCase):
         self.assertEqual(self.statuses(done)["render"], "done", done["log"])
         self.assertEqual(self.json("GET", "/api/photo/jobs")[1]["jobs"], [])
 
-        # Замена картинки готового выпуска — пересобрать видео.
+        # Замена картинки готового выпуска — видео пересобирается само.
+        video = self.folder(pid) / "video.mp4"
+        before = video.stat().st_mtime_ns
         status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/02", png_bytes())
-        self.assertEqual((self.statuses(view)["images"], self.statuses(view)["render"]), ("done", "pending"))
+        self.assertEqual((status, self.statuses(view)["images"]), (200, "done"))
+        rebuilt = self.settle(pid)
+        self.assertEqual(self.statuses(rebuilt)["render"], "done", rebuilt["log"])
+        self.assertGreater(video.stat().st_mtime_ns, before)
 
     def test_continue_without_missing(self):
         settings = {"images_mode": "upload", "poster_mode": "upload"}
@@ -119,7 +124,7 @@ class ExternalImagesTest(StudioCase):
 @NEEDS_FFMPEG
 class ExternalClipsTest(StudioCase):
     def test_clips_become_slide_backgrounds(self):
-        settings = {"clips": True, "draw_images": False, "shorts": True}
+        settings = {"clips": True, "clips_mode": "upload", "draw_images": False, "shorts": True}
         project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
         pid = project["id"]
         waiting = self.settle(pid)
@@ -145,7 +150,7 @@ class ExternalClipsTest(StudioCase):
         self.assertEqual(media.video_size(folder / "short.mp4"), (270, 480))
 
     def test_bad_uploads(self):
-        project = self.create(scenario="article", text=ARTICLE, settings={"clips": True})
+        project = self.create(scenario="article", text=ARTICLE, settings={"clips": True, "clips_mode": "upload"})
         pid = project["id"]
         base = f"/api/studio/projects/{pid}/upload"
         # Плана ещё нет — слайдов нет.
@@ -168,13 +173,120 @@ class ExternalClipsTest(StudioCase):
         self.assertEqual((status, self.statuses(view)["clips"]), (200, "done"))
 
 
+@NEEDS_FFMPEG
+class UploadWhileRunningTest(StudioCase):
+    process_env = StudioCase.process_env | {"FAKE_TTS_STEP_DELAY": "0.4"}
+
+    def step(self, project, step_id):
+        return next(s for s in project["steps"] if s["id"] == step_id)
+
+    def test_uploads_while_voice_runs_then_render_starts_itself(self):
+        settings = {"images_mode": "upload"}
+        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
+        pid = project["id"]
+        # Картинки ждут человека, а озвучка тем временем идёт.
+        running = self.poll(
+            f"/api/studio/projects/{pid}",
+            lambda p: self.statuses(p)["images"] == "waiting" and self.statuses(p)["voice"] == "running",
+        )
+        self.assertTrue(running["running"])
+        self.assertFalse(self.step(running, "images")["locked"])
+        self.assertTrue(self.step(running, "voice")["locked"])
+
+        # Озвучку, которая выполняется прямо сейчас, подменить нельзя; картинки — можно.
+        status, err = self.json("POST", f"/api/studio/projects/{pid}/upload/voice", b"ID3" + b"\0" * 64)
+        self.assertEqual(status, 409, err)
+        self.assertIn("Озвучка", err["error"])
+        for key in ("01", "02", "03", "04"):
+            status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/{key}", png_bytes())
+            self.assertEqual(status, 200, view)
+
+        # Никаких кнопок: озвучка доделалась, видео собралось само.
+        done = self.settle(pid)
+        steps_now = self.statuses(done)
+        self.assertEqual((steps_now["images"], steps_now["voice"], steps_now["render"]), ("done", "done", "done"))
+        self.assertEqual(steps_now["publish"], "waiting", done["log"])
+
+    def test_stopped_project_does_not_resume_on_upload(self):
+        settings = {"poster_mode": "upload", "draw_images": False}
+        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
+        pid = project["id"]
+        self.poll(f"/api/studio/projects/{pid}", lambda p: self.statuses(p)["voice"] == "running")
+        self.json("POST", f"/api/studio/projects/{pid}/cancel", {})
+        stopped = self.settle(pid)
+        self.assertEqual(self.statuses(stopped)["voice"], "pending")
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/poster", png_bytes())
+        self.assertEqual(status, 200, view)
+        self.assertFalse(view["running"], "остановленный кнопкой выпуск сам не запускается")
+        self.assertEqual(self.statuses(view)["voice"], "pending")
+
+
+@NEEDS_FFMPEG
+class LocalClipsTest(StudioCase):
+    process_env = StudioCase.process_env | {"FAKE_LTX_STEP_DELAY": "0.01"}
+
+    def test_clips_start_from_slide_images(self):
+        project = self.create(scenario="article", text=ARTICLE, settings={"clips": True}, run=True)
+        done = self.settle(project["id"], timeout=180)
+        self.assertEqual(self.statuses(done)["render"], "done", done["log"])
+        _, videos = self.json("GET", "/api/video/jobs")
+        self.assertEqual(len(videos["jobs"]), 4)
+        for job in videos["jobs"]:
+            self.assertEqual(len(job["frames"]), 1, job)
+            self.assertEqual(job["frames"][0]["frame_idx"], 0, "картинка слайда — первый кадр")
+
+        # Новая картинка слайда — ролик этого слайда перегенерируется, остальные нет.
+        pid = project["id"]
+        status, _ = self.json("POST", f"/api/studio/projects/{pid}/upload/images/02", png_bytes())
+        self.assertEqual(status, 200)
+        rebuilt = self.settle(pid, timeout=180)
+        self.assertEqual(self.statuses(rebuilt)["render"], "done", rebuilt["log"])
+        self.assertEqual(len(self.json("GET", "/api/video/jobs")[1]["jobs"]), 5)
+
+    def test_wan_makes_clips_from_prompt_only(self):
+        settings = {"clips": True, "video_model": "wan-2.2-t2v-q4"}
+        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
+        done = self.settle(project["id"], timeout=180)
+        self.assertEqual(self.statuses(done)["clips"], "done", done["log"])
+        self.assertTrue(any("только по промпту" in line for line in done["log"]), done["log"])
+        _, videos = self.json("GET", "/api/video/jobs")
+        self.assertTrue(all(not j["frames"] for j in videos["jobs"]))
+
+    def test_clips_generated_on_video_tab(self):
+        settings = {"clips": True, "draw_images": False}
+        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
+        self.assertEqual(project["settings"]["clips_mode"], "local", "по умолчанию — локальная модель")
+        done = self.settle(project["id"], timeout=180)
+        steps_now = self.statuses(done)
+        self.assertEqual((steps_now["clips"], steps_now["render"]), ("done", "done"), done["log"])
+        _, videos = self.json("GET", "/api/video/jobs")
+        self.assertEqual(len(videos["jobs"]), 4, "по ролику на слайд во вкладке «Видео»")
+        job = videos["jobs"][0]
+        self.assertEqual((job["duration_s"], job["width"], job["height"]), (5, 704, 448))
+        self.assertTrue(all(s["clip"] for s in done["slides"]))
+
+        # Повторный запуск шага не перегенерирует готовые ролики.
+        self.json("POST", f"/api/studio/projects/{project['id']}/run", {"step": "clips"})
+        self.settle(project["id"])
+        self.assertEqual(len(self.json("GET", "/api/video/jobs")[1]["jobs"]), 4)
+
+    def test_bad_video_model(self):
+        status, body = self.json(
+            "POST", "/api/studio/projects", {"scenario": "article", "text": "т", "settings": {"video_model": "nope"}}
+        )
+        self.assertEqual(status, 400, body)
+        self.assertIn("модель видео", body["error"])
+        _, cfg = self.json("GET", "/api/studio/config")
+        self.assertIn("ltx-2.3-q4", [m["id"] for m in cfg["video_models"]])
+
+
 class OldProjectTest(StudioCase):
     def test_project_without_clips_step_loads(self):
         project = self.create(scenario="article", text="Абзац.")
         path = self.folder(project["id"]) / "project.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         del data["steps"]["clips"]
-        for key in ("clips", "images_mode"):
+        for key in ("clips", "images_mode", "clips_mode", "video_model", "clips_from_images"):
             del data["settings"][key]
         path.write_text(json.dumps(data), encoding="utf-8")
         from aiplatform import server as server_module
