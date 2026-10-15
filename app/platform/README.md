@@ -69,7 +69,7 @@ Python-зависимостей у сервиса нет.
 | `AIP_VIDEO_LTX_CMD`, `AIP_VIDEO_WAN_CMD`, `AIP_VIDEO_MODEL` | из PATH | пайплайны видео (или старые `VIDEOGEN_*`) |
 | `AIP_NARRATOR_DIR` | `~/my_track/07_offline_text-to-word` | репозиторий narrator |
 | `AIP_NARRATE_CMD` | `$AIP_NARRATOR_DIR/narrate` | команда озвучки (`narrate say`) |
-| `AIP_AUDIO_ENGINE` | `espeech` | движок озвучки по умолчанию |
+| `AIP_AUDIO_ENGINE` | `higgs` | движок озвучки по умолчанию (голос — Charon) |
 | `AIP_LLM_CMD` | `claude -p` | LLM для промптов и слайдов: промпт на stdin, ответ в stdout |
 | `AIP_NEWS_CMD` | `make -C {narrator} news-collect news-agent news-judge DAY={day}` | сбор дайджеста |
 | `AIP_NEWS_WHERE` | `{narrator}/narrate news where --date {day}` | где лежит выпуск |

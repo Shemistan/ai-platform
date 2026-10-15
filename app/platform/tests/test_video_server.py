@@ -111,11 +111,13 @@ class HappyPathTest(ServerCase):
     def test_chosen_model_reaches_pipeline(self):
         status, cfg = self.json("GET", "/api/video/config")
         self.assertEqual([m["id"] for m in cfg["models"]], ["ltx-2.3-q4", "ltx-2.5-q4", "wan-2.2-t2v-q4"])
-        self.assertEqual(cfg["default_model"], "ltx-2.3-q4")
-        status, job = self.json("POST", "/api/video/jobs", {"prompt": "кот", "model": "ltx-2.5-q4"})
-        self.assertEqual((status, job["model"], job["model_label"]), (201, "ltx-2.5-q4", "LTX-2.5 Q4"))
+        self.assertEqual(cfg["default_model"], "ltx-2.5-q4")
+        status, job = self.json("POST", "/api/video/jobs", {"prompt": "кот"})
+        self.assertEqual((status, job["model"]), (201, "ltx-2.5-q4"), "без выбора — модель по умолчанию")
+        status, job = self.json("POST", "/api/video/jobs", {"prompt": "кот", "model": "ltx-2.3-q4"})
+        self.assertEqual((status, job["model"], job["model_label"]), (201, "ltx-2.3-q4", "LTX-2.3 Q4"))
         done, _ = self.wait(job["id"])
-        self.assertTrue(any("dgrauet/ltx-2.5-mlx-q4" in line for line in done["log"]), done["log"])
+        self.assertTrue(any("dgrauet/ltx-2.3-mlx-q4" in line for line in done["log"]), done["log"])
         status, err = self.json("POST", "/api/video/jobs", {"prompt": "кот", "model": "нет такой"})
         self.assertEqual(status, 400, err)
 

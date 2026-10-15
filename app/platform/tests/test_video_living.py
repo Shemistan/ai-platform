@@ -46,7 +46,9 @@ class SpecTest(unittest.TestCase):
 
     def test_model_must_take_a_keyframe_and_eight_seconds(self):
         available = fake_models()
-        self.assertEqual(living.pick_model(available).id, "ltx-2.3-q4")
+        self.assertEqual(living.pick_model(available).id, "ltx-2.5-q4")
+        without_25 = [m for m in available if m.id != "ltx-2.5-q4"]
+        self.assertEqual(living.pick_model(without_25).id, "ltx-2.3-q4", "нет 2.5 — первая установленная LTX")
         wan_only = [m for m in available if m.pipeline == "wan"]
         with self.assertRaisesRegex(ValidationError, r"setup-model\.sh"):
             living.pick_model(wan_only)
@@ -68,7 +70,7 @@ class LivingServerTest(ServerCase):
     def test_photo_becomes_a_job_that_runs_to_done(self):
         _, cfg = self.json("GET", "/api/video/config")
         self.assertEqual((cfg["living"]["before_s"], cfg["living"]["after_s"]), (4, 4))
-        self.assertEqual((cfg["living"]["default_model"], cfg["living"]["problem"]), ("ltx-2.3-q4", None))
+        self.assertEqual((cfg["living"]["default_model"], cfg["living"]["problem"]), ("ltx-2.5-q4", None))
         self.assertEqual([m["id"] for m in cfg["living"]["models"]], ["ltx-2.3-q4", "ltx-2.5-q4"])
         self.assertEqual([o["id"] for o in cfg["living"]["orientations"]], ["landscape", "portrait"])
         self.assertEqual(cfg["living"]["qualities"][1]["sizes"], {"landscape": [704, 448], "portrait": [448, 704]})

@@ -48,7 +48,7 @@ def pick_model(available: list[models.Available], model_id: object = None) -> mo
         raise ValidationError("model должен быть строкой — id модели.")
     fitting = suitable(available)
     if not model_id:
-        model = next((m for m in fitting if m.installed), None)
+        model = models.default(fitting) if any(m.installed for m in fitting) else None
         if model is None:
             raise ValidationError("Живому фото нужна модель LTX: запусти ./setup-model.sh ltx-2.3-q4.")
         return model

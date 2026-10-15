@@ -21,7 +21,7 @@ def audio_only(ctx):
 class SpecTest(unittest.TestCase):
     def test_defaults(self):
         spec = build_spec({"text": "  привет  "})
-        self.assertEqual(spec, AudioSpec(text="привет\n", engine="espeech", voice="Charon", speed=None))
+        self.assertEqual(spec, AudioSpec(text="привет\n", engine="higgs", voice="Charon", speed=None))
 
     def test_engine_voice_speed(self):
         spec = build_spec({"text": "т", "engine": "supertonic", "voice": "F2", "speed": 1.25})
@@ -77,7 +77,7 @@ class AudioServerTest(AudioServerCase):
     def test_config(self):
         status, cfg = self.json("GET", "/api/audio/config")
         self.assertEqual(status, 200)
-        self.assertEqual(cfg["default_engine"], "espeech")
+        self.assertEqual(cfg["default_engine"], "higgs")
         self.assertIn("supertonic", [e["id"] for e in cfg["engines"]])
         self.assertTrue(cfg["runner_available"])
 
