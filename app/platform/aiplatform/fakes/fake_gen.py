@@ -1,4 +1,4 @@
-"""Имитация `mflux-generate-*` и `Flux2CLI` для демо-режима и тестов.
+"""Имитация `mflux-generate-*`, `mflux-upscale-seedvr2` и `Flux2CLI` для демо-режима и тестов.
 
 Первый аргумент — имя настоящей команды (`mflux-generate-qwen`, `flux2`),
 дальше её настоящие флаги. Вывод в том же формате, что у настоящих CLI,
@@ -145,6 +145,32 @@ def _run_mflux(command: str, argv: list[str], delay: float) -> int:
     return 0
 
 
+def _run_upscale(argv: list[str], delay: float) -> int:
+    """`mflux-upscale-seedvr2`: один шаг, итог — по короткой стороне, как у SeedVR2."""
+    parser = argparse.ArgumentParser(prog="mflux-upscale-seedvr2")
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--image-path", required=True)
+    parser.add_argument("--resolution", type=int, required=True)
+    parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--vae-tiling", action="store_true")
+    parser.add_argument("--low-ram", action="store_true")
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args(argv)
+    try:
+        width, height = png_size(args.image_path)
+    except (OSError, ValueError):
+        _say(f"error: cannot open image: {args.image_path}")
+        return 2
+    time.sleep(delay)
+    if _fail_requested(1, 1):
+        _say("RuntimeError: fake failure requested by FAKE_GEN_FAIL")
+        return 1
+    _say(f"\r100%|██████████| 1/1 [00:01<00:00, {delay:.2f}s/it]")
+    scale = args.resolution / min(width, height)
+    write_png(args.output, int(width * scale) // 2 * 2, int(height * scale) // 2 * 2, args.seed)
+    return 0
+
+
 def _run_flux2(argv: list[str], delay: float) -> int:
     args = _flux2_parser().parse_args(argv)
     source = getattr(args, "images", None) or getattr(args, "image", None)
@@ -190,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     command, rest = argv[0], argv[1:]
     if command == "flux2":
         return _run_flux2(rest, delay)
+    if command == "mflux-upscale-seedvr2":
+        return _run_upscale(rest, delay)
     return _run_mflux(command, rest, delay)
 
 

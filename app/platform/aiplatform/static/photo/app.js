@@ -366,7 +366,9 @@ const STATUS = {
   canceled: "Отменено",
 };
 const isActive = (job) => job.status === "queued" || job.status === "running";
-const modeLabel = (id) => state.config.modes.find((m) => m.id === id)?.label || id;
+const isUpscale = (job) => job.mode === "upscale";
+const modeLabel = (id) =>
+  id === "upscale" ? state.config.upscale.mode_label : state.config.modes.find((m) => m.id === id)?.label || id;
 
 function upsertJob(job) {
   const index = state.jobs.findIndex((j) => j.id === job.id);
@@ -421,6 +423,10 @@ function logBlock(job, open) {
 }
 
 function jobMeta(job) {
+  if (isUpscale(job)) {
+    const [w, h] = job.source_size;
+    return [job.model_label, modeLabel(job.mode), `${w}×${h} → ${job.width}×${job.height}`].join(" · ");
+  }
   return [
     job.model_label,
     modeLabel(job.mode),
@@ -430,6 +436,30 @@ function jobMeta(job) {
     job.strength != null ? `сила ${job.strength}` : null,
     `seed ${job.seed}`,
   ].filter(Boolean).join(" · ");
+}
+
+function upscaleBlock(job) {
+  const targets = state.config.upscale.targets.filter((t) => job.upscale_targets?.includes(t.id));
+  if (!targets.length) return null;
+  return h("div", { class: "upscale" },
+    h("span", { class: "muted small" }, "Увеличить с дорисовкой деталей (SeedVR2):"),
+    ...targets.map((t) =>
+      h("button", { type: "button", onclick: () => upscaleJob(job.id, t.id) }, `до ${t.label}`),
+    ),
+    h("span", { class: "muted small" }, "4K — несколько минут; первый запуск докачает ~7 ГБ весов."),
+  );
+}
+
+async function upscaleJob(id, target) {
+  try {
+    const job = await api("POST", `/api/photo/jobs/${id}/upscale`, { target });
+    upsertJob(job);
+    state.selectedId = job.id;
+    renderJobs();
+    schedulePoll(300);
+  } catch (err) {
+    showFormError(err.message);
+  }
 }
 
 let jobSignature = "";
@@ -462,9 +492,10 @@ function renderJob() {
         h("img", { class: "result", src: job.image_url, alt: job.prompt, width: job.width, height: job.height }),
       ),
       h("div", { class: "job-foot" },
-        h("span", { class: "took" }, `Сгенерировано за ${fmtElapsed(job.elapsed_s)}`),
+        h("span", { class: "took" }, `${isUpscale(job) ? "Увеличено" : "Сгенерировано"} за ${fmtElapsed(job.elapsed_s)}`),
         h("a", { class: "download", href: `${job.image_url}?download=1`, download: `photo-${job.id}.png` }, "Скачать PNG"),
       ),
+      upscaleBlock(job),
     );
   }
   if (job.status === "failed") parts.push(h("p", { class: "job-error", role: "alert" }, job.error));

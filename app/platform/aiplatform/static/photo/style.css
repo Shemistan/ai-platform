@@ -352,6 +352,17 @@ input[type="text"] {
   font-weight: 600;
   text-decoration: none;
 }
+.upscale { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.upscale button {
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+.upscale button:hover { background: var(--info-bg); }
 .inputs { display: flex; flex-wrap: wrap; gap: 8px; }
 .inputs figure { margin: 0; display: grid; gap: 2px; justify-items: center; font-size: 11px; color: var(--muted); }
 .inputs img { height: 64px; max-width: 110px; object-fit: contain; border-radius: 6px; background: var(--sunken); }
