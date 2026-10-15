@@ -294,7 +294,7 @@ function uploader(what, accept, label) {
     "label",
     { class: "upload secondary" },
     label,
-    h("input", { type: "file", accept, hidden: true, disabled: state.project.running, onchange: (e) => e.target.files[0] && upload(what, e.target.files[0]) }),
+    h("input", { type: "file", accept, hidden: true, disabled: stepLocked(what), onchange: (e) => e.target.files[0] && upload(what, e.target.files[0]) }),
   );
 }
 
@@ -314,7 +314,7 @@ const MEDIA = {
 
 // Окно для готового файла: перетащить или выбрать. Внутри — превью того, что уже лежит.
 function dropZone(kind, url, onFile) {
-  const busy = state.project.running;
+  const busy = stepLocked(kind);
   const input = h("input", { type: "file", accept: MEDIA[kind].accept, hidden: true, onchange: (e) => e.target.files[0] && onFile(e.target.files[0]) });
   let preview = h("span", { class: "drop-hint" }, MEDIA[kind].hint);
   if (url && kind === "clips") {
@@ -385,6 +385,9 @@ function mediaRows(kind) {
     .map((s) => promptRow(`Слайд ${Number(s.key)} · ${s.title}`, s[field], dropZone(kind, s[fileField], (file) => uploadSlide(kind, s.key, file))));
   return rows.length ? [h("div", { class: "prompt-rows" }, ...rows)] : [];
 }
+
+// Файлы шагу можно класть и во время запуска — пока сам шаг и зависящие от него не выполняются.
+const stepLocked = (id) => Boolean(state.project.steps.find((s) => s.id === id)?.locked);
 
 function jobLink(step) {
   if (!step.job) return null;
@@ -502,6 +505,9 @@ function renderStep(step) {
     step.status === "running" ? progressBar(step.progress || { stage: "…", percent: 0 }) : null,
     step.error ? h("p", { class: "job-error" }, step.error) : null,
     step.note ? h("p", { class: "step-note" }, step.note) : null,
+    step.status === "pending" && step.blocked_by.length
+      ? h("p", { class: "hint" }, `Начнётся, когда будет готово: ${step.blocked_by.join(", ")}.`)
+      : null,
     canApprove ? h("button", { type: "button", class: "primary", onclick: () => act("approve", { step: step.id }) }, approveLabel) : null,
     h("div", { class: "step-body" }, ...stepBody(step)),
   );
@@ -556,8 +562,12 @@ function schedule() {
   state.timer = setTimeout(refresh, state.project?.running ? 1000 : 5000);
 }
 
+// Пока человек тащит файл, страницу не перерисовываем — иначе окно под курсором пропадёт.
+document.addEventListener("dragover", () => (state.dragging = Date.now()));
+
 async function refresh() {
   try {
+    if (state.project && Date.now() - (state.dragging || 0) < 1500) return schedule();
     if (state.project) {
       const editing = document.activeElement?.tagName === "TEXTAREA" || document.activeElement?.tagName === "SELECT";
       const fresh = await api("GET", `${API}/projects/${state.project.id}`);

@@ -97,9 +97,14 @@ class ExternalImagesTest(StudioCase):
         self.assertEqual(self.statuses(done)["render"], "done", done["log"])
         self.assertEqual(self.json("GET", "/api/photo/jobs")[1]["jobs"], [])
 
-        # Замена картинки готового выпуска — пересобрать видео.
+        # Замена картинки готового выпуска — видео пересобирается само.
+        video = self.folder(pid) / "video.mp4"
+        before = video.stat().st_mtime_ns
         status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/02", png_bytes())
-        self.assertEqual((self.statuses(view)["images"], self.statuses(view)["render"]), ("done", "pending"))
+        self.assertEqual((status, self.statuses(view)["images"]), (200, "done"))
+        rebuilt = self.settle(pid)
+        self.assertEqual(self.statuses(rebuilt)["render"], "done", rebuilt["log"])
+        self.assertGreater(video.stat().st_mtime_ns, before)
 
     def test_continue_without_missing(self):
         settings = {"images_mode": "upload", "poster_mode": "upload"}
@@ -166,6 +171,54 @@ class ExternalClipsTest(StudioCase):
                 self.assertIn(message, err["error"])
         status, view = self.json("POST", f"{base}/clips/01", clip_bytes())
         self.assertEqual((status, self.statuses(view)["clips"]), (200, "done"))
+
+
+@NEEDS_FFMPEG
+class UploadWhileRunningTest(StudioCase):
+    process_env = StudioCase.process_env | {"FAKE_TTS_STEP_DELAY": "0.4"}
+
+    def step(self, project, step_id):
+        return next(s for s in project["steps"] if s["id"] == step_id)
+
+    def test_uploads_while_voice_runs_then_render_starts_itself(self):
+        settings = {"images_mode": "upload"}
+        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
+        pid = project["id"]
+        # Картинки ждут человека, а озвучка тем временем идёт.
+        running = self.poll(
+            f"/api/studio/projects/{pid}",
+            lambda p: self.statuses(p)["images"] == "waiting" and self.statuses(p)["voice"] == "running",
+        )
+        self.assertTrue(running["running"])
+        self.assertFalse(self.step(running, "images")["locked"])
+        self.assertTrue(self.step(running, "voice")["locked"])
+
+        # Озвучку, которая выполняется прямо сейчас, подменить нельзя; картинки — можно.
+        status, err = self.json("POST", f"/api/studio/projects/{pid}/upload/voice", b"ID3" + b"\0" * 64)
+        self.assertEqual(status, 409, err)
+        self.assertIn("Озвучка", err["error"])
+        for key in ("01", "02", "03", "04"):
+            status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/{key}", png_bytes())
+            self.assertEqual(status, 200, view)
+
+        # Никаких кнопок: озвучка доделалась, видео собралось само.
+        done = self.settle(pid)
+        steps_now = self.statuses(done)
+        self.assertEqual((steps_now["images"], steps_now["voice"], steps_now["render"]), ("done", "done", "done"))
+        self.assertEqual(steps_now["publish"], "waiting", done["log"])
+
+    def test_stopped_project_does_not_resume_on_upload(self):
+        settings = {"poster_mode": "upload", "draw_images": False}
+        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
+        pid = project["id"]
+        self.poll(f"/api/studio/projects/{pid}", lambda p: self.statuses(p)["voice"] == "running")
+        self.json("POST", f"/api/studio/projects/{pid}/cancel", {})
+        stopped = self.settle(pid)
+        self.assertEqual(self.statuses(stopped)["voice"], "pending")
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/poster", png_bytes())
+        self.assertEqual(status, 200, view)
+        self.assertFalse(view["running"], "остановленный кнопкой выпуск сам не запускается")
+        self.assertEqual(self.statuses(view)["voice"], "pending")
 
 
 class OldProjectTest(StudioCase):

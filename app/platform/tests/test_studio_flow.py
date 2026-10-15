@@ -111,21 +111,25 @@ class ArticleFlowTest(StudioCase):
         self.assertEqual(steps["text"], "done")
         self.assertTrue(all(v == "pending" for k, v in steps.items() if k != "text"), steps)
 
-    def test_poster_upload_mode_waits_for_human(self):
+    def test_poster_upload_does_not_block_other_steps(self):
         project = self.create(scenario="article", text=ARTICLE, settings={"poster_mode": "upload"}, run=True)
         waiting = self.settle(project["id"])
         steps = self.statuses(waiting)
-        self.assertEqual((steps["poster_prompt"], steps["poster"], steps["plan"]), ("done", "waiting", "pending"))
+        # Постер ждёт человека, но всё, что от него не зависит, сделано.
+        self.assertEqual(steps["poster"], "waiting")
+        self.assertEqual((steps["plan"], steps["images"], steps["voice"]), ("done", "done", "done"), waiting["log"])
+        render = next(s for s in waiting["steps"] if s["id"] == "render")
+        self.assertEqual((render["status"], render["blocked_by"]), ("pending", ["Постер — первый кадр"]))
         poster_step = next(s for s in waiting["steps"] if s["id"] == "poster")
         self.assertIn("загрузи", poster_step["note"])
 
+        status, body = self.json("POST", f"/api/studio/projects/{project['id']}/upload/poster", b"not an image")
+        self.assertEqual(status, 400, body)
         status, _, after = self.call("POST", f"/api/studio/projects/{project['id']}/upload/poster", png_bytes())
         self.assertEqual(status, 200, after)
         self.assertEqual(self.statuses(json.loads(after))["poster"], "done")
-        status, body = self.json("POST", f"/api/studio/projects/{project['id']}/upload/poster", b"not an image")
-        self.assertEqual(status, 400, body)
 
-        self.json("POST", f"/api/studio/projects/{project['id']}/run", {})
+        # Без «Запустить всё»: загрузка последнего недостающего сама продолжает выпуск.
         done = self.settle(project["id"])
         self.assertEqual(self.statuses(done)["render"], "done", done["log"])
         self.assertTrue(self.folder(project["id"]).joinpath("poster.png").is_file())
