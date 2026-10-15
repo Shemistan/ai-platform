@@ -5,9 +5,9 @@
 <!-- gate:begin spec-plan-index -->
 ### Спеки
 
-_пока нет_
+- [AI Platform: фото, видео, аудио и сценарии в одном сервисе](specs/2026-10-15-ai-platform-design.md) — утверждено
 
 ### Планы
 
-_пока нет_
+- [AI Platform Implementation Plan](plans/2026-10-15-ai-platform.md) — в работе
 <!-- gate:end spec-plan-index -->
