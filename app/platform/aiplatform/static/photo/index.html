@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Фото — AI Platform</title>
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Фото</h1>
+    <span class="chip" id="model-chip">…</span>
+  </header>
+  <div class="banner" id="banner" hidden></div>
+
+  <main class="layout">
+    <form class="panel composer" id="composer" novalidate>
+      <h2>Новое фото</h2>
+
+      <fieldset class="field">
+        <legend class="field-label">Режим</legend>
+        <div class="segmented modes" id="modes"></div>
+        <p class="mode-hint" id="mode-hint"></p>
+      </fieldset>
+
+      <section class="field" id="source-section" aria-labelledby="source-title" hidden>
+        <div class="field-head">
+          <span class="field-label" id="source-title">Исходное фото</span>
+          <button type="button" class="link" id="replace-btn" hidden>Заменить фото</button>
+        </div>
+        <button type="button" class="drop" id="drop">
+          <span class="plus" aria-hidden="true">+</span>
+          <span>Выбери фото или перетащи сюда</span>
+          <span class="muted small">PNG, JPEG, WebP</span>
+        </button>
+        <div class="stage-wrap" id="stage-wrap" hidden>
+          <div class="canvas-frame" id="frame">
+            <canvas id="photo-canvas"></canvas>
+            <canvas id="mask-canvas" hidden></canvas>
+          </div>
+        </div>
+        <div class="stage-foot" id="stage-foot" hidden>
+          <span class="muted small" id="stage-info"></span>
+        </div>
+        <div class="tools" id="mask-tools" hidden>
+          <button type="button" class="tool" id="tool-brush" aria-pressed="true">Кисть</button>
+          <button type="button" class="tool" id="tool-eraser" aria-pressed="false">Ластик</button>
+          <label>Размер <input type="range" id="brush-size" min="8" max="200" value="60"></label>
+          <button type="button" class="link" id="mask-clear">Очистить</button>
+        </div>
+        <div class="pads" id="pads" hidden></div>
+        <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp" hidden>
+      </section>
+
+      <label class="field">
+        <span class="field-label" id="prompt-label">Промпт</span>
+        <textarea id="prompt" rows="4"></textarea>
+        <span class="hint" id="prompt-hint"></span>
+      </label>
+
+      <div class="settings">
+        <label class="field">
+          <span class="field-label">Модель</span>
+          <select id="model"></select>
+        </label>
+        <label class="field" id="size-field">
+          <span class="field-label">Размер</span>
+          <select id="size"></select>
+        </label>
+        <label class="field" id="work-field" hidden>
+          <span class="field-label">Рабочий размер</span>
+          <select id="work-side"></select>
+        </label>
+        <label class="field">
+          <span class="field-label">Стиль</span>
+          <select id="style"></select>
+        </label>
+      </div>
+      <p class="hint" id="model-note"></p>
+
+      <fieldset class="field">
+        <legend class="field-label">Детализация</legend>
+        <div class="segmented" id="details"></div>
+      </fieldset>
+
+      <details class="advanced">
+        <summary>Точные параметры</summary>
+        <div class="settings">
+          <label class="field" id="steps-field">
+            <span class="field-label">Шаги</span>
+            <input type="number" id="steps" min="1" step="1">
+          </label>
+          <label class="field" id="guidance-field">
+            <span class="field-label">Guidance</span>
+            <input type="number" id="guidance" step="0.5">
+          </label>
+          <label class="field">
+            <span class="field-label">Seed</span>
+            <input type="number" id="seed" min="0" max="2147483647" step="1" placeholder="случайный">
+          </label>
+          <label class="field wide" id="strength-field">
+            <span class="field-label">Сила изменений</span>
+            <span class="range-row">
+              <input type="range" id="strength" min="0.1" max="1" step="0.05">
+              <output id="strength-out"></output>
+            </span>
+            <span class="hint" id="strength-hint"></span>
+          </label>
+          <label class="field wide" id="negative-field">
+            <span class="field-label">Негативный промпт</span>
+            <input type="text" id="negative" placeholder="чего на картинке быть не должно">
+          </label>
+        </div>
+      </details>
+
+      <p class="form-error" id="form-error" role="alert" hidden></p>
+      <button type="submit" class="primary" id="submit">Сгенерировать</button>
+    </form>
+
+    <div class="side">
+      <section class="panel" id="job-panel" aria-live="polite">
+        <h2>Результат</h2>
+        <div id="job"></div>
+      </section>
+      <section class="panel">
+        <h2>История</h2>
+        <ul class="history" id="history"></ul>
+      </section>
+    </div>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
