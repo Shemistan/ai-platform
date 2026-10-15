@@ -16,6 +16,7 @@ from aiplatform.studio import news, publish, slides, steps
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, blockers, dependents
 from aiplatform.studio.render import Renderer
+from aiplatform.video import models as video_models
 
 PREFIX = "studio"
 URL_BASE = f"/api/{PREFIX}"
@@ -24,6 +25,7 @@ MAX_TEXT = 100_000
 MAX_BODY = 4 * MAX_TEXT + 64 * 1024
 POSTER_MODES = ("local", "upload")
 IMAGES_MODES = ("local", "upload")
+CLIPS_MODES = ("local", "upload")
 VOICE_MODES = ("tts", "upload")
 # Настройка → шаг, который она меняет (его и зависящие — заново).
 SETTING_STEPS = {
@@ -32,6 +34,8 @@ SETTING_STEPS = {
     "images_mode": "images",
     "image_model": "images",
     "clips": "clips",
+    "clips_mode": "clips",
+    "video_model": "clips",
     "voice_mode": "voice",
     "engine": "voice",
     "voice": "voice",
@@ -72,6 +76,7 @@ class StudioModule:
             config=self.config,
             photo=self.ctx.modules["photo"].jobs,
             audio=self.ctx.modules["audio"].jobs,
+            video=self.ctx.modules["video"].jobs,
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
         )
 
@@ -91,6 +96,10 @@ class StudioModule:
             if photo_models.TXT2IMG in m.model.modes
         ]
 
+    def video_models(self) -> list[dict]:
+        found = self.ctx.modules["video"].config.models()
+        return [{"id": m.id, "label": m.label, "installed": m.installed} for m in found]
+
     def defaults(self) -> dict:
         audio = self.ctx.modules["audio"].config
         return {
@@ -99,6 +108,8 @@ class StudioModule:
             "images_mode": "local",
             "image_model": self.config.image_model,
             "clips": False,
+            "clips_mode": "local",
+            "video_model": video_models.default(self.ctx.modules["video"].config.models()).id,
             "voice_mode": "tts",
             "engine": audio.default_engine,
             "voice": "",
@@ -116,6 +127,7 @@ class StudioModule:
             "defaults": self.defaults(),
             "engines": [e.public() for e in voices.ENGINES.values()],
             "image_models": self.image_models(),
+            "video_models": self.video_models(),
             "channels": [c.public() for c in self.channels()],
             "channels_file": str(self.config.channels_file),
             "llm": {
@@ -151,6 +163,8 @@ class StudioModule:
             raise bad_request("poster_mode — local или upload.")
         if out["images_mode"] not in IMAGES_MODES:
             raise bad_request("images_mode — local или upload.")
+        if out["clips_mode"] not in CLIPS_MODES:
+            raise bad_request("clips_mode — local или upload.")
         if out["voice_mode"] not in VOICE_MODES:
             raise bad_request("voice_mode — tts или upload.")
         for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish"):
@@ -172,6 +186,8 @@ class StudioModule:
             out["speed"] = None
         if out["image_model"] not in {m["id"] for m in self.image_models()}:
             raise bad_request("Неизвестная модель картинок.")
+        if out["video_model"] not in {m["id"] for m in self.video_models()}:
+            raise bad_request("Неизвестная модель видео.")
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
             raise bad_request("channels — список id каналов.")

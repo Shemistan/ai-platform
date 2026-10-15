@@ -102,9 +102,27 @@ function settingsForm(values, prefix) {
       h("legend", {}, "Видео для слайдов"),
       check(
         "clips",
-        "Видео-фон слайдов — сделаю сам по промптам во внешней модели",
-        "На шаге «Видео для слайдов» будут промпты и окна, куда перетащить готовые ролики (MP4, MOV, WebM). Ролик заменяет картинку слайда и крутится по кругу без своего звука.",
+        "Видео на слайдах",
+        "Ролик заменяет картинку слайда и крутится по кругу без своего звука. Иначе фон — картинка.",
         values.clips,
+      ),
+      h(
+        "div",
+        { class: "radio-row" },
+        radio("clips_mode", "local", "Сгенерировать локальной моделью", values.clips_mode !== "upload"),
+        radio("clips_mode", "upload", "Сделаю сам по промптам во внешней модели", values.clips_mode === "upload"),
+      ),
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "hint" }, "Модель видео (ролик 5 с, 704×448 на слайд)"),
+        h(
+          "select",
+          { id: id("video_model") },
+          ...cfg.video_models.map((m) =>
+            h("option", { value: m.id, selected: m.id === values.video_model }, m.label + (m.installed ? "" : " — не установлена")),
+          ),
+        ),
       ),
     ),
     h(
@@ -145,6 +163,8 @@ function readSettings(prefix) {
     images_mode: radio("images_mode"),
     image_model: get("image_model").value,
     clips: get("clips").checked,
+    clips_mode: radio("clips_mode"),
+    video_model: get("video_model").value,
     voice_mode: radio("voice_mode"),
     engine: get("engine").value,
     voice: get("voice").value,
@@ -391,7 +411,8 @@ const stepLocked = (id) => Boolean(state.project.steps.find((s) => s.id === id)?
 
 function jobLink(step) {
   if (!step.job) return null;
-  return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${step.job.tab === "photo" ? "Фото" : "Аудио"}»`);
+  const tab = { photo: "Фото", video: "Видео", audio: "Аудио" }[step.job.tab] || step.job.tab;
+  return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${tab}»`);
 }
 
 function stepBody(step) {
@@ -438,7 +459,8 @@ function stepBody(step) {
       if (!p.settings.draw_images) return [];
       return [step.status === "running" ? jobLink(step) : null, ...mediaRows("images")];
     case "clips":
-      return p.settings.clips ? mediaRows("clips") : [];
+      if (!p.settings.clips) return [];
+      return [step.status === "running" ? jobLink(step) : null, ...mediaRows("clips")];
     case "voice":
       return [
         f.voice ? h("audio", { controls: true, src: f.voice, preload: "metadata" }) : null,
@@ -489,7 +511,8 @@ function stepBody(step) {
 function renderStep(step) {
   const p = state.project;
   const approveLabel = { text: "Продолжить", images: "Продолжить без недостающих", clips: "Продолжить без недостающих" }[step.id];
-  const canApprove = step.status === "waiting" && approveLabel && !(step.id === "images" && p.settings.images_mode !== "upload");
+  const localMode = (step.id === "images" && p.settings.images_mode !== "upload") || (step.id === "clips" && p.settings.clips_mode !== "upload");
+  const canApprove = step.status === "waiting" && approveLabel && !localMode;
   return h(
     "article",
     { class: `step ${step.status}` },
