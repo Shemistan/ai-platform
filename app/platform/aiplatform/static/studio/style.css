@@ -60,3 +60,38 @@
 .upload input { font-size: 13px; }
 .results li { font-size: 14px; }
 .copy-row { display: flex; gap: 8px; align-items: center; }
+
+/* Промпт слева — окно для готового файла из внешней модели справа. */
+.prompt-rows { display: grid; gap: 10px; }
+.prompt-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 300px);
+  gap: 12px;
+  align-items: start;
+  padding: 10px;
+  background: var(--sunken);
+  border-radius: 10px;
+}
+@media (max-width: 640px) {
+  .prompt-row { grid-template-columns: minmax(0, 1fr); }
+}
+.prompt-side { display: grid; gap: 6px; min-width: 0; justify-items: start; }
+.prompt-side strong { font-size: 14px; }
+.prompt-text { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; user-select: all; }
+.drop-zone {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  border: 2px dashed var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  cursor: pointer;
+  overflow: hidden;
+  text-align: center;
+  padding: 8px;
+}
+.drop-zone.filled { padding: 0; border-style: solid; }
+.drop-zone:hover, .drop-zone:focus-visible, .drop-zone.over { border-color: var(--accent); outline: none; }
+.drop-zone.disabled { cursor: not-allowed; opacity: 0.6; }
+.drop-zone img, .drop-zone video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.drop-hint { font-size: 13px; color: var(--muted); }

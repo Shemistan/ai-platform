@@ -23,12 +23,15 @@ SCENARIOS = {"digest": "Дайджест новостей", "article": "Виде
 MAX_TEXT = 100_000
 MAX_BODY = 4 * MAX_TEXT + 64 * 1024
 POSTER_MODES = ("local", "upload")
+IMAGES_MODES = ("local", "upload")
 VOICE_MODES = ("tts", "upload")
 # Настройка → шаг, который она меняет (его и зависящие — заново).
 SETTING_STEPS = {
     "poster_mode": "poster",
     "draw_images": "images",
+    "images_mode": "images",
     "image_model": "images",
+    "clips": "clips",
     "voice_mode": "voice",
     "engine": "voice",
     "voice": "voice",
@@ -48,8 +51,10 @@ ARTIFACTS = {
 }
 _FILE = re.compile(
     r"^(poster\.(png|jpg|webp)|voice\.(mp3|wav|m4a)|video\.mp4|short\.mp4|short/voice\.mp3"
-    r"|images/\d{2}\.png|publish/[a-z0-9_-]+/(video\.mp4|title\.txt|description\.txt))$"
+    r"|images/\d{2}\.(png|jpg|webp)|clips/\d{2}\.(mp4|mov|webm)"
+    r"|publish/[a-z0-9_-]+/(video\.mp4|title\.txt|description\.txt))$"
 )
+_SLIDE = re.compile(r"^\d{2}$")
 
 
 class StudioModule:
@@ -91,7 +96,9 @@ class StudioModule:
         return {
             "poster_mode": "local",
             "draw_images": True,
+            "images_mode": "local",
             "image_model": self.config.image_model,
+            "clips": False,
             "voice_mode": "tts",
             "engine": audio.default_engine,
             "voice": "",
@@ -142,9 +149,11 @@ class StudioModule:
             out[key] = value
         if out["poster_mode"] not in POSTER_MODES:
             raise bad_request("poster_mode — local или upload.")
+        if out["images_mode"] not in IMAGES_MODES:
+            raise bad_request("images_mode — local или upload.")
         if out["voice_mode"] not in VOICE_MODES:
             raise bad_request("voice_mode — tts или upload.")
-        for key in ("draw_images", "shorts", "review_text", "auto_publish"):
+        for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish"):
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
         engine = voices.ENGINES.get(out["engine"])
@@ -229,7 +238,7 @@ class StudioModule:
             rel = path.relative_to(folder).as_posix()
             return f"{URL_BASE}/projects/{project_id}/files/{rel}?v={path.stat().st_mtime_ns}"
 
-        images = sorted((folder / "images").glob("*.png")) if (folder / "images").is_dir() else []
+        project["settings"] = self.defaults() | project["settings"]  # выпуски из версий без новых настроек
         project["scenario_label"] = SCENARIOS[project["scenario"]]
         project["steps"] = [{"id": s, "label": LABELS[s], **project["steps"][s]} for s in STEP_IDS]
         project["artifacts"] = {
@@ -239,9 +248,10 @@ class StudioModule:
             "plan": as_json(steps.PLAN),
             "short": as_json(steps.SHORT),
         }
+        project["slides"] = self._slides(folder, url)
         project["files"] = {
             "poster": url(steps.find(folder, "poster", steps.IMAGE_EXT)),
-            "images": {p.stem: url(p) for p in images},
+            "images": {s["key"]: s["image"] for s in project["slides"] if s["image"]},
             "voice": url(steps.find(folder, "voice", steps.AUDIO_EXT)),
             "video": url(folder / steps.VIDEO),
             "short_voice": url(folder / "short" / "voice.mp3"),
@@ -249,6 +259,67 @@ class StudioModule:
         }
         project["published"] = as_json(steps.PUBLISHED)
         return project
+
+    @staticmethod
+    def _plan(folder) -> list[slides.Slide]:
+        try:
+            data = json.loads((folder / steps.PLAN).read_text(encoding="utf-8"))
+            count = len(slides.paragraphs((folder / steps.TEXT).read_text(encoding="utf-8")))
+            return slides.parse_plan(data, max(count, 1))
+        except (OSError, json.JSONDecodeError, StudioError):
+            return []
+
+    def _slides(self, folder, url) -> list[dict]:
+        """Слайды для страницы: промпты картинки и видео и файлы, сделанные по ним."""
+        out = []
+        for n, slide in enumerate(self._plan(folder), start=1):
+            image_prompt, video_prompt = slide.image_prompt, steps.clip_prompt(slide)
+            out.append(
+                {
+                    "key": f"{n:02d}",
+                    "title": slide.title,
+                    "image_prompt": image_prompt,
+                    "video_prompt": video_prompt,
+                    "image": url(steps.slide_media(folder / steps.IMAGES, n, steps.IMAGES, image_prompt)),
+                    "clip": url(steps.slide_media(folder / steps.CLIPS, n, steps.CLIPS, video_prompt)),
+                }
+            )
+        return out
+
+    def upload_slide(self, project_id: str, kind: str, key: str, data: bytes) -> dict:
+        """Картинка или видео слайда от человека. Все на месте — шаг готов, сборка заново."""
+        if kind not in steps.MEDIA or not _SLIDE.match(key):
+            raise not_found("Загружать можно images/NN или clips/NN.")
+        if kind == steps.IMAGES:
+            ext = uploads_module.sniff(data) if data else None
+            if ext not in uploads_module.IMAGE_MIME:
+                raise bad_request(uploads_module._accepted((uploads_module.IMAGE,)))
+            if len(data) > uploads_module.MAX_UPLOAD_BYTES:
+                raise bad_request(f"Картинка больше {uploads_module.MAX_UPLOAD_BYTES // 2**20} МБ.")
+        else:
+            ext = uploads_module.sniff_video(data) if data else None
+            if ext is None:
+                raise bad_request("Поддерживаются только видео MP4, MOV, WebM.")
+        self._guard(project_id)
+        folder = self.studio.project_dir(project_id)
+        n = int(key)
+        prompts = dict(steps.media_prompts(kind, self._plan(folder)))
+        if n not in prompts:
+            raise not_found(f"В плане нет слайда {n}, которому нужны {steps.MEDIA[kind][1]}.")
+        steps.save_slide_media(folder / kind, n, ext, data, prompts[n], kind)
+        have = sum(steps.slide_media(folder / kind, m, kind, p) is not None for m, p in prompts.items())
+        note = f"Загружено вручную: {have} из {len(prompts)}."
+        state = (self.studio.get(project_id) or {}).get("steps", {}).get(kind, {})
+        if have == len(prompts) or state.get("status") == "done":
+            self.studio.mark_done(project_id, kind, note=note)
+        else:
+
+            def remember(project: dict) -> set[str]:
+                project["steps"][kind]["note"] = note
+                return set()
+
+            self.studio.update(project_id, remember)
+        return self.view(project_id)
 
     def save_artifact(self, project_id: str, name: str, payload: object) -> dict:
         if name not in ARTIFACTS:
@@ -320,7 +391,7 @@ class StudioModule:
         project = self.studio.get(project_id)
         if project is None:
             raise not_found("Проект не найден.")
-        new = self.check_settings(payload, project["settings"])
+        new = self.check_settings(payload, self.defaults() | project["settings"])
         changed = {k for k in new if new[k] != project["settings"].get(k)}
 
         def apply(p: dict) -> set[str]:
@@ -374,6 +445,9 @@ class StudioModule:
             case ("POST", ["projects", pid, "upload", what]):
                 data = req.body(uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
                 return req.send_json(self.upload(pid, what, data))
+            case ("POST", ["projects", pid, "upload", kind, key]):
+                data = req.body(uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
+                return req.send_json(self.upload_slide(pid, kind, key, data))
             case ("GET", ["projects", pid, "files", *rest]):
                 return self._send_file(req, pid, "/".join(rest))
         raise not_found()

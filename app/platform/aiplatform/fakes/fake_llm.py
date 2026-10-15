@@ -45,6 +45,7 @@ def answer(prompt: str) -> str:
                     "title": _words(sentences[0] if sentences else text, 7),
                     "bullets": [_words(s, 9) for s in sentences[1:3]],
                     "image_prompt": f"editorial illustration, scene {num}: {_words(text, 10)}",
+                    "video_prompt": f"slow dolly-in, scene {num}: {_words(text, 10)}",
                 }
             )
         data = {

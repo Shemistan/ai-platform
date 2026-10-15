@@ -42,9 +42,10 @@ STEPS = (
     Step("poster", "Постер — первый кадр", ("poster_prompt",)),
     Step("plan", "Слайды и промпты картинок", ("text",)),
     Step("images", "Картинки слайдов", ("plan",)),
+    Step("clips", "Видео для слайдов", ("plan",)),
     Step("voice", "Озвучка", ("text",)),
-    Step("render", "Сборка видео 16:9", ("poster", "plan", "images", "voice")),
-    Step("short", "Шортс 9:16", ("text", "poster", "images")),
+    Step("render", "Сборка видео 16:9", ("poster", "plan", "images", "clips", "voice")),
+    Step("short", "Шортс 9:16", ("text", "poster", "images", "clips")),
     Step("publish", "Публикация", ("render", "short")),
 )
 STEP_IDS = tuple(s.id for s in STEPS)
@@ -162,6 +163,11 @@ class Studio:
             except (OSError, json.JSONDecodeError):
                 continue
             changed = False
+            for step in STEPS:  # выпуск из версии, где этого шага ещё не было
+                if step.id not in project["steps"]:
+                    # В старом выпуске настройка нового шага выключена: шаг сразу пропущен.
+                    project["steps"][step.id] = _fresh_state() | {"status": SKIPPED, "note": "Не было в этой версии."}
+                    changed = True
             for state in project["steps"].values():
                 if state["status"] == RUNNING:
                     state.update(status=FAILED, error="Сервис был перезапущен во время шага.", progress=None)

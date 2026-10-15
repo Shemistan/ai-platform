@@ -1,6 +1,7 @@
 """Сборка видео ffmpeg'ом: постер, «живые» слайды под озвучку, склейка со звуком.
 
-Слайд — картинка-фон с медленным наездом (zoompan), затемнение снизу,
+Слайд — видео-фон (ролик из внешней модели: по кругу, без своего звука) или
+картинка-фон с медленным наездом (zoompan), затемнение снизу,
 заголовок и тезисы, которые появляются по очереди (drawtext с alpha по
 времени). Без картинки — тёмный фон с лёгким градиентом. Тексты идут
 через textfile с expansion=none: ни кавычки, ни двоеточия, ни % в тексте
@@ -73,9 +74,13 @@ def _quote(path: Path | str) -> str:
     return "'" + str(path).replace("\\", "\\\\").replace("'", r"'\''") + "'"
 
 
-def _background(image: Path | None, lay: Layout, frames: int) -> tuple[list[str], str]:
-    """Вход и цепочка фильтров фона: картинка с наездом или градиент."""
+def _background(image: Path | None, lay: Layout, frames: int, clip: Path | None = None) -> tuple[list[str], str]:
+    """Вход и цепочка фильтров фона: видео (по кругу, без звука), картинка с наездом или градиент."""
     w, h = lay.width, lay.height
+    if clip is not None:
+        args = ["-stream_loop", "-1", "-i", str(clip)]
+        chain = f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={FPS},setsar=1"
+        return args, chain
     if image is not None:
         args = ["-loop", "1", "-framerate", str(FPS), "-i", str(image)]
         chain = (
@@ -161,6 +166,7 @@ class Renderer:
         seconds: float,
         orientation: str,
         cancel: threading.Event,
+        clip: Path | None = None,
     ) -> Path:
         lay = layout(orientation, self.scale)
         work = out.with_suffix("")
@@ -173,7 +179,7 @@ class Renderer:
             path.write_text(wrap("• " + bullet, lay.bullet_chars, 2), encoding="utf-8")
             bullet_files.append(path)
         frames = max(int(seconds * FPS), 1)
-        args, chain = _background(image, lay, frames)
+        args, chain = _background(image, lay, frames, clip)
         text = slide_filter(lay, self.font, title_file, bullet_files, seconds)
         argv = [self.ffmpeg, "-y", "-loglevel", "error", *args]
         argv += ["-filter_complex", f"{chain},{text},format=yuv420p[v]", "-map", "[v]", *self._encode(seconds)]
@@ -224,6 +230,7 @@ class Renderer:
                     title=scene["title"],
                     bullets=scene.get("bullets") or [],
                     image=scene.get("image"),
+                    clip=scene.get("clip"),
                     out=work / f"{n:02d}.mp4",
                     seconds=scene["seconds"],
                     orientation=orientation,
