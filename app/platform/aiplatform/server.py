@@ -56,8 +56,9 @@ ModulesFactory = Callable[[Context], list[Module]]
 def default_modules(ctx: Context) -> list[Module]:
     """Все вкладки платформы в порядке шапки; сценарии — после вкладок, которыми пользуются."""
     from aiplatform.photo.service import PhotoModule
+    from aiplatform.video.service import VideoModule
 
-    return [PhotoModule(ctx)]
+    return [PhotoModule(ctx), VideoModule(ctx)]
 
 
 class App:
