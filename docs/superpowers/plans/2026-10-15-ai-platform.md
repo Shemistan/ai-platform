@@ -1,6 +1,6 @@
 ---
 тип: plan
-статус: в работе
+статус: завершено
 обновлено: 2026-10-15
 спека: 2026-10-15-ai-platform-design.md
 ---
@@ -57,8 +57,8 @@
 - `server.Module` протокол: `prefix: str`, `handle(req) -> bool`, `describe() -> dict`, `close()`; `make_server(config, modules=None) -> (ThreadingHTTPServer, App)`.
 - `config.Config` с `data_dir`, `host`, `port`, `fake`, `ffmpeg`, `font`, под-конфиги вкладок.
 
-- [ ] Тесты: gate FIFO (2 потока, порядок), отмена ожидания, holder; `/` → редирект на `/photo/`; `/api/config` → `{"tabs": [...], "problems": [...]}`; POST с чужим Origin → 403; неизвестный `/api/x` → 404.
-- [ ] Реализация, `make check` зелёный, коммит `feat(platform): ядро — сервер, GPU-замок, загрузки, вкладки`.
+- [x] Тесты: gate FIFO (2 потока, порядок), отмена ожидания, holder; `/` → редирект на `/photo/`; `/api/config` → `{"tabs": [...], "problems": [...]}`; POST с чужим Origin → 403; неизвестный `/api/x` → 404.
+- [x] Реализация, `make check` зелёный, коммит `feat(platform): ядро — сервер, GPU-замок, загрузки, вкладки`.
 
 ### Task 2: Вкладка «Фото»
 
@@ -70,10 +70,10 @@
 **Produces:** `photo.service.PhotoModule(config, uploads, gate)` (Module) с
 `jobs: JobManager`; `JobManager.submit_prompt(prompt: str, width: int, height: int, *, model: str | None = None) -> dict`; `JobManager.wait(job_id, cancel) -> dict` (финальный view); `JobManager.image_path(job_id) -> Path | None`.
 
-- [ ] Перенести модули photogen, заменить `photogen.` → `aiplatform.photo.` / `aiplatform.core.`; воркер берёт `gate.hold("Фото", ...)`; URL-ы `/api/photo/...`.
-- [ ] Перенести тесты photogen (params, pipelines, server) на новый префикс; добавить тест «пока замок у другого — стадия „Ждёт GPU“».
-- [ ] UI: `static/photo/` из photogen, `api()` с базой `/api/photo`, общая шапка `nav.js`.
-- [ ] Коммит `feat(photo): вкладка фото — перенос photogen`.
+- [x] Перенести модули photogen, заменить `photogen.` → `aiplatform.photo.` / `aiplatform.core.`; воркер берёт `gate.hold("Фото", ...)`; URL-ы `/api/photo/...`.
+- [x] Перенести тесты photogen (params, pipelines, server) на новый префикс; добавить тест «пока замок у другого — стадия „Ждёт GPU“».
+- [x] UI: `static/photo/` из photogen, `api()` с базой `/api/photo`, общая шапка `nav.js`.
+- [x] Коммит `feat(photo): вкладка фото — перенос photogen`.
 
 ### Task 3: Вкладка «Видео»
 
@@ -83,8 +83,8 @@
 
 **Produces:** `video.service.VideoModule(config, uploads, gate)`.
 
-- [ ] Перенос videogen по той же схеме (префикс `/api/video`, замок «Видео»).
-- [ ] Перенос тестов; коммит `feat(video): вкладка видео — перенос videogen`.
+- [x] Перенос videogen по той же схеме (префикс `/api/video`, замок «Видео»).
+- [x] Перенос тестов; коммит `feat(video): вкладка видео — перенос videogen`.
 
 ### Task 4: Вкладка «Аудио»
 
@@ -98,8 +98,8 @@
 - `core.media.duration(path) -> float` (ffprobe; 0.0 если нельзя), `core.media.ffmpeg_available() -> bool`.
 - argv: `[*narrate_cmd, "say", text_file, "--engine", E, "--voice", V, "--speed", S, "--out", out_mp3, "--no-verify"]`.
 
-- [ ] Тесты: валидация (пустой текст, неизвестный движок/голос, скорость вне 0.5–2), задача через фейк до `done` с mp3 и `duration_s>0`, HTTP `/api/audio/jobs`, скачивание.
-- [ ] Коммит `feat(audio): вкладка озвучки через narrator`.
+- [x] Тесты: валидация (пустой текст, неизвестный движок/голос, скорость вне 0.5–2), задача через фейк до `done` с mp3 и `duration_s>0`, HTTP `/api/audio/jobs`, скачивание.
+- [x] Коммит `feat(audio): вкладка озвучки через narrator`.
 
 ### Task 5: Движок сценариев и «Видео по статье»
 
@@ -117,8 +117,8 @@
 - `studio.assemble.render_slide(spec, out_mp4, *, ffmpeg, font, size, seconds, image=None)`; `concat(parts, audio, out, size)`; `ORIENT = {"landscape": (1920,1080), "vertical": (1080,1920)}`.
 - Настройки сценария: `poster_mode: "local"|"upload"`, `draw_images: bool`, `voice_mode: "tts"|"upload"`, `engine`, `voice`, `shorts: bool`, `review_text: bool`, `channels: list[str]`.
 
-- [ ] Тесты: `parse_plan` (битый JSON → `StudioError`, para вне диапазона зажимается, пусто → один слайд на весь текст); `timings` (сумма = длина аудио − интро, минимум 1,5 с); `render_slide` строит фильтр с `zoompan`/`drawtext` и экранирует `:` `'` `%` в тексте; при наличии ffmpeg — mp4 нужного размера; прогон «статья» на фейках через HTTP до `video.mp4` и `short.mp4`; повторный run → 409; режим «загружу постер сам» → шаг `poster` в `waiting`, после загрузки продолжение.
-- [ ] Коммит `feat(studio): сценарий «видео по статье» — от текста до mp4 и шортс`.
+- [x] Тесты: `parse_plan` (битый JSON → `StudioError`, para вне диапазона зажимается, пусто → один слайд на весь текст); `timings` (сумма = длина аудио − интро, минимум 1,5 с); `render_slide` строит фильтр с `zoompan`/`drawtext` и экранирует `:` `'` `%` в тексте; при наличии ffmpeg — mp4 нужного размера; прогон «статья» на фейках через HTTP до `video.mp4` и `short.mp4`; повторный run → 409; режим «загружу постер сам» → шаг `poster` в `waiting`, после загрузки продолжение.
+- [x] Коммит `feat(studio): сценарий «видео по статье» — от текста до mp4 и шортс`.
 
 ### Task 6: Сценарий «Дайджест новостей»
 
@@ -126,8 +126,8 @@
 
 **Produces:** `news.collect(day: date, *, collect_cmd: list[str], where_cmd: list[str], cancel, on_line) -> Path` — каталог выпуска с `narration.md` (+`post.md`); шаг `text` у сценария `digest` копирует их в проект.
 
-- [ ] Тесты: разбор вывода `where` (строка «Озвучить: <path>/narration.md → …»), «Дайджеста за … нет» → ошибка шага, день в будущем → 400, прогон дайджеста на фейках до видео.
-- [ ] Коммит `feat(studio): сценарий «дайджест новостей» через narrator`.
+- [x] Тесты: разбор вывода `where` (строка «Озвучить: <path>/narration.md → …»), «Дайджеста за … нет» → ошибка шага, день в будущем → 400, прогон дайджеста на фейках до видео.
+- [x] Коммит `feat(studio): сценарий «дайджест новостей» через narrator`.
 
 ### Task 7: Публикация
 
@@ -135,10 +135,10 @@
 
 **Produces:** `publish.load_channels(path) -> list[Channel(id,label,type,format,chat_id,token_env)]`; `publish.publish(channel, project_dir, *, video, short, post_text, http=urllib) -> dict(result)`.
 
-- [ ] Тесты: manual → пакет с mp4/title/description; telegram с подменённым HTTP → multipart с `chat_id`, `caption` ≤1024, `parse_mode=HTML`; нет токена → ошибка без значения токена; vertical-канал без шортса → ошибка «включи шортс».
-- [ ] Коммит `feat(studio): публикация в каналы`.
+- [x] Тесты: manual → пакет с mp4/title/description; telegram с подменённым HTTP → multipart с `chat_id`, `caption` ≤1024, `parse_mode=HTML`; нет токена → ошибка без значения токена; vertical-канал без шортса → ошибка «включи шортс».
+- [x] Коммит `feat(studio): публикация в каналы`.
 
 ### Task 8: Документация и финал
 
-- [ ] `app/platform/README.md`: запуск, переменные, установка моделей (ссылки на исходные репо), сценарии; корневой `README.md`.
-- [ ] Статусы: план → `завершено`, спека → `реализовано`; `./check`; `./finish`.
+- [x] `app/platform/README.md`: запуск, переменные, установка моделей (ссылки на исходные репо), сценарии; корневой `README.md`.
+- [x] Статусы: план → `завершено`, спека → `реализовано`; `./check`; `./finish`.

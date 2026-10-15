@@ -76,11 +76,11 @@ class EditModesTest(unittest.TestCase):
         self.assertEqual(build().model, "flux2-dev", "по промпту — первая в каталоге")
 
     def test_mode_the_model_cannot_do(self):
-        with self.assertRaisesRegex(params.ValidationError, "Ideogram 4 не умеет режим «Image-to-Image»"):
+        with self.assertRaisesRegex(params.ValidationError, "Ideogram 4 не умеет режим «Поправить фото»"):
             build(mode="img2img", source=SRC, model="ideogram-4")
-        with self.assertRaisesRegex(params.ValidationError, "не умеет режим «Outpainting»"):
+        with self.assertRaisesRegex(params.ValidationError, "не умеет режим «Расширить кадр»"):
             build(mode="outpaint", source=SRC, padding={"left": 64}, model="flux2-dev")
-        with self.assertRaisesRegex(params.ValidationError, "не умеет режим «Inpainting»"):
+        with self.assertRaisesRegex(params.ValidationError, "не умеет режим «Удалить / заменить объект»"):
             build(mode="inpaint", source=SRC, mask=MASK, model="qwen-image-2512")
 
     def test_source_must_fit_the_grid(self):

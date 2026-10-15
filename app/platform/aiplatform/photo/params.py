@@ -51,10 +51,10 @@ DEFAULT_STRENGTH = {IMG2IMG: 0.6, INPAINT: 1.0}
 MIN_STRENGTH = 0.1
 
 MODE_LABELS = {
-    TXT2IMG: "По промпту",
-    IMG2IMG: "Image-to-Image",
-    INPAINT: "Inpainting",
-    OUTPAINT: "Outpainting",
+    TXT2IMG: "С нуля",
+    IMG2IMG: "Поправить фото",
+    INPAINT: "Удалить / заменить объект",
+    OUTPAINT: "Расширить кадр",
 }
 
 
