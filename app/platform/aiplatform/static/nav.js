@@ -9,6 +9,8 @@ const TABS = [
   { id: "digest", label: "Дайджест новостей", href: "/studio/?scenario=digest" },
   { id: "article", label: "Видео по статье", href: "/studio/?scenario=article" },
   { sep: true },
+  { id: "library", label: "Статьи", href: "/library/" },
+  { sep: true },
   { id: "channels", label: "Каналы", href: "/channels/" },
   { id: "updates", label: "Обновления", href: "/updates/" },
 ];

@@ -57,6 +57,7 @@ def default_modules(ctx: Context) -> list[Module]:
     """Все вкладки платформы в порядке шапки; сценарии — после вкладок, которыми пользуются."""
     from aiplatform.audio.service import AudioModule
     from aiplatform.channels.service import ChannelsModule
+    from aiplatform.library.service import LibraryModule
     from aiplatform.photo.service import PhotoModule
     from aiplatform.studio.service import StudioModule
     from aiplatform.updates.service import UpdatesModule
@@ -67,6 +68,7 @@ def default_modules(ctx: Context) -> list[Module]:
         VideoModule(ctx),
         AudioModule(ctx),
         StudioModule(ctx),
+        LibraryModule(ctx),
         ChannelsModule(ctx),
         UpdatesModule(ctx),
     ]

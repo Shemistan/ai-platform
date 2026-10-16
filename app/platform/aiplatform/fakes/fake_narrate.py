@@ -169,14 +169,20 @@ def state_file() -> Path:
 def load() -> dict:
     path = state_file()
     if not path.is_file():
-        state = seed()
-        save(state)
-        return state
+        # Демо заполняется один раз: другой процесс мог успеть первым — его данные главнее.
+        tmp = path.with_name(f"seed-{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(seed(), ensure_ascii=False, indent=1), encoding="utf-8")
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            pass
+        finally:
+            tmp.unlink()
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def save(state: dict) -> None:
-    tmp = state_file().with_suffix(".tmp")
+    tmp = state_file().with_name(f"state-{os.getpid()}.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(state_file())
 

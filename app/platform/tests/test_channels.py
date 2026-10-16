@@ -67,7 +67,7 @@ class ChannelsTest(PlatformCase):
             if subs["active"] == 3:
                 break
             time.sleep(0.1)
-        self.assertEqual(subs["active"], 3)
+        self.assertEqual(subs["active"], 3, self.json("GET", "/api/channels/serve")[1])
         _, serve = self.json("GET", "/api/channels/serve")
         self.assertTrue(any("слушает" in line for line in serve["log"]), serve)
         _, serve = self.json("POST", "/api/channels/serve/stop")
