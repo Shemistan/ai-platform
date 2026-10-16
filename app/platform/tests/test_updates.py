@@ -170,8 +170,8 @@ class UpdatesTabTest(PlatformCase):
         self.assertEqual(by_id["photo-z-image-turbo"]["status"], "update")
         self.assertEqual(by_id["photo-krea-2"]["status"], "ok")
         self.assertEqual(by_id["video-wan-2.2-t2v-q4"]["status"], "ok")
-        self.assertEqual(by_id["narrator"]["status"], "update")
-        self.assertEqual(body["models"]["updates"], 4)
+        self.assertNotIn("narrator", by_id)  # движок — часть репозитория, сверять не с чем
+        self.assertEqual(body["models"]["updates"], 3)
         status, _, page = self.call("GET", "/updates/")
         self.assertEqual(status, 200)
         self.assertIn(b"app.js", page)

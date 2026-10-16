@@ -1,7 +1,7 @@
 """Вкладка «Обновления»: API под /api/updates/.
 
 Две проверки, обе в фоне (запустил → статус → результат):
-- модели и пайплайны — сверка установленных версий с PyPI, GitHub, Hugging Face и git;
+- модели и пайплайны — сверка установленных версий с PyPI, GitHub и Hugging Face;
 - реестр запрещённых организаций — LLM с веб-поиском сверяет его с перечнями
   Минюста и предлагает новую версию; применяет её человек, посмотрев разницу.
 """
@@ -18,7 +18,6 @@ from datetime import date
 from http import HTTPStatus
 from pathlib import Path
 
-from aiplatform.audio import config as audio_config
 from aiplatform.config import Config, pick
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import config as photo_config
@@ -139,11 +138,10 @@ class UpdatesModule:
 
             self.llm_cmd: tuple[str, ...] = (sys.executable, str(FAKES / "fake_llm.py"))
             self.fetch: checks.Fetch = fake_updates.fetch
-            self.git = fake_updates.git
             self.demo: dict[str, str] | None = fake_updates.INSTALLED
         else:
             self.llm_cmd = tuple(shlex.split(pick(ctx.config.env, "AIP_UPDATES_LLM_CMD", default=DEFAULT_LLM_CMD)))
-            self.fetch, self.git, self.demo = checks.http_fetch, checks.run_git, None
+            self.fetch, self.demo = checks.http_fetch, None
 
     # --- модели ---
 
@@ -151,7 +149,6 @@ class UpdatesModule:
         return checks.components(
             photo_config.load(self.config),
             video_config.load(self.config),
-            audio_config.load(self.config),
             demo=self.demo,
         )
 
@@ -164,7 +161,7 @@ class UpdatesModule:
                 if self.cancel.is_set():
                     return
                 self.models_job.update(progress=f"{component.label} ({n} из {len(todo)})")
-                results.append(checks.check(component, self.fetch, self.git).public())
+                results.append(checks.check(component, self.fetch).public())
                 self.models_job.update(results=results)
             updates = sum(r["status"] == checks.UPDATE for r in results)
             self.models_job.update(status=DONE, finished=time.time(), progress="", updates=updates)

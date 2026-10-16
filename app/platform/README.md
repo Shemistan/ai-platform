@@ -2,7 +2,9 @@
 
 Один локальный сервис вместо трёх: генерация фото, видео и озвучки плюс
 бизнес-сценарии «Дайджест новостей» и «Видео по статье». Всё работает на
-этом Mac (Apple Silicon), модели локальные.
+этом Mac (Apple Silicon), модели локальные. Озвучку, библиотеку статей,
+сбор новостей и Telegram-бота делает движок narrator — он рядом, в
+[`app/narrator`](../narrator/README.md).
 
 | Вкладка | Адрес | Что умеет |
 |---|---|---|
@@ -133,7 +135,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 
 - **Модели и пайплайны** — сверка установленного с источниками: mflux
   (PyPI), Flux2CLI (релизы GitHub), ltx-2-mlx (теги GitHub), веса на
-  Hugging Face, narrator (git). Версии читаются из путей установки
+  Hugging Face. Версии читаются из путей установки
   (`mflux-0.22.0`, `flux2cli-v3.1.0`, …), у весов — дата установки. Сама
   вкладка ничего не ставит: подсказывает, что поднять в setup-model.sh.
   Для закрытых репозиториев весов нужен `HF_TOKEN` в окружении.
@@ -145,7 +147,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 
 Переменные окружения — в `local.mk` рядом с Makefile (не в git) или в
 окружении. Пустое значение — значение по умолчанию. Готовый пример с путями,
-которые ставят setup-model.sh и narrator: `cp local.mk.example local.mk`.
+которые ставят setup-model.sh: `cp local.mk.example local.mk`.
 
 | Переменная | По умолчанию | Что это |
 |---|---|---|
@@ -155,7 +157,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | `AIP_LOW_RAM` | — | экономия памяти для фото и видео |
 | `AIP_PHOTO_MFLUX_BIN`, `AIP_PHOTO_FLUX2_CMD` | из PATH | пайплайны фото (или старые `PHOTOGEN_*`) |
 | `AIP_VIDEO_LTX_CMD`, `AIP_VIDEO_WAN_CMD`, `AIP_VIDEO_MODEL` | из PATH | пайплайны видео (или старые `VIDEOGEN_*`) |
-| `AIP_NARRATOR_DIR` | `~/my_track/07_offline_text-to-word` | репозиторий narrator |
+| `AIP_NARRATOR_DIR` | `app/narrator` | движок озвучки и новостей |
 | `AIP_NARRATE_CMD` | `$AIP_NARRATOR_DIR/narrate` | команда озвучки (`narrate say`) |
 | `AIP_AUDIO_ENGINE` | `higgs` | движок озвучки по умолчанию (голос — Charon) |
 | `AIP_LLM_CMD` | `claude -p` | LLM для промптов и слайдов: промпт на stdin, ответ в stdout |
@@ -180,7 +182,9 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
   апскейлер SeedVR2 3B ставить не нужно — он идёт в окружении mflux, веса
   (~7 ГБ) докачиваются в `AIP_MODELS_DIR/.photogen-cache` при первом увеличении;
 - видео: `10_video_generator/app/videogen/setup-model.sh <id>`;
-- озвучка и новости: в `07_offline_text-to-word` — `make models`; для дайджеста нужен ещё claude CLI.
+- озвучка и новости: в `app/narrator` — `make models`; для дайджеста нужен ещё claude CLI.
+  Данные старого narrator (статьи, база новостей, каналы, токен бота) переносит один раз
+  `sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word`.
 
 ### Каналы публикации
 

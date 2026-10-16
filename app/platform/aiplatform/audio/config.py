@@ -11,7 +11,7 @@ from pathlib import Path
 from aiplatform.audio import voices
 from aiplatform.config import Config, pick
 
-DEFAULT_NARRATOR_DIR = Path.home() / "my_track" / "07_offline_text-to-word"
+DEFAULT_NARRATOR_DIR = Path(__file__).resolve().parents[3] / "narrator"  # app/narrator рядом с app/platform
 FAKE_NARRATE = Path(__file__).resolve().parent.parent / "fakes" / "fake_narrate.py"
 
 

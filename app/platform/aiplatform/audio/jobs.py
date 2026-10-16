@@ -29,7 +29,7 @@ WAIT_POLL_S = 0.2
 # Темп скачиваемого mp3: atempo берёт 0,5–2 одним фильтром.
 TEMPO_RANGE = (0.5, 2.0)
 RETIME_TIMEOUT_S = 600
-INSTALL_HINT = "Нужен narrator: 07_offline_text-to-word, `make models` (или задай AIP_NARRATE_CMD)."
+INSTALL_HINT = "Нужен движок app/narrator: `make models` в нём (или задай AIP_NARRATE_CMD)."
 _ID = re.compile(r"^[0-9a-f]{12}$")
 _STAGE = re.compile(r"абзац (\d+)/(\d+)")
 _DONE = re.compile(r"^\[(\d+)/(\d+)\]")

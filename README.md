@@ -3,7 +3,9 @@
 Локальная AI-платформа: вкладки «Фото», «Видео», «Аудио» и сценарии
 «Дайджест новостей» и «Видео по статье» в одном сервисе.
 
-Сервис — `app/platform/`, запуск и настройка — в [его README](app/platform/README.md):
+Сервис — `app/platform/`, запуск и настройка — в [его README](app/platform/README.md).
+Движок озвучки, статей, новостей и Telegram-бота, который он вызывает, —
+`app/narrator/` ([README](app/narrator/README.md)).
 
 ```sh
 cd app/platform && make demo   # http://127.0.0.1:8780

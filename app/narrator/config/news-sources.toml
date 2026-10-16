@@ -1,0 +1,1216 @@
+# Источники дайджеста новостей (narrate news collect). Подборка и логика
+# важности — docs/news/sources-v1.md и sources-v2.md, устройство — спек
+# 2026-09-23-news-digest.
+#
+# Поля источника:
+#   id        — латиницей, уникальный; им помечены материалы в news.db
+#   name, url — как называть и куда вести человека
+#   type      — место в иерархии доверия (веса — [types] ниже)
+#   authority — свой вес доверия вместо веса типа (необязательно)
+#   category  — тема: stack, backend, ai, youtube_en, youtube_ru, telegram, radar
+#   priority  — 1…5 из подборки, для порядка в выдаче агенту
+#   kind      — как забирать:
+#     feed     — RSS/Atom по адресу feed
+#     page     — ищем ленту на странице url, иначе ссылки с путём match
+#     github   — релизы repo (tags = true — теги), exclude — отсеять rc/beta
+#     godl     — стабильные версии Go с go.dev/dl
+#     youtube  — лента канала handle
+#     telegram — публичный канал channel через t.me/s
+#     govuln   — Go Vulnerability Database (vuln.go.dev), только проверенные
+#     ghsa     — GitHub Advisory Database по ecosystem, не ниже min_severity
+#   vendor    — чьи это новости, для правила «не больше двух событий
+#               поставщика в главном»; по умолчанию id до первого «_»
+#   enabled   — false выключает источник, причина — в note
+
+[types]
+official = 1.00
+official_changelog = 1.00
+engineering_blog = 0.90
+expert_blog = 0.85
+conference = 0.80
+youtube_expert = 0.75
+telegram_channel = 0.65
+telegram_community = 0.55
+newsletter = 0.55
+aggregator = 0.45
+
+# Вторичные источники: без confirmed_by важность не выше 6 (правило §9).
+[confirm]
+secondary = [
+  "conference", "youtube_expert", "telegram_channel", "telegram_community",
+  "newsletter", "aggregator",
+]
+
+# --- 1. Мой стек ------------------------------------------------------------
+
+[[source]]
+id = "go_blog"
+name = "The Go Blog"
+url = "https://go.dev/blog/"
+type = "official"
+category = "stack"
+priority = 5
+kind = "feed"
+feed = "https://go.dev/blog/feed.atom"
+
+[[source]]
+id = "go_releases"
+name = "Go Releases"
+url = "https://go.dev/dl/"
+type = "official_changelog"
+category = "stack"
+priority = 5
+kind = "godl"
+
+[[source]]
+id = "go_github"
+name = "Go GitHub"
+url = "https://github.com/golang/go"
+type = "official"
+category = "stack"
+priority = 4
+kind = "github"
+repo = "golang/go"
+tags = true
+exclude = "weekly|release\\.r|rc|beta"
+enabled = false
+note = "релизы Go уже приходят из go_releases, а issues и proposals — поток без фильтра"
+
+[[source]]
+id = "postgresql_news"
+name = "PostgreSQL News"
+url = "https://www.postgresql.org/about/news/"
+type = "official"
+category = "stack"
+priority = 5
+kind = "feed"
+feed = "https://www.postgresql.org/news.rss"
+
+[[source]]
+id = "postgresql_release_notes"
+name = "PostgreSQL Release Notes"
+url = "https://www.postgresql.org/docs/release/"
+type = "official_changelog"
+category = "stack"
+priority = 5
+kind = "page"
+match = "/docs/release/"
+
+[[source]]
+id = "postgrespro_blog"
+name = "Postgres Professional"
+url = "https://postgrespro.com/blog"
+type = "engineering_blog"
+category = "stack"
+priority = 4
+kind = "page"
+match = "/blog/"
+
+[[source]]
+id = "kafka_blog"
+name = "Apache Kafka Blog"
+url = "https://kafka.apache.org/blog"
+type = "official"
+category = "stack"
+priority = 5
+kind = "page"
+match = "/blog/"
+
+[[source]]
+id = "kafka_github"
+name = "Apache Kafka GitHub"
+url = "https://github.com/apache/kafka"
+type = "official_changelog"
+category = "stack"
+priority = 4
+kind = "github"
+repo = "apache/kafka"
+tags = true
+exclude = "rc|RC|beta|alpha"
+
+[[source]]
+id = "rabbitmq_blog"
+name = "RabbitMQ Blog"
+url = "https://www.rabbitmq.com/blog"
+type = "official"
+category = "stack"
+priority = 4
+kind = "feed"
+feed = "https://www.rabbitmq.com/blog/rss.xml"
+
+[[source]]
+id = "rabbitmq_releases"
+name = "RabbitMQ Releases"
+url = "https://github.com/rabbitmq/rabbitmq-server/releases"
+type = "official_changelog"
+category = "stack"
+priority = 4
+kind = "github"
+repo = "rabbitmq/rabbitmq-server"
+exclude = "rc|beta|alpha"
+
+[[source]]
+id = "redis_blog"
+name = "Redis Blog"
+url = "https://redis.io/blog/"
+type = "official"
+category = "stack"
+priority = 4
+kind = "page"
+match = "/blog/"
+
+[[source]]
+id = "redis_github"
+name = "Redis GitHub"
+url = "https://github.com/redis/redis"
+type = "official_changelog"
+category = "stack"
+priority = 4
+kind = "github"
+repo = "redis/redis"
+exclude = "rc|RC|m0"
+
+[[source]]
+id = "clickhouse_blog"
+name = "ClickHouse Blog"
+url = "https://clickhouse.com/blog"
+type = "official"
+category = "stack"
+priority = 4
+kind = "page"
+match = "/blog/"
+
+[[source]]
+id = "clickhouse_github"
+name = "ClickHouse GitHub"
+url = "https://github.com/ClickHouse/ClickHouse"
+type = "official_changelog"
+category = "stack"
+priority = 4
+kind = "github"
+repo = "ClickHouse/ClickHouse"
+exclude = "testing|prestable"
+
+[[source]]
+id = "kubernetes_blog"
+name = "Kubernetes Blog"
+url = "https://kubernetes.io/blog/"
+type = "official"
+category = "stack"
+priority = 5
+kind = "feed"
+feed = "https://kubernetes.io/feed.xml"
+
+[[source]]
+id = "kubernetes_github"
+name = "Kubernetes GitHub"
+url = "https://github.com/kubernetes/kubernetes"
+type = "official_changelog"
+category = "stack"
+priority = 4
+kind = "github"
+repo = "kubernetes/kubernetes"
+exclude = "alpha|beta|rc"
+
+# Структурированные базы уязвимостей: курируемые записи, а не пересказ.
+[[source]]
+id = "go_vulndb"
+vendor = "go"
+name = "Go Vulnerability Database"
+url = "https://pkg.go.dev/vuln/"
+type = "official"
+category = "stack"
+priority = 5
+kind = "govuln"
+
+[[source]]
+id = "ghsa_go"
+vendor = "ghsa"
+name = "GitHub Advisories: Go"
+url = "https://github.com/advisories?query=ecosystem%3Ago"
+type = "official"
+category = "stack"
+priority = 5
+kind = "ghsa"
+ecosystem = "go"
+min_severity = "medium"
+# Без списка в экосистеме Go — сплошь уязвимости конечных приложений: десятки в
+# день. Здесь — библиотеки, которые стоят в типичном Go/backend-сервисе.
+packages = [
+  "golang.org/x/net",
+  "golang.org/x/crypto",
+  "golang.org/x/oauth2",
+  "golang.org/x/text",
+  "golang.org/x/sys",
+  "golang.org/x/image",
+  "google.golang.org/grpc",
+  "google.golang.org/protobuf",
+  "github.com/grpc-ecosystem/grpc-gateway/v2",
+  "github.com/jackc/pgx/v5",
+  "github.com/jackc/pgx/v4",
+  "github.com/lib/pq",
+  "github.com/redis/go-redis/v9",
+  "github.com/IBM/sarama",
+  "github.com/segmentio/kafka-go",
+  "github.com/twmb/franz-go",
+  "github.com/ClickHouse/clickhouse-go/v2",
+  "github.com/rabbitmq/amqp091-go",
+  "github.com/nats-io/nats-server/v2",
+  "go.mongodb.org/mongo-driver",
+  "go.etcd.io/etcd/server/v3",
+  "github.com/gin-gonic/gin",
+  "github.com/labstack/echo/v4",
+  "github.com/gofiber/fiber/v2",
+  "github.com/go-chi/chi/v5",
+  "github.com/gorilla/websocket",
+  "github.com/gorilla/mux",
+  "github.com/golang-jwt/jwt/v5",
+  "github.com/golang-jwt/jwt/v4",
+  "github.com/quic-go/quic-go",
+  "github.com/go-jose/go-jose/v4",
+  "github.com/docker/docker",
+  "github.com/moby/buildkit",
+  "github.com/containerd/containerd",
+  "github.com/containerd/containerd/v2",
+  "github.com/opencontainers/runc",
+  "k8s.io/kubernetes",
+  "k8s.io/client-go",
+  "k8s.io/apimachinery",
+  "helm.sh/helm/v3",
+  "github.com/prometheus/prometheus",
+  "github.com/prometheus/client_golang",
+  "go.opentelemetry.io/otel",
+  "go.opentelemetry.io/otel/sdk",
+  "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp",
+  "github.com/hashicorp/vault",
+  "github.com/hashicorp/consul",
+  "gopkg.in/yaml.v3",
+  "github.com/spf13/viper",
+]
+
+[[source]]
+id = "ghsa_actions"
+vendor = "ghsa"
+name = "GitHub Advisories: Actions"
+url = "https://github.com/advisories?query=ecosystem%3Aactions"
+type = "official"
+category = "stack"
+priority = 4
+kind = "ghsa"
+ecosystem = "actions"
+min_severity = "high"
+
+[[source]]
+id = "kubernetes_cve"
+name = "Kubernetes Official CVE Feed"
+url = "https://kubernetes.io/docs/reference/issues-security/official-cve-feed/"
+type = "official"
+category = "stack"
+priority = 5
+kind = "feed"
+feed = "https://kubernetes.io/docs/reference/issues-security/official-cve-feed/feed.xml"
+
+[[source]]
+id = "cncf_blog"
+name = "CNCF Blog"
+url = "https://www.cncf.io/blog/"
+type = "official"
+category = "stack"
+priority = 3
+kind = "feed"
+feed = "https://www.cncf.io/feed/"
+
+[[source]]
+id = "docker_blog"
+name = "Docker Blog"
+url = "https://www.docker.com/blog/"
+type = "official"
+category = "stack"
+priority = 4
+kind = "feed"
+feed = "https://www.docker.com/feed/"
+
+[[source]]
+id = "docker_engine_releases"
+name = "Docker Engine Releases"
+url = "https://docs.docker.com/engine/release-notes/"
+type = "official_changelog"
+category = "stack"
+priority = 5
+kind = "github"
+repo = "moby/moby"
+exclude = "rc|beta|alpha"
+
+[[source]]
+id = "opentelemetry_blog"
+name = "OpenTelemetry Blog"
+url = "https://opentelemetry.io/blog/"
+type = "official"
+category = "stack"
+priority = 4
+kind = "feed"
+feed = "https://opentelemetry.io/blog/index.xml"
+
+[[source]]
+id = "grafana_blog"
+name = "Grafana Labs Blog"
+url = "https://grafana.com/blog/"
+type = "engineering_blog"
+category = "stack"
+priority = 4
+kind = "feed"
+feed = "https://grafana.com/blog/index.xml"
+
+[[source]]
+id = "prometheus_blog"
+name = "Prometheus Blog"
+url = "https://prometheus.io/blog/"
+type = "official"
+category = "stack"
+priority = 4
+kind = "feed"
+feed = "https://prometheus.io/blog/feed.xml"
+
+[[source]]
+id = "github_changelog"
+name = "GitHub Changelog"
+url = "https://github.blog/changelog/"
+type = "official_changelog"
+category = "stack"
+priority = 5
+kind = "feed"
+feed = "https://github.blog/changelog/feed/"
+
+[[source]]
+id = "github_engineering"
+name = "GitHub Engineering"
+url = "https://github.blog/engineering/"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://github.blog/engineering/feed/"
+
+# --- 2. Инженерные блоги ----------------------------------------------------
+
+[[source]]
+id = "cloudflare_blog"
+name = "Cloudflare Blog"
+url = "https://blog.cloudflare.com/"
+type = "engineering_blog"
+category = "backend"
+priority = 5
+kind = "feed"
+feed = "https://blog.cloudflare.com/rss/"
+
+[[source]]
+id = "uber_engineering"
+name = "Uber Engineering"
+url = "https://www.uber.com/blog/engineering/"
+type = "engineering_blog"
+category = "backend"
+priority = 5
+kind = "page"
+match = "/blog/"
+
+[[source]]
+id = "stripe_engineering"
+name = "Stripe Engineering"
+url = "https://stripe.dev/blog"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "page"
+match = "/blog/"
+
+[[source]]
+id = "netflix_techblog"
+name = "Netflix TechBlog"
+url = "https://netflixtechblog.com/"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://netflixtechblog.com/feed"
+
+[[source]]
+id = "discord_engineering"
+name = "Discord Engineering"
+url = "https://discord.com/category/engineering"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "page"
+match = "/blog/"
+
+[[source]]
+id = "dropbox_tech"
+name = "Dropbox Tech"
+url = "https://dropbox.tech/"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://dropbox.tech/feed"
+
+[[source]]
+id = "cockroach_blog"
+name = "Cockroach Labs Blog"
+url = "https://www.cockroachlabs.com/blog/"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "page"
+match = "/blog/"
+
+# --- 2a. Независимые инженеры -------------------------------------------
+# Пишут редко, но сами разбираются в теме: разборы, измерения, приёмы.
+# Проверены 2026-10-15 (sources-v2.md).
+
+[[source]]
+id = "simonwillison"
+name = "Simon Willison"
+url = "https://simonwillison.net/"
+type = "expert_blog"
+category = "ai"
+priority = 5
+kind = "feed"
+feed = "https://simonwillison.net/atom/entries/"
+
+[[source]]
+id = "antonz"
+name = "Anton Zhiyanov"
+url = "https://antonz.org/"
+type = "expert_blog"
+category = "stack"
+priority = 5
+kind = "feed"
+feed = "https://antonz.org/feed.xml"
+
+[[source]]
+id = "eli_bendersky"
+name = "Eli Bendersky"
+url = "https://eli.thegreenplace.net/"
+type = "expert_blog"
+category = "stack"
+priority = 3
+kind = "feed"
+feed = "https://eli.thegreenplace.net/feeds/all.atom.xml"
+
+[[source]]
+id = "bitfield"
+name = "Bitfield Consulting (John Arundel)"
+url = "https://bitfieldconsulting.com/"
+type = "expert_blog"
+category = "stack"
+priority = 3
+kind = "feed"
+feed = "https://bitfieldconsulting.com/posts?format=rss"
+
+[[source]]
+id = "marc_brooker"
+name = "Marc Brooker"
+url = "https://brooker.co.za/blog/"
+type = "expert_blog"
+category = "backend"
+priority = 5
+kind = "feed"
+feed = "https://brooker.co.za/blog/rss.xml"
+
+[[source]]
+id = "murat_demirbas"
+name = "Murat Demirbas"
+url = "https://muratbuffalo.blogspot.com/"
+type = "expert_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://muratbuffalo.blogspot.com/feeds/posts/default"
+
+[[source]]
+id = "phil_eaton"
+name = "Phil Eaton"
+url = "https://notes.eatonphil.com/"
+type = "expert_blog"
+# В ленте много чужих ссылок с комментарием: это курация, она вторична.
+# Свой текст Фила агент подтверждает его же ссылкой в confirmed_by.
+secondary = true
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://notes.eatonphil.com/rss.xml"
+
+[[source]]
+id = "kleppmann"
+name = "Martin Kleppmann"
+url = "https://martin.kleppmann.com/"
+type = "expert_blog"
+category = "backend"
+priority = 3
+kind = "feed"
+feed = "https://feeds.feedburner.com/martinkl"
+
+[[source]]
+id = "charity_majors"
+name = "Charity Majors"
+url = "https://charity.wtf/"
+type = "expert_blog"
+category = "backend"
+priority = 3
+kind = "feed"
+feed = "https://charity.wtf/feed/"
+
+[[source]]
+id = "mitchellh"
+name = "Mitchell Hashimoto"
+url = "https://mitchellh.com/"
+type = "expert_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://mitchellh.com/feed.xml"
+
+[[source]]
+id = "hillel_wayne"
+name = "Hillel Wayne"
+url = "https://buttondown.com/hillelwayne"
+type = "expert_blog"
+category = "backend"
+priority = 3
+kind = "feed"
+feed = "https://buttondown.com/hillelwayne/rss"
+
+[[source]]
+id = "danluu"
+name = "Dan Luu"
+url = "https://danluu.com/"
+type = "expert_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://danluu.com/atom.xml"
+
+# --- 2b. Инженерные блоги компаний, v2 -----------------------------------
+
+[[source]]
+id = "planetscale_blog"
+name = "PlanetScale Blog"
+url = "https://planetscale.com/blog"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://planetscale.com/blog/feed.atom"
+
+[[source]]
+id = "crunchydata_blog"
+name = "Crunchy Data Blog"
+url = "https://www.crunchydata.com/blog"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://www.crunchydata.com/blog/rss.xml"
+
+[[source]]
+id = "tailscale_blog"
+name = "Tailscale Blog"
+url = "https://tailscale.com/blog"
+type = "engineering_blog"
+category = "backend"
+priority = 3
+kind = "feed"
+feed = "https://tailscale.com/blog/index.xml"
+
+[[source]]
+id = "tigerbeetle_blog"
+name = "TigerBeetle Blog"
+url = "https://tigerbeetle.com/blog"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://tigerbeetle.com/blog/atom.xml"
+
+[[source]]
+id = "oxide_blog"
+name = "Oxide Computer Blog"
+url = "https://oxide.computer/blog"
+type = "engineering_blog"
+category = "backend"
+priority = 3
+kind = "feed"
+feed = "https://oxide.computer/blog/feed"
+
+[[source]]
+id = "flyio_blog"
+name = "Fly.io Blog"
+url = "https://fly.io/blog/"
+type = "engineering_blog"
+category = "backend"
+priority = 3
+kind = "feed"
+feed = "https://fly.io/blog/feed.xml"
+
+[[source]]
+id = "vktech_habr"
+name = "VK Tech на Хабре"
+url = "https://habr.com/ru/companies/vktech/articles/"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://habr.com/ru/rss/companies/vktech/articles/?fl=ru"
+
+[[source]]
+id = "ozontech_habr"
+name = "Ozon Tech на Хабре"
+url = "https://habr.com/ru/companies/ozontech/articles/"
+type = "engineering_blog"
+category = "backend"
+priority = 4
+kind = "feed"
+feed = "https://habr.com/ru/rss/companies/ozontech/articles/?fl=ru"
+
+# --- 3. AI для разработчика -------------------------------------------------
+
+[[source]]
+id = "openai_dev_blog"
+name = "OpenAI Developer Blog"
+url = "https://developers.openai.com/blog"
+type = "official"
+category = "ai"
+priority = 5
+kind = "page"
+match = "/blog/"
+
+[[source]]
+id = "openai_changelog"
+name = "OpenAI API Changelog"
+url = "https://developers.openai.com/api/docs/changelog"
+type = "official_changelog"
+category = "ai"
+priority = 5
+kind = "page"
+match = "/api/docs/changelog"
+
+[[source]]
+id = "anthropic_engineering"
+name = "Anthropic Engineering"
+url = "https://www.anthropic.com/engineering"
+type = "official"
+category = "ai"
+priority = 5
+kind = "page"
+match = "/engineering/"
+
+[[source]]
+id = "deepmind_blog"
+name = "Google DeepMind Blog"
+url = "https://deepmind.google/blog/"
+type = "official"
+category = "ai"
+priority = 4
+kind = "feed"
+feed = "https://deepmind.google/blog/rss.xml"
+
+[[source]]
+id = "huggingface_blog"
+name = "Hugging Face Blog"
+url = "https://huggingface.co/blog"
+type = "official"
+category = "ai"
+priority = 4
+kind = "feed"
+feed = "https://huggingface.co/blog/feed.xml"
+
+[[source]]
+id = "copilot_changelog"
+vendor = "github"
+name = "GitHub Copilot Changelog"
+url = "https://github.blog/changelog/label/copilot/"
+type = "official_changelog"
+category = "ai"
+priority = 5
+kind = "feed"
+feed = "https://github.blog/changelog/label/copilot/feed/"
+
+[[source]]
+id = "langchain_blog"
+name = "LangChain Blog"
+url = "https://blog.langchain.com/"
+type = "engineering_blog"
+category = "ai"
+priority = 4
+kind = "feed"
+feed = "https://blog.langchain.com/rss/"
+enabled = false
+note = "лента не разбирается, а из 30 разобранных в выпуски не попал ни один (2026-10-15)"
+
+[[source]]
+id = "llamaindex_blog"
+name = "LlamaIndex Blog"
+url = "https://www.llamaindex.ai/blog"
+type = "engineering_blog"
+category = "ai"
+priority = 4
+kind = "page"
+match = "/blog/"
+
+# --- 4. YouTube, зарубежные -------------------------------------------------
+
+[[source]]
+id = "fireship"
+name = "Fireship"
+url = "https://www.youtube.com/@Fireship"
+type = "youtube_expert"
+authority = 0.70
+category = "youtube_en"
+priority = 4
+kind = "youtube"
+handle = "Fireship"
+
+[[source]]
+id = "theprimeagen"
+name = "ThePrimeagen"
+url = "https://www.youtube.com/@ThePrimeagen"
+type = "youtube_expert"
+category = "youtube_en"
+priority = 4
+kind = "youtube"
+handle = "ThePrimeagen"
+channel_id = "UC8ENHE5xdFSwx71u3fDH5Xw"
+
+[[source]]
+id = "theprimetime"
+name = "ThePrimeTime"
+url = "https://www.youtube.com/@ThePrimeTimeagen"
+type = "youtube_expert"
+category = "youtube_en"
+priority = 4
+kind = "youtube"
+handle = "ThePrimeTimeagen"
+channel_id = "UCUyeluBRhGPCW4rPe_UvBZQ"
+
+[[source]]
+id = "hussein_nasser"
+name = "Hussein Nasser"
+url = "https://www.youtube.com/@hnasr"
+type = "youtube_expert"
+category = "youtube_en"
+priority = 5
+kind = "youtube"
+handle = "hnasr"
+
+[[source]]
+id = "bytebytego"
+name = "ByteByteGo"
+url = "https://www.youtube.com/@ByteByteGo"
+type = "youtube_expert"
+category = "youtube_en"
+priority = 4
+kind = "youtube"
+handle = "ByteByteGo"
+
+[[source]]
+id = "t3gg"
+name = "Theo / t3.gg"
+url = "https://www.youtube.com/@t3dotgg"
+type = "youtube_expert"
+category = "youtube_en"
+priority = 4
+kind = "youtube"
+handle = "t3dotgg"
+
+[[source]]
+id = "techworld_nana"
+name = "TechWorld with Nana"
+url = "https://www.youtube.com/@TechWorldwithNana"
+type = "youtube_expert"
+category = "youtube_en"
+priority = 4
+kind = "youtube"
+handle = "TechWorldwithNana"
+
+[[source]]
+id = "ardanlabs"
+name = "Ardan Labs"
+url = "https://www.youtube.com/@ardanlabs"
+type = "youtube_expert"
+category = "youtube_en"
+priority = 5
+kind = "youtube"
+handle = "ardanlabs"
+
+[[source]]
+id = "gophercon"
+name = "GopherCon / Gopher Academy"
+url = "https://www.youtube.com/@GopherAcademy"
+type = "conference"
+category = "youtube_en"
+priority = 5
+kind = "youtube"
+handle = "GopherAcademy"
+
+[[source]]
+id = "karpathy"
+name = "Andrej Karpathy"
+url = "https://www.youtube.com/@AndrejKarpathy"
+type = "youtube_expert"
+category = "youtube_en"
+priority = 5
+kind = "youtube"
+handle = "AndrejKarpathy"
+
+[[source]]
+id = "gaurav_sen"
+name = "Gaurav Sen"
+url = "https://www.youtube.com/@gkcs"
+type = "youtube_expert"
+category = "youtube_en"
+priority = 4
+kind = "youtube"
+handle = "gkcs"
+
+# --- 5. YouTube, RU/CIS -----------------------------------------------------
+
+[[source]]
+id = "yandex_backend_yt"
+name = "Yandex for Backend"
+url = "https://www.youtube.com/@YandexforBackend"
+type = "conference"
+category = "youtube_ru"
+priority = 5
+kind = "youtube"
+handle = "YandexforBackend"
+
+[[source]]
+id = "avitotech_yt"
+name = "AvitoTech"
+url = "https://www.youtube.com/@AvitoTech"
+type = "conference"
+category = "youtube_ru"
+priority = 5
+kind = "youtube"
+handle = "AvitoTech"
+
+[[source]]
+id = "golangconf_yt"
+name = "Golang Channel / GolangConf"
+url = "https://www.youtube.com/@GolangChannel"
+type = "conference"
+category = "youtube_ru"
+priority = 5
+kind = "youtube"
+handle = "GolangChannel"
+
+[[source]]
+id = "highload_yt"
+name = "HighLoad++"
+url = "https://www.youtube.com/@HighLoadChannel"
+type = "conference"
+authority = 0.75
+category = "youtube_ru"
+priority = 5
+kind = "youtube"
+handle = "HighLoadChannel"
+
+[[source]]
+id = "podlodka_yt"
+name = "Podlodka"
+url = "https://www.youtube.com/@PodlodkaShow"
+type = "youtube_expert"
+category = "youtube_ru"
+priority = 4
+kind = "youtube"
+handle = "PodlodkaShow"
+channel_id = "UCOei1E1Vqq10S913OEqTWGw"
+
+[[source]]
+id = "moscowpython_yt"
+name = "MoscowPython"
+url = "https://www.youtube.com/@moscowdjangoru"
+type = "conference"
+category = "youtube_ru"
+priority = 3
+kind = "youtube"
+handle = "moscowdjangoru"
+channel_id = "UC-OVMPlMA3-YCIeg4z5z23A"
+
+[[source]]
+id = "itboroda_yt"
+name = "АйТиБорода"
+url = "https://www.youtube.com/@АйТиБорода"
+type = "youtube_expert"
+category = "youtube_ru"
+priority = 3
+kind = "youtube"
+handle = "АйТиБорода"
+
+# Пилот с 2026-10-15: разборы «посмотреть и разобрать», не новости. Потолок 6 —
+# в главное не идут даже с confirmed_by, только в рубрику YouTube.
+[[source]]
+id = "balun_yt"
+name = "Владимир Балун"
+url = "https://www.youtube.com/@vladimir_balun_programming"
+type = "youtube_expert"
+category = "youtube_ru"
+priority = 3
+kind = "youtube"
+handle = "vladimir_balun_programming"
+max_importance = 6
+
+[[source]]
+id = "tuzov_yt"
+name = "Николай Тузов"
+url = "https://www.youtube.com/@nikolay_tuzov"
+type = "youtube_expert"
+category = "youtube_ru"
+priority = 3
+kind = "youtube"
+handle = "nikolay_tuzov"
+max_importance = 6
+
+[[source]]
+id = "olezhek28_yt"
+name = "Olezhek28 Go"
+url = "https://www.youtube.com/@olezhek28go"
+type = "youtube_expert"
+category = "youtube_ru"
+priority = 3
+kind = "youtube"
+handle = "olezhek28go"
+max_importance = 6
+
+# --- 6. Telegram ------------------------------------------------------------
+
+[[source]]
+id = "avitotech_tg"
+name = "AvitoTech"
+url = "https://t.me/avitotech"
+type = "telegram_channel"
+authority = 0.80
+category = "telegram"
+priority = 5
+kind = "telegram"
+channel = "avitotech"
+
+[[source]]
+id = "yandex_backend_tg"
+name = "Yandex for Backend"
+url = "https://t.me/yandexforbackend"
+type = "telegram_channel"
+category = "telegram"
+priority = 5
+kind = "telegram"
+channel = "yandexforbackend"
+
+[[source]]
+id = "highload_tg"
+name = "HighLoad++"
+url = "https://t.me/highloadchannel"
+type = "telegram_channel"
+authority = 0.75
+category = "telegram"
+priority = 4
+kind = "telegram"
+channel = "highloadchannel"
+
+[[source]]
+id = "postgrespro_tg"
+name = "Postgres Professional"
+url = "https://t.me/postgres_pro"
+type = "telegram_channel"
+category = "telegram"
+priority = 4
+kind = "telegram"
+channel = "postgres_pro"
+
+[[source]]
+id = "moscowpython_tg"
+name = "MoscowPython"
+url = "https://t.me/moscow_python"
+type = "telegram_channel"
+category = "telegram"
+priority = 3
+kind = "telegram"
+channel = "moscow_python"
+
+[[source]]
+id = "goproglib_tg"
+name = "Go Proglib"
+url = "https://t.me/goproglib"
+type = "telegram_channel"
+category = "telegram"
+priority = 3
+kind = "telegram"
+channel = "goproglib"
+
+[[source]]
+id = "golang_ru_tg"
+name = "Golang RU"
+url = "https://t.me/golang_ru"
+type = "telegram_community"
+category = "telegram"
+priority = 5
+kind = "telegram"
+channel = "golang_ru"
+enabled = false
+note = "чат: веб-превью t.me/s отдаёт только каналы, для чатов нужен клиент MTProto"
+
+[[source]]
+id = "devops_ru_tg"
+name = "DevOps RU"
+url = "https://t.me/devops_ru"
+type = "telegram_community"
+category = "telegram"
+priority = 4
+kind = "telegram"
+channel = "devops_ru"
+enabled = false
+note = "чат: веб-превью t.me/s отдаёт только каналы, для чатов нужен клиент MTProto"
+
+[[source]]
+id = "kubernetes_ru_tg"
+name = "Kubernetes RU"
+url = "https://t.me/kubernetes_ru"
+type = "telegram_community"
+category = "telegram"
+priority = 4
+kind = "telegram"
+channel = "kubernetes_ru"
+enabled = false
+note = "чат: веб-превью t.me/s отдаёт только каналы, для чатов нужен клиент MTProto"
+
+[[source]]
+id = "docker_ru_tg"
+name = "Docker RU"
+url = "https://t.me/docker_ru"
+type = "telegram_community"
+category = "telegram"
+priority = 4
+kind = "telegram"
+channel = "docker_ru"
+enabled = false
+note = "чат: веб-превью t.me/s отдаёт только каналы, для чатов нужен клиент MTProto"
+
+# --- 7. Радар: находят темы, но не подтверждают их --------------------------
+
+[[source]]
+id = "hackernews"
+name = "Hacker News"
+url = "https://news.ycombinator.com/"
+type = "aggregator"
+category = "radar"
+priority = 4
+kind = "feed"
+feed = "https://hnrss.org/frontpage?points=150"
+
+[[source]]
+id = "infoq"
+name = "InfoQ"
+url = "https://www.infoq.com/"
+type = "aggregator"
+category = "radar"
+priority = 4
+kind = "feed"
+feed = "https://feed.infoq.com/"
+
+[[source]]
+id = "lobsters"
+name = "Lobsters"
+url = "https://lobste.rs/"
+type = "aggregator"
+category = "radar"
+priority = 3
+kind = "feed"
+feed = "https://lobste.rs/rss"
+
+[[source]]
+id = "reddit_golang"
+name = "Reddit / r/golang"
+url = "https://www.reddit.com/r/golang/"
+type = "aggregator"
+category = "radar"
+priority = 3
+kind = "feed"
+feed = "https://www.reddit.com/r/golang/top/.rss?t=day"
+
+[[source]]
+id = "reddit_programming"
+name = "Reddit / r/programming"
+url = "https://www.reddit.com/r/programming/"
+type = "aggregator"
+category = "radar"
+priority = 2
+kind = "feed"
+feed = "https://www.reddit.com/r/programming/top/.rss?t=day"
+enabled = false
+note = "HTTP 429, а из 17 разобранных в выпуски не попал ни один (2026-10-15)"
+
+# --- 8. Рассылки и хабы: что заметили редакторы недели --------------------
+# Вторичные: тема из рассылки без первоисточника — не выше 6.
+
+[[source]]
+id = "golang_weekly"
+name = "Golang Weekly"
+url = "https://golangweekly.com/"
+type = "newsletter"
+category = "radar"
+priority = 4
+kind = "feed"
+feed = "https://cprss.s3.amazonaws.com/golangweekly.com.xml"
+
+[[source]]
+id = "postgres_weekly"
+name = "Postgres Weekly"
+url = "https://postgresweekly.com/"
+type = "newsletter"
+category = "radar"
+priority = 4
+kind = "feed"
+feed = "https://cprss.s3.amazonaws.com/postgresweekly.com.xml"
+
+[[source]]
+id = "sre_weekly"
+name = "SRE Weekly"
+url = "https://sreweekly.com/"
+type = "newsletter"
+category = "radar"
+priority = 3
+kind = "feed"
+feed = "https://sreweekly.com/feed/"
+
+[[source]]
+id = "pragmatic_engineer"
+name = "The Pragmatic Engineer"
+url = "https://newsletter.pragmaticengineer.com/"
+type = "newsletter"
+category = "radar"
+priority = 4
+kind = "feed"
+feed = "https://newsletter.pragmaticengineer.com/feed"
+
+[[source]]
+id = "habr_go"
+name = "Хабр, хаб Go"
+url = "https://habr.com/ru/hubs/go/articles/"
+type = "aggregator"
+category = "radar"
+priority = 3
+kind = "feed"
+feed = "https://habr.com/ru/rss/hubs/go/articles/?fl=ru"
+enabled = false
+note = "первый этап v2: агрегаторов и так много — включить после пересмотра"
+
+[[source]]
+id = "habr_postgresql"
+name = "Хабр, хаб PostgreSQL"
+url = "https://habr.com/ru/hubs/postgresql/articles/"
+type = "aggregator"
+category = "radar"
+priority = 3
+kind = "feed"
+feed = "https://habr.com/ru/rss/hubs/postgresql/articles/?fl=ru"
+enabled = false
+note = "первый этап v2: агрегаторов и так много — включить после пересмотра"
