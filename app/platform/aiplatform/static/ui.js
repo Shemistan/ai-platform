@@ -70,6 +70,12 @@ export function seconds(value) {
 
 // --- Общие компоненты вкладок движка ---
 
+// fill(узел, ...дети) — как replaceChildren, но null и false пропускаются, как в h().
+export function fill(node, ...children) {
+  node.replaceChildren(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
+  return node;
+}
+
 // chip("готово", "ok") — метка состояния: ok, warn, bad, info или без тона.
 export function chip(text, tone = "") {
   return h("span", { class: `chip${tone ? ` ${tone}` : ""}` }, text);

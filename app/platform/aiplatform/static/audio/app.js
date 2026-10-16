@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, api, chip, debounce, followTask, h, logBlock, modal, progressBar, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, api, chip, debounce, fill, followTask, h, logBlock, modal, progressBar, seconds, shortDate, statusChip, taskCard } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -35,7 +35,7 @@ function fillEngines(saved) {
   const ready = state.config.engines.filter((e) => !e.problem);
   const wanted = saved.engine || state.config.default_engine;
   const pick = state.config.engines.find((e) => e.id === wanted && !e.problem) || ready[0] || state.config.engines[0];
-  $("engine").replaceChildren(
+  fill($("engine"), 
     ...state.config.engines.map((e) =>
       h("option", { value: e.id, selected: e.id === pick.id, disabled: Boolean(e.problem) }, e.problem ? `${e.label} — недоступен` : e.label),
     ),
@@ -45,7 +45,7 @@ function fillEngines(saved) {
 function fillVoices(saved = {}) {
   const e = engine();
   const voice = e.voices.includes(saved.voice) ? saved.voice : e.default_voice;
-  $("voice").replaceChildren(...e.voices.map((v) => h("option", { value: v, selected: v === voice }, v)));
+  fill($("voice"), ...e.voices.map((v) => h("option", { value: v, selected: v === voice }, v)));
   $("speed-field").hidden = !e.speed;
   $("steps-field").hidden = !e.steps;
   $("steps").placeholder = e.default_steps ? `${e.default_steps} по умолчанию` : "";
@@ -87,7 +87,7 @@ function renderPreview(data) {
   if (data.issues.length) parts.push(`${data.issues.length} ${plural(data.issues.length, "замечание", "замечания", "замечаний")}`);
   $("pron-summary").textContent = `Как прочитает модель: ${parts.join(" · ")}`;
   $("pron-text").textContent = data.script;
-  $("pron-remarks").replaceChildren(...data.issues.map((i) => h("li", { class: "muted" }, `строка ${i.line}: ${i.message}`)));
+  fill($("pron-remarks"), ...data.issues.map((i) => h("li", { class: "muted" }, `строка ${i.line}: ${i.message}`)));
   $("pronunciation").hidden = false;
 }
 
@@ -112,7 +112,7 @@ async function openLibrary() {
   try {
     items = (await api("GET", `${API}/library`)).items;
   } catch (err) {
-    list.replaceChildren(h("p", { class: "job-error" }, err.message));
+    fill(list, h("p", { class: "job-error" }, err.message));
     return;
   }
   const render = () => {
@@ -146,7 +146,7 @@ async function openLibrary() {
         );
       }
     }
-    list.replaceChildren(...(out.length ? out : [h("p", { class: "empty" }, q ? "Ничего не нашлось." : "В библиотеке пока нет текстов.")]));
+    fill(list, ...(out.length ? out : [h("p", { class: "empty" }, q ? "Ничего не нашлось." : "В библиотеке пока нет текстов.")]));
   };
   search.addEventListener("input", render);
   render();
@@ -186,7 +186,7 @@ function renderBatch() {
   }
   const max = state.config.max_batch;
   const over = batch.articles.length > max;
-  box.replaceChildren(
+  fill(box, 
     h(
       "div",
       { class: "card-head" },
@@ -336,12 +336,12 @@ function checkBlock(check) {
 function renderJob(job) {
   const box = $("job");
   if (!job) {
-    box.replaceChildren(h("p", { class: "muted" }, "Здесь появится озвучка."));
+    fill(box, h("p", { class: "muted" }, "Здесь появится озвучка."));
     return;
   }
   const active = job.status === "queued" || job.status === "running";
   const meta = [job.engine_label, job.voice, job.speed ? `×${job.speed}` : "", job.steps ? `${job.steps} шагов` : "", `${job.chars} знаков`].filter(Boolean).join(" · ");
-  box.replaceChildren(
+  fill(box, 
     h(
       "div",
       { class: "job" },
@@ -368,7 +368,7 @@ function renderJob(job) {
 }
 
 function renderHistory() {
-  $("history").replaceChildren(
+  fill($("history"), 
     ...(state.jobs.length
       ? state.jobs.map((job) =>
           h(
@@ -436,7 +436,7 @@ async function openVoices() {
     try {
       renderVoices(await api("GET", `${API}/voices`), content, taskBox, reload);
     } catch (err) {
-      content.replaceChildren(h("p", { class: "job-error" }, err.message));
+      fill(content, h("p", { class: "job-error" }, err.message));
     }
   };
   await reload();
@@ -445,7 +445,7 @@ async function openVoices() {
 function renderVoices(data, content, taskBox, reload) {
   const busy = Boolean(data.task);
   if (data.task) watchVoiceTask(data.task, taskBox, reload);
-  content.replaceChildren(
+  fill(content, 
     ...data.voices.map((v) => {
       const tone = v.custom ? "info" : v.sample_url ? "" : "warn";
       const status = v.custom ? "записан вами" : v.sample_url ? "встроенный" : "не записан";
@@ -519,14 +519,14 @@ async function startRecord(stem, payload, taskBox, reload) {
     const task = await api("POST", `${API}/voices/${stem}`, payload);
     watchVoiceTask(task, taskBox, reload);
   } catch (err) {
-    taskBox.replaceChildren(h("p", { class: "job-error" }, err.message));
+    fill(taskBox, h("p", { class: "job-error" }, err.message));
   }
 }
 
 async function watchVoiceTask(task, taskBox, reload) {
   if (taskBox.dataset.watching === task.id) return;
   taskBox.dataset.watching = task.id;
-  const final = await followTask(`${API}/tasks/${task.id}`, (t) => taskBox.replaceChildren(taskCard(t, { full: true })));
+  const final = await followTask(`${API}/tasks/${task.id}`, (t) => fill(taskBox, taskCard(t, { full: true })));
   delete taskBox.dataset.watching;
   if (final.status === "done") {
     await reload();
@@ -594,5 +594,5 @@ async function init() {
 }
 
 init().catch((err) => {
-  $("job").replaceChildren(h("p", { class: "job-error" }, `Не удалось загрузить настройки: ${err.message}`));
+  fill($("job"), h("p", { class: "job-error" }, `Не удалось загрузить настройки: ${err.message}`));
 });

@@ -303,3 +303,9 @@ blockquote.quote { margin: 0; padding: 6px 12px; border-left: 3px solid var(--li
 .empty { padding: 20px; text-align: center; color: var(--muted); }
 .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
 .switch input { width: 34px; height: 20px; accent-color: var(--accent); }
+
+/* Раскрывающийся блок настроек: те же, что у сценариев. */
+.wide details.settings-box { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.wide details.settings-box summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.wide details.settings-box[open] summary { margin-bottom: 12px; }
+form.field { gap: 12px; }

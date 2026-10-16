@@ -68,7 +68,9 @@ def load(config: Config) -> StudioConfig:
         llm_cmd = tuple(shlex.split(pick(env, "AIP_LLM_CMD", default=DEFAULT_LLM_CMD)))
         news_cmd = pick(env, "AIP_NEWS_CMD", default=DEFAULT_NEWS_CMD)
         news_where = pick(env, "AIP_NEWS_WHERE", default=DEFAULT_NEWS_WHERE)
-    channels = pick(env, "AIP_CHANNELS", default=str(SERVICE_DIR / "channels.json"))
+    # В демо свой список каналов в данных демо: настоящий channels.json не трогаем.
+    home = config.data_dir if config.fake else SERVICE_DIR
+    channels = pick(env, "AIP_CHANNELS", default=str(home / "channels.json"))
     return StudioConfig(
         data_dir=data_dir,
         fake=config.fake,
