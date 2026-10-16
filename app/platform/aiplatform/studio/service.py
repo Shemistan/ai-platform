@@ -6,13 +6,16 @@ import hashlib
 import json
 import mimetypes
 import re
+import time
 from http import HTTPStatus
 
 from aiplatform.audio import voices
+from aiplatform.core import media
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
+from aiplatform.studio import estimate as estimate_module
 from aiplatform.studio import news, publish, slides, steps
 from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError
@@ -70,6 +73,7 @@ _FILE = re.compile(
     r"|publish/[a-z0-9_-]+/(video\.mp4|title\.txt|description\.txt))$"
 )
 _SLIDE = re.compile(r"^\d{2}$")
+RATES_TTL_S = 60
 # Копия выпуска: что не переносится (итоги сборки и публикации) и чьи статусы переносятся.
 CLONE_SKIP = {
     "project.json",
@@ -126,6 +130,8 @@ class StudioModule:
         self.ctx = ctx
         self.config = studio_config.load(ctx.config)
         self.studio = Studio(self.config.projects_dir, steps.STEPS)
+        self._rates: tuple[float, estimate_module.Rates] | None = None
+        self._durations: dict[tuple[str, int], float] = {}
 
     def bind(self) -> None:
         """Соседние вкладки готовы — сценарии будут ставить задачи в их очереди."""
@@ -575,7 +581,123 @@ class StudioModule:
         project["review"] = {"verdict": steps.verdict(review), "text": review} if review else None
         found = registry.mentioned(f"{project['title']}\n{read(steps.TEXT)}\n{read(steps.POST)}", self.banned())
         project["disclaimers"] = [{"name": e.name, "note": e.disclaimer + "."} for e in found]
+        plan = self._plan(folder) or None
+        voice = steps.find(folder, "voice", steps.AUDIO_EXT)
+        project["estimate"] = estimate_module.estimate(
+            scenario=project["scenario"],
+            settings=project["settings"],
+            text=read(steps.TEXT),
+            plan=plan,
+            statuses={s: raw[s]["status"] for s in STEP_IDS},
+            have_images=len(project["files"]["images"]),
+            rates=self.rates(),
+            audio_s=self._duration(voice) if voice is not None else None,
+        )
+        project["preflight"] = self.preflight(project["scenario"], project["settings"], read(steps.TEXT))
         return project
+
+    # --- оценка и проверка до запуска ---
+
+    def _duration(self, path) -> float:
+        """Длительность озвучки для оценки; ffprobe — только когда файл сменился."""
+        stamp = (str(path), path.stat().st_mtime_ns)
+        if stamp not in self._durations:
+            self._durations = {stamp: media.duration(path, self.config.ffmpeg)}
+        return self._durations[stamp]
+
+    def rates(self) -> estimate_module.Rates:
+        """Ставки по истории задач; пересчёт не чаще раза в минуту — страница выпуска опрашивает часто."""
+        now = time.monotonic()
+        if self._rates is None or now - self._rates[0] > RATES_TTL_S:
+            modules = self.ctx.modules
+            projects = [self.studio.get(p["id"]) or {} for p in self.studio.list()]
+            found = estimate_module.rates(
+                modules["photo"].jobs.list(), modules["video"].jobs.list(), modules["audio"].jobs.list(), projects
+            )
+            self._rates = (now, found)
+        return self._rates[1]
+
+    def preflight(self, scenario: str, settings: dict, text: str) -> list[dict]:
+        """Что помешает выпуску дойти до канала или задержит его — видно до «Запустить всё».
+        warn — сломается или не опубликуется, info — будет ждать тебя."""
+        out: list[dict] = []
+
+        def warn(message: str) -> None:
+            out.append({"level": "warn", "text": message})
+
+        def info(message: str) -> None:
+            out.append({"level": "info", "text": message})
+
+        channels = {c.id: c for c in self.channels()}
+        for channel_id in settings.get("channels") or []:
+            channel = channels.get(channel_id)
+            if channel is None:
+                warn(f"Канала {channel_id} больше нет — убери его из выбранных.")
+                continue
+            if channel.format == publish.VERTICAL and (scenario == "post" or not settings.get("shorts")):
+                if scenario == "post":
+                    warn(f"«{channel.label}» ждёт вертикальное видео 9:16, а у поста его нет — выбери канал 16:9.")
+                else:
+                    warn(f"«{channel.label}» ждёт шортс 9:16, а он выключен — включи «Шортс» или убери канал.")
+            if channel.problem():
+                warn(f"«{channel.label}»: {channel.problem()}.")
+        if not settings.get("channels"):
+            info("Каналы не выбраны — публикация будет ждать выбора.")
+        if not self.config.llm_available():
+            warn(f"LLM-команда «{self.config.llm_cmd[0]}» не найдена — промпты и слайды не написать.")
+        draws = settings.get("draw_images") and settings.get("images_mode") == "local" and not settings.get("draft")
+        if scenario != "post" and (settings.get("poster_mode") == "local" or draws):
+            model = next((m for m in self.image_models() if m["id"] == settings.get("image_model")), None)
+            if model is not None and not model["installed"]:
+                warn(f"Модель картинок «{model['label']}» не установлена.")
+        if settings.get("clips") and settings.get("clips_mode") == "local" and not settings.get("draft"):
+            model = next((m for m in self.video_models() if m["id"] == settings.get("video_model")), None)
+            if model is not None and not model["installed"]:
+                warn(f"Модель видео «{model['label']}» не установлена.")
+        waits = []
+        if settings.get("poster_mode") == "upload":
+            waits.append("постер")
+        if scenario != "post" and settings.get("draw_images") and settings.get("images_mode") == "upload":
+            waits.append("картинки слайдов")
+        if scenario != "post" and settings.get("clips") and settings.get("clips_mode") == "upload":
+            waits.append("ролики")
+        if settings.get("voice_mode") == "upload":
+            waits.append("озвучку")
+        if waits:
+            info(f"Выпуск будет ждать твои файлы: {', '.join(waits)}.")
+        if settings.get("review_text"):
+            info("Пауза после текста — выпуск продолжится после «Продолжить».")
+        words = len(text.split())
+        if scenario == "article" and estimate_module.voice_seconds(words) > estimate_module.LONG_VOICE_S:
+            minutes = round(estimate_module.voice_seconds(words) / 60)
+            warn(
+                f"Озвучка ~{minutes} мин — сборка займёт часы, а длинное видео досматривают редко. "
+                "Подумай о серии по главам или выжимке на 5–8 минут."
+            )
+        return out
+
+    def check_draft(self, payload: object) -> dict:
+        """Проверка и оценка для формы «Новый выпуск» — до создания."""
+        if not isinstance(payload, dict):
+            raise bad_request("Тело запроса — не объект JSON.")
+        scenario = payload.get("scenario")
+        if scenario not in SCENARIOS:
+            raise bad_request("Сценарий — digest, article или post.")
+        settings = self.check_settings(payload.get("settings"), self.defaults() | self.scenario_defaults(scenario))
+        text = payload.get("text") if isinstance(payload.get("text"), str) else ""
+        text = text[:MAX_TEXT]
+        if scenario == "post" and not text.strip():
+            text = publish.plain_text(str(payload.get("post") or ""))
+        found = estimate_module.estimate(
+            scenario=scenario,
+            settings=settings,
+            text=text,
+            plan=None,
+            statuses={s: "pending" for s in STEP_IDS},
+            have_images=0,
+            rates=self.rates(),
+        )
+        return {"estimate": found, "preflight": self.preflight(scenario, settings, text)}
 
     def banned(self) -> list[registry.Entry]:
         return steps.banned(self.config)
@@ -760,6 +882,8 @@ class StudioModule:
                 return req.send_json(self.describe())
             case ("GET", ["projects"]):
                 return req.send_json({"projects": self.studio.list(req.arg("scenario"))})
+            case ("POST", ["preflight"]):
+                return req.send_json(self.check_draft(req.json(MAX_BODY)))
             case ("GET", ["board"]):
                 return req.send_json(self.board(archived=req.arg("archived") in ("1", "true")))
             case ("POST", ["projects", pid, "clone"]):

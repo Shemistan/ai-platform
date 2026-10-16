@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, api, h, logBlock, progressBar, seconds, statusChip } from "/ui.js";
+import { $, api, debounce, h, logBlock, progressBar, seconds, statusChip } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -247,6 +247,44 @@ function readSettings(prefix, names = scenario === "post" ? POST_SETTINGS : SETT
   return out;
 }
 
+// --- оценка времени и проверка до запуска ---
+
+function duration(s) {
+  if (!s) return "меньше минуты";
+  const m = Math.round(s / 60);
+  if (m < 1) return "меньше минуты";
+  return m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`;
+}
+
+// «≈ 1 ч 40 мин: картинки 18 шт. — 36 мин, озвучка — 50 мин…» и предупреждения: что сломается или будет ждать.
+function checkBox(data, { done = false } = {}) {
+  if (!data) return null;
+  const { estimate: est, preflight = [] } = data;
+  const parts = (est?.parts || []).map((p) => `${p.label}${p.count ? ` (${p.count})` : ""} — ${duration(p.seconds)}`);
+  const head = done || !est?.parts?.length ? null : h("p", {}, h("strong", {}, `≈ ${duration(est.total_s)}`), h("span", { class: "muted" }, ` до готового видео${est.video_s ? `, ролик ~${duration(est.video_s)}` : ""}`));
+  const items = preflight.map((x) => h("li", { class: x.level }, x.text));
+  if (!head && !items.length) return null;
+  return h(
+    "div",
+    { class: "check-box" },
+    head,
+    parts.length && !done ? h("details", {}, h("summary", { class: "link" }, "Из чего складывается"), h("ul", { class: "small" }, ...parts.map((t) => h("li", {}, t))), h("p", { class: "hint" }, est.from_history ? `По истории задач этой машины (${est.from_history}).` : "Истории задач ещё нет — оценка по умолчанию.")) : null,
+    items.length ? h("ul", { class: "preflight" }, ...items) : null,
+  );
+}
+
+const refreshCreateCheck = debounce(async () => {
+  const box = $("create-check");
+  if (!box) return;
+  const payload = { scenario, settings: readSettings("new") };
+  if (scenario !== "digest") Object.assign(payload, { text: $("text")?.value || "", post: $("post")?.value || "" });
+  try {
+    box.replaceChildren(checkBox(await api("POST", `${API}/preflight`, payload)) || "");
+  } catch {
+    box.replaceChildren();
+  }
+}, 400);
+
 // --- создание ---
 
 function renderCreate() {
@@ -276,6 +314,7 @@ function renderCreate() {
   );
   const defaults = { ...state.config.defaults, ...(state.config.scenario_defaults?.[scenario] || {}) };
   $("create-settings").replaceChildren(settingsForm(defaults, "new"));
+  refreshCreateCheck();
 }
 
 // Подпись поста со счётчиком: Telegram берёт под видео до 1024 знаков.
@@ -853,6 +892,7 @@ function show(project) {
   if (signature === state.signature) return schedule();
   state.signature = signature;
   const running = project.running;
+  const check = checkBox(project, { done: !project.estimate?.parts?.length });
   $("project").replaceChildren(
     h(
       "div",
@@ -896,6 +936,7 @@ function show(project) {
         h("span", { class: "hint" }, "Изменённые настройки сбросят только затронутые шаги."),
       ),
     ),
+    check ? h("div", { class: "panel" }, check) : null,
     h("div", { class: "steps" }, ...project.steps.filter((s) => !HIDDEN_STEPS[project.scenario]?.has(s.id)).map(renderStep)),
     h("div", { class: "panel" }, logBlock(project.log, "Журнал выпуска") || h("p", { class: "muted small" }, "Журнал пуст.")),
   );
@@ -932,6 +973,8 @@ async function init() {
   state.config = await api("GET", `${API}/config`);
   renderCreate();
   $("create").addEventListener("submit", create);
+  $("create").addEventListener("input", refreshCreateCheck);
+  $("create").addEventListener("change", refreshCreateCheck);
   await loadProjects();
   const wanted = new URLSearchParams(location.search).get("project");
   const first = wanted || state.projects[0]?.id;

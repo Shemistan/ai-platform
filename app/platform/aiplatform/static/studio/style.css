@@ -107,3 +107,11 @@
 .step-settings[open] summary { margin-bottom: 4px; }
 .note.verdict { display: grid; gap: 6px; justify-items: start; margin-bottom: 10px; }
 .note.verdict details { width: 100%; }
+
+/* Оценка времени и проверка до запуска. */
+.check-box { display: grid; gap: 6px; font-size: 14px; }
+.check-box .preflight { display: grid; gap: 4px; list-style: none; padding: 0; margin: 0; }
+.check-box .preflight li { padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+.check-box .preflight li.warn { background: var(--bad-bg); color: var(--bad); }
+.check-box .preflight li.info { background: var(--sunken); color: var(--muted); }
+.check-box ul.small { padding-left: 18px; list-style: disc; }

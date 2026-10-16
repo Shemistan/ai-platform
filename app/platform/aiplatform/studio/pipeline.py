@@ -470,7 +470,9 @@ class Studio:
 
     def _run_step(self, project_id: str, step: Step, cancel: threading.Event) -> bool:
         """True — можно идти дальше."""
-        project = self._set(project_id, step.id, status=RUNNING, error=None, note=None, progress=None)
+        project = self._set(
+            project_id, step.id, status=RUNNING, error=None, note=None, progress=None, started_at=time.time()
+        )
         ctx = StepContext(self, project, step.id, cancel)
         self._log(project_id, f"▶ {step.label}")
         try:

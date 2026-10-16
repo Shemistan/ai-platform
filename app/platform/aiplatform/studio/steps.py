@@ -701,6 +701,7 @@ def render_video(
         thumb.unlink(missing_ok=True)
     size = "×".join(map(str, render.size_of(orientation)))
     ctx.log(f"{out.name}: {audio_s:.0f} с, {len(scene_list)} слайдов, кадр {size}")
+    ctx.remember(media_s=round(audio_s, 1))  # для оценки времени следующих сборок
 
 
 def paced(ctx: StepContext, audio: Path) -> Path:
@@ -830,6 +831,23 @@ def step_publish(ctx: StepContext) -> None:
     post = ctx.read(POST)
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
+    # Сначала все каналы: что не уйдёт — видно сразу, и ни один канал не получит выпуск наполовину.
+    problems = []
+    photo_post = ctx.settings.get("post_format") == "photo"
+    for channel_id in chosen:
+        channel = channels.get(channel_id)
+        if channel is None:
+            problems.append(f"канала {channel_id} нет в {svc.config.channels_file.name}")
+            continue
+        if channel.type == publish.TELEGRAM and channel.problem():
+            problems.append(f"{channel.label}: {channel.problem()}")
+        elif not (channel.type == publish.TELEGRAM and photo_post):
+            video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
+            if not video.is_file():
+                hint = "включи «Шортс» и собери его" if channel.format == VERTICAL else "собери видео"
+                problems.append(f"{channel.label}: нет видео — {hint}")
+    if problems:
+        raise StudioError("Ничего не отправлено: " + "; ".join(problems) + ".")
     results = []
     for n, channel_id in enumerate(chosen, start=1):
         channel = channels.get(channel_id)
