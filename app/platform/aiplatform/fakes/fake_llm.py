@@ -1,8 +1,9 @@
 """Имитация LLM-CLI (`claude -p`) для демо и тестов: промпт со stdin, ответ в stdout.
 
-Задачу узнаёт по первой строке промпта (`### task: poster|plan|short`) и
-отвечает детерминированно по тексту: промпт постера, план слайдов на
-каждый абзац (до 8), сценарий шортса из первых фраз.
+Задачу узнаёт по первой строке промпта (`### task: poster|plan|short|registry`)
+и отвечает детерминированно по тексту: промпт постера, план слайдов на
+каждый абзац (до 8), сценарий шортса из первых фраз, реестр организаций —
+текущий список плюс одна демо-запись.
 
 Окружение: FAKE_LLM_FAIL=1 — упасть; FAKE_LLM_GARBAGE=1 — ответить не JSON.
 """
@@ -15,6 +16,15 @@ import re
 import sys
 
 _PARA = re.compile(r"^\[(\d+)\]\s*(.+)$", re.M)
+DEMO_ENTRY = {
+    "id": "demo-corp",
+    "name": "Демо-корпорация",
+    "status": "undesirable",
+    "aliases": ["Демо-корпораци*", "Demo Corp"],
+    "disclaimer": "Демо-корпорация — вымышленная запись демо-режима",
+    "basis": "демо",
+    "source": "",
+}
 
 
 def _words(text: str, n: int) -> str:
@@ -62,6 +72,11 @@ def answer(prompt: str) -> str:
         ]
         beats.append({"title": "Подписывайся", "text": "Подписывайся, чтобы не пропустить следующий выпуск."})
         return json.dumps({"beats": beats}, ensure_ascii=False)
+    if task == "registry":
+        current = json.loads(prompt.rsplit("```json", 1)[1].split("```", 1)[0])
+        entries = [e for e in current["entries"] if e.get("id") != DEMO_ENTRY["id"]] + [DEMO_ENTRY]
+        data = {"entries": entries, "notes": "Демо: добавлена вымышленная запись, проверь её перед применением."}
+        return "```json\n" + json.dumps(data, ensure_ascii=False, indent=2) + "\n```"
     return "Не знаю такой задачи."
 
 

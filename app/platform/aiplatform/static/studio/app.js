@@ -158,6 +158,23 @@ function settingsForm(values, prefix) {
     h(
       "fieldset",
       {},
+      h("legend", {}, "Оформление"),
+      check(
+        "branding",
+        "Плашка «подпишись» и кнопка «плей»",
+        "Первый кадр — обложка: постер притемнён, по центру плей, внизу крупная плашка; дальше плашка плавно уезжает в угол и остаётся до конца. Этот кадр — обложка видео в Telegram.",
+        values.branding,
+      ),
+      check(
+        "disclaimers",
+        "Помечать запрещённые в РФ организации",
+        h("span", {}, "Мелкий текст на слайдах, где упомянута, например, Meta, и строка в конце поста. Список — на вкладке ", h("a", { class: "link", href: "/updates/" }, "«Обновления»"), "."),
+        values.disclaimers,
+      ),
+    ),
+    h(
+      "fieldset",
+      {},
       h("legend", {}, "Публикация"),
       ...channels,
       check("auto_publish", "Публиковать сразу, без моей проверки", null, values.auto_publish),
@@ -183,6 +200,8 @@ function readSettings(prefix) {
     voice: get("voice").value,
     shorts: get("shorts").checked,
     review_text: get("review_text").checked,
+    disclaimers: get("disclaimers").checked,
+    branding: get("branding").checked,
     auto_publish: get("auto_publish").checked,
     channels: [...document.querySelectorAll(`input[name="${prefix}-channels"]:checked`)].map((i) => i.value),
   };
@@ -428,6 +447,20 @@ function jobLink(step) {
   return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${tab}»`);
 }
 
+function disclaimerBox() {
+  const found = state.project.disclaimers || [];
+  if (!found.length) return null;
+  if (!state.project.settings.disclaimers) {
+    return h("p", { class: "hint" }, `В тексте есть ${found.map((d) => d.name).join(", ")} — пометки выключены в настройках выпуска.`);
+  }
+  return h(
+    "div",
+    { class: "note disclaimers" },
+    h("strong", {}, "Пометки на видео и в посте"),
+    h("ul", {}, ...found.map((d) => h("li", {}, d.note))),
+  );
+}
+
 function stepBody(step) {
   const p = state.project;
   const a = p.artifacts;
@@ -480,9 +513,12 @@ function stepBody(step) {
         h("div", { class: "actions" }, uploader("voice", "audio/mpeg,audio/wav,audio/mp4,.m4a", f.voice ? "Заменить своим mp3" : "Загрузить озвучку"), jobLink(step)),
       ];
     case "render":
-      return f.video
-        ? [h("video", { controls: true, src: f.video, preload: "metadata", poster: f.poster || null }), h("a", { class: "link", href: `${f.video.split("?")[0]}?download=1` }, "Скачать видео 16:9")]
-        : [];
+      return [
+        disclaimerBox(),
+        ...(f.video
+          ? [h("video", { controls: true, src: f.video, preload: "metadata", poster: f.poster || null }), h("a", { class: "link", href: `${f.video.split("?")[0]}?download=1` }, "Скачать видео 16:9")]
+          : []),
+      ];
     case "short":
       return [
         a.short ? h("details", {}, h("summary", { class: "link" }, `Сценарий шортса: ${a.short.beats.length} частей`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,

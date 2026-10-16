@@ -10,8 +10,10 @@ from pathlib import Path
 
 from aiplatform.audio import config as audio_config
 from aiplatform.config import SERVICE_DIR, Config, pick
+from aiplatform.updates import registry
 
 FAKES = Path(__file__).resolve().parent.parent / "fakes"
+ASSETS = Path(__file__).resolve().parent / "assets"  # плашка «подпишись» и кнопка «плей», как у narrator
 DEFAULT_LLM_CMD = "claude -p"
 DEFAULT_IMAGE_MODEL = "z-image-turbo"  # быстрая и лёгкая: картинок на ролик много
 # {narrator} и {day} подставляются; команда сбора — как `make news DAY=…` в narrator.
@@ -32,6 +34,9 @@ class StudioConfig:
     ffmpeg: str
     font: str
     render_scale: float
+    registry_file: Path  # реестр запрещённых организаций: пометки на видео и в посте
+    sticker: Path  # плашка «подпишись» (PNG с прозрачностью)
+    play: Path  # кнопка «плей» на обложке видео
 
     @property
     def projects_dir(self) -> Path:
@@ -71,4 +76,7 @@ def load(config: Config) -> StudioConfig:
         ffmpeg=config.ffmpeg,
         font=config.font,
         render_scale=float(pick(env, "AIP_RENDER_SCALE", default="1")),
+        registry_file=config.data_dir / registry.FILE_NAME,
+        sticker=Path(pick(env, "AIP_STUDIO_STICKER", default=str(ASSETS / "subscribe.png"))).expanduser(),
+        play=Path(pick(env, "AIP_STUDIO_PLAY", default=str(ASSETS / "play.png"))).expanduser(),
     )

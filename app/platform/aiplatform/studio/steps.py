@@ -5,13 +5,19 @@
   post.md            — подпись к посту
   poster_prompt.md   — промпт постера (первого кадра)
   poster.png|jpg|webp — постер: сгенерирован локально или загружен
+  narrator/image_prompt.md, narrator/cover.* — промпт и картинка обложки из выпуска narrator (дайджест)
   plan.json          — {title, post, slides: [{para, title, bullets, image_prompt}]}
   images/NN.png|jpg|webp — картинки слайдов (+ NN.json — каким промптом, uploaded — загрузил человек)
   clips/NN.mp4|mov|webm  — видео-фоны слайдов: из вкладки «Видео» или от человека (+ NN.json)
   voice.mp3|wav|m4a  — озвучка
   video.mp4          — 16:9
+  video-cover.jpg, video-thumb.jpg — первый кадр (обложка для Telegram) и миниатюра, если есть оформление
   short.json, short/voice.mp3, short.mp4 — шортс 9:16
   published.json     — куда и что отправлено
+
+Если в тексте упомянута организация из реестра запрещённых в РФ
+(updates/registry.py), на её слайдах внизу идёт мелкая пометка, а в подпись
+к посту она дописывается в конце. Выключается настройкой disclaimers.
 """
 
 from __future__ import annotations
@@ -27,7 +33,8 @@ from aiplatform.studio import news, prompts, publish, slides
 from aiplatform.studio.config import StudioConfig
 from aiplatform.studio.llm import StudioError, complete, extract_json, plain
 from aiplatform.studio.pipeline import Skip, StepContext, Waiting
-from aiplatform.studio.render import INTRO_S, LANDSCAPE, VERTICAL, Renderer
+from aiplatform.studio.render import LANDSCAPE, VERTICAL, Branding, Renderer, intro_seconds
+from aiplatform.updates import registry
 
 TEXT, POST, POSTER_PROMPT, PLAN, SHORT = "text.md", "post.md", "poster_prompt.md", "plan.json", "short.json"
 VIDEO, SHORT_VIDEO, PUBLISHED = "video.mp4", "short.mp4", "published.json"
@@ -38,6 +45,11 @@ IMAGES, CLIPS = "images", "clips"
 # Что лежит в каталоге слайдов: расширения и что показать в сообщениях.
 MEDIA = {IMAGES: (IMAGE_EXT, "картинки"), CLIPS: (CLIP_EXT, "видео")}
 IMAGE_SIZE = "1344x768"  # 16:9 из размеров вкладки «Фото»
+DIGEST_POSTER_SIZE = "1024x1024"  # обложка дайджеста квадратная, как у narrator: в кадре — целиком
+NARRATOR_PROMPT = "narrator/image_prompt.md"
+NARRATOR_COVER = "narrator/cover"
+NARRATOR_FOLDER = "narrator/folder.txt"  # каталог выпуска: туда же человек кладёт обложку из ChatGPT
+NARRATOR_COVER_EXT = (".png", ".jpg", ".jpeg", ".webp")
 CLIP_PRESET = "landscape-m"  # 704×448 из пресетов вкладки «Видео»: быстрее, а ffmpeg растянет до кадра
 CLIP_DURATION_S = 5  # есть у всех видеомоделей; длиннее слайд — ролик идёт по кругу
 MAX_CLIPS = 3  # роликов на выпуск: ключевые моменты, остальные слайды — картинка с наездом
@@ -102,10 +114,10 @@ def wait_job(ctx: StepContext, tab: str, jobs: object, job: dict, what: str) -> 
     return current
 
 
-def generate_image(ctx: StepContext, prompt: str, target: Path, what: str) -> str:
+def generate_image(ctx: StepContext, prompt: str, target: Path, what: str, size: str = IMAGE_SIZE) -> str:
     """Картинка во вкладке «Фото» (и увеличение, если включено). Возвращает id исходной задачи."""
     svc = services(ctx)
-    payload = {"mode": "txt2img", "prompt": prompt, "size": IMAGE_SIZE, "model": ctx.settings["image_model"]}
+    payload = {"mode": "txt2img", "prompt": prompt, "size": size, "model": ctx.settings["image_model"]}
     try:
         job = svc.photo.create(payload)
     except ValueError as exc:
@@ -234,6 +246,20 @@ def uploads_ready(ctx: StepContext, kind: str, items: list[tuple[int, str]]) -> 
     ctx.log(f"{what}: {have} из {len(items)}")
 
 
+def banned(config: StudioConfig) -> list[registry.Entry]:
+    return registry.Registry(config.registry_file).entries()
+
+
+def slide_notes(paras: list[str], plan: list[slides.Slide], entries: list[registry.Entry]) -> list[list[str]]:
+    """Пометки каждого слайда: об организациях из его абзацев, заголовка и тезисов."""
+    out = []
+    for n, slide in enumerate(plan):
+        end = plan[n + 1].para if n + 1 < len(plan) else len(paras)
+        said = "\n".join([*paras[slide.para : max(end, slide.para + 1)], slide.title, *slide.bullets])
+        out.append(registry.notes(said, entries))
+    return out
+
+
 def load_plan(ctx: StepContext) -> tuple[dict, list[slides.Slide]]:
     raw = ctx.read(PLAN)
     if not raw:
@@ -255,6 +281,7 @@ def step_text(ctx: StepContext) -> None:
         post = folder / news.POST
         if post.is_file():
             ctx.write(POST, post.read_text(encoding="utf-8"))
+        take_narrator_cover(ctx, folder)
         ctx.log(f"выпуск: {folder}")
     text = require_text(ctx)
     words = len(text.split())
@@ -263,9 +290,63 @@ def step_text(ctx: StepContext) -> None:
         raise Waiting("Проверь и при необходимости поправь текст, затем нажми «Продолжить».")
 
 
+def take_narrator_cover(ctx: StepContext, folder: Path) -> None:
+    """Промпт обложки (image_prompt.md) и готовую картинку (cover.*) выпуска narrator — в проект."""
+    for old in ctx.path("narrator").glob("*") if ctx.path("narrator").is_dir() else []:
+        old.unlink()
+    source = folder / news.IMAGE_PROMPT
+    if source.is_file() and source.read_text(encoding="utf-8").strip():
+        ctx.write(NARRATOR_PROMPT, source.read_text(encoding="utf-8").strip() + "\n")
+        ctx.log("промпт обложки — из narrator")
+    ctx.write(NARRATOR_FOLDER, str(folder) + "\n")
+    if pull_narrator_cover(ctx):
+        ctx.log("обложка выпуска — из narrator")
+
+
+def pull_narrator_cover(ctx: StepContext) -> bool:
+    """Свежая cover.* из каталога выпуска narrator — в проект. True — обложка появилась или сменилась."""
+    folder = Path(ctx.read(NARRATOR_FOLDER).strip() or ".")
+    cover = find(folder, "cover", NARRATOR_COVER_EXT) if ctx.read(NARRATOR_FOLDER).strip() else None
+    if cover is None:
+        return False
+    current = narrator_cover(ctx)
+    if current is not None and current.read_bytes() == cover.read_bytes():
+        return False
+    if current is not None:
+        current.unlink()
+    shutil.copyfile(cover, ctx.path(NARRATOR_COVER + cover.suffix.lower()))
+    return True
+
+
+def narrator_cover(ctx: StepContext) -> Path | None:
+    return find(ctx.path("narrator"), "cover", NARRATOR_COVER_EXT)
+
+
+def use_narrator_cover(ctx: StepContext, prompt: str) -> bool:
+    """Постер — готовая обложка выпуска narrator, если она есть."""
+    ready = narrator_cover(ctx)
+    if ready is None:
+        return False
+    for old in (ctx.dir / f"poster{ext}" for ext in IMAGE_EXT):
+        old.unlink(missing_ok=True)
+    ext = ".jpg" if ready.suffix == ".jpeg" else ready.suffix
+    shutil.copyfile(ready, ctx.path(f"poster{ext}"))
+    ctx.path("poster.json").write_text(json.dumps({"prompt": prompt, "narrator": True}), encoding="utf-8")
+    ctx.log("постер — готовая обложка выпуска narrator")
+    return True
+
+
 def step_poster_prompt(ctx: StepContext) -> None:
     text = require_text(ctx)
-    prompt = plain(llm(ctx, prompts.poster(text, ctx.project["title"])))
+    if ctx.project["scenario"] == "digest":
+        own = ctx.read(NARRATOR_PROMPT).strip()
+        if own:  # как в narrator: сцена по событиям дня и заголовки на картинке
+            ctx.write(POSTER_PROMPT, own + "\n")
+            ctx.log("промпт обложки — из выпуска narrator")
+            return
+        prompt = plain(llm(ctx, prompts.digest_poster(text, ctx.project["day"])))
+    else:
+        prompt = plain(llm(ctx, prompts.poster(text, ctx.project["title"])))
     if not prompt:
         raise StudioError("LLM не придумала промпт постера.")
     ctx.write(POSTER_PROMPT, prompt + "\n")
@@ -273,14 +354,24 @@ def step_poster_prompt(ctx: StepContext) -> None:
 
 def step_poster(ctx: StepContext) -> None:
     existing = find(ctx.dir, "poster", IMAGE_EXT)
+    prompt = ctx.read(POSTER_PROMPT).strip()
     if ctx.settings["poster_mode"] == "upload":
+        # Обложку делают в ChatGPT: её перетаскивают сюда или кладут в каталог выпуска narrator.
+        from_narrator = existing is None or read_meta(ctx.path("poster.json")).get("narrator")
+        if from_narrator and (pull_narrator_cover(ctx) or existing is None) and use_narrator_cover(ctx, prompt):
+            return
         if existing is None:
-            raise Waiting("Сгенерируй картинку по промпту во внешней модели и загрузи её сюда.")
+            where = ""
+            if ctx.read(NARRATOR_FOLDER).strip():
+                where = f" или положи её в {ctx.read(NARRATOR_FOLDER).strip()} и нажми «Перезапустить шаг»"
+            raise Waiting(f"Сгенерируй картинку по промпту (например, в ChatGPT) и загрузи её сюда{where}.")
         ctx.log(f"постер загружен: {existing.name}")
         return
-    prompt = ctx.read(POSTER_PROMPT).strip()
     if not prompt:
         raise StudioError("Нет промпта постера.")
+    if narrator_cover(ctx) is not None and prompt == ctx.read(NARRATOR_PROMPT).strip():
+        use_narrator_cover(ctx, prompt)
+        return
     model, upscale = ctx.settings["image_model"], ctx.settings.get("upscale_images") or "none"
     meta_path, target = ctx.path("poster.json"), ctx.path("poster.png")
     meta = read_meta(meta_path)
@@ -299,7 +390,8 @@ def step_poster(ctx: StepContext) -> None:
         ctx.progress("Ставлю в очередь «Фото»…")
         for old in (ctx.dir / f"poster{ext}" for ext in IMAGE_EXT):
             old.unlink(missing_ok=True)
-        job_id = generate_image(ctx, prompt, target, "Постер")
+        size = DIGEST_POSTER_SIZE if ctx.project["scenario"] == "digest" else IMAGE_SIZE
+        job_id = generate_image(ctx, prompt, target, "Постер", size)
     want = {"prompt": prompt, "model": model, "job": job_id, "upscale": upscale}
     meta_path.write_text(json.dumps(want, ensure_ascii=False), encoding="utf-8")
 
@@ -409,9 +501,10 @@ def scenes(
     *,
     images: bool = True,
     clips: bool = False,
+    notes: list[list[str]] | None = None,
 ) -> list[dict]:
     """Сцены слайдов. Фон: видео (если включены), иначе картинка (если включены), иначе градиент.
-    cycle — у шортса свой план: файлы слайдов идут по кругу."""
+    cycle — у шортса свой план: файлы слайдов идут по кругу. notes — пометки слайдов."""
     enabled = {IMAGES: images, CLIPS: clips}
     found = {kind: _media_files(folder / kind, MEDIA[kind][0]) if enabled[kind] else [] for kind in MEDIA}
 
@@ -429,6 +522,7 @@ def scenes(
                 "bullets": slide.bullets,
                 "image": pick(IMAGES, n),
                 "clip": pick(CLIPS, n),
+                "notes": notes[n - 1] if notes else [],
                 "seconds": seconds,
             }
         )
@@ -443,11 +537,17 @@ def render_video(
     if audio_s <= 0:
         raise StudioError(f"Не удалось узнать длительность {audio.name} — нужен ffprobe рядом с ffmpeg.")
     poster = find(ctx.dir, "poster", IMAGE_EXT)
-    intro = INTRO_S if poster is not None and audio_s > INTRO_S + 1 else 0.0
-    durations = slides.durations(slides.paragraphs(text), plan, audio_s, intro)
     settings = ctx.settings
+    brand = branding(svc.config) if settings.get("branding") else None
+    intro = intro_seconds(brand) if poster is not None and audio_s > intro_seconds(brand) + 1 else 0.0
+    paras = slides.paragraphs(text)
+    durations = slides.durations(paras, plan, audio_s, intro)
+    notes = slide_notes(paras, plan, banned(svc.config)) if settings.get("disclaimers", True) else None
+    marked = [n for n, found in enumerate(notes or [], start=1) if found]
+    if marked:
+        ctx.log(f"пометки о запрещённых организациях: слайды {', '.join(map(str, marked))}")
     scene_list = scenes(
-        ctx.dir, plan, durations, cycle, images=settings["draw_images"], clips=bool(settings.get("clips"))
+        ctx.dir, plan, durations, cycle, images=settings["draw_images"], clips=bool(settings.get("clips")), notes=notes
     )
 
     def on_progress(done: int, total: int) -> None:
@@ -463,8 +563,27 @@ def render_video(
         orientation=orientation,
         cancel=ctx.cancel,
         on_progress=on_progress,
+        branding=brand,
     )
+    cover, thumb = covers(out)
+    if brand is not None and intro:
+        svc.renderer.cover_frames(out, cover, thumb, ctx.cancel)
+    else:
+        cover.unlink(missing_ok=True)
+        thumb.unlink(missing_ok=True)
     ctx.log(f"{out.name}: {audio_s:.0f} с, {len(scene_list)} слайдов")
+
+
+def branding(config: StudioConfig) -> Branding:
+    missing = [p for p in (config.sticker, config.play) if not p.is_file()]
+    if missing:
+        raise StudioError(f"Нет файла оформления {missing[0]} — проверь AIP_STUDIO_STICKER и AIP_STUDIO_PLAY.")
+    return Branding(sticker=config.sticker, play=config.play)
+
+
+def covers(video: Path) -> tuple[Path, Path]:
+    """Обложка ролика для Telegram (первый кадр: плей и плашка) и её миниатюра."""
+    return video.with_name(f"{video.stem}-cover.jpg"), video.with_name(f"{video.stem}-thumb.jpg")
 
 
 def step_render(ctx: StepContext) -> None:
@@ -522,6 +641,8 @@ def step_publish(ctx: StepContext) -> None:
         plan_title = json.loads(ctx.read(PLAN)).get("title", "")
     title = plan_title or ctx.project["title"]
     post = ctx.read(POST)
+    if ctx.settings.get("disclaimers", True):
+        post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
     results = []
     for n, channel_id in enumerate(chosen, start=1):
         channel = channels.get(channel_id)
@@ -533,6 +654,7 @@ def step_publish(ctx: StepContext) -> None:
             raise StudioError(f"{channel.label}: нет видео — {hint}.")
         ctx.progress(f"{channel.label} ({n} из {len(chosen)})", 100.0 * (n - 1) / len(chosen))
         width, height = media.video_size(video, svc.config.ffmpeg)
+        cover, thumb = covers(video)
         result = publish.publish(
             channel,
             video=video,
@@ -542,6 +664,8 @@ def step_publish(ctx: StepContext) -> None:
             width=width,
             height=height,
             seconds=media.duration(video, svc.config.ffmpeg),
+            cover=cover if cover.is_file() else None,
+            thumb=thumb if thumb.is_file() else None,
         )
         ctx.log(f"{channel.label}: {result['message']}")
         results.append(result | {"label": channel.label})

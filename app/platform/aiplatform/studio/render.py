@@ -3,14 +3,25 @@
 Слайд — видео-фон (ролик из внешней модели: по кругу, без своего звука) или
 картинка-фон с медленным наездом (zoompan), затемнение снизу,
 заголовок и тезисы, которые появляются по очереди (drawtext с alpha по
-времени). Без картинки — тёмный фон с лёгким градиентом. Тексты идут
-через textfile с expansion=none: ни кавычки, ни двоеточия, ни % в тексте
+времени), и мелкая пометка внизу кадра — о запрещённой в РФ организации,
+если она упоминается на слайде. Без картинки — тёмный фон с лёгким
+градиентом.
+
+Постер — первый кадр: картинка целиком (не влезла по пропорциям — по бокам
+её же размытая копия). С оформлением (Branding), как у видео narrator:
+первые COVER_HOLD_S секунд — обложка (постер притемнён, по центру кнопка
+«плей», внизу крупная плашка «подпишись»; этот кадр Telegram показывает
+превью), затем притемнение и плей гаснут, а плашка плавно уезжает в правый
+верхний угол и остаётся там до конца ролика — на всех слайдах.
+
+Тексты идут через textfile с expansion=none: ни кавычки, ни двоеточия, ни % в тексте
 не ломают фильтр. Горизонталь 1920×1080 и вертикаль 1080×1920 — одна сцена,
 разная раскладка.
 """
 
 from __future__ import annotations
 
+import struct
 import subprocess
 import textwrap
 import threading
@@ -29,6 +40,15 @@ ZOOM_MAX = 1.18
 BACKGROUND = "0x141a26"
 ACCENT = "0x7ea2ff"
 INTRO_S = 2.0
+INTRO_BRANDED_S = 3.0  # обложка, переезд плашки в угол и ещё немного чистого постера
+COVER_HOLD_S = 0.8  # обложка с плеем и крупной плашкой — первый кадр и превью в Telegram
+MOVE_S = 1.0  # плашка уезжает в угол
+FADE_S = 0.5  # притемнение и плей гаснут
+COVER_SHADE = 0.6  # притемнение обложки, чтобы плей не терялся в картинке
+PLAY_SHARE = 0.26  # кнопка — доля короткой стороны кадра, как у narrator
+STICKER_BOTTOM = (0.92, 0.28)  # плашка на обложке: доля ширины, не выше доли высоты
+STICKER_CORNER = {"landscape": 0.24, "vertical": 0.5}  # плашка в углу: доля ширины
+MARGIN = 0.03  # отступ от края — доля короткой стороны
 FFMPEG_HINT = "Нужен ffmpeg: brew install ffmpeg (или путь в AIP_FFMPEG)."
 
 
@@ -43,6 +63,52 @@ class Layout:
     shade_y: int  # откуда начинается затемнение
     title_chars: int  # сколько знаков в строке заголовка
     bullet_chars: int
+    note_size: int  # пометка о запрещённой организации: мелко, во всю ширину внизу
+    note_chars: int
+
+
+@dataclass(frozen=True)
+class Branding:
+    """Оформление канала: плашка «подпишись» и кнопка «плей» (PNG с прозрачностью)."""
+
+    sticker: Path
+    play: Path
+
+    @property
+    def ratio(self) -> float:
+        width, height = png_size(self.sticker)
+        return width / height
+
+
+def png_size(path: Path) -> tuple[int, int]:
+    """Ширина и высота PNG из заголовка IHDR."""
+    head = path.read_bytes()[:24]
+    if head[:8] != b"\x89PNG\r\n\x1a\n":
+        raise StudioError(f"{path.name}: не PNG.")
+    return struct.unpack(">II", head[16:24])
+
+
+@dataclass(frozen=True)
+class Box:
+    width: int
+    x: int
+    y: int
+
+
+def sticker_boxes(lay: Layout, ratio: float) -> tuple[Box, Box]:
+    """Где плашка на обложке (крупно внизу по центру) и где весь остальной ролик (в правом верхнем углу)."""
+    w, h = lay.width, lay.height
+    margin = round(min(w, h) * MARGIN)
+    big = _even(min(w * STICKER_BOTTOM[0], h * STICKER_BOTTOM[1] * ratio))
+    corner = _even(w * STICKER_CORNER[VERTICAL if h > w else LANDSCAPE])
+    bottom = Box(big, (w - big) // 2, h - round(big / ratio) - margin)
+    return bottom, Box(corner, w - corner - margin, margin)
+
+
+def _ease(start: float, seconds: float) -> str:
+    """0 → 1 за seconds начиная со start, плавно на концах (smoothstep), — выражение ffmpeg от t."""
+    p = f"min(1,max(0,(t-{start:.3f})/{seconds:.3f}))"
+    return f"({p})*({p})*(3-2*({p}))"
 
 
 def layout(orientation: str, scale: float = 1.0) -> Layout:
@@ -51,10 +117,10 @@ def layout(orientation: str, scale: float = 1.0) -> Layout:
     if orientation == VERTICAL:
         title, bullet, margin = round(h * 0.036), round(h * 0.024), round(w * 0.07)
         top = round(h * 0.58)
-        return Layout(w, h, title, bullet, margin, top, round(h * 0.38), 24, 34)
+        return Layout(w, h, title, bullet, margin, top, round(h * 0.38), 24, 34, max(round(h * 0.012), 8), 66)
     title, bullet, margin = round(h * 0.062), round(h * 0.04), round(w * 0.05)
     top = round(h * 0.6)
-    return Layout(w, h, title, bullet, margin, top, round(h * 0.36), 44, 70)
+    return Layout(w, h, title, bullet, margin, top, round(h * 0.36), 44, 70, max(round(h * 0.02), 8), 130)
 
 
 def _even(value: float) -> int:
@@ -94,8 +160,11 @@ def _background(image: Path | None, lay: Layout, frames: int, clip: Path | None 
     return args, chain
 
 
-def slide_filter(lay: Layout, font: str, title_file: Path, bullet_files: list[Path], seconds: float) -> str:
-    """Тексты поверх фона: заголовок проявляется первым, тезисы — по очереди за ним."""
+def slide_filter(
+    lay: Layout, font: str, title_file: Path, bullet_files: list[Path], seconds: float, note_file: Path | None = None
+) -> str:
+    """Тексты поверх фона: заголовок проявляется первым, тезисы — по очереди за ним.
+    Пометка (note_file) видна весь слайд — внизу, на своей тёмной полосе."""
     # Затемнение снизу ступенями — мягкий переход вместо резкой плашки.
     band = max((lay.title_y - lay.shade_y) // 4, 1)
     parts = [
@@ -127,6 +196,16 @@ def slide_filter(lay: Layout, font: str, title_file: Path, bullet_files: list[Pa
             f":alpha='min(1,max(0,(t-{appear:.2f})/0.4))'"
         )
         y += lines * round(lay.bullet_size * 1.35) + lay.bullet_size // 2
+    if note_file is not None:
+        lines = note_file.read_text(encoding="utf-8").count("\n") + 1
+        size = lay.note_size
+        top = lay.height - round(size * 1.2) - lines * round(size * 1.25)
+        pad = size // 2
+        parts.append(f"drawbox=x=0:y={top - pad}:w=iw:h=ih-{top - pad}:color=black@0.55:t=fill")
+        parts.append(
+            f"drawtext={font_arg}textfile={_quote(note_file)}:expansion=none:fontsize={size}"
+            f":fontcolor=white@0.85:line_spacing={size // 4}:x={lay.margin}:y={top}"
+        )
     return ",".join(parts)
 
 
@@ -147,14 +226,61 @@ class Renderer:
     def _encode(self, seconds: float) -> list[str]:
         return ["-t", f"{seconds:.3f}", "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast"]
 
-    def poster_clip(self, image: Path, out: Path, seconds: float, orientation: str, cancel: threading.Event) -> Path:
+    def poster_clip(
+        self,
+        image: Path,
+        out: Path,
+        seconds: float,
+        orientation: str,
+        cancel: threading.Event,
+        branding: Branding | None = None,
+    ) -> Path:
         lay = layout(orientation, self.scale)
-        frames = max(int(seconds * FPS), 1)
-        args, chain = _background(image, lay, frames)
-        argv = [self.ffmpeg, "-y", "-loglevel", "error", *args, "-filter_complex", f"{chain},format=yuv420p[v]"]
+        w, h = lay.width, lay.height
+        args = ["-loop", "1", "-framerate", str(FPS), "-i", str(image)]
+        # Картинка целиком поверх своей размытой копии: квадратная обложка narrator не обрезается.
+        graph = [
+            "[0:v]split[pa][pb]",
+            f"[pa]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},gblur=sigma={max(w // 60, 1)},"
+            f"drawbox=x=0:y=0:w=iw:h=ih:color=black@0.35:t=fill[bg]",
+            f"[pb]scale={w}:{h}:force_original_aspect_ratio=decrease,setsar=1[fg]",
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[base]",
+        ]
+        last = "base"
+        if branding is not None:
+            args += ["-loop", "1", "-framerate", str(FPS), "-i", str(branding.play)]
+            args += ["-loop", "1", "-framerate", str(FPS), "-i", str(branding.sticker)]
+            play = _even(min(w, h) * PLAY_SHARE)
+            bottom, corner = sticker_boxes(lay, branding.ratio)
+            e = _ease(COVER_HOLD_S, MOVE_S)
+
+            def lerp(a: int, b: int) -> str:
+                return f"'{a}+({b - a})*{e}'"
+
+            fade = f"fade=t=out:st={COVER_HOLD_S}:d={FADE_S}:alpha=1"
+            graph += [
+                f"color=c=black@{COVER_SHADE}:s={w}x{h}:r={FPS},format=rgba,{fade}[shade]",
+                "[base][shade]overlay=0:0:shortest=1[shaded]",
+                f"[1:v]format=rgba,scale={play}:-1,{fade}[play]",
+                "[shaded][play]overlay=(W-w)/2:(H-h)/2:shortest=1[played]",
+                f"[2:v]format=rgba,scale=w={lerp(bottom.width, corner.width)}:h=-1:eval=frame[sticker]",
+                f"[played][sticker]overlay=x={lerp(bottom.x, corner.x)}:y={lerp(bottom.y, corner.y)}"
+                ":shortest=1[branded]",
+            ]
+            last = "branded"
+        graph.append(f"[{last}]format=yuv420p[v]")
+        argv = [self.ffmpeg, "-y", "-loglevel", "error", *args, "-filter_complex", ";".join(graph)]
         argv += ["-map", "[v]", *self._encode(seconds), "-an", str(out)]
         self._run(argv, cancel, "постер")
         return out
+
+    def cover_frames(self, video: Path, cover: Path, thumb: Path, cancel: threading.Event) -> None:
+        """Первый кадр ролика — обложка для Telegram — и её миниатюра (до 320 px, JPEG)."""
+        argv = [self.ffmpeg, "-y", "-loglevel", "error", "-i", str(video), "-frames:v", "1", "-q:v", "3", str(cover)]
+        self._run(argv, cancel, "обложка")
+        small = "scale='if(gt(iw,ih),320,-2)':'if(gt(iw,ih),-2,320)'"
+        argv = [self.ffmpeg, "-y", "-loglevel", "error", "-i", str(cover), "-vf", small, "-q:v", "5", str(thumb)]
+        self._run(argv, cancel, "миниатюра обложки")
 
     def slide_clip(
         self,
@@ -167,6 +293,8 @@ class Renderer:
         orientation: str,
         cancel: threading.Event,
         clip: Path | None = None,
+        notes: list[str] | None = None,
+        branding: Branding | None = None,
     ) -> Path:
         lay = layout(orientation, self.scale)
         work = out.with_suffix("")
@@ -178,11 +306,23 @@ class Renderer:
             path = work / f"bullet{n}.txt"
             path.write_text(wrap("• " + bullet, lay.bullet_chars, 2), encoding="utf-8")
             bullet_files.append(path)
+        note_file = None
+        if notes:
+            note_file = work / "note.txt"
+            note_file.write_text("\n".join(wrap(n, lay.note_chars, 4) for n in notes), encoding="utf-8")
         frames = max(int(seconds * FPS), 1)
         args, chain = _background(image, lay, frames, clip)
-        text = slide_filter(lay, self.font, title_file, bullet_files, seconds)
+        text = slide_filter(lay, self.font, title_file, bullet_files, seconds, note_file)
+        graph = f"{chain},{text},format=yuv420p[v]"
+        if branding is not None:  # плашка «подпишись» в углу — весь слайд
+            args += ["-loop", "1", "-framerate", str(FPS), "-i", str(branding.sticker)]
+            _, corner = sticker_boxes(lay, branding.ratio)
+            graph = (
+                f"{chain},{text}[base];[1:v]format=rgba,scale={corner.width}:-1[sticker];"
+                f"[base][sticker]overlay={corner.x}:{corner.y}:shortest=1,format=yuv420p[v]"
+            )
         argv = [self.ffmpeg, "-y", "-loglevel", "error", *args]
-        argv += ["-filter_complex", f"{chain},{text},format=yuv420p[v]", "-map", "[v]", *self._encode(seconds)]
+        argv += ["-filter_complex", graph, "-map", "[v]", *self._encode(seconds)]
         argv += ["-an", str(out)]
         self._run(argv, cancel, "слайд")
         return out
@@ -210,15 +350,20 @@ class Renderer:
         orientation: str,
         cancel: threading.Event,
         on_progress: Callable[[int, int], None] | None = None,
+        branding: Branding | None = None,
     ) -> Path:
-        """Видео целиком: постер INTRO_S секунд (если есть), затем сцены {title, bullets, image, seconds}."""
+        """Видео целиком: постер intro_seconds(branding) секунд (если есть), затем сцены.
+
+        Сцена — {title, bullets, image, clip, notes, seconds}.
+        """
         work = out.parent / f".{out.stem}-clips"
         work.mkdir(parents=True, exist_ok=True)
         clips = []
         total = len(scenes) + (1 if poster else 0)
         done = 0
         if poster is not None:
-            clips.append(self.poster_clip(poster, work / "00-poster.mp4", INTRO_S, orientation, cancel))
+            intro = intro_seconds(branding)
+            clips.append(self.poster_clip(poster, work / "00-poster.mp4", intro, orientation, cancel, branding))
             done += 1
             if on_progress:
                 on_progress(done, total)
@@ -231,6 +376,8 @@ class Renderer:
                     bullets=scene.get("bullets") or [],
                     image=scene.get("image"),
                     clip=scene.get("clip"),
+                    notes=scene.get("notes"),
+                    branding=branding,
                     out=work / f"{n:02d}.mp4",
                     seconds=scene["seconds"],
                     orientation=orientation,
@@ -243,6 +390,10 @@ class Renderer:
         if not clips:
             raise StudioError("Нечего собирать: ни одного кадра.")
         return self.concat(clips, audio, out, audio_s, cancel)
+
+
+def intro_seconds(branding: Branding | None) -> float:
+    return INTRO_BRANDED_S if branding is not None else INTRO_S
 
 
 def ffmpeg_works(ffmpeg: str) -> bool:

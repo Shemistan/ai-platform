@@ -8,6 +8,8 @@ const TABS = [
   { sep: true },
   { id: "digest", label: "Дайджест новостей", href: "/studio/?scenario=digest" },
   { id: "article", label: "Видео по статье", href: "/studio/?scenario=article" },
+  { sep: true },
+  { id: "updates", label: "Обновления", href: "/updates/" },
 ];
 
 function currentTab() {
