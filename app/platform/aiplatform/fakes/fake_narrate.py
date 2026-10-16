@@ -440,7 +440,7 @@ def bridge(args, state: dict) -> dict:
                         "id": eid,
                         "label": label,
                         "size_gb": MLX_SIZES[eid],
-                        "note": note,
+                        "note": note.split(", около")[0],
                         "downloaded": eid in state["mlx"],
                         "problem": None if eid in state["mlx"] else f"модель не скачана: ./narrate setup --mlx {eid}",
                     }

@@ -1,5 +1,5 @@
 // Вкладка «Обновления»: версии моделей и пайплайнов, реестр запрещённых организаций.
-import { $, api, h, progressBar } from "/ui.js";
+import { $, api, fill, followTask, h, progressBar, taskCard } from "/ui.js";
 
 const API = "/api/updates";
 const MODEL_STATUS = { update: "есть обновление", ok: "актуально", unknown: "не знаю", error: "ошибка" };
@@ -177,3 +177,75 @@ $("registry-reset").addEventListener("click", async () => {
   await act("registry/reset");
 });
 refresh();
+
+// --- модели озвучки движка: что на диске, скачать основные или модели для сравнения ---
+
+const voice = { picked: new Set(), active: null };
+
+function renderVoiceModels(data) {
+  const main = data.main.map((m) =>
+    h("tr", {}, h("td", {}, m.label, h("span", { class: "sub" }, m.path)), h("td", {}, m.exists ? chip("done", "на месте") : chip("failed", "нет"))),
+  );
+  const mlx = data.mlx.map((m) => {
+    const box = h("input", { type: "checkbox", checked: voice.picked.has(m.id), disabled: m.downloaded });
+    box.addEventListener("change", () => {
+      if (box.checked) voice.picked.add(m.id);
+      else voice.picked.delete(m.id);
+      renderVoiceButton();
+    });
+    return h(
+      "tr",
+      {},
+      h("td", {}, h("label", { class: "check" }, box, h("span", {}, m.label, h("span", { class: "hint" }, `${m.note}, около ${m.size_gb} ГБ`)))),
+      h("td", {}, m.downloaded ? chip("done", "скачана") : chip("pending", "не скачана")),
+    );
+  });
+  const pick = h("button", { type: "button", class: "secondary", id: "voice-mlx", onclick: () => startVoice("mlx", { engines: [...voice.picked] }) }, "Скачать выбранные");
+  fill(
+    $("voice-models"),
+    data.root_exists ? null : h("p", { class: "job-error" }, `Папки моделей ${data.root} нет: ${data.hint}`),
+    h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Основные"), h("th", {}, ""))), h("tbody", {}, ...main)),
+    h("table", { class: "data-table", style: "margin-top:16px" }, h("thead", {}, h("tr", {}, h("th", {}, "Для сравнения (mlx-audio, Apple Silicon)"), h("th", {}, ""))), h("tbody", {}, ...mlx)),
+    h("div", { class: "toolbar", style: "margin-top:10px" }, pick, h("span", { class: "hint" }, "Higgs и Fish на huggingface.co просят принять лицензию — открой страницу модели и согласись.")),
+  );
+  renderVoiceButton();
+}
+
+function renderVoiceButton() {
+  const btn = $("voice-mlx");
+  if (btn) btn.disabled = !voice.picked.size || Boolean(voice.active);
+  for (const id of ["voice-fetch", "voice-move"]) $(id).disabled = Boolean(voice.active);
+}
+
+async function loadVoiceModels() {
+  try {
+    const data = await api("GET", `${API}/voice-models`);
+    renderVoiceModels(data);
+    const active = data.tasks.find((t) => t.status === "queued" || t.status === "running");
+    if (active && voice.active !== active.id) watchVoice(active);
+  } catch (err) {
+    fill($("voice-models"), h("p", { class: "job-error" }, err.message));
+  }
+}
+
+async function watchVoice(task) {
+  voice.active = task.id;
+  renderVoiceButton();
+  const cancel = (t) => api("POST", `${API}/tasks/${t.id}/cancel`);
+  await followTask(`${API}/tasks/${task.id}`, (t) => fill($("voice-task"), taskCard(t, { full: true, onCancel: cancel })));
+  voice.active = null;
+  voice.picked.clear();
+  loadVoiceModels();
+}
+
+async function startVoice(action, body = {}) {
+  try {
+    watchVoice(await api("POST", `${API}/voice-models/${action}`, body));
+  } catch (err) {
+    fill($("voice-task"), h("p", { class: "job-error" }, err.message));
+  }
+}
+
+$("voice-fetch").addEventListener("click", () => startVoice("fetch"));
+$("voice-move").addEventListener("click", () => startVoice("move"));
+loadVoiceModels();
