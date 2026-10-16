@@ -41,7 +41,8 @@ NEWS_POST ?= $(or $(NARRATOR_NEWS_POST),video)
 CLAUDE ?= claude
 NEWS_PROMPT = Собери дайджест новостей за день $(DAY) (для news top и news digest — --date $(DAY)) по регламенту CLAUDE.md, раздел «Дайджест новостей». Работай автономно, в конце — короткий отчёт.
 JUDGE_PROMPT = Проверь дайджест за день $(DAY) (для news top — --date $(DAY)) по регламенту CLAUDE.md, раздел «Судья дайджеста»: найди ошибки, исправь, запиши review.md с вердиктом. Работай автономно, в конце — короткий отчёт.
-RESCUE_PROMPT = Доберите материалы упавших источников за день $(DAY) (для news add — --date $(DAY)) по регламенту CLAUDE.md, раздел «Дайджест новостей», шаг «Добор». Только добор: без разбора и выпуска. Работай автономно, в конце — короткий отчёт.
+PREPARE_PROMPT = Подготовь статью $(A) к озвучке по регламенту CLAUDE.md, раздел «Озвучка статьи», шаги 2–4: script.txt по source.md, карточка meta.json, ./narrate lint. Каталог — ./narrate bridge article $(A), поле folder. Не озвучивай и не отправляй. Работай автономно, в конце — короткий отчёт.
+RESCUE_PROMPT = Добери материалы упавших источников за день $(DAY) (для news add — --date $(DAY)) по регламенту CLAUDE.md, раздел «Дайджест новостей», шаг «Добор». Только добор: без разбора и выпуска. Работай автономно, в конце — короткий отчёт.
 WEEKLY_PROMPT = /youtube-news week
 MONTHLY_PROMPT = /youtube-news month $(MONTH)
 # Месяц обзора: make news-monthly MONTH=2026-09; без него — текущий.
@@ -52,7 +53,7 @@ ENGINE_FLAG = --engine $(ENGINE) $(if $(VOICE),--voice $(VOICE),)
 .PHONY: help render render-fast render-all lint synth verify list index say move-models models-mlx voice-charon \
 	unsent send-unsent mark-sent send channels subscribers bot models check need-a \
 	news news-collect news-agent news-judge news-publish news-video news-weekly news-monthly news-sources skills news-top \
-	news-rescue
+	news-rescue article-prepare
 
 ##@ Озвучка: все статьи, где текст новее аудио
 
@@ -66,6 +67,9 @@ render-all: ## переозвучить все статьи заново
 	./narrate render --all $(ENGINE_FLAG)
 
 ##@ Одна статья: make <команда> A=<дата>/<название>
+
+article-prepare: need-a ## агент пишет script.txt и карточку по source.md (claude -p), A=<id статьи>
+	$(CLAUDE) -p "$(PREPARE_PROMPT)"
 
 lint: need-a ## проверить script.txt
 	./narrate lint $(A)

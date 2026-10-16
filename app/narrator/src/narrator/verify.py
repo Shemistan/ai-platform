@@ -168,6 +168,28 @@ def check(cache_dir: Path, transcribe) -> list[BlockCheck]:
     return results
 
 
+def summary(results: list[BlockCheck], threshold: float) -> dict:
+    """Отчёт структурой: общий процент и абзацы ниже порога, худшие первыми."""
+    total_words = sum(len(words(r.text)) for r in results) or 1
+    overall = sum(r.score * len(words(r.text)) for r in results) / total_words
+    weak = sorted((r for r in results if r.score < threshold), key=lambda r: r.score)
+    return {
+        "overall": round(overall, 3),
+        "threshold": threshold,
+        "total": len(results),
+        "weak": [
+            {
+                "line": r.line,
+                "score": round(r.score, 3),
+                "text": r.text,
+                "heard": r.heard,
+                "missed": r.missed,
+            }
+            for r in weak
+        ],
+    }
+
+
 def report(results: list[BlockCheck], threshold: float) -> str:
     total_words = sum(len(words(r.text)) for r in results) or 1
     overall = sum(r.score * len(words(r.text)) for r in results) / total_words

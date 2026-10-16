@@ -329,18 +329,28 @@ def cmd_say(args) -> int:
     print(f"{audio}  {library.format_duration(duration)}")
     if args.no_verify:
         return 0
-    from narrator.verify import Transcriber, check, report
+    from narrator.verify import Transcriber, check, report, summary
 
     try:
         transcriber = Transcriber()
     except RuntimeError as e:
         print(f"проверка пропущена: {e}", file=sys.stderr)
+        write_check_json(args.check_json, {"skipped": str(e)})
         return 0
-    result = report(check(cache, transcriber), args.threshold)
+    results = check(cache, transcriber)
+    result = report(results, args.threshold)
     (work / CHECK).write_text(result, encoding="utf-8")
+    write_check_json(args.check_json, summary(results, args.threshold))
     print(result.split("\n\n")[1])
     print(f"отчёт: {work / CHECK}")
     return 0
+
+
+def write_check_json(target: str | None, data: dict) -> None:
+    if target:
+        import json
+
+        Path(target).expanduser().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
 def verify_entry(d: Path, transcriber, threshold: float) -> int:
@@ -764,6 +774,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--out", help="куда положить mp3 (по умолчанию tmp/say/<имя>/)")
     s.add_argument("--no-verify", action="store_true", help="не проверять распознаванием")
     s.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    s.add_argument(
+        "--check-json", metavar="ФАЙЛ", help="отчёт проверки ещё и JSON-ом (для страниц)"
+    )
     s.set_defaults(func=cmd_say)
 
     s = sub.add_parser("normalize", help="показать текст так, как он уйдёт в модель")
@@ -792,6 +805,10 @@ def build_parser() -> argparse.ArgumentParser:
     from narrator.news.cli import add_parser as add_news_parser
 
     add_news_parser(sub)
+
+    from narrator.bridge import add_parser as add_bridge_parser
+
+    add_bridge_parser(sub)
 
     s = sub.add_parser("bot", help="телеграм-бот: подписчики и рассылка озвучек")
     bot = s.add_subparsers(dest="bot_cmd", required=True)

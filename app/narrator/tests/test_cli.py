@@ -65,3 +65,44 @@ def test_say_name_tells_digests_apart(lib):
 def test_say_reports_missing_file(tmp_path, capsys):
     assert main(["say", str(tmp_path / "нет.md"), "--engine", "silero"]) == 1
     assert "нет файла" in capsys.readouterr().err
+
+
+def test_say_writes_check_json(tmp_path, monkeypatch, capsys):
+    """--check-json: отчёт проверки структурой — для страницы «Аудио» платформы."""
+    from narrator import synth, verify
+
+    class FakeSynth:
+        settings = synth.Settings(engine="silero")
+
+        def check_chars(self, blocks):
+            return ""
+
+        def close(self):
+            pass
+
+    def fake_render(blocks, out_wav, cache_dir, synth_, **kwargs):
+        out_wav.parent.mkdir(parents=True, exist_ok=True)
+        out_wav.write_bytes(b"wav")
+        return 3.0
+
+    monkeypatch.setenv("NARRATOR_SAY_DIR", str(tmp_path / "say"))
+    monkeypatch.setattr(synth, "make_synth", lambda settings: FakeSynth())
+    monkeypatch.setattr(synth, "render", fake_render)
+    monkeypatch.setattr(synth, "encode_mp3", lambda wav, mp3, title: mp3.write_bytes(b"mp3"))
+    monkeypatch.setattr(verify, "Transcriber", lambda: None)
+    weak = verify.BlockCheck(1, "раз два три", "раз", 1 / 3, ["два", "три"])
+    good = verify.BlockCheck(3, "четыре", "четыре", 1.0, [])
+    monkeypatch.setattr(verify, "check", lambda cache, t: [weak, good])
+
+    src = tmp_path / "text.md"
+    src.write_text("Раз два три.\n\nЧетыре.\n", encoding="utf-8")
+    report = tmp_path / "check.json"
+    out = tmp_path / "out.mp3"
+    args = ["say", str(src), "--engine", "silero", "--out", str(out), "--check-json", str(report)]
+    assert main(args) == 0
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["total"] == 2 and data["overall"] == 0.5
+    assert data["weak"] == [
+        {"line": 1, "score": 0.333, "text": "раз два три", "heard": "раз", "missed": ["два", "три"]}
+    ]
+    assert out.read_bytes() == b"mp3"

@@ -17,6 +17,7 @@ from aiplatform.audio import voices
 from aiplatform.audio.config import AudioConfig
 from aiplatform.core import media, runner
 from aiplatform.core.gate import Gate
+from aiplatform.core.narrator import INSTALL_HINT
 
 ACTIVE = ("queued", "running")
 LOG_TAIL = 200
@@ -29,7 +30,6 @@ WAIT_POLL_S = 0.2
 # Темп скачиваемого mp3: atempo берёт 0,5–2 одним фильтром.
 TEMPO_RANGE = (0.5, 2.0)
 RETIME_TIMEOUT_S = 600
-INSTALL_HINT = "Нужен движок app/narrator: `make models` в нём (или задай AIP_NARRATE_CMD)."
 _ID = re.compile(r"^[0-9a-f]{12}$")
 _STAGE = re.compile(r"абзац (\d+)/(\d+)")
 _DONE = re.compile(r"^\[(\d+)/(\d+)\]")
@@ -345,9 +345,9 @@ class AudioJobs:
                 with self._lock:
                     job["progress"]["stage"] = "Загрузка модели"
                     job["started_at"] = time.time()
-                cwd = self._config.narrator_dir if self._config.narrator_dir.is_dir() else None
+                narrator = self._config.narrator
                 argv = self.argv(spec, folder / SOURCE, output)
-                runner.run(argv, on_line, cancel, cwd=cwd, missing_hint=INSTALL_HINT)
+                runner.run(argv, on_line, cancel, cwd=narrator.cwd, env=narrator.env, missing_hint=INSTALL_HINT)
             if not output.is_file() or output.stat().st_size == 0:
                 raise runner.RunFailed("Озвучка завершилась без ошибки, но mp3 не появился.")
             duration = media.duration(output, self._config.ffmpeg)
