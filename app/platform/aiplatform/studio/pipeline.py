@@ -290,14 +290,16 @@ class Studio:
             self._resume(project)
             return copy.deepcopy(project)
 
-    def run(self, project_id: str, only: str | None = None) -> dict:
-        """Запустить в фоне: все шаги, для которых всё готово, или один шаг заново (only)."""
+    def run(self, project_id: str, only: str | None = None, state: dict | None = None) -> dict:
+        """Запустить в фоне: все шаги, для которых всё готово, или один шаг заново (only).
+        state — что положить в состояние шага only перед запуском (например, approved)."""
         with self._lock:
             project = self._require(project_id)
             if project["running"]:
                 raise Conflict("Проект уже выполняется.")
             if only is not None:
                 self._reset(project, only, include_self=True)
+                project["steps"][only].update(state or {})
             else:
                 project["auto"] = True
                 # «Запустить всё» ещё раз пробует шаги, которые ждали человека или упали.

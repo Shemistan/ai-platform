@@ -59,6 +59,24 @@ Python-зависимостей у сервиса нет.
 Правка результата шага сбрасывает только зависящие от него шаги: новая
 картинка постера пересоберёт видео, но не тронет озвучку и слайды.
 
+## Публикация в Telegram
+
+Вместо `make news-publish` в narrator — кнопка «Опубликовать» в шаге
+«Публикация»: рядом выбор каналов и галочка «Опубликовать повторно». Видео
+уходит одним постом с подписью к посту (и обложкой, если есть оформление).
+В канал, куда выпуск уже ушёл, повторно отправляется только с галочкой —
+как `FORCE=1`. У дайджеста по умолчанию выбран канал новостей narrator
+(`VOICE_NEWS`).
+
+Каналы, пока нет своего `channels.json`, — пакеты для ручной загрузки и
+каналы из `telegram_tems.md` narrator (строки `ИМЯ=id`; `-100…_3` — тема в
+группе, уходит как `message_thread_id`). «Добавить канал Telegram» в
+настройках выпуска (название, id, 16:9 или 9:16) записывает список целиком в
+`channels.json` (`AIP_CHANNELS`); дальше каналы берутся оттуда, «убрать» —
+удаляет. Токен бота — как у narrator: `$NARRATOR_TELEGRAM_TOKEN`, файл
+`$NARRATOR_TELEGRAM_TOKEN_FILE` или `bot_token.md` в каталоге narrator; у
+канала можно задать свою переменную `token_env`.
+
 ## Оформление: плей и плашка «подпишись»
 
 Как у видео narrator: первый кадр ролика — обложка. Постер притемнён, по
@@ -128,7 +146,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | `AIP_NEWS_WHERE` | `{narrator}/narrate news where --date {day}` | где лежит выпуск |
 | `AIP_STUDIO_IMAGE_MODEL` | `z-image-turbo` | модель постера и картинок по умолчанию |
 | `AIP_STUDIO_STICKER`, `AIP_STUDIO_PLAY` | `aiplatform/studio/assets/subscribe.png`, `play.png` | плашка «подпишись» и кнопка «плей» (PNG с прозрачностью) |
-| `AIP_CHANNELS` | `app/platform/channels.json` | каналы публикации |
+| `AIP_CHANNELS` | `app/platform/channels.json` | каналы публикации; нет файла — каналы из `telegram_tems.md` narrator |
 | `AIP_FONT` | системный Arial Unicode | шрифт слайдов с кириллицей |
 | `AIP_FFMPEG` | `ffmpeg` | путь к ffmpeg |
 | `AIP_RENDER_SCALE` | `1` | доля от 1920×1080 (0.5 — быстрые черновики) |
