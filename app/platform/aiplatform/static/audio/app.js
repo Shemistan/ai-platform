@@ -2,7 +2,43 @@
 import { $, api, h, logBlock, progressBar, seconds, statusChip } from "/ui.js";
 
 const API = "/api/audio";
-const state = { config: null, jobs: [], selected: null };
+const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
+// tempo — скорость плеера и скачиваемого mp3; одна на все задачи.
+const state = { config: null, jobs: [], selected: null, tempo: 1 };
+
+function downloadHref(job) {
+  const query = state.tempo === 1 ? "download=1" : `download=1&speed=${state.tempo}`;
+  return `${job.audio_url}?${query}`;
+}
+
+// Скорость берётся и с кнопок, и из меню самого плеера; в mp3 — в пределах tempo_range.
+function setTempo(rate, box) {
+  const [low, high] = state.config.tempo_range;
+  state.tempo = Math.round(Math.min(high, Math.max(low, rate)) * 100) / 100;
+  const player = box.querySelector("audio");
+  if (player && player.playbackRate !== state.tempo) player.playbackRate = state.tempo;
+  for (const b of box.querySelectorAll(".tempo button")) b.setAttribute("aria-pressed", String(Number(b.value) === state.tempo));
+  const link = box.querySelector("a[data-download]");
+  if (link) {
+    link.href = downloadHref(state.selected);
+    link.textContent = state.tempo === 1 ? "Скачать mp3" : `Скачать mp3 ×${state.tempo}`;
+  }
+}
+
+function player(job, box) {
+  const audio = h("audio", { controls: true, src: job.audio_url, preload: "metadata" });
+  audio.playbackRate = audio.defaultPlaybackRate = state.tempo;
+  audio.addEventListener("ratechange", () => audio.playbackRate !== state.tempo && setTempo(audio.playbackRate, box));
+  const tempo = h(
+    "div",
+    { class: "tempo", role: "group", "aria-label": "Скорость" },
+    h("span", { class: "muted small" }, "Скорость"),
+    ...TEMPOS.map((t) =>
+      h("button", { type: "button", value: String(t), "aria-pressed": String(t === state.tempo), onclick: () => setTempo(t, box) }, `×${t}`),
+    ),
+  );
+  return [audio, tempo];
+}
 
 function engine() {
   return state.config.engines.find((e) => e.id === $("engine").value);
@@ -36,11 +72,13 @@ function renderJob(job) {
       active ? progressBar(job.progress) : null,
       job.queue_position ? h("p", { class: "muted small" }, `Перед ней в очереди: ${job.queue_position}`) : null,
       job.error ? h("p", { class: "job-error" }, job.error) : null,
-      job.audio_url ? h("audio", { controls: true, src: job.audio_url, preload: "metadata" }) : null,
+      ...(job.audio_url ? player(job, box) : []),
       h(
         "div",
         { class: "actions" },
-        job.audio_url ? h("a", { class: "link", href: `${job.audio_url}?download=1` }, "Скачать mp3") : null,
+        job.audio_url
+          ? h("a", { class: "link", href: downloadHref(job), "data-download": "" }, state.tempo === 1 ? "Скачать mp3" : `Скачать mp3 ×${state.tempo}`)
+          : null,
         job.duration_s ? h("span", { class: "muted small" }, `Длительность ${seconds(job.duration_s)}`) : null,
         job.elapsed_s ? h("span", { class: "muted small" }, `Озвучка заняла ${seconds(job.elapsed_s)}`) : null,
         active ? h("button", { type: "button", class: "link danger", onclick: () => cancel(job.id) }, "Отменить") : null,

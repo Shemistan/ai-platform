@@ -6,6 +6,7 @@ import copy
 import json
 import queue
 import re
+import subprocess
 import threading
 import time
 import uuid
@@ -25,6 +26,9 @@ SOURCE = "source.txt"
 OUTPUT = "output.mp3"
 GPU_OWNER = "Аудио"
 WAIT_POLL_S = 0.2
+# Темп скачиваемого mp3: atempo берёт 0,5–2 одним фильтром.
+TEMPO_RANGE = (0.5, 2.0)
+RETIME_TIMEOUT_S = 600
 INSTALL_HINT = "Нужен narrator: 07_offline_text-to-word, `make models` (или задай AIP_NARRATE_CMD)."
 _ID = re.compile(r"^[0-9a-f]{12}$")
 _STAGE = re.compile(r"абзац (\d+)/(\d+)")
@@ -33,6 +37,24 @@ _DONE = re.compile(r"^\[(\d+)/(\d+)\]")
 
 class ValidationError(ValueError):
     """Запрос не годится; текст показывается пользователю."""
+
+
+class RetimeFailed(RuntimeError):
+    """ffmpeg не собрал mp3 в другом темпе."""
+
+
+def parse_tempo(raw: str | None) -> float:
+    """Темп скачиваемого mp3 из ?speed=: пусто — 1, иначе число в TEMPO_RANGE."""
+    if raw in (None, ""):
+        return 1.0
+    try:
+        tempo = round(float(raw.replace(",", ".")), 2)
+    except ValueError:
+        raise ValidationError("Скорость — число.") from None
+    low, high = TEMPO_RANGE
+    if not low <= tempo <= high:
+        raise ValidationError(f"Скорость скачивания — от {low:g} до {high:g}.")
+    return tempo
 
 
 @dataclass(frozen=True)
@@ -101,6 +123,7 @@ class AudioJobs:
         self._gate = gate
         self._url = url_base
         self._lock = threading.Lock()
+        self._retime_lock = threading.Lock()
         self._jobs: dict[str, dict] = {}
         self._cancels: dict[str, threading.Event] = {}
         self._specs: dict[str, AudioSpec] = {}
@@ -122,13 +145,22 @@ class AudioJobs:
             jobs = sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)
             return [{k: v for k, v in self._view(j).items() if k != "log"} for j in jobs]
 
-    def audio_path(self, job_id: str) -> Path | None:
+    def audio_path(self, job_id: str, tempo: float = 1.0) -> Path | None:
+        """Готовый mp3; tempo ≠ 1 — его копия в другом темпе, собирается при первом запросе."""
         with self._lock:
             job = self._jobs.get(job_id)
             if not job or job["status"] != "done":
                 return None
         path = self._dir(job_id) / OUTPUT
-        return path if path.is_file() else None
+        if not path.is_file():
+            return None
+        if tempo == 1.0:
+            return path
+        out = path.with_name(f"{path.stem}@{tempo:g}{path.suffix}")
+        with self._retime_lock:
+            if not out.is_file():
+                self._retime(path, out, tempo)
+        return out
 
     def text(self, job_id: str) -> str | None:
         if not _ID.match(job_id or ""):
@@ -223,6 +255,19 @@ class AudioJobs:
 
     def _dir(self, job_id: str) -> Path:
         return self._config.jobs_dir / job_id
+
+    def _retime(self, audio: Path, out: Path, tempo: float) -> None:
+        """Как retime у студии: длина делится на tempo, высота голоса та же."""
+        tmp = out.with_name(out.stem + ".part.mp3")
+        argv = [self._config.ffmpeg, "-y", "-loglevel", "error", "-i", str(audio), "-filter:a", f"atempo={tempo:g}"]
+        argv += ["-codec:a", "libmp3lame", "-b:a", "128k", str(tmp)]
+        try:
+            subprocess.run(argv, capture_output=True, text=True, check=True, timeout=RETIME_TIMEOUT_S)
+        except (OSError, subprocess.SubprocessError) as exc:
+            tmp.unlink(missing_ok=True)
+            detail = getattr(exc, "stderr", None) or str(exc)
+            raise RetimeFailed(f"Не удалось ускорить mp3: {detail.strip()[-300:]}") from exc
+        tmp.replace(out)
 
     def _save(self, job: dict) -> None:
         folder = self._dir(job["id"])
