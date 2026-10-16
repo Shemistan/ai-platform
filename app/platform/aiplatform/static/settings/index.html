@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Настройки — AI Platform</title>
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="page-head">
+    <h1>Настройки</h1>
+    <p class="muted">Общие настройки платформы. Выключенная модель, движок или голос пропадает из выбора во всех вкладках и сценариях; уже начатые задачи доделываются.</p>
+  </header>
+
+  <main class="wide">
+    <p class="form-error" id="error" role="alert" hidden></p>
+    <div class="cols-2">
+      <div class="side">
+        <section class="panel">
+          <h2>Модели картинок</h2>
+          <div id="photo"><p class="muted">Загружаю…</p></div>
+        </section>
+        <section class="panel">
+          <h2>Модели видео</h2>
+          <div id="video"><p class="muted">Загружаю…</p></div>
+        </section>
+      </div>
+      <section class="panel">
+        <h2>Озвучка: движки и голоса</h2>
+        <p class="hint">Голос включается и выключается нажатием, ★ — голос по умолчанию. Движок без включённых голосов из выбора пропадает.</p>
+        <div id="audio"><p class="muted">Загружаю…</p></div>
+      </section>
+    </div>
+    <p class="hint" id="file"></p>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

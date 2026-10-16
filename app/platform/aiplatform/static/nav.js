@@ -15,6 +15,7 @@ const TABS = [
   { sep: true },
   { id: "channels", label: "Каналы", href: "/channels/" },
   { id: "updates", label: "Обновления", href: "/updates/" },
+  { id: "settings", label: "Настройки", href: "/settings/" },
 ];
 
 function currentTab() {

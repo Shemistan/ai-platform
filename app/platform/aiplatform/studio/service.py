@@ -158,6 +158,14 @@ class StudioModule:
             if photo_models.TXT2IMG in m.model.modes
         ]
 
+    def default_image_model(self) -> str | None:
+        """AIP_STUDIO_IMAGE_MODEL, если её не выключили в настройках; иначе первая включённая."""
+        found = self.image_models()
+        ids = [m["id"] for m in found]
+        if self.config.image_model in ids:
+            return self.config.image_model
+        return next((m["id"] for m in found if m["installed"]), ids[0] if ids else None)
+
     def video_models(self) -> list[dict]:
         found = self.ctx.modules["video"].config.models()
         return [{"id": m.id, "label": m.label, "installed": m.installed} for m in found]
@@ -168,11 +176,11 @@ class StudioModule:
             "poster_mode": "local",
             "draw_images": True,
             "images_mode": "local",
-            "image_model": self.config.image_model,
+            "image_model": self.default_image_model(),
             "upscale_images": "none",
             "clips": False,
             "clips_mode": "local",
-            "video_model": video_models.default(self.ctx.modules["video"].config.models()).id,
+            "video_model": getattr(video_models.default(self.ctx.modules["video"].config.models()), "id", None),
             "voice_mode": "tts",
             "engine": audio.default_engine,
             "voice": "",
@@ -217,7 +225,7 @@ class StudioModule:
             "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
             "steps": [{"id": s, "label": LABELS[s]} for s in STEP_IDS],
             "defaults": self.defaults(),
-            "engines": [e.public() for e in voices.ENGINES.values()],
+            "engines": [e.public() for e in self.ctx.modules["audio"].config.engines().values()],
             "image_models": self.image_models(),
             "video_models": self.video_models(),
             "channels": [c.public() for c in self.channels()],
@@ -272,11 +280,11 @@ class StudioModule:
         if isinstance(tempo, bool) or not isinstance(tempo, int | float) or float(tempo) not in steps.TEMPOS:
             raise bad_request(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}.")
         out["tempo"] = float(tempo)
-        engine = voices.ENGINES.get(out["engine"])
+        engine = self.ctx.modules["audio"].config.engines().get(out["engine"])
         if engine is None:
-            raise bad_request("Неизвестный движок озвучки.")
+            raise bad_request(voices.unknown(out["engine"]))
         if out["voice"] and out["voice"] not in engine.voices:
-            raise bad_request(f"У движка {engine.label} нет голоса {out['voice']}.")
+            raise bad_request(voices.unknown(engine.id, out["voice"]))
         speed = out["speed"]
         if speed not in (None, "") and (isinstance(speed, bool) or not isinstance(speed, int | float)):
             raise bad_request("speed — число или null.")
@@ -286,10 +294,13 @@ class StudioModule:
                 raise bad_request(f"Скорость — от {low:g} до {high:g}.")
         else:
             out["speed"] = None
-        if out["image_model"] not in {m["id"] for m in self.image_models()}:
-            raise bad_request("Неизвестная модель картинок.")
-        if out["video_model"] not in {m["id"] for m in self.video_models()}:
-            raise bad_request("Неизвестная модель видео.")
+        # Пустой список — все модели выключены в настройках: выпуск без картинок и роликов можно.
+        image_ids = {m["id"] for m in self.image_models()}
+        if out["image_model"] not in image_ids and (image_ids or out["image_model"] is not None):
+            raise bad_request(photo_models.unknown(out["image_model"], "Неизвестная модель картинок."))
+        video_ids = {m["id"] for m in self.video_models()}
+        if out["video_model"] not in video_ids and (video_ids or out["video_model"] is not None):
+            raise bad_request(video_models.unknown(out["video_model"], "Неизвестная модель видео."))
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
             raise bad_request("channels — список id каналов.")

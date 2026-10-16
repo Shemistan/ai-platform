@@ -173,7 +173,8 @@ class LibraryModule:
         name = card["title"]
         match action:
             case "synth":
-                argv = self.narrator.argv("synth", article_id, *engine_args(payload))
+                engines = voices.enabled(self.platform.settings)
+                argv = self.narrator.argv("synth", article_id, *engine_args(payload, engines))
                 if not payload.get("send"):
                     argv.append("--no-send")
                 return self._start("synth", f"Озвучка: {name}", argv, target=article_id, gpu=True)
@@ -203,7 +204,7 @@ class LibraryModule:
     def render(self, payload: object) -> dict:
         payload = payload if isinstance(payload, dict) else {}
         everything = bool(payload.get("all"))
-        argv = self.narrator.argv("render", *engine_args(payload))
+        argv = self.narrator.argv("render", *engine_args(payload, voices.enabled(self.platform.settings)))
         if everything:
             argv.append("--all")
         if not payload.get("send", True):
@@ -225,18 +226,19 @@ class LibraryModule:
         self.tasks.close()
 
 
-def engine_args(payload: dict) -> list[str]:
-    """--engine/--voice/--speed/--steps из запроса, проверенные по списку движков."""
-    engine = voices.ENGINES.get(str(payload.get("engine") or "")) if payload.get("engine") else None
+def engine_args(payload: dict, engines: dict[str, voices.Engine] | None = None) -> list[str]:
+    """--engine/--voice/--speed/--steps из запроса, проверенные по включённым движкам."""
+    engines = voices.ENGINES if engines is None else engines
+    engine = engines.get(str(payload.get("engine") or "")) if payload.get("engine") else None
     if payload.get("engine") and engine is None:
-        raise bad_request("Неизвестный движок озвучки.")
+        raise bad_request(voices.unknown(payload.get("engine")))
     if engine is None:
         return []
     out = ["--engine", engine.id]
     voice = payload.get("voice")
     if voice:
         if voice not in engine.voices:
-            raise bad_request(f"У движка {engine.label} нет голоса {voice!r}.")
+            raise bad_request(voices.unknown(engine.id, voice))
         out += ["--voice", voice]
     speed = payload.get("speed")
     if engine.tunable and isinstance(speed, int | float) and not isinstance(speed, bool):

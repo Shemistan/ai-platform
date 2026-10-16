@@ -71,7 +71,7 @@ class AudioModule:
         info = self.engines()
         live = {e["id"]: e for e in info.get("engines") or []}
         engines = []
-        for engine in voices.ENGINES.values():
+        for engine in self.config.engines().values():
             item = engine.public() | {"steps": engine.tunable, "problem": None, "default_steps": None}
             found_engine = live.get(engine.id)
             if found_engine:
@@ -195,7 +195,11 @@ class AudioModule:
         settings = {k: payload.get(k) for k in ("engine", "voice", "speed", "steps", "verify")}
         try:
             specs = [
-                build_spec(settings | {"text": a.get("text"), "title": a.get("title")}, self.config.default_engine)
+                build_spec(
+                    settings | {"text": a.get("text"), "title": a.get("title")},
+                    self.config.default_engine,
+                    self.config.engines(),
+                )
                 for a in articles
                 if isinstance(a, dict)
             ]

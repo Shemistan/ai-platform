@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from aiplatform.core.settings import Settings
 
 CLONES = ("Charon", "M1", "Shem", "Shem-v2")  # клоны образцов narrator/voices
 
@@ -57,3 +59,31 @@ ENGINES: dict[str, Engine] = {
 }
 DEFAULT_ENGINE = "higgs"  # голос по умолчанию у Higgs — Charon
 SPEED_RANGE = (0.7, 2.0)  # как speed_arg в narrator/cli.py
+
+
+def enabled(settings: Settings | None) -> dict[str, Engine]:
+    """Движки и голоса без выключенных в настройках; голос по умолчанию — первый оставшийся."""
+    if settings is None:
+        return dict(ENGINES)
+    data = settings.load()["disabled"]
+    off_engines, off_voices = set(data["audio"]), data["voices"]
+    out = {}
+    for engine in ENGINES.values():
+        names = tuple(v for v in engine.voices if v not in off_voices.get(engine.id, ()))
+        if engine.id in off_engines or not names:
+            continue
+        default_voice = engine.default_voice if engine.default_voice in names else names[0]
+        out[engine.id] = replace(engine, voices=names, default_voice=default_voice)
+    return out
+
+
+def unknown(engine_id: object, voice: object = None) -> str:
+    """Почему движка или голоса нет в списке: выключен в настройках или такого нет вовсе."""
+    engine = ENGINES.get(engine_id) if isinstance(engine_id, str) else None
+    if engine is None:
+        return "Неизвестный движок озвучки."
+    if voice is None:
+        return f"Движок {engine.label} выключен — включи его во вкладке «Настройки»."
+    if voice in engine.voices:
+        return f"Голос {voice} у движка {engine.label} выключен — включи его во вкладке «Настройки»."
+    return f"У движка {engine.label} нет голоса {voice!r}."

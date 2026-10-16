@@ -27,7 +27,7 @@ class PhotoModule:
         backends = sorted({m.model.backend for m in available})
         return {
             "models": [m.public() for m in available],
-            "default_models": {mode: models.default(available, mode).id for mode in models.MODES},
+            "default_models": {mode: getattr(models.default(available, mode), "id", None) for mode in models.MODES},
             "backend": self.config.backend,
             "runners": {b: self.config.runner_available(b) for b in backends},
             "models_dir": str(self.config.models_dir),
