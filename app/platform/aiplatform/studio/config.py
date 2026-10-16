@@ -10,6 +10,7 @@ from pathlib import Path
 
 from aiplatform.audio import config as audio_config
 from aiplatform.config import SERVICE_DIR, Config, pick
+from aiplatform.updates import registry
 
 FAKES = Path(__file__).resolve().parent.parent / "fakes"
 DEFAULT_LLM_CMD = "claude -p"
@@ -32,6 +33,7 @@ class StudioConfig:
     ffmpeg: str
     font: str
     render_scale: float
+    registry_file: Path  # реестр запрещённых организаций: пометки на видео и в посте
 
     @property
     def projects_dir(self) -> Path:
@@ -71,4 +73,5 @@ def load(config: Config) -> StudioConfig:
         ffmpeg=config.ffmpeg,
         font=config.font,
         render_scale=float(pick(env, "AIP_RENDER_SCALE", default="1")),
+        registry_file=config.data_dir / registry.FILE_NAME,
     )

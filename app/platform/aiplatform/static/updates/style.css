@@ -1,0 +1,24 @@
+.updates { display: grid; gap: 20px; max-width: 1280px; margin: 0 auto; padding: 16px 24px 48px; }
+@media (max-width: 960px) { .updates { padding-inline: 16px; } }
+.updates .panel { display: grid; gap: 12px; }
+.section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.section-head h2 { margin: 0; flex: 1 1 240px; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-top: 1px solid var(--line); }
+th { font-size: 12px; color: var(--muted); font-weight: 600; border-top: 0; }
+td.version { font: 13px var(--mono); white-space: nowrap; }
+tr.group td { background: var(--sunken); font-weight: 600; font-size: 13px; }
+.status.update { background: var(--warn-bg); color: var(--warn); }
+.status.ok { background: var(--ok-bg); color: var(--ok); }
+.status.error { background: var(--bad-bg); color: var(--bad); }
+.aliases { color: var(--muted); font-size: 12px; }
+.disclaimer { font-size: 13px; }
+.row-added td { background: var(--ok-bg); }
+.row-changed td { background: var(--warn-bg); }
+.row-removed td { background: var(--bad-bg); text-decoration: line-through; }
+.proposal { display: grid; gap: 10px; border: 1px solid var(--warn); border-radius: 10px; padding: 12px; }
+.editor { display: grid; gap: 8px; }
+.editor[open] summary { margin-bottom: 8px; }

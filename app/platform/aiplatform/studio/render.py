@@ -3,7 +3,8 @@
 Слайд — видео-фон (ролик из внешней модели: по кругу, без своего звука) или
 картинка-фон с медленным наездом (zoompan), затемнение снизу,
 заголовок и тезисы, которые появляются по очереди (drawtext с alpha по
-времени). Без картинки — тёмный фон с лёгким градиентом. Тексты идут
+времени), и мелкая пометка внизу кадра — о запрещённой в РФ организации,
+если она упоминается на слайде. Без картинки — тёмный фон с лёгким градиентом. Тексты идут
 через textfile с expansion=none: ни кавычки, ни двоеточия, ни % в тексте
 не ломают фильтр. Горизонталь 1920×1080 и вертикаль 1080×1920 — одна сцена,
 разная раскладка.
@@ -43,6 +44,8 @@ class Layout:
     shade_y: int  # откуда начинается затемнение
     title_chars: int  # сколько знаков в строке заголовка
     bullet_chars: int
+    note_size: int  # пометка о запрещённой организации: мелко, во всю ширину внизу
+    note_chars: int
 
 
 def layout(orientation: str, scale: float = 1.0) -> Layout:
@@ -51,10 +54,10 @@ def layout(orientation: str, scale: float = 1.0) -> Layout:
     if orientation == VERTICAL:
         title, bullet, margin = round(h * 0.036), round(h * 0.024), round(w * 0.07)
         top = round(h * 0.58)
-        return Layout(w, h, title, bullet, margin, top, round(h * 0.38), 24, 34)
+        return Layout(w, h, title, bullet, margin, top, round(h * 0.38), 24, 34, max(round(h * 0.012), 8), 66)
     title, bullet, margin = round(h * 0.062), round(h * 0.04), round(w * 0.05)
     top = round(h * 0.6)
-    return Layout(w, h, title, bullet, margin, top, round(h * 0.36), 44, 70)
+    return Layout(w, h, title, bullet, margin, top, round(h * 0.36), 44, 70, max(round(h * 0.02), 8), 130)
 
 
 def _even(value: float) -> int:
@@ -94,8 +97,11 @@ def _background(image: Path | None, lay: Layout, frames: int, clip: Path | None 
     return args, chain
 
 
-def slide_filter(lay: Layout, font: str, title_file: Path, bullet_files: list[Path], seconds: float) -> str:
-    """Тексты поверх фона: заголовок проявляется первым, тезисы — по очереди за ним."""
+def slide_filter(
+    lay: Layout, font: str, title_file: Path, bullet_files: list[Path], seconds: float, note_file: Path | None = None
+) -> str:
+    """Тексты поверх фона: заголовок проявляется первым, тезисы — по очереди за ним.
+    Пометка (note_file) видна весь слайд — внизу, на своей тёмной полосе."""
     # Затемнение снизу ступенями — мягкий переход вместо резкой плашки.
     band = max((lay.title_y - lay.shade_y) // 4, 1)
     parts = [
@@ -127,6 +133,16 @@ def slide_filter(lay: Layout, font: str, title_file: Path, bullet_files: list[Pa
             f":alpha='min(1,max(0,(t-{appear:.2f})/0.4))'"
         )
         y += lines * round(lay.bullet_size * 1.35) + lay.bullet_size // 2
+    if note_file is not None:
+        lines = note_file.read_text(encoding="utf-8").count("\n") + 1
+        size = lay.note_size
+        top = lay.height - round(size * 1.2) - lines * round(size * 1.25)
+        pad = size // 2
+        parts.append(f"drawbox=x=0:y={top - pad}:w=iw:h=ih-{top - pad}:color=black@0.55:t=fill")
+        parts.append(
+            f"drawtext={font_arg}textfile={_quote(note_file)}:expansion=none:fontsize={size}"
+            f":fontcolor=white@0.85:line_spacing={size // 4}:x={lay.margin}:y={top}"
+        )
     return ",".join(parts)
 
 
@@ -167,6 +183,7 @@ class Renderer:
         orientation: str,
         cancel: threading.Event,
         clip: Path | None = None,
+        notes: list[str] | None = None,
     ) -> Path:
         lay = layout(orientation, self.scale)
         work = out.with_suffix("")
@@ -178,9 +195,13 @@ class Renderer:
             path = work / f"bullet{n}.txt"
             path.write_text(wrap("• " + bullet, lay.bullet_chars, 2), encoding="utf-8")
             bullet_files.append(path)
+        note_file = None
+        if notes:
+            note_file = work / "note.txt"
+            note_file.write_text("\n".join(wrap(n, lay.note_chars, 4) for n in notes), encoding="utf-8")
         frames = max(int(seconds * FPS), 1)
         args, chain = _background(image, lay, frames, clip)
-        text = slide_filter(lay, self.font, title_file, bullet_files, seconds)
+        text = slide_filter(lay, self.font, title_file, bullet_files, seconds, note_file)
         argv = [self.ffmpeg, "-y", "-loglevel", "error", *args]
         argv += ["-filter_complex", f"{chain},{text},format=yuv420p[v]", "-map", "[v]", *self._encode(seconds)]
         argv += ["-an", str(out)]
@@ -211,7 +232,10 @@ class Renderer:
         cancel: threading.Event,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> Path:
-        """Видео целиком: постер INTRO_S секунд (если есть), затем сцены {title, bullets, image, seconds}."""
+        """Видео целиком: постер INTRO_S секунд (если есть), затем сцены.
+
+        Сцена — {title, bullets, image, clip, notes, seconds}.
+        """
         work = out.parent / f".{out.stem}-clips"
         work.mkdir(parents=True, exist_ok=True)
         clips = []
@@ -231,6 +255,7 @@ class Renderer:
                     bullets=scene.get("bullets") or [],
                     image=scene.get("image"),
                     clip=scene.get("clip"),
+                    notes=scene.get("notes"),
                     out=work / f"{n:02d}.mp4",
                     seconds=scene["seconds"],
                     orientation=orientation,

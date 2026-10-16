@@ -16,6 +16,7 @@ from aiplatform.studio import news, publish, slides, steps
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, blockers, dependents
 from aiplatform.studio.render import Renderer
+from aiplatform.updates import registry
 from aiplatform.video import models as video_models
 
 PREFIX = "studio"
@@ -45,6 +46,7 @@ SETTING_STEPS = {
     "shorts": "short",
     "channels": "publish",
     "auto_publish": "publish",
+    "disclaimers": ("render", "short"),
     "review_text": None,
 }
 # Правка файла на странице → (файл, шаг, чей это результат).
@@ -119,6 +121,7 @@ class StudioModule:
             "speed": None,
             "shorts": False,
             "review_text": False,
+            "disclaimers": True,
             "auto_publish": False,
             "channels": [],
         }
@@ -172,7 +175,7 @@ class StudioModule:
             raise bad_request("voice_mode — tts или upload.")
         if out["upscale_images"] not in UPSCALE_CHOICES:
             raise bad_request("upscale_images — none, 2k или 4k.")
-        for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish"):
+        for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers"):
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
         engine = voices.ENGINES.get(out["engine"])
@@ -290,7 +293,12 @@ class StudioModule:
             "short_video": url(folder / steps.SHORT_VIDEO),
         }
         project["published"] = as_json(steps.PUBLISHED)
+        found = registry.mentioned(f"{project['title']}\n{read(steps.TEXT)}\n{read(steps.POST)}", self.banned())
+        project["disclaimers"] = [{"name": e.name, "note": e.disclaimer + "."} for e in found]
         return project
+
+    def banned(self) -> list[registry.Entry]:
+        return steps.banned(self.config)
 
     @staticmethod
     def _plan(folder) -> list[slides.Slide]:

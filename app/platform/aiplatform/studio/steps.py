@@ -12,6 +12,10 @@
   video.mp4          — 16:9
   short.json, short/voice.mp3, short.mp4 — шортс 9:16
   published.json     — куда и что отправлено
+
+Если в тексте упомянута организация из реестра запрещённых в РФ
+(updates/registry.py), на её слайдах внизу идёт мелкая пометка, а в подпись
+к посту она дописывается в конце. Выключается настройкой disclaimers.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from aiplatform.studio.config import StudioConfig
 from aiplatform.studio.llm import StudioError, complete, extract_json, plain
 from aiplatform.studio.pipeline import Skip, StepContext, Waiting
 from aiplatform.studio.render import INTRO_S, LANDSCAPE, VERTICAL, Renderer
+from aiplatform.updates import registry
 
 TEXT, POST, POSTER_PROMPT, PLAN, SHORT = "text.md", "post.md", "poster_prompt.md", "plan.json", "short.json"
 VIDEO, SHORT_VIDEO, PUBLISHED = "video.mp4", "short.mp4", "published.json"
@@ -234,6 +239,20 @@ def uploads_ready(ctx: StepContext, kind: str, items: list[tuple[int, str]]) -> 
     ctx.log(f"{what}: {have} из {len(items)}")
 
 
+def banned(config: StudioConfig) -> list[registry.Entry]:
+    return registry.Registry(config.registry_file).entries()
+
+
+def slide_notes(paras: list[str], plan: list[slides.Slide], entries: list[registry.Entry]) -> list[list[str]]:
+    """Пометки каждого слайда: об организациях из его абзацев, заголовка и тезисов."""
+    out = []
+    for n, slide in enumerate(plan):
+        end = plan[n + 1].para if n + 1 < len(plan) else len(paras)
+        said = "\n".join([*paras[slide.para : max(end, slide.para + 1)], slide.title, *slide.bullets])
+        out.append(registry.notes(said, entries))
+    return out
+
+
 def load_plan(ctx: StepContext) -> tuple[dict, list[slides.Slide]]:
     raw = ctx.read(PLAN)
     if not raw:
@@ -409,9 +428,10 @@ def scenes(
     *,
     images: bool = True,
     clips: bool = False,
+    notes: list[list[str]] | None = None,
 ) -> list[dict]:
     """Сцены слайдов. Фон: видео (если включены), иначе картинка (если включены), иначе градиент.
-    cycle — у шортса свой план: файлы слайдов идут по кругу."""
+    cycle — у шортса свой план: файлы слайдов идут по кругу. notes — пометки слайдов."""
     enabled = {IMAGES: images, CLIPS: clips}
     found = {kind: _media_files(folder / kind, MEDIA[kind][0]) if enabled[kind] else [] for kind in MEDIA}
 
@@ -429,6 +449,7 @@ def scenes(
                 "bullets": slide.bullets,
                 "image": pick(IMAGES, n),
                 "clip": pick(CLIPS, n),
+                "notes": notes[n - 1] if notes else [],
                 "seconds": seconds,
             }
         )
@@ -444,10 +465,15 @@ def render_video(
         raise StudioError(f"Не удалось узнать длительность {audio.name} — нужен ffprobe рядом с ffmpeg.")
     poster = find(ctx.dir, "poster", IMAGE_EXT)
     intro = INTRO_S if poster is not None and audio_s > INTRO_S + 1 else 0.0
-    durations = slides.durations(slides.paragraphs(text), plan, audio_s, intro)
+    paras = slides.paragraphs(text)
+    durations = slides.durations(paras, plan, audio_s, intro)
     settings = ctx.settings
+    notes = slide_notes(paras, plan, banned(svc.config)) if settings.get("disclaimers", True) else None
+    marked = [n for n, found in enumerate(notes or [], start=1) if found]
+    if marked:
+        ctx.log(f"пометки о запрещённых организациях: слайды {', '.join(map(str, marked))}")
     scene_list = scenes(
-        ctx.dir, plan, durations, cycle, images=settings["draw_images"], clips=bool(settings.get("clips"))
+        ctx.dir, plan, durations, cycle, images=settings["draw_images"], clips=bool(settings.get("clips")), notes=notes
     )
 
     def on_progress(done: int, total: int) -> None:
@@ -522,6 +548,8 @@ def step_publish(ctx: StepContext) -> None:
         plan_title = json.loads(ctx.read(PLAN)).get("title", "")
     title = plan_title or ctx.project["title"]
     post = ctx.read(POST)
+    if ctx.settings.get("disclaimers", True):
+        post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
     results = []
     for n, channel_id in enumerate(chosen, start=1):
         channel = channels.get(channel_id)

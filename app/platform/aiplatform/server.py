@@ -58,9 +58,10 @@ def default_modules(ctx: Context) -> list[Module]:
     from aiplatform.audio.service import AudioModule
     from aiplatform.photo.service import PhotoModule
     from aiplatform.studio.service import StudioModule
+    from aiplatform.updates.service import UpdatesModule
     from aiplatform.video.service import VideoModule
 
-    return [PhotoModule(ctx), VideoModule(ctx), AudioModule(ctx), StudioModule(ctx)]
+    return [PhotoModule(ctx), VideoModule(ctx), AudioModule(ctx), StudioModule(ctx), UpdatesModule(ctx)]
 
 
 class App:
