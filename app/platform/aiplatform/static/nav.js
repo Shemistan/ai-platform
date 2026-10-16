@@ -6,6 +6,7 @@ const TABS = [
   { id: "video", label: "Видео", href: "/video/" },
   { id: "audio", label: "Аудио", href: "/audio/" },
   { sep: true },
+  { id: "board", label: "Выпуски", href: "/board/" },
   { id: "digest", label: "Дайджест новостей", href: "/studio/?scenario=digest" },
   { id: "article", label: "Видео по статье", href: "/studio/?scenario=article" },
   { id: "post", label: "Пост в канал", href: "/studio/?scenario=post" },
@@ -46,6 +47,7 @@ function render() {
     }
     const link = el("a", { href: tab.href }, tab.label);
     if (tab.id === current) link.setAttribute("aria-current", "page");
+    if (tab.id === "board") link.append(el("span", { class: "badge", id: "platform-attention", hidden: "" }));
     const item = el("li");
     item.append(link);
     list.append(item);
@@ -66,6 +68,14 @@ async function pollGpu(gpu) {
     gpu.textContent = busy
       ? `GPU: ${data.gpu}${data.waiting ? ` · ждут ${data.waiting}` : ""}`
       : "GPU: свободен";
+    // Сколько выпусков ждут человека — счётчик у вкладки «Выпуски».
+    const badge = document.getElementById("platform-attention");
+    if (badge) {
+      const n = data.studio_attention || 0;
+      badge.textContent = n ? String(n) : "";
+      badge.hidden = !n;
+      badge.title = n ? `Ждут тебя: ${n}` : "";
+    }
   } catch {
     gpu.textContent = "GPU: нет связи";
   }

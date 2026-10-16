@@ -111,7 +111,12 @@ class App:
         }
 
     def status(self) -> dict:
-        return {"gpu": self.ctx.gate.holder(), "waiting": self.ctx.gate.waiting()}
+        out = {"gpu": self.ctx.gate.holder(), "waiting": self.ctx.gate.waiting()}
+        for module in self.modules.values():  # счётчики шапки: например, сколько выпусков ждут человека
+            badges = getattr(module, "badges", None)
+            if badges:
+                out |= badges()
+        return out
 
     def close(self) -> None:
         for module in reversed(list(self.modules.values())):

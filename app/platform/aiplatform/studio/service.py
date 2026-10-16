@@ -68,6 +68,34 @@ _FILE = re.compile(
     r"|publish/[a-z0-9_-]+/(video\.mp4|title\.txt|description\.txt))$"
 )
 _SLIDE = re.compile(r"^\d{2}$")
+# Группы доски «Выпуски» в порядке показа.
+BOARD_GROUPS = {"attention": "Ждут тебя", "running": "Идут", "published": "Опубликованы", "drafts": "Черновики"}
+
+
+def board_group(item: dict, project: dict) -> str:
+    """Куда выпуск на доске: идёт, ждёт человека, опубликован или черновик (не начат, остановлен)."""
+    if item["running"]:
+        return "running"
+    if item["attention"]:
+        return "attention"
+    if project.get("steps", {}).get("publish", {}).get("status") == "done":
+        return "published"
+    return "drafts"
+
+
+def _read_text(path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _read_json_list(path) -> list[dict]:
+    try:
+        data = json.loads(_read_text(path) or "[]")
+    except json.JSONDecodeError:
+        return []
+    return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
 
 
 class StudioModule:
@@ -148,6 +176,53 @@ class StudioModule:
         self.studio.update(project_id, apply)
         state = {"approved": True, "force": force, "ignore_verdict": ignore_verdict}
         self.studio.run(project_id, "publish", state=state)
+        return self.view(project_id)
+
+    # --- доска выпусков ---
+
+    def board(self, archived: bool = False) -> dict:
+        """Все выпуски всех сценариев по группам: ждёт тебя, идёт, опубликовано, черновики."""
+        channels = {c.id: c.label for c in self.channels()}
+        items = []
+        for item in self.studio.list(archived=archived):
+            project = self.studio.get(item["id"]) or {}
+            folder = self.studio.project_dir(item["id"])
+            published = _read_json_list(folder / steps.PUBLISHED)
+            chosen = project.get("settings", {}).get("channels") or []
+            review = _read_text(folder / steps.NARRATOR_REVIEW)
+            items.append(
+                item
+                | {
+                    "scenario_label": SCENARIOS.get(item["scenario"], item["scenario"]),
+                    "group": board_group(item, project),
+                    "channels": [{"id": c, "label": channels.get(c, c)} for c in chosen],
+                    "published": [
+                        {"channel": r["channel"], "label": r.get("label") or channels.get(r["channel"], r["channel"])}
+                        for r in published
+                        if r.get("ok") and not r.get("skipped")
+                    ],
+                    "verdict": steps.verdict(review) if review else None,
+                    "poster": self._poster_url(item["id"], folder),
+                }
+            )
+        counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
+        return {"groups": list(BOARD_GROUPS.items()), "counts": counts, "projects": items}
+
+    def _poster_url(self, project_id: str, folder) -> str | None:
+        path = steps.find(folder, "poster", steps.IMAGE_EXT)
+        if path is None:
+            return None
+        return f"{URL_BASE}/projects/{project_id}/files/{path.name}?v={path.stat().st_mtime_ns}"
+
+    def badges(self) -> dict:
+        """Для шапки: сколько выпусков ждут человека."""
+        return {"studio_attention": sum(1 for p in self.studio.list() if p["attention"])}
+
+    def archive(self, project_id: str, payload: object) -> dict:
+        archived = payload.get("archived", True) if isinstance(payload, dict) else True
+        if not isinstance(archived, bool):
+            raise bad_request("archived — true или false.")
+        self.studio.archive(project_id, archived)
         return self.view(project_id)
 
     def image_models(self) -> list[dict]:
@@ -604,6 +679,10 @@ class StudioModule:
                 return req.send_json(self.describe())
             case ("GET", ["projects"]):
                 return req.send_json({"projects": self.studio.list(req.arg("scenario"))})
+            case ("GET", ["board"]):
+                return req.send_json(self.board(archived=req.arg("archived") in ("1", "true")))
+            case ("POST", ["projects", pid, "archive"]):
+                return req.send_json(self.archive(pid, req.json() or {}))
             case ("POST", ["projects"]):
                 return req.send_json(self.create(req.json(MAX_BODY)), HTTPStatus.CREATED)
             case ("GET", ["projects", pid]):

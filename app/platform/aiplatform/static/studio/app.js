@@ -840,6 +840,14 @@ function show(project) {
       running
         ? h("button", { type: "button", class: "secondary", onclick: () => act("cancel") }, "Остановить")
         : h("button", { type: "button", class: "primary", onclick: () => act("run", {}) }, "Запустить всё"),
+      project.archived ? h("span", { class: "status skipped" }, "в архиве") : null,
+      running
+        ? null
+        : h(
+            "button",
+            { type: "button", class: "link", onclick: async () => (await act("archive", { archived: !project.archived })) && loadProjects() },
+            project.archived ? "Вернуть из архива" : "В архив",
+          ),
       h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
     ),
     h(

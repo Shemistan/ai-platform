@@ -197,9 +197,14 @@ class Studio:
             project = self._projects.get(project_id)
             return copy.deepcopy(project) if project else None
 
-    def list(self, scenario: str | None = None) -> list[dict]:
+    def list(self, scenario: str | None = None, *, archived: bool = False) -> list[dict]:
+        """Выпуски, новые сверху; архивные — только с archived=True (и только они)."""
         with self._lock:
-            items = [p for p in self._projects.values() if scenario in (None, p["scenario"])]
+            items = [
+                p
+                for p in self._projects.values()
+                if scenario in (None, p["scenario"]) and bool(p.get("archived")) == archived
+            ]
             items.sort(key=lambda p: p["created_at"], reverse=True)
             return [
                 {
@@ -207,11 +212,27 @@ class Studio:
                     "scenario": p["scenario"],
                     "title": p["title"],
                     "created_at": p["created_at"],
+                    "updated_at": p.get("updated_at") or p["created_at"],
                     "running": p["running"],
+                    "current": LABELS.get(p.get("current") or ""),
                     "status": summary(p),
+                    "attention": attention(p),
+                    "archived": bool(p.get("archived")),
+                    "source": p.get("source"),
                 }
                 for p in items
             ]
+
+    def archive(self, project_id: str, archived: bool) -> dict:
+        """Убрать выпуск с доски и из списков (файлы остаются) или вернуть его."""
+
+        def apply(project: dict) -> set[str]:
+            project["archived"] = archived
+            if archived:
+                project["auto"] = False  # архивный выпуск сам не продолжается
+            return set()
+
+        return self.update(project_id, apply)
 
     # --- запись ---
 
@@ -483,6 +504,18 @@ class Studio:
 
 def _fresh_state() -> dict:
     return {"status": PENDING, "error": None, "note": None, "progress": None, "updated_at": None}
+
+
+def attention(project: dict) -> dict | None:
+    """Первый шаг, которому нужен человек: ждёт или упал. None — ничего не нужно."""
+    if project.get("running"):
+        return None
+    for step in STEPS:
+        state = project["steps"][step.id]
+        if state["status"] in (WAITING, FAILED):
+            text = state.get("error") if state["status"] == FAILED else state.get("note")
+            return {"step": step.id, "label": step.label, "status": state["status"], "text": text or ""}
+    return None
 
 
 def summary(project: dict) -> str:

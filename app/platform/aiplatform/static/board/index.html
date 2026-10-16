@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Выпуски — AI Platform</title>
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="page-head">
+    <h1>Выпуски</h1>
+    <p class="muted">Все выпуски всех сценариев: что ждёт тебя, что идёт, что уже ушло в каналы. Выпуск, который ждёт публикации, можно опубликовать прямо отсюда.</p>
+  </header>
+
+  <main class="wide board">
+    <p class="form-error" id="error" role="alert" hidden></p>
+    <div class="board-bar">
+      <a class="primary" href="/studio/?scenario=digest">Дайджест</a>
+      <a class="secondary" href="/studio/?scenario=article">Видео по статье</a>
+      <a class="secondary" href="/studio/?scenario=post">Пост в канал</a>
+      <label class="check archived-toggle"><input type="checkbox" id="show-archived"> <span>Архив</span></label>
+    </div>
+    <div id="extra"></div>
+    <div id="groups"><p class="muted">Загружаю…</p></div>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
