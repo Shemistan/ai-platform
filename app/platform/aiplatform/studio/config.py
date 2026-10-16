@@ -43,6 +43,10 @@ class StudioConfig:
     def projects_dir(self) -> Path:
         return self.data_dir / "projects"
 
+    @property
+    def cache_dir(self) -> Path:
+        return self.data_dir / "cache"
+
     def channels(self) -> list[publish.Channel]:
         """Каналы публикации; в демо — без каналов narrator (там настоящие каналы Telegram)."""
         return publish.load_channels(self.channels_file, None if self.fake else self.narrator_dir)

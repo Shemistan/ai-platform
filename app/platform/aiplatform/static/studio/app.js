@@ -306,11 +306,11 @@ function postFields() {
   ];
 }
 
-async function create(event) {
-  event.preventDefault();
+async function create(event, forceNew = false) {
+  event?.preventDefault();
   const error = $("create-error");
   error.hidden = true;
-  const payload = { scenario, settings: readSettings("new"), run: true };
+  const payload = { scenario, settings: readSettings("new"), run: true, force_new: forceNew };
   if (scenario === "digest") payload.day = $("day").value;
   else if (scenario === "post") Object.assign(payload, { title: $("title").value, post: $("post").value, text: $("text").value });
   else Object.assign(payload, { title: $("title").value, text: $("text").value });
@@ -321,10 +321,32 @@ async function create(event) {
     await loadProjects();
     show(project);
   } catch (err) {
-    error.textContent = err.message;
+    const existing = err.data?.existing;
+    // Тот же день или тот же текст: открыть готовый выпуск вместо новой генерации — или всё же создать новый.
+    error.replaceChildren(
+      err.message,
+      ...(existing
+        ? [
+            " ",
+            h("button", { type: "button", class: "link", onclick: () => (existing.scenario === scenario ? open(existing.id) : (location.href = `?scenario=${existing.scenario}&project=${existing.id}`)) }, "Открыть"),
+            " · ",
+            h("button", { type: "button", class: "link", onclick: () => create(null, true) }, "Создать новый"),
+          ]
+        : []),
+    );
     error.hidden = false;
   } finally {
     $("create-btn").disabled = false;
+  }
+}
+
+async function cloneProject() {
+  try {
+    const copy = await api("POST", `${API}/projects/${state.project.id}/clone`);
+    await loadProjects();
+    await open(copy.id);
+  } catch (err) {
+    alertBox(err.message);
   }
 }
 
@@ -841,6 +863,9 @@ function show(project) {
         ? h("button", { type: "button", class: "secondary", onclick: () => act("cancel") }, "Остановить")
         : h("button", { type: "button", class: "primary", onclick: () => act("run", {}) }, "Запустить всё"),
       project.archived ? h("span", { class: "status skipped" }, "в архиве") : null,
+      running
+        ? null
+        : h("button", { type: "button", class: "link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: cloneProject }, "Копия выпуска"),
       running
         ? null
         : h(

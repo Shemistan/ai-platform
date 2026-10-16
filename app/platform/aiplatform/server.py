@@ -163,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.app.modules[prefix].handle(req)
             raise not_found()
         except HttpError as exc:
-            req.send_json({"error": exc.message}, exc.status)
+            req.send_json({"error": exc.message, **exc.extra}, exc.status)
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
 

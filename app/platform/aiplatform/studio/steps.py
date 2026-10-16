@@ -34,7 +34,7 @@ from pathlib import Path
 
 from aiplatform.core import media
 from aiplatform.core.runner import Canceled
-from aiplatform.studio import news, prompts, publish, render, slides
+from aiplatform.studio import cache, news, prompts, publish, render, slides
 from aiplatform.studio.config import StudioConfig
 from aiplatform.studio.llm import StudioError, complete, extract_json, plain
 from aiplatform.studio.pipeline import Skip, StepContext, Waiting
@@ -77,6 +77,7 @@ class Services:
     audio: object  # audio.jobs.AudioJobs: create / wait / audio_path
     video: object  # video.jobs.JobManager: create / get / cancel / video_path
     renderer: Renderer
+    cache: cache.MediaCache  # готовые картинки, ролики и озвучка по входам генерации
 
 
 def services(ctx: StepContext) -> Services:
@@ -126,16 +127,30 @@ def wait_job(ctx: StepContext, tab: str, jobs: object, job: dict, what: str) -> 
     return current
 
 
-def generate_image(ctx: StepContext, prompt: str, target: Path, what: str, size: str = IMAGE_SIZE) -> str:
-    """Картинка во вкладке «Фото» (и увеличение, если включено). Возвращает id исходной задачи."""
+def from_cache(ctx: StepContext, entry: str, target: Path, what: str) -> bool:
+    """Готовый файл с теми же входами — из кэша. «Перезапустить шаг» кэш не читает: просят новый вариант."""
+    if ctx.state.get("fresh") or not services(ctx).cache.take(entry, target):
+        return False
+    ctx.log(f"{what}: из кэша")
+    return True
+
+
+def generate_image(ctx: StepContext, prompt: str, target: Path, what: str, size: str = IMAGE_SIZE) -> str | None:
+    """Картинка во вкладке «Фото» (и увеличение, если включено). Возвращает id исходной задачи;
+    None — картинка из кэша, задачи не было."""
     svc = services(ctx)
-    payload = {"mode": "txt2img", "prompt": prompt, "size": size, "model": ctx.settings["image_model"]}
+    model, upscale = ctx.settings["image_model"], ctx.settings.get("upscale_images") or "none"
+    entry = cache.entry_id("image", prompt=prompt, model=model, size=size, upscale=upscale)
+    if from_cache(ctx, entry, target, what):
+        return None
+    payload = {"mode": "txt2img", "prompt": prompt, "size": size, "model": model}
     try:
         job = svc.photo.create(payload)
     except ValueError as exc:
         raise StudioError(f"{what}: {exc}") from exc
     done = wait_job(ctx, "photo", svc.photo, job, what)
     finish_image(ctx, done["id"], target, what)
+    svc.cache.put(entry, target)
     return done["id"]
 
 
@@ -167,6 +182,9 @@ def generate_clip(ctx: StepContext, prompt: str, target: Path, what: str) -> Pat
         "model": ctx.settings["video_model"],
         "audio": False,  # звук ролика всё равно не идёт в видео: под слайдом — озвучка
     }
+    entry = cache.entry_id("clip", **{k: payload[k] for k in ("prompt", "duration_s", "preset", "model")})
+    if from_cache(ctx, entry, target, what):
+        return target
     try:
         job = svc.video.create(payload)
     except ValueError as exc:
@@ -177,6 +195,7 @@ def generate_clip(ctx: StepContext, prompt: str, target: Path, what: str) -> Pat
         raise StudioError(f"{what}: mp4 не найден.")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
+    svc.cache.put(entry, target)
     return target
 
 
@@ -186,6 +205,9 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
     payload = {"text": text, "engine": settings["engine"], "voice": settings.get("voice") or None}
     if settings.get("speed"):
         payload["speed"] = settings["speed"]
+    entry = cache.entry_id("voice", **payload)
+    if from_cache(ctx, entry, target, what):
+        return target
     try:
         job = svc.audio.create(payload)
     except ValueError as exc:
@@ -196,6 +218,7 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
         raise StudioError(f"{what}: mp3 не найден.")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
+    svc.cache.put(entry, target)
     return target
 
 

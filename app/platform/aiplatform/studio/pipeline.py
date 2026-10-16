@@ -320,7 +320,8 @@ class Studio:
                 raise Conflict("Проект уже выполняется.")
             if only is not None:
                 self._reset(project, only, include_self=True)
-                project["steps"][only].update(state or {})
+                # Шаг перезапустили руками — нужен новый вариант, а не готовый из кэша.
+                project["steps"][only].update({"fresh": True} | (state or {}))
             else:
                 project["auto"] = True
                 # «Запустить всё» ещё раз пробует шаги, которые ждали человека или упали.

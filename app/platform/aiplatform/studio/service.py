@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import re
@@ -13,6 +14,7 @@ from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import news, publish, slides, steps
+from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, blockers, dependents
 from aiplatform.studio.render import Renderer
@@ -68,8 +70,26 @@ _FILE = re.compile(
     r"|publish/[a-z0-9_-]+/(video\.mp4|title\.txt|description\.txt))$"
 )
 _SLIDE = re.compile(r"^\d{2}$")
+# Копия выпуска: что не переносится (итоги сборки и публикации) и чьи статусы переносятся.
+CLONE_SKIP = {
+    "project.json",
+    steps.PUBLISHED,
+    "publish",
+    steps.VIDEO,
+    steps.SHORT_VIDEO,
+    "video-cover.jpg",
+    "video-thumb.jpg",
+}
+CLONE_STEPS = ("text", "poster_prompt", "poster", "plan", "images", "clips", "voice")
 # Группы доски «Выпуски» в порядке показа.
 BOARD_GROUPS = {"attention": "Ждут тебя", "running": "Идут", "published": "Опубликованы", "drafts": "Черновики"}
+
+
+def source_id(scenario: str, *, day: str | None = None, text: str = "") -> str:
+    """По чему узнаём тот же материал: у дайджеста — день, у статьи и поста — текст без лишних пробелов."""
+    if scenario == "digest":
+        return f"digest:{day}"
+    return f"{scenario}:" + hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()[:16]
 
 
 def board_group(item: dict, project: dict) -> str:
@@ -115,6 +135,7 @@ class StudioModule:
             audio=self.ctx.modules["audio"].jobs,
             video=self.ctx.modules["video"].jobs,
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
+            cache=MediaCache(self.config.cache_dir),
         )
 
     # --- описание ---
@@ -398,14 +419,19 @@ class StudioModule:
         settings = self.check_settings(payload.get("settings"), base)
         title = " ".join(str(payload.get("title") or "").split())[:200]
         extra: dict = {"auto_title": not title}
+        force_new = payload.get("force_new", False)
+        if not isinstance(force_new, bool):
+            raise bad_request("force_new — true или false.")
         if scenario == "digest":
             try:
                 day = news.parse_day(payload.get("day"))
             except ValueError as exc:
                 raise bad_request(str(exc)) from exc
             extra["day"] = day.isoformat()
+            extra["source"] = source_id(scenario, day=extra["day"])
             title = title or f"Дайджест новостей за {day.strftime('%d.%m.%Y')}"
             extra["auto_title"] = False
+            self._no_duplicate(extra["source"], force_new)
             project = self.studio.create(scenario, title, settings, extra)
         elif scenario == "post":
             post = payload.get("post")
@@ -416,6 +442,8 @@ class StudioModule:
                 raise bad_request(f"Текст длиннее {MAX_TEXT} знаков.")
             first = publish.plain_text(post).splitlines()[0] if publish.plain_text(post) else ""
             title = title or first[:90] or "Пост в канал"
+            extra["source"] = source_id(scenario, text=f"{post}\n{text}")
+            self._no_duplicate(extra["source"], force_new)
             project = self.studio.create(scenario, title, settings, extra)
             folder = self.studio.project_dir(project["id"])
             (folder / steps.POST).write_text(post.strip() + "\n", encoding="utf-8")
@@ -429,11 +457,64 @@ class StudioModule:
                 raise bad_request(f"Текст длиннее {MAX_TEXT} знаков.")
             paras = slides.paragraphs(text)
             title = title or (paras[0][:90] if paras else "Видео по статье")
+            extra["source"] = source_id(scenario, text=text)
+            self._no_duplicate(extra["source"], force_new)
             project = self.studio.create(scenario, title, settings, extra)
             (self.studio.project_dir(project["id"]) / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
         if payload.get("run"):
             self.studio.run(project["id"])
         return self.view(project["id"])
+
+    def _no_duplicate(self, source: str, force_new: bool) -> None:
+        """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый)."""
+        if force_new:
+            return
+        existing = next((p for p in self.studio.list() if self._source(p) == source), None)
+        if existing is not None:
+            raise HttpError(
+                HTTPStatus.CONFLICT,
+                f"Уже есть выпуск «{existing['title']}» по этому же материалу — открой его или создай новый.",
+                {"existing": {"id": existing["id"], "title": existing["title"], "scenario": existing["scenario"]}},
+            )
+
+    def _source(self, item: dict) -> str | None:
+        """Источник выпуска; у выпусков из прошлых версий — по дню или по тексту на диске."""
+        if item.get("source"):
+            return item["source"]
+        project = self.studio.get(item["id"]) or {}
+        folder = self.studio.project_dir(item["id"])
+        if project.get("scenario") == "digest" and project.get("day"):
+            return source_id("digest", day=project["day"])
+        if project.get("scenario") == "article":
+            return source_id("article", text=_read_text(folder / steps.TEXT))
+        if project.get("scenario") == "post":
+            return source_id("post", text=f"{_read_text(folder / steps.POST)}\n")
+        return None
+
+    def clone(self, project_id: str) -> dict:
+        """Копия выпуска: те же настройки и готовые результаты до сборки; сборка и публикация — заново."""
+        source = self.studio.get(project_id)
+        if source is None:
+            raise not_found("Проект не найден.")
+        if source["running"]:
+            raise HttpError(HTTPStatus.CONFLICT, "Проект сейчас выполняется — дождись или останови его.")
+        extra = {k: source[k] for k in ("day", "source", "auto_title") if k in source}
+        copy = self.studio.create(source["scenario"], f"{source['title']} (копия)", source["settings"], extra)
+        src, dst = self.studio.project_dir(project_id), self.studio.project_dir(copy["id"])
+        for path in src.rglob("*"):
+            rel = path.relative_to(src)
+            if not path.is_file() or rel.parts[0] in CLONE_SKIP or path.name.endswith(".tmp"):
+                continue
+            place(path, dst / rel)
+        kept = {s: st for s, st in source["steps"].items() if s in CLONE_STEPS and st["status"] in ("done", "skipped")}
+
+        def apply(project: dict) -> set[str]:
+            for step_id, state in kept.items():
+                project["steps"][step_id] = {k: v for k, v in state.items() if k not in ("fresh", "poke")}
+            return set()
+
+        self.studio.update(copy["id"], apply)
+        return self.view(copy["id"])
 
     def view(self, project_id: str) -> dict:
         project = self.studio.get(project_id)
@@ -681,6 +762,8 @@ class StudioModule:
                 return req.send_json({"projects": self.studio.list(req.arg("scenario"))})
             case ("GET", ["board"]):
                 return req.send_json(self.board(archived=req.arg("archived") in ("1", "true")))
+            case ("POST", ["projects", pid, "clone"]):
+                return req.send_json(self.clone(pid), HTTPStatus.CREATED)
             case ("POST", ["projects", pid, "archive"]):
                 return req.send_json(self.archive(pid, req.json() or {}))
             case ("POST", ["projects"]):
