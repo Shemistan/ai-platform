@@ -28,6 +28,8 @@ class SpecTest(unittest.TestCase):
         self.assertEqual((spec.engine, spec.voice, spec.speed), ("supertonic", "F2", 1.25))
         # У silero скорость не настраивается — не передаём её вовсе.
         self.assertIsNone(build_spec({"text": "т", "engine": "silero", "speed": 1.5}).speed)
+        # Shem-v2 — клон второй записи живого голоса: есть у всех движков-клонов.
+        self.assertEqual(build_spec({"text": "т", "engine": "higgs", "voice": "Shem-v2"}).voice, "Shem-v2")
 
     def test_rejects(self):
         cases = [
