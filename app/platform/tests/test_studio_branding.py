@@ -102,15 +102,29 @@ class DigestBrandingTest(StudioCase):
         folder = self.folder(project["id"])
         self.assertTrue((folder / "video-cover.jpg").is_file())
         self.assertTrue((folder / "video-thumb.jpg").is_file())
+        # Публикуют на ×1,25, как в narrator: видео короче озвучки во столько же раз.
+        self.assertEqual(done["settings"]["tempo"], 1.25)
         voice_s = media.duration(folder / "voice.mp3")
-        self.assertAlmostEqual(media.duration(folder / "video.mp4"), voice_s, delta=0.6)
+        self.assertAlmostEqual(media.duration(folder / "voice-x1.25.mp3"), voice_s / 1.25, delta=0.3)
+        self.assertAlmostEqual(media.duration(folder / "video.mp4"), voice_s / 1.25, delta=0.6)
+        self.assertIn("скорость озвучки ×1.25", "\n".join(done["log"]))
+
+        # Смена скорости пересобирает видео, но не озвучку.
+        status, changed = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"tempo": 1})
+        self.assertEqual(status, 200, changed)
+        self.assertEqual((self.statuses(changed)["voice"], self.statuses(changed)["render"]), ("done", "pending"))
+        bad = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"tempo": 3})
+        self.assertEqual(bad[0], 400)
+        self.assertIn("tempo", bad[1]["error"])
 
     def test_article_has_no_branding_by_default(self):
         project = self.create(scenario="article", text="Заголовок\n\nПервый абзац. Второе предложение.", run=True)
         self.assertFalse(project["settings"]["branding"])
+        self.assertEqual(project["settings"]["tempo"], 1.0)
         done = self.settle(project["id"])
         self.assertEqual(self.statuses(done)["render"], "done", done["log"])
         self.assertFalse((self.folder(project["id"]) / "video-cover.jpg").exists())
+        self.assertFalse(any(self.folder(project["id"]).glob("voice-x*")))
 
 
 @NEEDS_FFMPEG

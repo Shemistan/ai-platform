@@ -48,6 +48,7 @@ SETTING_STEPS = {
     "auto_publish": "publish",
     "disclaimers": ("render", "short"),
     "branding": ("render", "short"),
+    "tempo": ("render", "short"),
     "review_text": None,
 }
 # Правка файла на странице → (файл, шаг, чей это результат).
@@ -124,6 +125,7 @@ class StudioModule:
             "review_text": False,
             "disclaimers": True,
             "branding": False,
+            "tempo": 1.0,
             "auto_publish": False,
             "channels": [],
         }
@@ -180,6 +182,10 @@ class StudioModule:
         for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding"):
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
+        tempo = out["tempo"]
+        if isinstance(tempo, bool) or not isinstance(tempo, int | float) or float(tempo) not in steps.TEMPOS:
+            raise bad_request(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}.")
+        out["tempo"] = float(tempo)
         engine = voices.ENGINES.get(out["engine"])
         if engine is None:
             raise bad_request("Неизвестный движок озвучки.")
@@ -218,7 +224,7 @@ class StudioModule:
         # из ChatGPT по промпту выпуска — постер загружает человек.
         base = self.defaults()
         if scenario == "digest":
-            base |= {"branding": True, "poster_mode": "upload"}
+            base |= {"branding": True, "poster_mode": "upload", "tempo": 1.25}
         settings = self.check_settings(payload.get("settings"), base)
         title = " ".join(str(payload.get("title") or "").split())[:200]
         extra: dict = {"auto_title": not title}

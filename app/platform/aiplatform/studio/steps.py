@@ -54,6 +54,7 @@ CLIP_PRESET = "landscape-m"  # 704×448 из пресетов вкладки «�
 CLIP_DURATION_S = 5  # есть у всех видеомоделей; длиннее слайд — ролик идёт по кругу
 MAX_CLIPS = 3  # роликов на выпуск: ключевые моменты, остальные слайды — картинка с наездом
 UPSCALE_TARGETS = ("2k", "4k")
+TEMPOS = (0.75, 1.0, 1.25, 1.5, 1.75, 2.0)  # скорость озвучки в видео, как DOWNLOAD_TEMPOS у narrator
 SHORT_WORDS = 140
 POLL_S = 0.3
 
@@ -533,6 +534,7 @@ def render_video(
     ctx: StepContext, *, text: str, plan: list[slides.Slide], audio: Path, out: Path, orientation: str, cycle: bool
 ) -> None:
     svc = services(ctx)
+    audio = paced(ctx, audio)
     audio_s = media.duration(audio, svc.config.ffmpeg)
     if audio_s <= 0:
         raise StudioError(f"Не удалось узнать длительность {audio.name} — нужен ffprobe рядом с ffmpeg.")
@@ -572,6 +574,19 @@ def render_video(
         cover.unlink(missing_ok=True)
         thumb.unlink(missing_ok=True)
     ctx.log(f"{out.name}: {audio_s:.0f} с, {len(scene_list)} слайдов")
+
+
+def paced(ctx: StepContext, audio: Path) -> Path:
+    """Озвучка в темпе из настроек: слайды подстраиваются под её длину, обложка и плашка — в обычном темпе."""
+    tempo = float(ctx.settings.get("tempo") or 1.0)
+    if tempo == 1.0:
+        return audio
+    out = audio.with_name(f"{audio.stem}-x{tempo:g}.mp3")
+    if not out.is_file() or out.stat().st_mtime < audio.stat().st_mtime:
+        ctx.progress(f"Озвучка ×{tempo:g}…")
+        services(ctx).renderer.retime(audio, out, tempo, ctx.cancel)
+    ctx.log(f"скорость озвучки ×{tempo:g}")
+    return out
 
 
 def branding(config: StudioConfig) -> Branding:
