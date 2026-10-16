@@ -179,6 +179,20 @@ function settingsForm(values, prefix) {
       "fieldset",
       {},
       h("legend", {}, "Оформление"),
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "hint" }, "Кадр видео (шортс всегда 9:16)"),
+        h(
+          "select",
+          { id: id("frame") },
+          ...[
+            ["poster", "Как постер — пропорции картинки обложки"],
+            ["square", "Квадрат 1:1"],
+            ["landscape", "Широкий 16:9"],
+          ].map(([v, label]) => h("option", { value: v, selected: v === (values.frame || "landscape") }, label)),
+        ),
+      ),
       check(
         "branding",
         "Плашка «подпишись» и кнопка «плей»",
@@ -234,6 +248,7 @@ function readSettings(prefix) {
     disclaimers: get("disclaimers").checked,
     branding: get("branding").checked,
     tempo: Number(get("tempo").value),
+    frame: get("frame").value,
     auto_publish: get("auto_publish").checked,
     channels: [...document.querySelectorAll(`input[name="${prefix}-channels"]:checked`)].map((i) => i.value),
   };
