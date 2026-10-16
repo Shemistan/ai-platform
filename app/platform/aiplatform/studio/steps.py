@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 from dataclasses import dataclass
@@ -52,6 +53,10 @@ SQUARE_IMAGE_SIZE = "1024x1024"  # картинки слайдов под кад
 NARRATOR_PROMPT = "narrator/image_prompt.md"
 NARRATOR_COVER = "narrator/cover"
 NARRATOR_FOLDER = "narrator/folder.txt"  # каталог выпуска: туда же человек кладёт обложку из ChatGPT
+NARRATOR_REVIEW = "narrator/review.md"  # отчёт судьи выпуска: вердикт и что исправлено
+VERDICTS = ("готово", "готово с оговорками", "не готово")
+NOT_READY = "не готово"
+_VERDICT = re.compile(r"^\s*\**\s*Вердикт\s*\**\s*:\s*\**\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 NARRATOR_COVER_EXT = (".png", ".jpg", ".jpeg", ".webp")
 CLIP_PRESET = "landscape-m"  # 704×448 из пресетов вкладки «Видео»: быстрее, а ffmpeg растянет до кадра
 CLIP_DURATION_S = 5  # есть у всех видеомоделей; длиннее слайд — ролик идёт по кругу
@@ -297,12 +302,33 @@ def step_text(ctx: StepContext) -> None:
         if post.is_file():
             ctx.write(POST, post.read_text(encoding="utf-8"))
         take_narrator_cover(ctx, folder)
+        take_review(ctx, folder)
         ctx.log(f"выпуск: {folder}")
     text = require_text(ctx)
     words = len(text.split())
     ctx.log(f"{words} слов, {len(slides.paragraphs(text))} абзацев, ~{max(round(words / 130), 1)} мин озвучки")
     if ctx.settings.get("review_text") and not ctx.state.get("approved"):
         raise Waiting("Проверь и при необходимости поправь текст, затем нажми «Продолжить».")
+
+
+def verdict(text: str) -> str | None:
+    """Вердикт судьи из строки «Вердикт: …», как review_verdict у движка; None — нет строки."""
+    m = _VERDICT.search(text or "")
+    if not m:
+        return None
+    value = m[1].strip(" .*—-").lower()
+    return value if value in VERDICTS else None
+
+
+def take_review(ctx: StepContext, folder: Path) -> None:
+    """review.md судьи — в проект: вердикт виден в шаге «Текст» и держит публикацию."""
+    review = folder / news.REVIEW
+    if not review.is_file():
+        ctx.log("судья выпуск не смотрел: review.md нет")
+        return
+    text = review.read_text(encoding="utf-8")
+    ctx.write(NARRATOR_REVIEW, text)
+    ctx.log(f"судья: {verdict(text) or 'нет строки «Вердикт: …»'}")
 
 
 def take_narrator_cover(ctx: StepContext, folder: Path) -> None:
@@ -691,6 +717,11 @@ def step_publish(ctx: StepContext) -> None:
         raise Waiting("Выбери каналы и нажми «Опубликовать».")
     if not ctx.settings.get("auto_publish") and not ctx.state.get("approved"):
         raise Waiting("Посмотри видео, выбери каналы и нажми «Опубликовать».")
+    if verdict(ctx.read(NARRATOR_REVIEW)) == NOT_READY and not ctx.state.get("ignore_verdict"):
+        raise Waiting(
+            "Судья сказал «не готово» — см. его отчёт в шаге «Текст». Поправь выпуск или включи "
+            "«Опубликовать несмотря на вердикт» и нажми «Опубликовать»."
+        )
     channels = {c.id: c for c in svc.config.channels()}
     # Как `news publish` у narrator: в канал, куда уже ушло, повторно — только с «Опубликовать повторно».
     before = {r["channel"]: r for r in read_published(ctx) if r.get("sent")}

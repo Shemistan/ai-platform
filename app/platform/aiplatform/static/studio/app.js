@@ -328,13 +328,13 @@ async function deleteChannel(channelId, prefix) {
 
 // Выбор каналов и «повторно» у кнопки «Опубликовать» живут между перерисовками страницы.
 function publishPick(project) {
-  if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(project.settings.channels), force: false };
+  if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(project.settings.channels), force: false, ignoreVerdict: false };
   return state.publish[project.id];
 }
 
 async function publishNow(project) {
   const pick = publishPick(project);
-  await act("publish", { channels: [...pick.channels], force: pick.force });
+  await act("publish", { channels: [...pick.channels], force: pick.force, ignore_verdict: pick.ignoreVerdict });
   pick.force = false;
 }
 
@@ -560,6 +560,21 @@ function jobLink(step) {
   return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${tab}»`);
 }
 
+const VERDICT_TONE = { готово: "done", "готово с оговорками": "waiting", "не готово": "failed" };
+
+// Вердикт судьи дайджеста: отдельный запуск claude проверил выпуск по первоисточникам.
+function verdictBox(review) {
+  if (!review) return null;
+  const label = review.verdict ? `Судья: ${review.verdict}` : "Судья: вердикта нет";
+  return h(
+    "div",
+    { class: "note verdict" },
+    h("span", { class: `status ${VERDICT_TONE[review.verdict] || "pending"}` }, label),
+    review.verdict === "не готово" ? h("span", { class: "hint" }, " Публикация ждёт: поправь выпуск или разреши её в шаге «Публикация».") : null,
+    h("details", {}, h("summary", { class: "link" }, "Отчёт судьи"), h("pre", { class: "log" }, review.text)),
+  );
+}
+
 function disclaimerBox() {
   const found = state.project.disclaimers || [];
   if (!found.length) return null;
@@ -580,7 +595,7 @@ function stepBody(step) {
   const f = p.files;
   switch (step.id) {
     case "text":
-      return [a.text || step.status !== "pending" ? editor("text", a.text, 12) : h("p", { class: "muted" }, "Текст появится после сбора новостей.")];
+      return [verdictBox(p.review), a.text || step.status !== "pending" ? editor("text", a.text, 12) : h("p", { class: "muted" }, "Текст появится после сбора новостей.")];
     case "poster_prompt":
       return a.poster_prompt
         ? [
@@ -674,6 +689,14 @@ function stepBody(step) {
             h("input", { type: "checkbox", checked: pick.force, onchange: (e) => (pick.force = e.target.checked) }),
             h("span", {}, "Опубликовать повторно", h("span", { class: "hint" }, "Отправить и туда, куда выпуск уже ушёл — как FORCE=1 у make news-publish.")),
           ),
+          p.review?.verdict === "не готово"
+            ? h(
+                "label",
+                { class: "check" },
+                h("input", { type: "checkbox", checked: pick.ignoreVerdict, onchange: (e) => (pick.ignoreVerdict = e.target.checked) }),
+                h("span", {}, "Опубликовать несмотря на вердикт", h("span", { class: "hint" }, "Судья сказал «не готово» — как --force у make news-publish.")),
+              )
+            : null,
           channelAdder("step-publish"),
           h("button", { type: "button", class: "primary", disabled: p.running, onclick: () => publishNow(p) }, "Опубликовать"),
         ),

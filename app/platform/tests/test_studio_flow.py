@@ -191,6 +191,28 @@ class DigestFlowTest(StudioCase):
         self.assertIsNotNone(done["files"]["video"])
 
 
+@NEEDS_FFMPEG
+class DigestVerdictTest(StudioCase):
+    process_env = FAST | {"FAKE_NEWS_VERDICT": "не готово"}
+
+    def test_not_ready_holds_publish(self):
+        settings = {"poster_mode": "local", "channels": ["download-16x9"], "auto_publish": True}
+        project = self.create(scenario="digest", day="2026-10-03", settings=settings, run=True)
+        done = self.settle(project["id"])
+        self.assertEqual(done["review"]["verdict"], "не готово")
+        publish = next(s for s in done["steps"] if s["id"] == "publish")
+        self.assertEqual(publish["status"], "waiting", done["log"])
+        self.assertIn("Судья сказал «не готово»", publish["note"])
+        self.assertTrue(any("судья: не готово" in line for line in done["log"]))
+
+        status, _ = self.json("POST", f"/api/studio/projects/{project['id']}/publish", {"channels": ["download-16x9"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.statuses(self.settle(project["id"]))["publish"], "waiting")
+        body = {"channels": ["download-16x9"], "ignore_verdict": True}
+        self.json("POST", f"/api/studio/projects/{project['id']}/publish", body)
+        self.assertEqual(self.statuses(self.settle(project["id"]))["publish"], "done")
+
+
 class DigestEmptyTest(StudioCase):
     process_env = FAST | {"FAKE_NEWS_EMPTY": "1"}
 

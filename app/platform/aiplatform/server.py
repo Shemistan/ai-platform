@@ -58,6 +58,7 @@ def default_modules(ctx: Context) -> list[Module]:
     from aiplatform.audio.service import AudioModule
     from aiplatform.channels.service import ChannelsModule
     from aiplatform.library.service import LibraryModule
+    from aiplatform.news.service import NewsModule
     from aiplatform.photo.service import PhotoModule
     from aiplatform.studio.service import StudioModule
     from aiplatform.updates.service import UpdatesModule
@@ -69,6 +70,7 @@ def default_modules(ctx: Context) -> list[Module]:
         AudioModule(ctx),
         StudioModule(ctx),
         LibraryModule(ctx),
+        NewsModule(ctx),
         ChannelsModule(ctx),
         UpdatesModule(ctx),
     ]

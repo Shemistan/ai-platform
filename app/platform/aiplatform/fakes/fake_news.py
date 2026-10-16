@@ -1,7 +1,8 @@
 """Имитация сбора новостей narrator для демо и тестов.
 
 `collect --root R --date D` пишет R/D/digest/narration.md, post.md и
-image_prompt.md (промпт обложки), как `make news DAY=D`; FAKE_NEWS_COVER=1 —
+image_prompt.md (промпт обложки) и review.md судьи (вердикт —
+FAKE_NEWS_VERDICT, по умолчанию «готово»), как `make news DAY=D`; FAKE_NEWS_COVER=1 —
 ещё и готовую cover.png. `where --root R --date D` печатает строку
 «Озвучить: …», как `narrate news where`. FAKE_NEWS_EMPTY=1 — выпуск не собрался.
 """
@@ -48,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
         (d / "narration.md").write_text("\n\n".join(NEWS) + "\n", encoding="utf-8")
         (d / "post.md").write_text(POST, encoding="utf-8")
         (d / "image_prompt.md").write_text(IMAGE_PROMPT, encoding="utf-8")
+        verdict = os.environ.get("FAKE_NEWS_VERDICT", "готово")
+        review = f"# Судья: дайджест за {args.date}\n\nВердикт: {verdict}\n\n| Тема | Новое? |\n|---|---|\n"
+        review += "| релиз Go | да |\n"
+        (d / "review.md").write_text(review, encoding="utf-8")
         if os.environ.get("FAKE_NEWS_COVER"):
             from fake_gen import write_png  # запускается скриптом из каталога fakes
 

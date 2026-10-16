@@ -19,6 +19,7 @@ from aiplatform.studio.llm import StudioError
 
 NARRATION = "narration.md"
 POST = "post.md"
+REVIEW = "review.md"  # отчёт судьи выпуска
 IMAGE_PROMPT = "image_prompt.md"  # промпт обложки: сцена по событиям дня и заголовки на картинке
 _WHERE = re.compile(r"Озвучить:\s+(.+?" + re.escape(NARRATION) + r")")
 INSTALL_HINT = "Нужен движок app/narrator и claude CLI; другой путь — AIP_NARRATOR_DIR."

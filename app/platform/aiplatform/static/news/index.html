@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Новости — AI Platform</title>
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .page-tabs { justify-self: start; }
+    .usefulness .chip { justify-self: start; }
+    .importance { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 10px; font-weight: 700; font-variant-numeric: tabular-nums; background: var(--sunken); }
+    .importance.high { background: var(--bad-bg); color: var(--bad); }
+    .importance.mid { background: var(--warn-bg); color: var(--warn); }
+    .event { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .event:last-child { border-bottom: 0; }
+    .event h3 { font-size: 15px; }
+    .event a { color: inherit; }
+    .usefulness { display: grid; gap: 3px; min-width: 90px; }
+    .usefulness .bar { height: 6px; }
+    .review-card { cursor: pointer; text-align: left; background: var(--panel); color: inherit; font: inherit; }
+    .review-card:hover { background: var(--sunken); }
+  </style>
+</head>
+<body>
+  <header class="page-head">
+    <h1>Новости</h1>
+    <p class="muted">Из чего собираются дайджест и обзоры: источники, главное за день, добор упавших и обзоры недели и месяца для YouTube. Сам выпуск дня — в «<a class="link" href="/studio/?scenario=digest">Дайджесте новостей</a>».</p>
+  </header>
+
+  <main class="wide">
+    <div class="segmented page-tabs" id="tabs" role="tablist" aria-label="Разделы">
+      <button type="button" value="sources" aria-pressed="true">Источники</button>
+      <button type="button" value="top" aria-pressed="false">Главное за день</button>
+      <button type="button" value="failed" aria-pressed="false">Добор</button>
+      <button type="button" value="reviews" aria-pressed="false">Обзоры для YouTube</button>
+    </div>
+    <section class="panel" id="view" aria-live="polite"><p class="muted">Загружаю…</p></section>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

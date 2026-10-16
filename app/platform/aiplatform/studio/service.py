@@ -131,20 +131,22 @@ class StudioModule:
         if not isinstance(payload, dict):
             raise bad_request("Тело запроса — не объект JSON.")
         chosen, force = payload.get("channels"), payload.get("force", False)
+        ignore_verdict = payload.get("ignore_verdict", False)
         if not isinstance(chosen, list) or not chosen or not all(isinstance(c, str) for c in chosen):
             raise bad_request("Выбери хотя бы один канал.")
         unknown = [c for c in chosen if c not in {ch.id for ch in self.channels()}]
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
-        if not isinstance(force, bool):
-            raise bad_request("force — true или false.")
+        if not isinstance(force, bool) or not isinstance(ignore_verdict, bool):
+            raise bad_request("force и ignore_verdict — true или false.")
 
         def apply(project: dict) -> set[str]:
             project["settings"]["channels"] = list(dict.fromkeys(chosen))
             return {"publish"}
 
         self.studio.update(project_id, apply)
-        self.studio.run(project_id, "publish", state={"approved": True, "force": force})
+        state = {"approved": True, "force": force, "ignore_verdict": ignore_verdict}
+        self.studio.run(project_id, "publish", state=state)
         return self.view(project_id)
 
     def image_models(self) -> list[dict]:
@@ -365,6 +367,8 @@ class StudioModule:
             "short_video": url(folder / steps.SHORT_VIDEO),
         }
         project["published"] = as_json(steps.PUBLISHED)
+        review = read(steps.NARRATOR_REVIEW)
+        project["review"] = {"verdict": steps.verdict(review), "text": review} if review else None
         found = registry.mentioned(f"{project['title']}\n{read(steps.TEXT)}\n{read(steps.POST)}", self.banned())
         project["disclaimers"] = [{"name": e.name, "note": e.disclaimer + "."} for e in found]
         return project
