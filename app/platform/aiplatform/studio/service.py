@@ -22,6 +22,7 @@ from aiplatform.video import models as video_models
 PREFIX = "studio"
 URL_BASE = f"/api/{PREFIX}"
 SCENARIOS = {"digest": "Дайджест новостей", "article": "Видео по статье"}
+DIGEST_CHANNEL = "tg-voice-news"  # канал дайджеста у narrator (NEWS_CHANNEL = VOICE_NEWS)
 MAX_TEXT = 100_000
 MAX_BODY = 4 * MAX_TEXT + 64 * 1024
 POSTER_MODES = ("local", "upload")
@@ -90,9 +91,60 @@ class StudioModule:
 
     def channels(self) -> list[publish.Channel]:
         try:
-            return publish.load_channels(self.config.channels_file)
+            return self.config.channels()
         except ValueError:
             return []
+
+    def add_channel(self, payload: object) -> dict:
+        """Канал Telegram со страницы: список целиком записывается в channels.json."""
+        if not isinstance(payload, dict):
+            raise bad_request("Тело запроса — не объект JSON.")
+        current = self._channels_or_400()
+        try:
+            channel = publish.new_channel(
+                current,
+                str(payload.get("label") or ""),
+                str(payload.get("chat_id") or ""),
+                str(payload.get("format") or publish.LANDSCAPE),
+            )
+        except ValueError as exc:
+            raise bad_request(str(exc)) from exc
+        publish.save_channels(self.config.channels_file, [*current, channel])
+        return {"channels": [c.public() for c in self.channels()], "added": channel.id}
+
+    def delete_channel(self, channel_id: str) -> dict:
+        current = self._channels_or_400()
+        if channel_id not in {c.id for c in current}:
+            raise not_found("Нет такого канала.")
+        publish.save_channels(self.config.channels_file, [c for c in current if c.id != channel_id])
+        return {"channels": [c.public() for c in self.channels()]}
+
+    def _channels_or_400(self) -> list[publish.Channel]:
+        try:
+            return self.config.channels()
+        except ValueError as exc:
+            raise bad_request(f"Каналы: {exc}") from exc
+
+    def publish_now(self, project_id: str, payload: object) -> dict:
+        """Кнопка «Опубликовать», как `make news-publish`: выбранные каналы, повторно — с force."""
+        if not isinstance(payload, dict):
+            raise bad_request("Тело запроса — не объект JSON.")
+        chosen, force = payload.get("channels"), payload.get("force", False)
+        if not isinstance(chosen, list) or not chosen or not all(isinstance(c, str) for c in chosen):
+            raise bad_request("Выбери хотя бы один канал.")
+        unknown = [c for c in chosen if c not in {ch.id for ch in self.channels()}]
+        if unknown:
+            raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
+        if not isinstance(force, bool):
+            raise bad_request("force — true или false.")
+
+        def apply(project: dict) -> set[str]:
+            project["settings"]["channels"] = list(dict.fromkeys(chosen))
+            return {"publish"}
+
+        self.studio.update(project_id, apply)
+        self.studio.run(project_id, "publish", state={"approved": True, "force": force})
+        return self.view(project_id)
 
     def image_models(self) -> list[dict]:
         found = self.ctx.modules["photo"].config.models()
@@ -152,7 +204,7 @@ class StudioModule:
         if not self.config.llm_available():
             out.append(f"Сценарии: LLM-команда «{self.config.llm_cmd[0]}» не найдена — задай AIP_LLM_CMD.")
         try:
-            publish.load_channels(self.config.channels_file)
+            self.config.channels()
         except ValueError as exc:
             out.append(f"Каналы: {exc}")
         return out
@@ -225,6 +277,9 @@ class StudioModule:
         base = self.defaults()
         if scenario == "digest":
             base |= {"branding": True, "poster_mode": "upload", "tempo": 1.25}
+            usual = [c.id for c in self.channels() if c.id == DIGEST_CHANNEL]  # VOICE_NEWS narrator
+            if usual:
+                base["channels"] = usual
         settings = self.check_settings(payload.get("settings"), base)
         title = " ".join(str(payload.get("title") or "").split())[:200]
         extra: dict = {"auto_title": not title}
@@ -503,6 +558,12 @@ class StudioModule:
                     raise bad_request("Нет такого шага.")
                 self.studio.approve(pid, step)
                 return req.send_json(self.view(pid))
+            case ("POST", ["projects", pid, "publish"]):
+                return req.send_json(self.publish_now(pid, req.json()))
+            case ("POST", ["channels"]):
+                return req.send_json(self.add_channel(req.json()), HTTPStatus.CREATED)
+            case ("POST", ["channels", channel_id, "delete"]):
+                return req.send_json(self.delete_channel(channel_id))
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):

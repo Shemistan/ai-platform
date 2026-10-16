@@ -1,10 +1,16 @@
 """Каналы публикации: Telegram (Bot API) и пакет для ручной загрузки.
 
 Список каналов — channels.json (путь AIP_CHANNELS), пример —
-channels.example.json. Токен бота — только из переменной окружения,
-имя которой указано в канале (token_env): в файлы, лог и ответы API он
-не попадает. YouTube / TikTok / Instagram требуют OAuth-приложений —
-для них канал типа manual: готовый mp4 + заголовок + описание в папке.
+channels.example.json. Пока файла нет, каналы — пакеты для ручной загрузки
+плюс каналы Telegram из telegram_tems.md narrator (строки ИМЯ=id; id вида
+-1001234567890, -1001234567890_3 — тема в группе — или @username).
+Добавленный со страницы канал записывает channels.json целиком.
+
+Токен бота: из переменной канала (token_env), иначе — как у narrator:
+$NARRATOR_TELEGRAM_TOKEN, файл $NARRATOR_TELEGRAM_TOKEN_FILE или bot_token.md
+narrator. В файлы, лог и ответы API он не попадает. YouTube / TikTok /
+Instagram требуют OAuth-приложений — для них канал типа manual: готовый
+mp4 + заголовок + описание в папке.
 """
 
 from __future__ import annotations
@@ -35,6 +41,14 @@ DEFAULT_CHANNELS = (
 _LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_CHAT = re.compile(r"-?\d+(?:_\d+)?|@\w+")  # как resolve_channel у narrator: канал, тема в группе, @username
+_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+_TOKEN = re.compile(r"\d{6,}:[A-Za-z0-9_-]{30,}")
+NARRATOR_CHANNELS = "telegram_tems.md"
+NARRATOR_TOKEN_ENV = "NARRATOR_TELEGRAM_TOKEN"
+NARRATOR_TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"
+NARRATOR_TOKEN_FILE = "bot_token.md"
+GENERAL_THREAD = 1  # тема General: в неё пишут без message_thread_id
 
 
 @dataclass(frozen=True)
@@ -45,32 +59,82 @@ class Channel:
     format: str = LANDSCAPE
     chat_id: str = ""
     token_env: str = ""
+    token_file: str = ""  # bot_token.md narrator — если у канала нет своей переменной
 
     def public(self) -> dict:
         data = asdict(self)
+        data.pop("token_file")
         data["ready"] = self.problem() is None
         data["problem"] = self.problem()
         return data
+
+    def stored(self) -> dict:
+        """Как канал записывается в channels.json."""
+        data = {k: v for k, v in asdict(self).items() if v and k != "token_file"}
+        return data | {"format": self.format}
+
+    def token(self) -> str:
+        """Токен бота; пусто — не найден."""
+        if self.token_env:
+            return os.environ.get(self.token_env, "").strip()
+        if os.environ.get(NARRATOR_TOKEN_ENV, "").strip():
+            return os.environ[NARRATOR_TOKEN_ENV].strip()
+        path = os.environ.get(NARRATOR_TOKEN_FILE_ENV) or self.token_file
+        try:
+            found = _TOKEN.search(Path(path).read_text(encoding="utf-8")) if path else None
+        except OSError:
+            found = None
+        return found.group(0) if found else ""
+
+    def target(self) -> dict[str, str]:
+        """chat_id и, если канал — тема в группе (`<id>_<тема>`), message_thread_id."""
+        chat, _, thread = self.chat_id.partition("_") if not self.chat_id.startswith("@") else (self.chat_id, "", "")
+        if thread and int(thread) != GENERAL_THREAD:
+            return {"chat_id": chat, "message_thread_id": thread}
+        return {"chat_id": chat}
 
     def problem(self) -> str | None:
         if self.type == TELEGRAM:
             if not self.chat_id:
                 return "не указан chat_id"
-            if not self.token_env:
-                return "не указан token_env"
-            if not os.environ.get(self.token_env):
-                return f"нет токена в переменной {self.token_env}"
+            if not _CHAT.fullmatch(self.chat_id):
+                return "chat_id — вида -1001234567890, -1001234567890_3 (тема) или @username"
+            if not self.token():
+                if self.token_env:
+                    return f"нет токена в переменной {self.token_env}"
+                return f"нет токена бота: ${NARRATOR_TOKEN_ENV} или {NARRATOR_TOKEN_FILE} в narrator"
         return None
 
 
-def load_channels(path: Path) -> list[Channel]:
-    """Каналы из файла; нет файла — только пакеты для ручной загрузки."""
+def narrator_channels(narrator_dir: Path) -> list[dict]:
+    """Каналы Telegram из telegram_tems.md narrator: строки ИМЯ=id, пустые и с # пропускаются."""
+    path = narrator_dir / NARRATOR_CHANNELS
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for n, line in enumerate(lines, start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, _, value = (part.strip() for part in line.partition("="))
+        if not _NAME.fullmatch(name) or not _CHAT.fullmatch(value):
+            raise ValueError(f"{path}:{n}: ждём ИМЯ=id, id вида -1001234567890, -1001234567890_3 или @username")
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        out.append({"id": f"tg-{slug}", "label": f"Telegram: {name}", "type": TELEGRAM, "chat_id": value})
+    return out
+
+
+def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]:
+    """Каналы из файла; нет файла — пакеты для ручной загрузки и каналы из telegram_tems.md narrator."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raw = list(DEFAULT_CHANNELS)
+        raw = list(DEFAULT_CHANNELS) + (narrator_channels(narrator_dir) if narrator_dir else [])
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"{path}: не читается как JSON ({exc})") from exc
+    token_file = str(narrator_dir / NARRATOR_TOKEN_FILE) if narrator_dir else ""
     if not isinstance(raw, list):
         raise ValueError(f"{path}: ожидается список каналов")
     out = []
@@ -92,9 +156,37 @@ def load_channels(path: Path) -> list[Channel]:
                 format=fmt,
                 chat_id=str(item.get("chat_id", "")),
                 token_env=str(item.get("token_env", "")),
+                token_file=token_file,
             )
         )
+    if len({c.id for c in out}) != len(out):
+        raise ValueError(f"{path}: id каналов повторяются")
     return out
+
+
+def save_channels(path: Path, channels: list[Channel]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps([c.stored() for c in channels], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def new_channel(existing: list[Channel], label: str, chat_id: str, fmt: str) -> Channel:
+    """Канал Telegram со страницы: id из chat_id, проверки как у narrator."""
+    label, chat_id = " ".join(label.split())[:80], chat_id.strip()
+    if not label:
+        raise ValueError("Назови канал.")
+    if not _CHAT.fullmatch(chat_id):
+        raise ValueError("id канала — вида -1001234567890, -1001234567890_3 (тема в группе) или @username.")
+    if fmt not in (LANDSCAPE, VERTICAL):
+        raise ValueError("Формат — landscape или vertical.")
+    if any(c.type == TELEGRAM and c.chat_id == chat_id and c.format == fmt for c in existing):
+        raise ValueError("Такой канал уже есть.")
+    base = "tg-" + (re.sub(r"[^a-z0-9]+", "-", chat_id.lower()).strip("-") or "channel")
+    cid, n = base[:60], 2
+    while any(c.id == cid for c in existing):
+        cid, n = f"{base[:57]}-{n}", n + 1
+    return Channel(id=cid, label=label, type=TELEGRAM, format=fmt, chat_id=chat_id)
 
 
 # --- подпись: **жирный** и [текст](url) → HTML Telegram ---
@@ -174,7 +266,7 @@ def publish(
     title: str,
     post: str,
     out_dir: Path,
-    http_post: HttpPost = _http_post,
+    http_post: HttpPost | None = None,
     width: int = 0,
     height: int = 0,
     seconds: float = 0.0,
@@ -203,9 +295,9 @@ def publish(
         raise StudioError(f"{channel.label}: {problem}.")
     if video.stat().st_size > BOT_VIDEO_LIMIT:
         raise StudioError(f"{channel.label}: видео больше 50 МБ — Bot API такое не примет.")
-    token = os.environ[channel.token_env]
+    token = channel.token()
     fields = {
-        "chat_id": channel.chat_id,
+        **channel.target(),
         "caption": caption(post, title),
         "parse_mode": "HTML",
         "supports_streaming": "true",
@@ -221,7 +313,7 @@ def publish(
     if thumb is not None:
         files["thumbnail"] = thumb
     body, ctype = multipart(fields, files)
-    answer = http_post(f"{TELEGRAM_API}/bot{token}/sendVideo", body, ctype)
+    answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/sendVideo", body, ctype)
     if not answer.get("ok"):
         description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
         raise StudioError(f"{channel.label}: Telegram ответил «{description}».")

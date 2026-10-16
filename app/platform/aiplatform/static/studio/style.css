@@ -15,6 +15,10 @@
 
 .settings-box summary { cursor: pointer; font-weight: 600; font-size: 14px; }
 .disclaimers { display: grid; gap: 4px; }
+.publish-box { display: grid; gap: 8px; justify-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.publish-channels { display: grid; gap: 4px; }
+.add-channel { display: grid; gap: 8px; }
+.add-channel[open] summary { margin-bottom: 4px; }
 .disclaimers ul { list-style: disc; padding-left: 18px; font-size: 13px; }
 .settings-box[open] summary { margin-bottom: 12px; }
 .settings-form { display: grid; gap: 14px; }

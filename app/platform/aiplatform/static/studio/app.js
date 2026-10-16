@@ -9,7 +9,7 @@ const HINTS = {
     "narrator собирает свежие новости и пишет пересказ → постер → слайды с картинками → озвучка → видео 16:9 (и шортс 9:16) → публикация.",
   article: "Вставь готовую статью → постер → слайды с картинками → озвучка → видео 16:9 (и шортс 9:16) → публикация.",
 };
-const state = { config: null, projects: [], project: null, signature: "", drafts: {}, timer: null };
+const state = { config: null, projects: [], project: null, signature: "", drafts: {}, timer: null, publish: {} };
 
 // --- настройки (общая форма для «нового выпуска» и «настроек выпуска») ---
 
@@ -55,9 +55,29 @@ function settingsForm(values, prefix) {
           c.label,
           h("span", { class: "muted" }, c.format === "vertical" ? "9:16" : "16:9"),
           c.problem ? h("span", { class: "status failed" }, c.problem) : null,
+          c.type === "telegram" ? h("button", { type: "button", class: "link danger", onclick: () => deleteChannel(c.id, prefix) }, "убрать") : null,
         ),
       )
     : [h("p", { class: "hint" }, `Каналы не настроены: ${cfg.channels_file}`)];
+  const newChannel = h(
+    "details",
+    { class: "add-channel" },
+    h("summary", { class: "link" }, "Добавить канал Telegram"),
+    h(
+      "div",
+      { class: "settings" },
+      h("label", { class: "field" }, h("span", { class: "hint" }, "Название"), h("input", { type: "text", id: id("new-label"), placeholder: "Канал новостей" })),
+      h("label", { class: "field" }, h("span", { class: "hint" }, "id: -100…, -100…_тема или @username"), h("input", { type: "text", id: id("new-chat"), placeholder: "-1003755616451_3" })),
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "hint" }, "Видео"),
+        h("select", { id: id("new-format") }, h("option", { value: "landscape" }, "16:9"), h("option", { value: "vertical" }, "9:16 (шортс)")),
+      ),
+    ),
+    h("p", { class: "form-error", id: id("new-error"), hidden: true }),
+    h("button", { type: "button", class: "secondary", onclick: () => addChannel(prefix) }, "Добавить"),
+  );
   return h(
     "div",
     { class: "settings-form" },
@@ -176,6 +196,7 @@ function settingsForm(values, prefix) {
       "fieldset",
       {},
       h("legend", {}, "Публикация"),
+      newChannel,
       h(
         "label",
         { class: "field" },
@@ -298,6 +319,48 @@ async function open(id) {
 }
 
 // --- действия над выпуском ---
+
+// --- каналы ---
+
+function rerenderSettings(prefix) {
+  if (prefix === "create") return renderCreate();
+  state.signature = "";
+  show(state.project);
+}
+
+async function addChannel(prefix) {
+  const get = (name) => document.getElementById(`${prefix}-${name}`);
+  const error = get("new-error");
+  try {
+    const res = await api("POST", `${API}/channels`, { label: get("new-label").value, chat_id: get("new-chat").value, format: get("new-format").value });
+    state.config.channels = res.channels;
+    rerenderSettings(prefix);
+  } catch (err) {
+    error.hidden = false;
+    error.textContent = err.message;
+  }
+}
+
+async function deleteChannel(channelId, prefix) {
+  try {
+    state.config.channels = (await api("POST", `${API}/channels/${channelId}/delete`)).channels;
+    rerenderSettings(prefix);
+  } catch (err) {
+    alertBox(err.message);
+  }
+}
+
+// Выбор каналов и «повторно» у кнопки «Опубликовать» живут между перерисовками страницы.
+function publishPick(project) {
+  if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(project.settings.channels), force: false };
+  return state.publish[project.id];
+}
+
+async function publishNow(project) {
+  const pick = publishPick(project);
+  await act("publish", { channels: [...pick.channels], force: pick.force });
+  pick.force = false;
+}
 
 async function act(path, body) {
   try {
@@ -538,15 +601,36 @@ function stepBody(step) {
           : null,
       ];
     case "publish": {
-      const ready = p.settings.channels.length;
+      const pick = publishPick(p);
+      const sentTo = new Set((p.published || []).filter((r) => r.sent).map((r) => r.channel));
       return [
         editor("post", a.post, 5),
-        ready
-          ? h("p", { class: "hint" }, "Каналы: ", p.settings.channels.map((id) => state.config.channels.find((c) => c.id === id)?.label || id).join(", "))
-          : h("p", { class: "hint" }, "Выбери каналы в настройках выпуска."),
-        step.status === "waiting" && ready
-          ? h("button", { type: "button", class: "primary", onclick: () => act("approve", { step: "publish" }) }, "Опубликовать")
-          : null,
+        h(
+          "div",
+          { class: "publish-box" },
+          h(
+            "div",
+            { class: "publish-channels" },
+            ...state.config.channels.map((c) =>
+              h(
+                "label",
+                { class: "channel" },
+                h("input", { type: "checkbox", checked: pick.channels.has(c.id), onchange: (e) => (e.target.checked ? pick.channels.add(c.id) : pick.channels.delete(c.id)) }),
+                c.label,
+                h("span", { class: "muted" }, c.format === "vertical" ? "9:16" : "16:9"),
+                sentTo.has(c.id) ? h("span", { class: "status done" }, "уже опубликовано") : null,
+                c.problem ? h("span", { class: "status failed" }, c.problem) : null,
+              ),
+            ),
+          ),
+          h(
+            "label",
+            { class: "check" },
+            h("input", { type: "checkbox", checked: pick.force, onchange: (e) => (pick.force = e.target.checked) }),
+            h("span", {}, "Опубликовать повторно", h("span", { class: "hint" }, "Отправить и туда, куда выпуск уже ушёл — как FORCE=1 у make news-publish.")),
+          ),
+          h("button", { type: "button", class: "primary", disabled: p.running, onclick: () => publishNow(p) }, "Опубликовать"),
+        ),
         p.published
           ? h(
               "ul",
@@ -555,7 +639,7 @@ function stepBody(step) {
                 h(
                   "li",
                   {},
-                  `✓ ${r.label}: ${r.message} `,
+                  `${r.skipped ? "↷" : "✓"} ${r.label}: ${r.message} `,
                   ...(r.files || []).filter((x) => x.endsWith(".mp4")).map((x) => h("a", { class: "link", href: `${API}/projects/${p.id}/files/${x}?download=1` }, "скачать")),
                 ),
               ),

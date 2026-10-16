@@ -10,6 +10,7 @@ from pathlib import Path
 
 from aiplatform.audio import config as audio_config
 from aiplatform.config import SERVICE_DIR, Config, pick
+from aiplatform.studio import publish
 from aiplatform.updates import registry
 
 FAKES = Path(__file__).resolve().parent.parent / "fakes"
@@ -41,6 +42,10 @@ class StudioConfig:
     @property
     def projects_dir(self) -> Path:
         return self.data_dir / "projects"
+
+    def channels(self) -> list[publish.Channel]:
+        """Каналы публикации; в демо — без каналов narrator (там настоящие каналы Telegram)."""
+        return publish.load_channels(self.channels_file, None if self.fake else self.narrator_dir)
 
     def llm_available(self) -> bool:
         return self.fake or shutil.which(self.llm_cmd[0]) is not None

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -647,10 +648,13 @@ def step_publish(ctx: StepContext) -> None:
     svc = services(ctx)
     chosen = ctx.settings.get("channels") or []
     if not chosen:
-        raise Waiting("Выбери каналы публикации в настройках и нажми «Опубликовать».")
+        raise Waiting("Выбери каналы и нажми «Опубликовать».")
     if not ctx.settings.get("auto_publish") and not ctx.state.get("approved"):
-        raise Waiting("Посмотри видео и нажми «Опубликовать».")
-    channels = {c.id: c for c in publish.load_channels(svc.config.channels_file)}
+        raise Waiting("Посмотри видео, выбери каналы и нажми «Опубликовать».")
+    channels = {c.id: c for c in svc.config.channels()}
+    # Как `news publish` у narrator: в канал, куда уже ушло, повторно — только с «Опубликовать повторно».
+    before = {r["channel"]: r for r in read_published(ctx) if r.get("sent")}
+    force = bool(ctx.state.get("force"))
     plan_title = ""
     if ctx.read(PLAN):
         plan_title = json.loads(ctx.read(PLAN)).get("title", "")
@@ -663,6 +667,11 @@ def step_publish(ctx: StepContext) -> None:
         channel = channels.get(channel_id)
         if channel is None:
             raise StudioError(f"Канала {channel_id} нет в {svc.config.channels_file.name}.")
+        if channel.type == publish.TELEGRAM and channel_id in before and not force:
+            message = "уже опубликовано — включи «Опубликовать повторно», чтобы отправить ещё раз"
+            ctx.log(f"{channel.label}: {message}")
+            results.append(before[channel_id] | {"label": channel.label, "skipped": True, "message": message})
+            continue
         video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
         if not video.is_file():
             hint = "включи «Шортс» и собери его" if channel.format == VERTICAL else "собери видео"
@@ -683,8 +692,19 @@ def step_publish(ctx: StepContext) -> None:
             thumb=thumb if thumb.is_file() else None,
         )
         ctx.log(f"{channel.label}: {result['message']}")
-        results.append(result | {"label": channel.label})
-    ctx.write(PUBLISHED, json.dumps(results, ensure_ascii=False, indent=2) + "\n")
+        sent = {"sent": time.time()} if channel.type == publish.TELEGRAM else {}
+        results.append(result | {"label": channel.label} | sent)
+    done = {r["channel"] for r in results}
+    kept = [r for r in read_published(ctx) if r["channel"] not in done]  # прошлые отправки в другие каналы
+    ctx.write(PUBLISHED, json.dumps(results + kept, ensure_ascii=False, indent=2) + "\n")
+
+
+def read_published(ctx: StepContext) -> list[dict]:
+    try:
+        data = json.loads(ctx.read(PUBLISHED) or "[]")
+    except json.JSONDecodeError:
+        return []
+    return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
 
 
 STEPS = {
