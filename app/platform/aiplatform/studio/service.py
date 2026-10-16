@@ -214,8 +214,11 @@ class StudioModule:
         scenario = payload.get("scenario")
         if scenario not in SCENARIOS:
             raise bad_request("Сценарий — digest или article.")
-        # Оформление канала (плашка «подпишись», плей) — по умолчанию у дайджеста, как в narrator.
-        base = self.defaults() | {"branding": scenario == "digest"}
+        # У дайджеста, как в narrator: оформление канала (плашка «подпишись», плей) и обложка
+        # из ChatGPT по промпту выпуска — постер загружает человек.
+        base = self.defaults()
+        if scenario == "digest":
+            base |= {"branding": True, "poster_mode": "upload"}
         settings = self.check_settings(payload.get("settings"), base)
         title = " ".join(str(payload.get("title") or "").split())[:200]
         extra: dict = {"auto_title": not title}

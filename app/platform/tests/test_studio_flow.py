@@ -175,7 +175,7 @@ class ArticleFlowTest(StudioCase):
 @NEEDS_FFMPEG
 class DigestFlowTest(StudioCase):
     def test_digest_from_fake_narrator(self):
-        project = self.create(scenario="digest", day="2026-10-01", run=True)
+        project = self.create(scenario="digest", day="2026-10-01", settings={"poster_mode": "local"}, run=True)
         self.assertEqual(project["title"], "Дайджест новостей за 01.10.2026")
         done = self.settle(project["id"])
         steps = self.statuses(done)

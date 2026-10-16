@@ -48,6 +48,7 @@ IMAGE_SIZE = "1344x768"  # 16:9 из размеров вкладки «Фото�
 DIGEST_POSTER_SIZE = "1024x1024"  # обложка дайджеста квадратная, как у narrator: в кадре — целиком
 NARRATOR_PROMPT = "narrator/image_prompt.md"
 NARRATOR_COVER = "narrator/cover"
+NARRATOR_FOLDER = "narrator/folder.txt"  # каталог выпуска: туда же человек кладёт обложку из ChatGPT
 NARRATOR_COVER_EXT = (".png", ".jpg", ".jpeg", ".webp")
 CLIP_PRESET = "landscape-m"  # 704×448 из пресетов вкладки «Видео»: быстрее, а ffmpeg растянет до кадра
 CLIP_DURATION_S = 5  # есть у всех видеомоделей; длиннее слайд — ролик идёт по кругу
@@ -297,14 +298,42 @@ def take_narrator_cover(ctx: StepContext, folder: Path) -> None:
     if source.is_file() and source.read_text(encoding="utf-8").strip():
         ctx.write(NARRATOR_PROMPT, source.read_text(encoding="utf-8").strip() + "\n")
         ctx.log("промпт обложки — из narrator")
-    cover = find(folder, "cover", NARRATOR_COVER_EXT)
-    if cover is not None:
-        shutil.copyfile(cover, ctx.path(NARRATOR_COVER + cover.suffix.lower()))
-        ctx.log(f"обложка выпуска — {cover.name} из narrator")
+    ctx.write(NARRATOR_FOLDER, str(folder) + "\n")
+    if pull_narrator_cover(ctx):
+        ctx.log("обложка выпуска — из narrator")
+
+
+def pull_narrator_cover(ctx: StepContext) -> bool:
+    """Свежая cover.* из каталога выпуска narrator — в проект. True — обложка появилась или сменилась."""
+    folder = Path(ctx.read(NARRATOR_FOLDER).strip() or ".")
+    cover = find(folder, "cover", NARRATOR_COVER_EXT) if ctx.read(NARRATOR_FOLDER).strip() else None
+    if cover is None:
+        return False
+    current = narrator_cover(ctx)
+    if current is not None and current.read_bytes() == cover.read_bytes():
+        return False
+    if current is not None:
+        current.unlink()
+    shutil.copyfile(cover, ctx.path(NARRATOR_COVER + cover.suffix.lower()))
+    return True
 
 
 def narrator_cover(ctx: StepContext) -> Path | None:
     return find(ctx.path("narrator"), "cover", NARRATOR_COVER_EXT)
+
+
+def use_narrator_cover(ctx: StepContext, prompt: str) -> bool:
+    """Постер — готовая обложка выпуска narrator, если она есть."""
+    ready = narrator_cover(ctx)
+    if ready is None:
+        return False
+    for old in (ctx.dir / f"poster{ext}" for ext in IMAGE_EXT):
+        old.unlink(missing_ok=True)
+    ext = ".jpg" if ready.suffix == ".jpeg" else ready.suffix
+    shutil.copyfile(ready, ctx.path(f"poster{ext}"))
+    ctx.path("poster.json").write_text(json.dumps({"prompt": prompt, "narrator": True}), encoding="utf-8")
+    ctx.log("постер — готовая обложка выпуска narrator")
+    return True
 
 
 def step_poster_prompt(ctx: StepContext) -> None:
@@ -325,22 +354,23 @@ def step_poster_prompt(ctx: StepContext) -> None:
 
 def step_poster(ctx: StepContext) -> None:
     existing = find(ctx.dir, "poster", IMAGE_EXT)
+    prompt = ctx.read(POSTER_PROMPT).strip()
     if ctx.settings["poster_mode"] == "upload":
+        # Обложку делают в ChatGPT: её перетаскивают сюда или кладут в каталог выпуска narrator.
+        from_narrator = existing is None or read_meta(ctx.path("poster.json")).get("narrator")
+        if from_narrator and (pull_narrator_cover(ctx) or existing is None) and use_narrator_cover(ctx, prompt):
+            return
         if existing is None:
-            raise Waiting("Сгенерируй картинку по промпту во внешней модели и загрузи её сюда.")
+            where = ""
+            if ctx.read(NARRATOR_FOLDER).strip():
+                where = f" или положи её в {ctx.read(NARRATOR_FOLDER).strip()} и нажми «Перезапустить шаг»"
+            raise Waiting(f"Сгенерируй картинку по промпту (например, в ChatGPT) и загрузи её сюда{where}.")
         ctx.log(f"постер загружен: {existing.name}")
         return
-    prompt = ctx.read(POSTER_PROMPT).strip()
     if not prompt:
         raise StudioError("Нет промпта постера.")
-    ready = narrator_cover(ctx)
-    if ready is not None and prompt == ctx.read(NARRATOR_PROMPT).strip():
-        for old in (ctx.dir / f"poster{ext}" for ext in IMAGE_EXT):
-            old.unlink(missing_ok=True)
-        ext = ".jpg" if ready.suffix == ".jpeg" else ready.suffix
-        shutil.copyfile(ready, ctx.path(f"poster{ext}"))
-        ctx.path("poster.json").write_text(json.dumps({"prompt": prompt, "narrator": True}), encoding="utf-8")
-        ctx.log("постер — готовая обложка выпуска narrator")
+    if narrator_cover(ctx) is not None and prompt == ctx.read(NARRATOR_PROMPT).strip():
+        use_narrator_cover(ctx, prompt)
         return
     model, upscale = ctx.settings["image_model"], ctx.settings.get("upscale_images") or "none"
     meta_path, target = ctx.path("poster.json"), ctx.path("poster.png")

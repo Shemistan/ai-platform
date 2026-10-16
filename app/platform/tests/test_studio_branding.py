@@ -90,7 +90,7 @@ class TelegramCoverTest(unittest.TestCase):
 @NEEDS_FFMPEG
 class DigestBrandingTest(StudioCase):
     def test_digest_uses_narrator_prompt_and_branding(self):
-        project = self.create(scenario="digest", day="2026-10-01", run=True)
+        project = self.create(scenario="digest", day="2026-10-01", settings={"poster_mode": "local"}, run=True)
         self.assertTrue(project["settings"]["branding"], "у дайджеста оформление по умолчанию")
         done = self.settle(project["id"])
         self.assertEqual(self.statuses(done)["render"], "done", done["log"])
@@ -111,6 +111,31 @@ class DigestBrandingTest(StudioCase):
         done = self.settle(project["id"])
         self.assertEqual(self.statuses(done)["render"], "done", done["log"])
         self.assertFalse((self.folder(project["id"]) / "video-cover.jpg").exists())
+
+
+@NEEDS_FFMPEG
+class DigestChatGptCoverTest(StudioCase):
+    def test_poster_waits_for_cover_from_chatgpt(self):
+        project = self.create(scenario="digest", day="2026-10-04", run=True)
+        self.assertEqual(project["settings"]["poster_mode"], "upload", "обложку дайджеста делают в ChatGPT")
+        waiting = self.poll(
+            f"/api/studio/projects/{project['id']}",
+            lambda p: not p["running"] or self.statuses(p)["poster"] == "waiting",
+        )
+        poster = next(s for s in waiting["steps"] if s["id"] == "poster")
+        self.assertEqual(poster["status"], "waiting")
+        folder = Path((self.folder(project["id"]) / "narrator" / "folder.txt").read_text(encoding="utf-8").strip())
+        self.assertIn(str(folder), poster["note"])
+        self.assertEqual(waiting["artifacts"]["poster_prompt"].strip(), fake_news.IMAGE_PROMPT.strip())
+        self.settle(project["id"])
+
+        # Картинку из ChatGPT положили в каталог выпуска narrator — перезапуск шага её подхватывает.
+        (folder / "cover.png").write_bytes(png_bytes())
+        self.json("POST", f"/api/studio/projects/{project['id']}/run", {})
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["poster"], "done", done["log"])
+        self.assertEqual(self.statuses(done)["render"], "done", done["log"])
+        self.assertEqual((self.folder(project["id"]) / "poster.png").read_bytes(), png_bytes())
 
 
 @NEEDS_FFMPEG
