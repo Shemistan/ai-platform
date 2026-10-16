@@ -74,6 +74,18 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
   font-size: 13px;
 }
 .link.danger { color: var(--bad); }
+.tempo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tempo button {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.tempo button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-text); }
 .form-error, .job-error {
   color: var(--bad);
   background: var(--bad-bg);

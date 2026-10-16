@@ -7,8 +7,9 @@ from pathlib import Path
 from aiplatform import config as platform_config
 from aiplatform.audio import config as audio_config
 from aiplatform.audio import jobs as audio_jobs
-from aiplatform.audio.jobs import AudioSpec, Progress, ValidationError, build_spec
+from aiplatform.audio.jobs import AudioSpec, Progress, ValidationError, build_spec, parse_tempo
 from aiplatform.audio.service import AudioModule
+from aiplatform.core import media
 from tests.helpers import PlatformCase
 
 TEXT = "Первый абзац про новости дня.\n\nВторой абзац: релиз Go 1.25 и что в нём нового.\n\nТретий абзац."
@@ -28,6 +29,11 @@ class SpecTest(unittest.TestCase):
         self.assertEqual((spec.engine, spec.voice, spec.speed), ("supertonic", "F2", 1.25))
         # У silero скорость не настраивается — не передаём её вовсе.
         self.assertIsNone(build_spec({"text": "т", "engine": "silero", "speed": 1.5}).speed)
+        # Темп скачиваемого mp3: пусто — 1, запятая как точка, вне 0,5–2 — ошибка.
+        self.assertEqual((parse_tempo(None), parse_tempo(""), parse_tempo("1,75")), (1.0, 1.0, 1.75))
+        for bad in ("быстро", "0.25", "3"):
+            with self.assertRaises(ValidationError):
+                parse_tempo(bad)
         # Shem-v2 — клон второй записи живого голоса: есть у всех движков-клонов.
         self.assertEqual(build_spec({"text": "т", "engine": "higgs", "voice": "Shem-v2"}).voice, "Shem-v2")
 
@@ -101,6 +107,22 @@ class AudioServerTest(AudioServerCase):
         self.assertIn("attachment", headers["Content-Disposition"])
         _, listing = self.json("GET", "/api/audio/jobs")
         self.assertEqual([j["id"] for j in listing["jobs"]], [job["id"]])
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "нужен ffmpeg")
+    def test_download_at_speed(self):
+        _, job = self.json("POST", "/api/audio/jobs", {"text": TEXT, "engine": "silero", "voice": "baya"})
+        done = self.wait(job["id"])
+        status, headers, fast = self.call("GET", done["audio_url"] + "?download=1&speed=1.5")
+        self.assertEqual(status, 200)
+        self.assertIn(f"audio-{job['id']}-x1.5.mp3", headers["Content-Disposition"])
+        path = self.config.data_dir / "audio" / "jobs" / job["id"]
+        seconds = media.duration(path / "output@1.5.mp3")
+        self.assertAlmostEqual(seconds, done["duration_s"] / 1.5, delta=0.3)
+        # Второй раз — из готового файла; ×1 — исходный mp3.
+        self.assertEqual(self.call("GET", done["audio_url"] + "?speed=1,5")[2], fast)
+        _, headers, _ = self.call("GET", done["audio_url"] + "?download=1&speed=1")
+        self.assertIn(f"audio-{job['id']}.mp3", headers["Content-Disposition"])
+        self.assertEqual(self.json("GET", done["audio_url"] + "?speed=3")[0], 400)
 
     def test_bad_requests(self):
         self.assertEqual(self.json("POST", "/api/audio/jobs", {"text": ""})[0], 400)

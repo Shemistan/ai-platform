@@ -6,8 +6,16 @@ from http import HTTPStatus
 
 from aiplatform.audio import config as audio_config
 from aiplatform.audio import voices
-from aiplatform.audio.jobs import INSTALL_HINT, MAX_TEXT, AudioJobs, ValidationError
-from aiplatform.core.http import Request, bad_request, found, not_found
+from aiplatform.audio.jobs import (
+    INSTALL_HINT,
+    MAX_TEXT,
+    TEMPO_RANGE,
+    AudioJobs,
+    RetimeFailed,
+    ValidationError,
+    parse_tempo,
+)
+from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
 
 PREFIX = "audio"
 URL_BASE = f"/api/{PREFIX}"
@@ -27,6 +35,7 @@ class AudioModule:
             "engines": [e.public() for e in voices.ENGINES.values()],
             "default_engine": self.config.default_engine,
             "speed_range": list(voices.SPEED_RANGE),
+            "tempo_range": list(TEMPO_RANGE),
             "max_text": MAX_TEXT,
             "backend": "fake" if self.config.fake else "narrator",
             "runner_available": self.config.runner_available(),
@@ -57,10 +66,17 @@ class AudioModule:
             case ("POST", ["jobs", job_id, "cancel"]):
                 return req.send_json(found(self.jobs.cancel(job_id)))
             case ("GET", ["jobs", job_id, "audio"]):
-                path = self.jobs.audio_path(job_id)
+                try:
+                    tempo = parse_tempo(req.arg("speed"))
+                    path = self.jobs.audio_path(job_id, tempo)
+                except ValidationError as exc:
+                    raise bad_request(str(exc)) from exc
+                except RetimeFailed as exc:
+                    raise HttpError(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc)) from exc
                 if path is None:
                     raise not_found("Аудио ещё не готово или задача не найдена.")
-                attachment = f"audio-{job_id}.mp3" if "download" in req.query else None
+                suffix = "" if tempo == 1.0 else f"-x{tempo:g}"
+                attachment = f"audio-{job_id}{suffix}.mp3" if "download" in req.query else None
                 return req.send_file(path, "audio/mpeg", ranged=True, attachment=attachment)
         raise not_found()
 
