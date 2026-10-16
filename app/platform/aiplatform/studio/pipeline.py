@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import re
@@ -145,6 +146,9 @@ class Studio:
         self.root = root
         self.steps = steps
         self.services = services  # то, чем шаги пользуются: вкладки, LLM, рендер — см. steps.Services
+        # Запуск закончился: (проект, статусы шагов на старте) — для уведомлений; зовётся вне замка.
+        self.on_stop: Callable[[dict, dict[str, str]], None] | None = None
+        self._before: dict[str, dict[str, str]] = {}
         self._lock = threading.Lock()
         self._projects: dict[str, dict] = {}
         self._threads: dict[str, threading.Thread] = {}
@@ -373,6 +377,7 @@ class Studio:
         """Под замком: поднять поток выпуска."""
         project_id = project["id"]
         project["running"] = True
+        self._before[project_id] = {s: st["status"] for s, st in project["steps"].items()}
         self._save(project)
         cancel = threading.Event()
         self._cancels[project_id] = cancel
@@ -475,6 +480,11 @@ class Studio:
                 project = self._projects[project_id]
                 if project["running"]:
                     self._stop(project)
+                done = copy.deepcopy(project)
+                before = self._before.pop(project_id, {})
+            if self.on_stop is not None and not done["running"]:
+                with contextlib.suppress(Exception):  # уведомление не должно ронять поток выпуска
+                    self.on_stop(done, before)
 
     def _stop(self, project: dict) -> None:
         project["running"] = False

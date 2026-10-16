@@ -17,10 +17,10 @@ from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
-from aiplatform.studio import news, prompts, publish, series, slides, steps
+from aiplatform.studio import news, prompts, publish, schedule, series, slides, steps
 from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError, complete
-from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, blockers, dependents
+from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, attention, blockers, dependents
 from aiplatform.studio.render import Renderer
 from aiplatform.updates import registry
 from aiplatform.video import models as video_models
@@ -140,6 +140,8 @@ class StudioModule:
         self.ctx = ctx
         self.config = studio_config.load(ctx.config)
         self.studio = Studio(self.config.projects_dir, steps.STEPS)
+        self.studio.on_stop = self._on_stop
+        self.scheduler = schedule.Scheduler(self, self.config.data_dir, self.config.schedule_tick_s)
         self._rates: tuple[float, estimate_module.Rates] | None = None
         self._durations: dict[tuple[str, int], float] = {}
 
@@ -153,6 +155,27 @@ class StudioModule:
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
             cache=MediaCache(self.config.cache_dir),
         )
+        self.scheduler.start()
+
+    # --- уведомления ---
+
+    def notify(self, title: str, text: str, *, important: bool) -> None:
+        """В журнал уведомлений всегда; показать — если важно и уведомления включены в настройках."""
+        show = important and self.ctx.config.settings.load()["notify"]["enabled"]
+        self.ctx.notifier.send(title, text, show=show)
+
+    def _on_stop(self, project: dict, before: dict[str, str]) -> None:
+        """Запуск выпуска закончился: опубликован — сказать; ждёт тебя или упал — тоже, если это новое."""
+        if project.get("archived"):
+            return
+        publish_state = project["steps"]["publish"]["status"]
+        if publish_state == "done" and before.get("publish") != "done":
+            self.notify("Опубликовано", project["title"], important=True)
+            return
+        need = attention(project)
+        if need and before.get(need["step"]) != need["status"]:
+            head = "Выпуск упал" if need["status"] == "failed" else "Выпуск ждёт тебя"
+            self.notify(head, f"{project['title']} — {need['label']}: {need['text']}".strip(" :"), important=True)
 
     # --- описание ---
 
@@ -487,7 +510,7 @@ class StudioModule:
         """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый)."""
         if force_new:
             return
-        existing = next((p for p in self.studio.list() if self._source(p) == source), None)
+        existing = next((p for p in self.studio.list() if self.source_of(p) == source), None)
         if existing is not None:
             raise HttpError(
                 HTTPStatus.CONFLICT,
@@ -495,7 +518,7 @@ class StudioModule:
                 {"existing": {"id": existing["id"], "title": existing["title"], "scenario": existing["scenario"]}},
             )
 
-    def _source(self, item: dict) -> str | None:
+    def source_of(self, item: dict) -> str | None:
         """Источник выпуска; у выпусков из прошлых версий — по дню или по тексту на диске."""
         if item.get("source"):
             return item["source"]
@@ -1023,4 +1046,5 @@ class StudioModule:
         req.send_file(path, ctype, ranged=True, attachment=attachment, cache="no-cache")
 
     def close(self) -> None:
+        self.scheduler.close()
         self.studio.close()

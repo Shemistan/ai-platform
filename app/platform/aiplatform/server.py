@@ -19,6 +19,7 @@ from aiplatform.config import Config
 from aiplatform.core import media
 from aiplatform.core.gate import Gate
 from aiplatform.core.http import HttpError, Request, not_found
+from aiplatform.core.notify import Notifier
 from aiplatform.core.uploads import UploadStore
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -42,11 +43,12 @@ class Module(Protocol):
 
 @dataclass
 class Context:
-    """Общее для модулей: настройки, GPU-замок, загрузки, соседние модули."""
+    """Общее для модулей: настройки, GPU-замок, загрузки, уведомления, соседние модули."""
 
     config: Config
     gate: Gate
     uploads: UploadStore
+    notifier: Notifier
     modules: dict[str, Module] = field(default_factory=dict)
 
 
@@ -81,7 +83,8 @@ def default_modules(ctx: Context) -> list[Module]:
 class App:
     def __init__(self, config: Config, modules: ModulesFactory = default_modules) -> None:
         self.config = config
-        self.ctx = Context(config=config, gate=Gate(), uploads=UploadStore(config.uploads_dir))
+        notifier = Notifier(config.data_dir, config_module.pick(config.env, "AIP_NOTIFY_CMD"), fake=config.fake)
+        self.ctx = Context(config=config, gate=Gate(), uploads=UploadStore(config.uploads_dir), notifier=notifier)
         for module in modules(self.ctx):
             self.ctx.modules[module.prefix] = module
         for module in self.ctx.modules.values():  # модулю нужны соседи — они уже созданы

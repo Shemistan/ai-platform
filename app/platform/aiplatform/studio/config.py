@@ -38,6 +38,7 @@ class StudioConfig:
     registry_file: Path  # реестр запрещённых организаций: пометки на видео и в посте
     sticker: Path  # плашка «подпишись» (PNG с прозрачностью)
     play: Path  # кнопка «плей» на обложке видео
+    schedule_tick_s: float = 30.0  # как часто поток расписания смотрит на часы; 0 — не запускать
 
     @property
     def projects_dir(self) -> Path:
@@ -90,4 +91,5 @@ def load(config: Config) -> StudioConfig:
         registry_file=config.data_dir / registry.FILE_NAME,
         sticker=Path(pick(env, "AIP_STUDIO_STICKER", default=str(ASSETS / "subscribe.png"))).expanduser(),
         play=Path(pick(env, "AIP_STUDIO_PLAY", default=str(ASSETS / "play.png"))).expanduser(),
+        schedule_tick_s=float(pick(env, "AIP_SCHEDULE_TICK_S", default="30")),
     )

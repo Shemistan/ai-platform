@@ -1,4 +1,4 @@
-// Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены.
+// Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены; расписание, уведомления, уборка.
 import { $, api, chip, fill, h } from "/ui.js";
 
 const API = "/api/settings";
@@ -72,7 +72,62 @@ function voiceButtons(engine) {
   );
 }
 
+async function section(name, body) {
+  try {
+    render(await api("POST", `${API}/section/${name}`, body));
+    showError("");
+  } catch (err) {
+    showError(err.message);
+    load();
+  }
+}
+
+function checkRow(label, hint, checked, onchange) {
+  return h(
+    "label",
+    { class: "check" },
+    h("input", { type: "checkbox", checked, onchange: (e) => onchange(e.target.checked) }),
+    h("span", {}, label, hint ? h("span", { class: "hint" }, hint) : null),
+  );
+}
+
+function renderSchedule(data) {
+  const plan = data.schedule;
+  const last = data.last_runs?.digest;
+  fill(
+    $("schedule"),
+    h(
+      "div",
+      { class: "settings-stack" },
+      checkRow("Собирать дайджест сам", "Выпуск создаётся и запускается в это время; дальше — как обычно: постер, проверка, публикация.", plan.enabled, (v) => section("schedule", { enabled: v })),
+      h(
+        "div",
+        { class: "inline-fields" },
+        h("label", { class: "field" }, h("span", { class: "hint" }, "Время"), h("input", { type: "time", value: plan.time, onchange: (e) => section("schedule", { time: e.target.value }) })),
+        h(
+          "label",
+          { class: "field" },
+          h("span", { class: "hint" }, "Новости"),
+          h(
+            "select",
+            { onchange: (e) => section("schedule", { day: e.target.value }) },
+            h("option", { value: "yesterday", selected: plan.day === "yesterday" }, "за вчера"),
+            h("option", { value: "today", selected: plan.day === "today" }, "за сегодня"),
+          ),
+        ),
+      ),
+      last ? h("p", { class: "hint" }, `Последний запуск по расписанию: ${last}. Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день.`) : h("p", { class: "hint" }, "Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день."),
+      checkRow("Уведомлять меня", "Когда выпуск ждёт тебя, упал или опубликован. На Mac — системное уведомление; своя команда — AIP_NOTIFY_CMD.", data.notify.enabled, (v) => section("notify", { enabled: v })),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "small-btn", onclick: () => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)) }, "Проверить уведомление")),
+      data.notifications.length
+        ? h("details", {}, h("summary", { class: "link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
+        : null,
+    ),
+  );
+}
+
 function render(data) {
+  renderSchedule(data);
   const { photo, video, audio } = data.sections;
   fill($("photo"), h("div", { class: "toggle-list" }, ...photo.map((m) => row(m, "photo", m.note))));
   fill($("video"), h("div", { class: "toggle-list" }, ...video.map((m) => row(m, "video", m.note))));
