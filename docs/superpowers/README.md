@@ -6,8 +6,10 @@
 ### Спеки
 
 - [AI Platform: фото, видео, аудио и сценарии в одном сервисе](specs/2026-10-15-ai-platform-design.md) — реализовано
+- [Студия: без лимита слайдов, динамические слайды вперемешку с картинками](specs/2026-10-16-dynamic-slides-design.md) — реализовано
 
 ### Планы
 
 - [AI Platform Implementation Plan](plans/2026-10-15-ai-platform.md) — завершено
+- [План: без лимита слайдов, динамические слайды, ритм 3–5 с](plans/2026-10-16-dynamic-slides.md) — завершено
 <!-- gate:end spec-plan-index -->

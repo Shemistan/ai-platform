@@ -185,7 +185,7 @@ class DigestNarratorCoverTest(StudioCase):
         folder = self.folder(project["id"])
         self.assertEqual((folder / "poster.png").read_bytes(), (folder / "narrator" / "cover.png").read_bytes())
         _, photos = self.json("GET", "/api/photo/jobs")
-        slides_n = len(done["artifacts"]["plan"]["slides"])
+        slides_n = sum(s["kind"] == "image" for s in done["artifacts"]["plan"]["slides"])
         self.assertEqual(len(photos["jobs"]), slides_n, "задачи «Фото» — только картинки слайдов, постер не рисовали")
 
 

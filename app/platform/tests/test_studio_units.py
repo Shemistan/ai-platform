@@ -38,7 +38,86 @@ class SlidesTest(unittest.TestCase):
         }
         plan = slides.parse_plan(raw, 4)
         self.assertEqual([(s.para, s.title) for s in plan], [(0, "Начало"), (2, "Середина"), (3, "Конец")])
-        self.assertEqual(plan[2].bullets, ["а", "б", "в"])
+        # Без вида: с промптом картинки — картинка (тезисов до трёх), без него — пункты (до пяти).
+        self.assertEqual([s.kind for s in plan], ["image", "bullets", "bullets"])
+        self.assertEqual(plan[2].bullets, ["а", "б", "в", "г"])
+        image = slides.parse_plan([{"title": "к", "image_prompt": "x", "bullets": list("абвгд")}], 1)[0]
+        self.assertEqual(image.bullets, ["а", "б", "в"])
+
+    def test_parse_plan_has_no_slide_limit(self):
+        paras = [f"Фраза {i}. Ещё фраза {i}." for i in range(40)]
+        raw = [{"para": i // 2, "sent": i % 2, "title": f"С{i}"} for i in range(80)]
+        plan = slides.parse_plan(raw, paras)
+        self.assertEqual(len(plan), 80)
+        self.assertEqual([(s.para, s.sent) for s in plan[:3]], [(0, 0), (0, 1), (1, 0)])
+
+    def test_parse_plan_sentences(self):
+        paras = ["Раз. Два! Три?", "Четыре."]
+        self.assertEqual(slides.sentences(paras[0]), ["Раз.", "Два!", "Три?"])
+        raw = [
+            {"para": 0, "sent": 2, "title": "три"},
+            {"para": 0, "sent": 9, "title": "зажата к последней фразе — дубль, отброшена"},
+            {"para": 1, "sent": 5, "title": "четыре"},
+            {"para": 0, "sent": 1, "title": "первый — с начала текста"},
+        ]
+        plan = slides.parse_plan(raw, paras)
+        self.assertEqual(
+            [(s.para, s.sent, s.title) for s in plan],
+            [(0, 0, "первый — с начала текста"), (0, 2, "три"), (1, 0, "четыре")],
+        )
+        # В plan.json нулевая фраза не пишется — старые планы и новые выглядят одинаково.
+        self.assertNotIn("sent", plan[0].to_dict())
+        self.assertEqual(plan[1].to_dict()["sent"], 2)
+
+    def test_parse_plan_scene_kinds(self):
+        raw = [
+            {"kind": "image", "title": "картинка", "image_prompt": "a fox", "video_prompt": "fox runs"},
+            {"para": 1, "kind": "stat", "title": "число", "value": "12,5", "suffix": "%", "label": "доля"},
+            {
+                "para": 2,
+                "kind": "chart",
+                "title": "график",
+                "chart": "line",
+                "data": [{"label": "a", "value": 1}, {"label": "b", "value": "2"}, {"label": "c", "value": "x"}],
+            },
+            {"para": 3, "kind": "flow", "title": "схема", "steps": ["раз", "два"], "image_prompt": "игнор"},
+            {
+                "para": 4,
+                "kind": "compare",
+                "title": "сравнение",
+                "left": {"items": ["было"]},
+                "right": {"title": "Go", "items": ["стало"]},
+            },
+            {"para": 5, "kind": "quote", "title": "цитата", "text": "Слова.", "author": "Автор"},
+            {"para": 6, "kind": "chart", "title": "мало точек", "data": [{"label": "a", "value": 1}]},
+            {"para": 7, "kind": "unknown", "title": "неизвестный вид"},
+        ]
+        plan = slides.parse_plan(raw, 8)
+        kinds = [s.kind for s in plan]
+        self.assertEqual(kinds, ["image", "stat", "chart", "flow", "compare", "quote", "bullets", "bullets"])
+        self.assertEqual(plan[1].data["value"], 12.5)
+        self.assertEqual([p["value"] for p in plan[2].data["data"]], [1.0, 2.0])
+        self.assertEqual(plan[2].data["chart"], "line")
+        # Картинки и ролики — только у слайдов-картинок.
+        self.assertEqual((plan[0].image_prompt, plan[0].video_prompt), ("a fox", "fox runs"))
+        self.assertEqual(plan[3].image_prompt, "")
+        self.assertEqual(plan[4].data["right"], {"title": "Go", "items": ["стало"]})
+        # Данные сцены — полями слайда в plan.json, и план читается обратно тем же.
+        again = slides.parse_plan([s.to_dict() for s in plan], 8)
+        self.assertEqual([s.to_dict() for s in again], [s.to_dict() for s in plan])
+
+    def test_spoken_and_starts_by_sentence(self):
+        paras = ["раз два. три четыре.", "пять шесть"]
+        plan = [slides.Slide(0, "a"), slides.Slide(0, "b", sent=1), slides.Slide(1, "c")]
+        self.assertEqual(slides.starts(paras, plan, 6.0), [0.0, 2.0, 4.0])
+        self.assertEqual([slides.spoken(paras, plan, n) for n in range(3)], ["раз два.", "три четыре.", "пять шесть"])
+
+    def test_target_slides_keeps_slide_near_four_seconds(self):
+        # ~130 слов в минуту: 600 слов — ~4,5 минуты, по слайду на 4–5 секунд.
+        self.assertEqual(
+            slides.target_slides(["слово " * 600]), round(600 / slides.WORDS_PER_S / slides.TARGET_SLIDE_S)
+        )
+        self.assertEqual(slides.target_slides([""]), 1)
 
     def test_parse_plan_errors(self):
         for raw in ({"slides": []}, {"slides": [{"title": ""}]}, {"nope": 1}, "текст"):

@@ -74,8 +74,12 @@ class ArticleFlowTest(StudioCase):
         self.assertAlmostEqual(media.duration(folder / "video.mp4"), voice_s, delta=0.6)
         self.assertEqual(media.video_size(folder / "short.mp4"), (270, 480))
         plan = done["artifacts"]["plan"]
-        self.assertEqual(len(plan["slides"]), 4)
-        self.assertEqual(sorted(done["files"]["images"]), ["01", "02", "03", "04"])
+        # Слайд на каждую фразу, картинки вперемешку с динамическими сценами; рисуются только картинки.
+        self.assertEqual(len(plan["slides"]), 7)
+        drawn = [f"{n:02d}" for n, s in enumerate(plan["slides"], start=1) if s["kind"] == "image"]
+        self.assertEqual(drawn, ["01", "03", "05", "07"])
+        self.assertEqual({s["kind"] for s in plan["slides"]}, {"image", "bullets", "stat", "chart"})
+        self.assertEqual(sorted(done["files"]["images"]), drawn)
         self.assertTrue(done["artifacts"]["poster_prompt"].startswith("cinematic"))
         self.assertIn("Главное", done["artifacts"]["post"])
         self.assertEqual(len(done["artifacts"]["short"]["beats"]), 4)
