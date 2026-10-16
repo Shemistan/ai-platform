@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-CLONES = ("Charon", "M1", "Shem")  # клоны образцов narrator/voices
+CLONES = ("Charon", "M1", "Shem", "Shem-v2")  # клоны образцов narrator/voices
 
 
 @dataclass(frozen=True)
