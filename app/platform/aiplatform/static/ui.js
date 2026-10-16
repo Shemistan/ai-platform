@@ -41,6 +41,7 @@ export const STATUS = {
   canceled: "отменено",
   waiting: "ждёт вас",
   pending: "не начат",
+  skipped: "пропущен",
 };
 
 export function statusChip(status) {

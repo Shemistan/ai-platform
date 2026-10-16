@@ -446,6 +446,23 @@ class Renderer:
         listing.unlink(missing_ok=True)
         return out
 
+    def still(
+        self,
+        *,
+        poster: Path,
+        audio: Path,
+        audio_s: float,
+        out: Path,
+        orientation: str,
+        cancel: threading.Event,
+        branding: Branding | None = None,
+    ) -> Path:
+        """Пост: постер целиком на всю длину звука; с оформлением — плей и плашка, как у обложки."""
+        work = out.parent / f".{out.stem}-clips"
+        work.mkdir(parents=True, exist_ok=True)
+        clip = self.poster_clip(poster, work / "still.mp4", audio_s, orientation, cancel, branding)
+        return self.concat([clip], audio, out, audio_s, cancel)
+
     def build(
         self,
         *,

@@ -1,13 +1,19 @@
-// Сценарии «Дайджест новостей» и «Видео по статье»: выпуск — цепочка шагов от текста до публикации.
+// Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
 import { $, api, h, logBlock, progressBar, seconds, statusChip } from "/ui.js";
 
 const API = "/api/studio";
-const scenario = new URLSearchParams(location.search).get("scenario") === "digest" ? "digest" : "article";
+const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
+const wantedScenario = new URLSearchParams(location.search).get("scenario");
+const scenario = SCENARIO_TITLES[wantedScenario] ? wantedScenario : "article";
+// У поста нет слайдов: эти шаги всегда пропущены — их не показываем.
+const HIDDEN_STEPS = { post: new Set(["plan", "images", "clips", "short"]) };
+const CAPTION_LIMIT = 1024;
 const HINTS = {
   digest:
     "narrator собирает свежие новости и пишет пересказ → постер → слайды с картинками → озвучка → видео 16:9 (и шортс 9:16) → публикация.",
   article: "Вставь готовую статью → постер → слайды с картинками → озвучка → видео 16:9 (и шортс 9:16) → публикация.",
+  post: "Свой постер, своя озвучка (или озвучка подписи) и подпись → одно видео с постером под звук или картинка с аудио → в каналы.",
 };
 const state = { config: null, projects: [], project: null, signature: "", drafts: {}, stepDrafts: {}, timer: null, publish: {} };
 
@@ -64,7 +70,7 @@ function fieldsOf(values, prefix) {
     video_model: () => select("video_model", "Модель видео (ролик 5 с, 704×448)", models(cfg.video_models, values.video_model)),
     voice_mode: () =>
       radios("voice_mode", [
-        ["tts", "Озвучить narrator", values.voice_mode !== "upload"],
+        ["tts", "Озвучить локальной моделью", values.voice_mode !== "upload"],
         ["upload", "Загружу свой mp3", values.voice_mode === "upload"],
       ]),
     engine: () => {
@@ -136,6 +142,16 @@ function fieldsOf(values, prefix) {
           )
         : h("p", { class: "hint" }, `Каналы не настроены: ${cfg.channels_file}`),
     auto_publish: () => check("auto_publish", "Публиковать сразу, без моей проверки", null, values.auto_publish),
+    post_format: () =>
+      h(
+        "div",
+        { class: "field" },
+        h("span", { class: "hint" }, "Вид поста в Telegram: видео одним постом или картинка с подписью и следом аудио. Пакеты для ручной загрузки — всегда видео."),
+        radios("post_format", [
+          ["video", "Видео", values.post_format !== "photo"],
+          ["photo", "Картинка, затем аудио", values.post_format === "photo"],
+        ]),
+      ),
     review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
   };
 }
@@ -167,6 +183,17 @@ function channelAdder(prefix) {
 function settingsForm(values, prefix) {
   const f = fieldsOf(values, prefix);
   const group = (legend, ...children) => h("fieldset", {}, h("legend", {}, legend), ...children);
+  if (scenario === "post") {
+    return h(
+      "div",
+      { class: "settings-form" },
+      group("Постер", f.poster_mode(), f.image_model()),
+      group("Озвучка", f.voice_mode(), f.engine()),
+      group("Оформление", f.frame(), f.branding(), f.disclaimers()),
+      group("Публикация", channelAdder(prefix), f.post_format(), f.tempo(), f.channels(), f.auto_publish()),
+      f.review_text(),
+    );
+  }
   return h(
     "div",
     { class: "settings-form" },
@@ -184,10 +211,16 @@ function settingsForm(values, prefix) {
 const SETTING_NAMES = [
   "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
   "voice_mode", "engine", "shorts", "review_text", "disclaimers", "branding", "tempo", "frame", "auto_publish", "channels",
+  "post_format",
+]; // prettier-ignore
+// Поля формы поста: остальные настройки у него не меняются.
+const POST_SETTINGS = [
+  "poster_mode", "image_model", "voice_mode", "engine", "review_text", "disclaimers", "branding", "tempo", "frame",
+  "auto_publish", "channels", "post_format",
 ]; // prettier-ignore
 
 // Читает поля формы с этим префиксом; names — какие именно (engine читается вместе с голосом).
-function readSettings(prefix, names = SETTING_NAMES) {
+function readSettings(prefix, names = scenario === "post" ? POST_SETTINGS : SETTING_NAMES) {
   const get = (name) => document.getElementById(`${prefix}-${name}`);
   const radio = (name) => document.querySelector(`input[name="${prefix}-${name}"]:checked`)?.value;
   const special = {
@@ -195,6 +228,7 @@ function readSettings(prefix, names = SETTING_NAMES) {
     images_mode: () => radio("images_mode"),
     clips_mode: () => radio("clips_mode"),
     voice_mode: () => radio("voice_mode"),
+    post_format: () => radio("post_format"),
     engine: () => ({ engine: get("engine").value, voice: get("voice").value }),
     tempo: () => ({ tempo: Number(get("tempo").value) }),
     channels: () => ({ channels: [...document.querySelectorAll(`input[name="${prefix}-channels"]:checked`)].map((i) => i.value) }),
@@ -228,7 +262,9 @@ function renderCreate() {
             h("span", { class: "hint" }, "narrator обойдёт источники и напишет пересказ дня — это занимает несколько минут."),
           ),
         ]
-      : [
+      : scenario === "post"
+        ? postFields()
+        : [
           h("label", { class: "field" }, h("span", { class: "field-label" }, "Заголовок"), h("input", { type: "text", id: "title", placeholder: "необязательно — возьмём из текста" })),
           h(
             "label",
@@ -238,7 +274,36 @@ function renderCreate() {
           ),
         ]),
   );
-  $("create-settings").replaceChildren(settingsForm(state.config.defaults, "new"));
+  const defaults = { ...state.config.defaults, ...(state.config.scenario_defaults?.[scenario] || {}) };
+  $("create-settings").replaceChildren(settingsForm(defaults, "new"));
+}
+
+// Подпись поста со счётчиком: Telegram берёт под видео до 1024 знаков.
+function captionCounter(area) {
+  const count = h("span", { class: "hint" });
+  const update = () => {
+    const visible = area.value.replace(/\*\*/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").length;
+    count.textContent = `${visible} знаков из ${CAPTION_LIMIT}${visible > CAPTION_LIMIT ? " — длинно: вместо подписи уйдёт заголовок" : ""}`;
+    count.classList.toggle("warn", visible > CAPTION_LIMIT);
+  };
+  area.addEventListener("input", update);
+  update();
+  return count;
+}
+
+function postFields() {
+  const post = h("textarea", { id: "post", rows: 7, placeholder: "**Жирный** и [ссылка](https://…) — как в post.md дайджеста." });
+  return [
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "Заголовок"), h("input", { type: "text", id: "title", placeholder: "необязательно — из первой строки подписи" })),
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "Подпись к посту"), post, captionCounter(post)),
+    h(
+      "details",
+      {},
+      h("summary", { class: "link" }, "Текст для озвучки — если озвучиваем здесь"),
+      h("textarea", { id: "text", rows: 5, placeholder: "Пусто — озвучим подпись. С «Загружу свой mp3» не нужен." }),
+    ),
+    h("p", { class: "hint" }, "Постер и mp3 перетащишь в шаги выпуска после создания."),
+  ];
 }
 
 async function create(event) {
@@ -247,11 +312,12 @@ async function create(event) {
   error.hidden = true;
   const payload = { scenario, settings: readSettings("new"), run: true };
   if (scenario === "digest") payload.day = $("day").value;
+  else if (scenario === "post") Object.assign(payload, { title: $("title").value, post: $("post").value, text: $("text").value });
   else Object.assign(payload, { title: $("title").value, text: $("text").value });
   $("create-btn").disabled = true;
   try {
     const project = await api("POST", `${API}/projects`, payload);
-    if (scenario === "article") $("text").value = "";
+    if (scenario !== "digest") for (const id of ["text", "post"]) if ($(id)) $(id).value = "";
     await loadProjects();
     show(project);
   } catch (err) {
@@ -595,6 +661,15 @@ function stepBody(step) {
   const f = p.files;
   switch (step.id) {
     case "text":
+      if (p.scenario === "post") {
+        const captionArea = editor("post", a.post, 6);
+        return [
+          h("p", { class: "field-label" }, "Подпись к посту"),
+          captionArea,
+          captionCounter(captionArea.querySelector("textarea")),
+          h("details", {}, h("summary", { class: "link" }, "Текст для озвучки"), editor("text", a.text, 6)),
+        ];
+      }
       return [verdictBox(p.review), a.text || step.status !== "pending" ? editor("text", a.text, 12) : h("p", { class: "muted" }, "Текст появится после сбора новостей.")];
     case "poster_prompt":
       return a.poster_prompt
@@ -663,7 +738,7 @@ function stepBody(step) {
       const pick = publishPick(p);
       const sentTo = new Set((p.published || []).filter((r) => r.sent).map((r) => r.channel));
       return [
-        editor("post", a.post, 5),
+        p.scenario === "post" ? null : editor("post", a.post, 5),
         h(
           "div",
           { class: "publish-box" },
@@ -788,7 +863,7 @@ function show(project) {
         h("span", { class: "hint" }, "Изменённые настройки сбросят только затронутые шаги."),
       ),
     ),
-    h("div", { class: "steps" }, ...project.steps.map(renderStep)),
+    h("div", { class: "steps" }, ...project.steps.filter((s) => !HIDDEN_STEPS[project.scenario]?.has(s.id)).map(renderStep)),
     h("div", { class: "panel" }, logBlock(project.log, "Журнал выпуска") || h("p", { class: "muted small" }, "Журнал пуст.")),
   );
   schedule();
@@ -818,7 +893,7 @@ async function refresh() {
 }
 
 async function init() {
-  $("scenario-title").textContent = scenario === "digest" ? "Дайджест новостей" : "Видео по статье";
+  $("scenario-title").textContent = SCENARIO_TITLES[scenario];
   $("scenario-hint").textContent = HINTS[scenario];
   document.title = `${$("scenario-title").textContent} — AI Platform`;
   state.config = await api("GET", `${API}/config`);

@@ -1,4 +1,7 @@
-"""Шаги сценариев «Дайджест новостей» и «Видео по статье».
+"""Шаги сценариев «Дайджест новостей», «Видео по статье» и «Пост в канал».
+
+У поста нет слайдов: видео — свой постер на всю длину своей озвучки (или
+озвучки текста), подпись — post.md.
 
 Файлы проекта:
   text.md            — текст для озвучки (пересказ новостей или статья)
@@ -292,7 +295,29 @@ def load_plan(ctx: StepContext) -> tuple[dict, list[slides.Slide]]:
 # --- шаги ---
 
 
+POST_SCENARIO = "post"
+
+
+def is_post(ctx: StepContext) -> bool:
+    return ctx.project["scenario"] == POST_SCENARIO
+
+
+def no_slides(ctx: StepContext) -> None:
+    if is_post(ctx):
+        raise Skip("В посте нет слайдов: видео — постер под звук.")
+
+
 def step_text(ctx: StepContext) -> None:
+    if is_post(ctx):
+        post = ctx.read(POST).strip()
+        if not post:
+            raise StudioError("Нет подписи к посту — заполни её.")
+        if not ctx.read(TEXT).strip():  # озвучить нечего своего — озвучиваем подпись
+            ctx.write(TEXT, publish.plain_text(post) + "\n")
+        ctx.log(f"подпись: {len(publish.plain_text(post))} знаков из {publish.CAPTION_LIMIT}")
+        if ctx.settings.get("review_text") and not ctx.state.get("approved"):
+            raise Waiting("Проверь подпись и текст, затем нажми «Продолжить».")
+        return
     if ctx.project["scenario"] == "digest":
         day = ctx.project["day"]
         ctx.progress(f"narrator собирает новости за {day}…")
@@ -378,6 +403,8 @@ def use_narrator_cover(ctx: StepContext, prompt: str) -> bool:
 
 
 def step_poster_prompt(ctx: StepContext) -> None:
+    if is_post(ctx) and ctx.settings["poster_mode"] == "upload":
+        raise Skip("Постер свой — промпт не нужен.")
     text = require_text(ctx)
     if ctx.project["scenario"] == "digest":
         own = ctx.read(NARRATOR_PROMPT).strip()
@@ -401,6 +428,8 @@ def step_poster(ctx: StepContext) -> None:
         from_narrator = existing is None or read_meta(ctx.path("poster.json")).get("narrator")
         if from_narrator and (pull_narrator_cover(ctx) or existing is None) and use_narrator_cover(ctx, prompt):
             return
+        if existing is None and is_post(ctx):
+            raise Waiting("Загрузи свой постер (PNG, JPEG или WebP): перетащи его сюда или нажми «Загрузить постер».")
         if existing is None:
             where = ""
             if ctx.read(NARRATOR_FOLDER).strip():
@@ -438,6 +467,7 @@ def step_poster(ctx: StepContext) -> None:
 
 
 def step_plan(ctx: StepContext) -> None:
+    no_slides(ctx)
     text = require_text(ctx)
     paras = slides.paragraphs(text)
     aspect = "16:9" if ctx.settings.get("frame", "landscape") == "landscape" else "1:1"
@@ -457,6 +487,7 @@ def step_plan(ctx: StepContext) -> None:
 
 
 def step_images(ctx: StepContext) -> None:
+    no_slides(ctx)
     if not ctx.settings["draw_images"]:
         raise Skip("Картинки выключены: фон слайдов — градиент.")
     _, plan = load_plan(ctx)
@@ -512,6 +543,7 @@ def video_frame(ctx: StepContext, poster: Path | None) -> str:
 
 
 def step_clips(ctx: StepContext) -> None:
+    no_slides(ctx)
     if not ctx.settings.get("clips"):
         raise Skip("Ролики выключены: фон слайдов — картинки с медленным наездом.")
     _, plan = load_plan(ctx)
@@ -666,7 +698,40 @@ def covers(video: Path) -> tuple[Path, Path]:
     return video.with_name(f"{video.stem}-cover.jpg"), video.with_name(f"{video.stem}-thumb.jpg")
 
 
+def render_still(ctx: StepContext) -> None:
+    """Пост: постер на всю длину озвучки, с оформлением — плей и плашка."""
+    svc = services(ctx)
+    poster = find(ctx.dir, "poster", IMAGE_EXT)
+    if poster is None:
+        raise StudioError("Нет постера — загрузи его в шаге «Постер».")
+    audio = find(ctx.dir, "voice", AUDIO_EXT)
+    if audio is None:
+        raise StudioError("Нет озвучки — выполни шаг «Озвучка».")
+    audio = paced(ctx, audio)
+    audio_s = media.duration(audio, svc.config.ffmpeg)
+    if audio_s <= 0:
+        raise StudioError(f"Не удалось узнать длительность {audio.name} — нужен ffprobe рядом с ffmpeg.")
+    brand = branding(svc.config) if ctx.settings.get("branding") else None
+    out = ctx.path(VIDEO)
+    ctx.progress("Собираю видео: постер под звук…", 10.0)
+    orientation = video_frame(ctx, poster)
+    svc.renderer.still(
+        poster=poster, audio=audio, audio_s=audio_s, out=out, orientation=orientation, cancel=ctx.cancel, branding=brand
+    )
+    cover, thumb = covers(out)
+    if brand is not None:
+        svc.renderer.cover_frames(out, cover, thumb, ctx.cancel)
+    else:
+        cover.unlink(missing_ok=True)
+        thumb.unlink(missing_ok=True)
+    size = "×".join(map(str, render.size_of(orientation)))
+    ctx.log(f"{out.name}: {audio_s:.0f} с, постер под звук, кадр {size}")
+
+
 def step_render(ctx: StepContext) -> None:
+    if is_post(ctx):
+        render_still(ctx)
+        return
     text = require_text(ctx)
     _, plan = load_plan(ctx)
     audio = find(ctx.dir, "voice", AUDIO_EXT)
@@ -692,6 +757,8 @@ def parse_short(obj: object) -> list[dict]:
 
 
 def step_short(ctx: StepContext) -> None:
+    if is_post(ctx):
+        raise Skip("У поста одно видео: формат 9:16 — кадр «как постер» с вертикальной картинкой.")
     if not ctx.settings["shorts"]:
         raise Skip("Шортс выключен в настройках.")
     text = require_text(ctx)
@@ -743,6 +810,11 @@ def step_publish(ctx: StepContext) -> None:
             ctx.log(f"{channel.label}: {message}")
             results.append(before[channel_id] | {"label": channel.label, "skipped": True, "message": message})
             continue
+        if channel.type == publish.TELEGRAM and ctx.settings.get("post_format") == "photo":
+            ctx.progress(f"{channel.label} ({n} из {len(chosen)})", 100.0 * (n - 1) / len(chosen))
+            results.append(publish_photo(ctx, channel, title, post) | {"label": channel.label, "sent": time.time()})
+            ctx.log(f"{channel.label}: {results[-1]['message']}")
+            continue
         video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
         if not video.is_file():
             hint = "включи «Шортс» и собери его" if channel.format == VERTICAL else "собери видео"
@@ -768,6 +840,17 @@ def step_publish(ctx: StepContext) -> None:
     done = {r["channel"] for r in results}
     kept = [r for r in read_published(ctx) if r["channel"] not in done]  # прошлые отправки в другие каналы
     ctx.write(PUBLISHED, json.dumps(results + kept, ensure_ascii=False, indent=2) + "\n")
+
+
+def publish_photo(ctx: StepContext, channel: publish.Channel, title: str, post: str) -> dict:
+    """Вид поста «картинка и аудио»: постер с подписью, затем mp3 озвучки."""
+    poster = find(ctx.dir, "poster", IMAGE_EXT)
+    audio = find(ctx.dir, "voice", AUDIO_EXT)
+    if poster is None or audio is None:
+        raise StudioError(f"{channel.label}: для поста «картинка и аудио» нужны постер и озвучка.")
+    audio = paced(ctx, audio)
+    seconds = media.duration(audio, services(ctx).config.ffmpeg)
+    return publish.publish_photo(channel, poster=poster, audio=audio, title=title, post=post, seconds=seconds)
 
 
 def read_published(ctx: StepContext) -> list[dict]:

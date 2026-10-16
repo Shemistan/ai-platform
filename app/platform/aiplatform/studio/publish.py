@@ -260,6 +260,18 @@ def caption(post: str, title: str) -> str:
 # --- отправка ---
 
 HttpPost = Callable[[str, bytes, str], dict]
+FILE_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".mp4": "video/mp4",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+}
+PHOTO_LIMIT = 10 * 2**20  # sendPhoto принимает картинки до 10 МБ
+POST_FORMATS = ("video", "photo")  # видео одним постом или картинка с подписью, затем аудио
 
 
 def _http_post(url: str, body: bytes, content_type: str) -> dict:
@@ -282,7 +294,7 @@ def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, st
     for name, value in fields.items():
         parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     for name, path in files.items():
-        ctype = "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "video/mp4"
+        ctype = FILE_TYPES.get(path.suffix.lower(), "application/octet-stream")
         head = (
             f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{path.name}"\r\n'
             f"Content-Type: {ctype}\r\n\r\n"
@@ -290,6 +302,49 @@ def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, st
         parts.append(head.encode() + path.read_bytes() + b"\r\n")
     parts.append(f"--{boundary}--\r\n".encode())
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def _send(channel: Channel, method: str, fields: dict, files: dict[str, Path], http_post: HttpPost | None) -> dict:
+    token = channel.token()
+    body, ctype = multipart({**channel.target(), **fields}, files)
+    answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype)
+    if not answer.get("ok"):
+        description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
+        raise StudioError(f"{channel.label}: Telegram ответил «{description}».")
+    return answer.get("result") or {}
+
+
+def publish_photo(
+    channel: Channel,
+    *,
+    poster: Path,
+    audio: Path,
+    title: str,
+    post: str,
+    seconds: float = 0.0,
+    http_post: HttpPost | None = None,
+) -> dict:
+    """Двумя постами, как NEWS_POST=photo у narrator: картинка с подписью, затем аудио."""
+    problem = channel.problem()
+    if problem:
+        raise StudioError(f"{channel.label}: {problem}.")
+    if poster.stat().st_size > PHOTO_LIMIT:
+        raise StudioError(f"{channel.label}: картинка больше 10 МБ — Telegram не примет её фото.")
+    if audio.stat().st_size > BOT_VIDEO_LIMIT:
+        raise StudioError(f"{channel.label}: аудио больше 50 МБ — Bot API такое не примет.")
+    photo = _send(
+        channel, "sendPhoto", {"caption": caption(post, title), "parse_mode": "HTML"}, {"photo": poster}, http_post
+    )
+    fields = {"title": title[:64]}
+    if seconds:
+        fields["duration"] = str(int(round(seconds)))
+    sound = _send(channel, "sendAudio", fields, {"audio": audio}, http_post)
+    ids = f"{photo.get('message_id')} и {sound.get('message_id')}"
+    return {
+        "channel": channel.id,
+        "ok": True,
+        "message": f"Отправлено двумя постами: картинка и аудио, сообщения {ids}.",
+    }
 
 
 def publish(
