@@ -1,0 +1,12 @@
+# Личные данные движка — не код: статьи, база новостей, подписчики бота
+library/
+# Токен телеграм-бота — секрет
+bot_token.md
+# id телеграм-каналов и тем, строки ИМЯ=id — личная настройка
+telegram_tems.md
+.venv/
+tmp/
+# onnxruntime в sandbox не может сохранить device ID телеметрии и пишет его в cwd
+:memory:.ses
+# skills агентов ставит make skills из docs/skills/
+.claude/skills/

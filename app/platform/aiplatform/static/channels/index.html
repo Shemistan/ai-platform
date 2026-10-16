@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Каналы — AI Platform</title>
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+  <header class="page-head">
+    <h1>Каналы</h1>
+    <p class="muted">Куда платформа публикует видео и озвучки и кто получает их от бота. Список каналов — общий для всех сценариев: его же видит шаг «Публикация».</p>
+  </header>
+
+  <main class="wide">
+    <div class="cols-2">
+      <section class="panel" aria-live="polite">
+        <div class="card-head">
+          <h2>Каналы публикации</h2>
+          <div class="toolbar" id="channel-tools"></div>
+        </div>
+        <div id="channels"><p class="muted">Загружаю…</p></div>
+        <details class="settings-box" id="add-box">
+          <summary>Добавить канал Telegram</summary>
+          <form id="add-form" class="field" novalidate>
+            <div class="settings">
+              <label class="field"><span class="field-label">Название</span><input type="text" id="add-label" placeholder="Новости разработки"></label>
+              <label class="field"><span class="field-label">id канала</span><input type="text" id="add-chat" placeholder="-1001234567890 или @username"></label>
+            </div>
+            <div class="settings">
+              <div class="field">
+                <span class="field-label">Что уходит</span>
+                <div class="segmented" id="add-format" role="group" aria-label="Формат">
+                  <button type="button" value="landscape" aria-pressed="true">Видео 16:9</button>
+                  <button type="button" value="vertical" aria-pressed="false">Шортс 9:16</button>
+                </div>
+              </div>
+              <label class="field"><span class="field-label">Переменная токена</span><input type="text" id="add-token" placeholder="по умолчанию — бот движка"></label>
+            </div>
+            <p class="hint">Тема в группе — <code>-1001234567890_3</code>. Бот должен быть администратором канала.</p>
+            <p class="form-error" id="add-error" role="alert" hidden></p>
+            <div class="toolbar"><button type="submit" class="secondary">Добавить канал</button></div>
+          </form>
+        </details>
+      </section>
+
+      <div class="side">
+        <section class="panel">
+          <div class="card-head">
+            <h2>Бот</h2>
+            <button type="button" class="small-btn" id="bot-check">Проверить</button>
+          </div>
+          <div id="bot"></div>
+        </section>
+        <section class="panel">
+          <div class="card-head">
+            <h2>Подписчики бота</h2>
+            <button type="button" class="small-btn" id="subs-sync">Обновить</button>
+          </div>
+          <div id="serve"></div>
+          <div id="subscribers"><p class="muted">Загружаю…</p></div>
+        </section>
+        <section class="panel" id="unsent-box" hidden>
+          <h2>Не ушли в Telegram</h2>
+          <div id="unsent"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

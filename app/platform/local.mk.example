@@ -12,8 +12,8 @@ AIP_PHOTO_FLUX2_CMD=$(HOME)/.local/share/photogen/flux2cli-v3.1.0/Flux2CLI
 AIP_VIDEO_LTX_CMD=uv run --project $(HOME)/.local/share/videogen/ltx-2-mlx-v0.16.2 ltx-2-mlx
 AIP_VIDEO_WAN_CMD=uv run --project $(HOME)/.local/share/videogen/wan-video-mlx-86bfc98 pocketai-wan-video
 
-# Озвучка и новости: репозиторий narrator.
-AIP_NARRATOR_DIR=$(HOME)/my_track/07_offline_text-to-word
+# Озвучка и новости: движок app/narrator (по умолчанию — рядом, задавать не нужно).
+# AIP_NARRATOR_DIR=/путь/к/narrator
 AIP_AUDIO_ENGINE=higgs
 
 # LLM для промптов постера, слайдов и шортса.

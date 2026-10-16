@@ -1,4 +1,4 @@
-"""Вкладки сценариев «Дайджест новостей» и «Видео по статье»: API под /api/studio/."""
+"""Вкладки сценариев «Дайджест новостей», «Видео по статье» и «Пост в канал»: API под /api/studio/."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from aiplatform.video import models as video_models
 
 PREFIX = "studio"
 URL_BASE = f"/api/{PREFIX}"
-SCENARIOS = {"digest": "Дайджест новостей", "article": "Видео по статье"}
+SCENARIOS = {"digest": "Дайджест новостей", "article": "Видео по статье", "post": "Пост в канал"}
 DIGEST_CHANNEL = "tg-voice-news"  # канал дайджеста у narrator (NEWS_CHANNEL = VOICE_NEWS)
 MAX_TEXT = 100_000
 MAX_BODY = 4 * MAX_TEXT + 64 * 1024
@@ -47,6 +47,7 @@ SETTING_STEPS = {
     "shorts": "short",
     "channels": "publish",
     "auto_publish": "publish",
+    "post_format": "publish",
     "disclaimers": ("render", "short"),
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
@@ -131,20 +132,22 @@ class StudioModule:
         if not isinstance(payload, dict):
             raise bad_request("Тело запроса — не объект JSON.")
         chosen, force = payload.get("channels"), payload.get("force", False)
+        ignore_verdict = payload.get("ignore_verdict", False)
         if not isinstance(chosen, list) or not chosen or not all(isinstance(c, str) for c in chosen):
             raise bad_request("Выбери хотя бы один канал.")
         unknown = [c for c in chosen if c not in {ch.id for ch in self.channels()}]
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
-        if not isinstance(force, bool):
-            raise bad_request("force — true или false.")
+        if not isinstance(force, bool) or not isinstance(ignore_verdict, bool):
+            raise bad_request("force и ignore_verdict — true или false.")
 
         def apply(project: dict) -> set[str]:
             project["settings"]["channels"] = list(dict.fromkeys(chosen))
             return {"publish"}
 
         self.studio.update(project_id, apply)
-        self.studio.run(project_id, "publish", state={"approved": True, "force": force})
+        state = {"approved": True, "force": force, "ignore_verdict": ignore_verdict}
+        self.studio.run(project_id, "publish", state=state)
         return self.view(project_id)
 
     def image_models(self) -> list[dict]:
@@ -181,11 +184,36 @@ class StudioModule:
             "tempo": 1.0,
             "frame": "landscape",
             "auto_publish": False,
+            "post_format": "video",
             "channels": [],
         }
 
+    def scenario_defaults(self, scenario: str) -> dict:
+        """Чем настройки сценария отличаются от общих: их и показывает форма нового выпуска."""
+        if scenario == "digest":
+            # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
+            # по промпту выпуска — постер загружает человек.
+            out: dict = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster"}
+            usual = [c.id for c in self.channels() if c.id == DIGEST_CHANNEL]  # VOICE_NEWS narrator
+            if usual:
+                out["channels"] = usual
+            return out
+        if scenario == "post":
+            # Пост — из готового: свой постер и свой mp3, оформление канала, кадр по постеру.
+            return {
+                "branding": True,
+                "poster_mode": "upload",
+                "voice_mode": "upload",
+                "frame": "poster",
+                "draw_images": False,
+                "clips": False,
+                "shorts": False,
+            }
+        return {}
+
     def describe(self) -> dict:
         return {
+            "scenario_defaults": {k: self.scenario_defaults(k) for k in SCENARIOS},
             "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
             "steps": [{"id": s, "label": LABELS[s]} for s in STEP_IDS],
             "defaults": self.defaults(),
@@ -233,6 +261,8 @@ class StudioModule:
             raise bad_request("voice_mode — tts или upload.")
         if out["frame"] not in steps.FRAMES:
             raise bad_request("frame — landscape, square или poster.")
+        if out["post_format"] not in publish.POST_FORMATS:
+            raise bad_request("post_format — video или photo.")
         if out["upscale_images"] not in UPSCALE_CHOICES:
             raise bad_request("upscale_images — none, 2k или 4k.")
         for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding"):
@@ -275,15 +305,10 @@ class StudioModule:
             raise bad_request("Тело запроса — не объект JSON.")
         scenario = payload.get("scenario")
         if scenario not in SCENARIOS:
-            raise bad_request("Сценарий — digest или article.")
+            raise bad_request("Сценарий — digest, article или post.")
         # У дайджеста, как в narrator: оформление канала (плашка «подпишись», плей) и обложка
         # из ChatGPT по промпту выпуска — постер загружает человек.
-        base = self.defaults()
-        if scenario == "digest":
-            base |= {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster"}
-            usual = [c.id for c in self.channels() if c.id == DIGEST_CHANNEL]  # VOICE_NEWS narrator
-            if usual:
-                base["channels"] = usual
+        base = self.defaults() | self.scenario_defaults(scenario)
         settings = self.check_settings(payload.get("settings"), base)
         title = " ".join(str(payload.get("title") or "").split())[:200]
         extra: dict = {"auto_title": not title}
@@ -296,6 +321,20 @@ class StudioModule:
             title = title or f"Дайджест новостей за {day.strftime('%d.%m.%Y')}"
             extra["auto_title"] = False
             project = self.studio.create(scenario, title, settings, extra)
+        elif scenario == "post":
+            post = payload.get("post")
+            if not isinstance(post, str) or not post.strip():
+                raise bad_request("Напиши подпись к посту.")
+            text = payload.get("text") if isinstance(payload.get("text"), str) else ""
+            if len(post) > MAX_TEXT or len(text) > MAX_TEXT:
+                raise bad_request(f"Текст длиннее {MAX_TEXT} знаков.")
+            first = publish.plain_text(post).splitlines()[0] if publish.plain_text(post) else ""
+            title = title or first[:90] or "Пост в канал"
+            project = self.studio.create(scenario, title, settings, extra)
+            folder = self.studio.project_dir(project["id"])
+            (folder / steps.POST).write_text(post.strip() + "\n", encoding="utf-8")
+            if text.strip():
+                (folder / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
         else:
             text = payload.get("text")
             if not isinstance(text, str) or not text.strip():
@@ -365,6 +404,8 @@ class StudioModule:
             "short_video": url(folder / steps.SHORT_VIDEO),
         }
         project["published"] = as_json(steps.PUBLISHED)
+        review = read(steps.NARRATOR_REVIEW)
+        project["review"] = {"verdict": steps.verdict(review), "text": review} if review else None
         found = registry.mentioned(f"{project['title']}\n{read(steps.TEXT)}\n{read(steps.POST)}", self.banned())
         project["disclaimers"] = [{"name": e.name, "note": e.disclaimer + "."} for e in found]
         return project

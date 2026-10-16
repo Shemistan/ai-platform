@@ -170,8 +170,8 @@ class UpdatesTabTest(PlatformCase):
         self.assertEqual(by_id["photo-z-image-turbo"]["status"], "update")
         self.assertEqual(by_id["photo-krea-2"]["status"], "ok")
         self.assertEqual(by_id["video-wan-2.2-t2v-q4"]["status"], "ok")
-        self.assertEqual(by_id["narrator"]["status"], "update")
-        self.assertEqual(body["models"]["updates"], 4)
+        self.assertNotIn("narrator", by_id)  # движок — часть репозитория, сверять не с чем
+        self.assertEqual(body["models"]["updates"], 3)
         status, _, page = self.call("GET", "/updates/")
         self.assertEqual(status, 200)
         self.assertIn(b"app.js", page)
@@ -245,6 +245,38 @@ class DisclaimerFlowTest(StudioCase):
             encoding="utf-8"
         )
         self.assertNotIn("экстремистской", description)
+
+
+class VoiceModelsTest(PlatformCase):
+    process_env = {"FAKE_NARRATOR_DELAY": "0.01"}
+
+    def task(self, task):
+        return self.poll(f"/api/updates/tasks/{task['id']}", lambda t: t["status"] not in ("queued", "running"))
+
+    def test_listing_and_downloads(self):
+        status, data = self.json("GET", "/api/updates/voice-models")
+        self.assertEqual(status, 200, data)
+        main = {m["id"]: m["exists"] for m in data["main"]}
+        self.assertFalse(main["silero"])
+        mlx = {m["id"]: m["downloaded"] for m in data["mlx"]}
+        self.assertTrue(mlx["higgs"])
+        self.assertFalse(mlx["fish"])
+
+        _, task = self.json("POST", "/api/updates/voice-models/fetch", {})
+        self.assertEqual(self.task(task)["status"], "done")
+        _, data = self.json("GET", "/api/updates/voice-models")
+        self.assertTrue(all(m["exists"] for m in data["main"]))
+
+        self.assertEqual(self.json("POST", "/api/updates/voice-models/mlx", {"engines": ["nope"]})[0], 400)
+        _, task = self.json("POST", "/api/updates/voice-models/mlx", {"engines": ["fish", "qwen3"]})
+        self.assertIn("fish, qwen3", task["title"])
+        self.assertEqual(self.task(task)["status"], "done")
+        _, data = self.json("GET", "/api/updates/voice-models")
+        self.assertTrue({m["id"]: m["downloaded"] for m in data["mlx"]}["qwen3"])
+
+        _, task = self.json("POST", "/api/updates/voice-models/move", {})
+        self.assertEqual(self.task(task)["status"], "done")
+        self.assertEqual(self.json("POST", "/api/updates/voice-models/nope", {})[0], 404)
 
 
 if __name__ == "__main__":

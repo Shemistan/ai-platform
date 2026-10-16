@@ -530,7 +530,119 @@ def quote_scene(c: Canvas, scene: dict, seconds: float) -> None:
             c.text(author, asize, c.margin, ay, color=ACCENT, enable=window(a, b))
 
 
+MONO_FONTS = (
+    "/System/Library/Fonts/Menlo.ttc",
+    "/System/Library/Fonts/Monaco.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+)
+
+
+def mono_font() -> str:
+    return next((f for f in MONO_FONTS if Path(f).is_file()), "")
+
+
+def chapter(c: Canvas, scene: dict, seconds: float) -> None:
+    """Глава: «Глава N» мелко, крупное название по словам, под ним подзаголовок и полоса акцента."""
+    kicker = f"Глава {scene['number']}" if scene.get("number") else "Глава"
+    ksize, size, ssize = c.px(40), c.px(104 if c.wide else 86), c.px(42)
+    text = wrap(scene["title"], c.chars(c.w - 2 * c.margin, size), 3)
+    subtitle = wrap(scene.get("subtitle") or "", c.chars(c.w - 2 * c.margin, ssize), 2) if scene.get("subtitle") else ""
+    block = line_h(ksize) + c.px(24) + text_h(text, size) + (c.px(36) + text_h(subtitle, ssize) if subtitle else 0)
+    y = max(c.top, (c.top + c.bottom) // 2 - block // 2)
+    c.text(kicker.upper(), ksize, slide_x(c.margin, 0.1, c.px(40)), y, color=ACCENT, alpha=appear(0.1, 0.4))
+    ty = y + line_h(ksize) + c.px(24)
+    span = min(max(seconds * 0.4, 0.6), len(text.split()) * 0.35)
+    c.words(text, size, c.margin, ty, 0.35, span)
+    bar_y = ty + text_h(text, size) + c.px(18)
+    c.grow_right(c.margin, bar_y, c.w - 2 * c.margin, c.px(6), ACCENT, 0.35 + span, 0.8, steps=12)
+    if subtitle:
+        c.text(subtitle, ssize, c.margin, bar_y + c.px(30), color=MUTED, alpha=appear(0.6 + span, 0.5))
+    # Долгая глава: по очереди вспыхивают надпись «Глава N» и полоса под названием.
+    for k, a, b in beats(1.2 + span, seconds, 2):
+        if k == 0:
+            c.text(kicker.upper(), ksize, c.margin, y, color=INK, enable=window(a, b))
+        else:
+            c.box(c.margin, bar_y, c.w - 2 * c.margin, c.px(12), ACCENT, enable=window(a, b))
+
+
+def code_scene(c: Canvas, scene: dict, seconds: float) -> None:
+    """Код: тёмная панель, строки набираются по очереди, текущая подсвечена, номера строк слева."""
+    top = c.heading(scene["title"]) if scene.get("title") else c.top
+    lines = scene["code"].split("\n")
+    mono = mono_font()
+    size = c.px(40 if c.wide else 34)
+    width = c.w - 2 * c.margin
+    pad, gutter = c.px(28), c.px(70)
+    while True:
+        row = line_h(size)
+        height = row * len(lines) + 2 * pad
+        fits_w = max(len(line) for line in lines) * size * 0.62 <= width - gutter - 2 * pad
+        if (top + height <= c.bottom and fits_w) or size <= c.px(20):
+            break
+        size = round(size * 0.9)
+    row = line_h(size)
+    height = row * len(lines) + 2 * pad
+    c.box(c.margin, top, width, height, "black@0.4", enable="gte(t,0.2)")
+    c.box(c.margin, top, c.px(8), height, ACCENT, enable="gte(t,0.2)")
+    if scene.get("language"):
+        c.text(
+            scene["language"],
+            c.px(28),
+            f"{c.margin + width - pad}-text_w",
+            top - c.px(40),
+            color=MUTED,
+            alpha=appear(0.2),
+        )
+    font = f"fontfile={quote(mono)}:" if mono else (f"fontfile={quote(c.font)}:" if c.font else "")
+    times = reveal_times(len(lines), seconds, start=0.4, tail=max(TAIL_S, seconds * 0.25))
+    for i, (line, t0) in enumerate(zip(lines, times, strict=True)):
+        y = top + pad + i * row
+        nxt = times[i + 1] if i + 1 < len(times) else None
+        if line.strip():
+            c.box(c.margin + c.px(8), y - c.px(4), width - c.px(8), row, "white@0.06", enable=window(t0, nxt))
+        for text, x, color in ((str(i + 1), c.margin + pad, MUTED), (line or " ", c.margin + gutter + pad, INK)):
+            part = (
+                f"drawtext={font}textfile={quote(c.file(text))}:expansion=none:fontsize={size}"
+                f":fontcolor={color}:x={x}:y={y}:alpha='{appear(t0, 0.25)}'"
+            )
+            c.parts.append(part)
+
+
+def summary(c: Canvas, scene: dict, seconds: float) -> None:
+    """Итог: пункты с галочками появляются по очереди, потом по очереди загораются акцентом."""
+    y = c.heading(scene["title"]) if scene.get("title") else c.top
+    items = scene["items"]
+    size, gap = c.px(46 if c.wide else 42), c.px(26)
+    mark = c.px(56)
+    width = c.w - 2 * c.margin - mark - c.px(30)
+    while True:
+        texts = [wrap(item, c.chars(width, size), 2) for item in items]
+        heights = [max(text_h(t, size), mark) for t in texts]
+        if y + sum(heights) + gap * (len(items) - 1) <= c.bottom or size <= c.px(26):
+            break
+        size = round(size * 0.9)
+    times = reveal_times(len(items), seconds)
+    tx = c.margin + mark + c.px(30)
+    focus = beats(times[-1], seconds, len(items))
+    for i, (text, height, t0) in enumerate(zip(texts, heights, times, strict=True)):
+        on = f"gte(t,{t0:.3f})"
+        my = y + (height - mark) // 2
+        ty = y + (height - text_h(text, size)) // 2
+        c.box(c.margin, my, mark, mark, ACCENT, enable=on)
+        c.text(
+            "✓", round(mark * 0.8), f"{c.margin + mark // 2}-text_w/2", my + round(mark * 0.08), color=DARK, enable=on
+        )
+        c.text(text, size, slide_x(tx, t0, c.px(50)), ty, alpha=appear(t0))
+        for k, a, b in focus:
+            if k == i:
+                c.text(text, size, tx, ty, color=ACCENT, enable=window(a, b))
+        y += height + gap
+
+
 SCENES = {
+    "chapter": chapter,
+    "code": code_scene,
+    "summary": summary,
     "bullets": bullets,
     "stat": stat,
     "flow": flow,

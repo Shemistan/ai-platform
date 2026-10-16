@@ -189,6 +189,39 @@ def new_channel(existing: list[Channel], label: str, chat_id: str, fmt: str) -> 
     return Channel(id=cid, label=label, type=TELEGRAM, format=fmt, chat_id=chat_id)
 
 
+def edit_channel(existing: list[Channel], channel_id: str, changes: dict) -> list[Channel]:
+    """Название, формат и переменная токена канала; chat_id не меняется — это уже другой канал."""
+    out = []
+    found = False
+    for c in existing:
+        if c.id != channel_id:
+            out.append(c)
+            continue
+        found = True
+        label = " ".join(str(changes.get("label", c.label)).split())[:80]
+        fmt = str(changes.get("format", c.format))
+        token_env = str(changes.get("token_env", c.token_env) or "").strip()
+        if not label:
+            raise ValueError("Назови канал.")
+        if fmt not in (LANDSCAPE, VERTICAL):
+            raise ValueError("Формат — landscape или vertical.")
+        if token_env and not re.fullmatch(r"[A-Z_][A-Z0-9_]*", token_env):
+            raise ValueError("Переменная токена — латиницей заглавными, вида AIP_TELEGRAM_TOKEN.")
+        out.append(Channel(c.id, label, c.type, fmt, c.chat_id, token_env, c.token_file))
+    if not found:
+        raise LookupError("Нет такого канала.")
+    return out
+
+
+def from_narrator(names: dict[str, str]) -> list[dict]:
+    """Каналы движка (имя → id из telegram_tems.md) в виде записей channels.json."""
+    out = []
+    for name, chat in names.items():
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        out.append({"id": f"tg-{slug}", "label": f"Telegram: {name}", "type": TELEGRAM, "chat_id": chat})
+    return out
+
+
 # --- подпись: **жирный** и [текст](url) → HTML Telegram ---
 
 
@@ -227,6 +260,18 @@ def caption(post: str, title: str) -> str:
 # --- отправка ---
 
 HttpPost = Callable[[str, bytes, str], dict]
+FILE_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".mp4": "video/mp4",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+}
+PHOTO_LIMIT = 10 * 2**20  # sendPhoto принимает картинки до 10 МБ
+POST_FORMATS = ("video", "photo")  # видео одним постом или картинка с подписью, затем аудио
 
 
 def _http_post(url: str, body: bytes, content_type: str) -> dict:
@@ -249,7 +294,7 @@ def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, st
     for name, value in fields.items():
         parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     for name, path in files.items():
-        ctype = "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "video/mp4"
+        ctype = FILE_TYPES.get(path.suffix.lower(), "application/octet-stream")
         head = (
             f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{path.name}"\r\n'
             f"Content-Type: {ctype}\r\n\r\n"
@@ -257,6 +302,49 @@ def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, st
         parts.append(head.encode() + path.read_bytes() + b"\r\n")
     parts.append(f"--{boundary}--\r\n".encode())
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def _send(channel: Channel, method: str, fields: dict, files: dict[str, Path], http_post: HttpPost | None) -> dict:
+    token = channel.token()
+    body, ctype = multipart({**channel.target(), **fields}, files)
+    answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype)
+    if not answer.get("ok"):
+        description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
+        raise StudioError(f"{channel.label}: Telegram ответил «{description}».")
+    return answer.get("result") or {}
+
+
+def publish_photo(
+    channel: Channel,
+    *,
+    poster: Path,
+    audio: Path,
+    title: str,
+    post: str,
+    seconds: float = 0.0,
+    http_post: HttpPost | None = None,
+) -> dict:
+    """Двумя постами, как NEWS_POST=photo у narrator: картинка с подписью, затем аудио."""
+    problem = channel.problem()
+    if problem:
+        raise StudioError(f"{channel.label}: {problem}.")
+    if poster.stat().st_size > PHOTO_LIMIT:
+        raise StudioError(f"{channel.label}: картинка больше 10 МБ — Telegram не примет её фото.")
+    if audio.stat().st_size > BOT_VIDEO_LIMIT:
+        raise StudioError(f"{channel.label}: аудио больше 50 МБ — Bot API такое не примет.")
+    photo = _send(
+        channel, "sendPhoto", {"caption": caption(post, title), "parse_mode": "HTML"}, {"photo": poster}, http_post
+    )
+    fields = {"title": title[:64]}
+    if seconds:
+        fields["duration"] = str(int(round(seconds)))
+    sound = _send(channel, "sendAudio", fields, {"audio": audio}, http_post)
+    ids = f"{photo.get('message_id')} и {sound.get('message_id')}"
+    return {
+        "channel": channel.id,
+        "ok": True,
+        "message": f"Отправлено двумя постами: картинка и аудио, сообщения {ids}.",
+    }
 
 
 def publish(

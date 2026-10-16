@@ -1,4 +1,4 @@
-"""Имитация источников обновлений для демо и тестов: PyPI, GitHub, Hugging Face и git без сети.
+"""Имитация источников обновлений для демо и тестов: PyPI, GitHub и Hugging Face без сети.
 
 Версии подобраны так, чтобы на вкладке были все состояния: mflux и ltx-2-mlx
 устарели, Flux2CLI свежий, часть весов обновлена после установки.
@@ -11,7 +11,6 @@ INSTALLED = {
     "flux2cli": "3.1.0",
     "ltx-2-mlx": "0.16.2",
     "wan": "86bfc98",
-    "narrator": "1a2b3c4",
     "installed_at": "2026-06-01",
 }
 
@@ -41,15 +40,3 @@ def fetch(url: str) -> object:
     if url.startswith("https://huggingface.co/api/models/"):
         return OLD_WEIGHTS
     raise OSError(f"демо: нет ответа для {url}")
-
-
-def git(folder: str):
-    """narrator в демо: на 2 коммита позади удалённой ветки."""
-    answers = {"rev-parse": INSTALLED["narrator"], "fetch": "", "rev-list": "2"}
-
-    def run(args: list[str]) -> str:
-        if args[:2] == ["rev-parse", "--short"] and args[-1] == "@{upstream}":
-            return "9f8e7d6"
-        return answers.get(args[0], "")
-
-    return run

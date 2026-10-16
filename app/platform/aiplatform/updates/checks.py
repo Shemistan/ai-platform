@@ -1,8 +1,8 @@
 """Проверка обновлений моделей и пайплайнов: что стоит у нас и что вышло в источнике.
 
-Источники — те же, откуда ставят setup-model.sh photogen/videogen и narrator:
+Источники — те же, откуда ставят setup-model.sh photogen/videogen:
 PyPI (mflux), релизы и теги GitHub (Flux2CLI, ltx-2-mlx), репозитории весов
-на Hugging Face, git-репозиторий narrator. Установленная версия читается из
+на Hugging Face. Установленная версия читается из
 путей установки (`mflux-0.22.0`, `flux2cli-v3.1.0`, `ltx-2-mlx-v0.16.2`,
 `wan-video-mlx-86bfc98`), у весов — время установки. Ничего не ставим сами:
 показываем, что обновить и как.
@@ -13,18 +13,17 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from aiplatform.photo import models as photo_models
 from aiplatform.video import models as video_models
 
-PYPI, RELEASE, TAG, HF, GIT = "pypi", "release", "tag", "hf", "git"
+PYPI, RELEASE, TAG, HF = "pypi", "release", "tag", "hf"
 UPDATE, OK, UNKNOWN, ERROR = "update", "ok", "unknown", "error"
 TIMEOUT_S = 20
 FRESH_DAYS = 1  # веса на HF новее установки меньше чем на день — это та же загрузка
@@ -40,7 +39,7 @@ class Component:
     group: str
     label: str
     kind: str
-    source: str  # пакет PyPI, owner/repo на GitHub или HF, каталог git
+    source: str  # пакет PyPI, owner/repo на GitHub или HF
     installed: str = ""  # версия или ревизия; пусто — не знаем
     installed_at: float | None = None  # у весов: когда поставлены (mtime отметки)
     hint: str = ""
@@ -106,10 +105,10 @@ def _mtime(path: Path) -> float | None:
         return None
 
 
-def components(photo, video, audio, *, demo: dict[str, str] | None = None) -> list[Component]:
-    """Что проверять: пайплайны и веса вкладок «Фото», «Видео» и движки «Аудио».
+def components(photo, video, *, demo: dict[str, str] | None = None) -> list[Component]:
+    """Что проверять: пайплайны и веса вкладок «Фото» и «Видео».
 
-    photo, video, audio — их конфиги. demo — установленные версии для демо-режима
+    photo, video — их конфиги. demo — установленные версии для демо-режима
     (там вместо пайплайнов фейковые команды и версии из путей не прочитать).
     """
     demo = demo or {}
@@ -185,17 +184,6 @@ def components(photo, video, audio, *, demo: dict[str, str] | None = None) -> li
                 hint=hint,
             )
         )
-    out.append(
-        Component(
-            "narrator",
-            "Озвучка",
-            "narrator — все движки озвучки (Higgs, ESpeech, Silero…) и сбор новостей",
-            GIT,
-            str(audio.narrator_dir),
-            demo.get("narrator", ""),
-            hint=f"git -C {audio.narrator_dir} pull, затем make setup в narrator, если менялись зависимости.",
-        )
-    )
     return out
 
 
@@ -240,41 +228,7 @@ def _hf(c: Component, data: dict) -> Result:
     return Result(c, OK, day, "Новее установленных весов нет.")
 
 
-Git = Callable[[list[str]], str]  # аргументы git → stdout
-
-
-def _git(c: Component, git: Git | None) -> Result:
-    if git is None:
-        return Result(c, UNKNOWN, "", f"{c.source} — не git-репозиторий: обновляй вручную.")
-    head = git(["rev-parse", "--short", "HEAD"]).strip()
-    c = replace(c, installed=head)
-    git(["fetch", "--quiet"])
-    behind = git(["rev-list", "--count", "HEAD..@{upstream}"]).strip()
-    if not behind.isdigit():
-        return Result(c, UNKNOWN, "", "У ветки нет удалённой — сравнить не с чем.")
-    if int(behind):
-        latest = git(["rev-parse", "--short", "@{upstream}"]).strip()
-        return Result(c, UPDATE, latest, f"Позади удалённой ветки на {behind} коммит(ов).")
-    return Result(c, OK, head, "Совпадает с удалённой веткой.")
-
-
-def run_git(folder: str) -> Git | None:
-    """git в каталоге folder; None — это не git-репозиторий."""
-    if not (Path(folder) / ".git").exists():
-        return None
-
-    def git(args: list[str]) -> str:
-        done = subprocess.run(
-            ["git", "-C", folder, *args], capture_output=True, text=True, timeout=TIMEOUT_S * 3, check=False
-        )
-        if done.returncode and args[0] != "rev-list":
-            raise RuntimeError((done.stderr or done.stdout).strip() or f"git {args[0]} упал")
-        return done.stdout
-
-    return git
-
-
-def check(c: Component, fetch: Fetch, git: Callable[[str], Git | None] = run_git) -> Result:
+def check(c: Component, fetch: Fetch) -> Result:
     """Одна проверка; любая ошибка сети или формата — статус error с текстом, а не исключение."""
     try:
         match c.kind:
@@ -292,11 +246,9 @@ def check(c: Component, fetch: Fetch, git: Callable[[str], Git | None] = run_git
                 return _compare(c, max(tags, key=version_key).lstrip("v"))
             case "hf":
                 return _hf(c, fetch(f"https://huggingface.co/api/models/{c.source}"))
-            case "git":
-                return _git(c, git(c.source))
     except urllib.error.HTTPError as exc:
         reason = "нет доступа — нужен HF_TOKEN с принятой лицензией" if exc.code in (401, 403) else exc.reason
         return Result(c, ERROR, "", f"{c.url or c.source}: HTTP {exc.code}, {reason}.")
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
         return Result(c, ERROR, "", f"Не удалось проверить: {exc}")
     return Result(c, UNKNOWN, "", "Неизвестный источник.")

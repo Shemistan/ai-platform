@@ -17,6 +17,7 @@ from aiplatform.audio import voices
 from aiplatform.audio.config import AudioConfig
 from aiplatform.core import media, runner
 from aiplatform.core.gate import Gate
+from aiplatform.core.narrator import INSTALL_HINT
 
 ACTIVE = ("queued", "running")
 LOG_TAIL = 200
@@ -24,12 +25,14 @@ MAX_TEXT = 100_000
 PREVIEW = 160
 SOURCE = "source.txt"
 OUTPUT = "output.mp3"
+CHECK = "check.json"  # отчёт проверки распознаванием от `say --check-json`
+STEPS_RANGE = (1, 128)
+TITLE_CHARS = 90
 GPU_OWNER = "Аудио"
 WAIT_POLL_S = 0.2
 # Темп скачиваемого mp3: atempo берёт 0,5–2 одним фильтром.
 TEMPO_RANGE = (0.5, 2.0)
 RETIME_TIMEOUT_S = 600
-INSTALL_HINT = "Нужен narrator: 07_offline_text-to-word, `make models` (или задай AIP_NARRATE_CMD)."
 _ID = re.compile(r"^[0-9a-f]{12}$")
 _STAGE = re.compile(r"абзац (\d+)/(\d+)")
 _DONE = re.compile(r"^\[(\d+)/(\d+)\]")
@@ -63,6 +66,9 @@ class AudioSpec:
     engine: str
     voice: str
     speed: float | None
+    steps: int | None = None
+    verify: bool = False  # проверить распознаванием после озвучки
+    title: str = ""  # название в истории; пусто — начало текста
 
 
 def build_spec(payload: object, default_engine: str = voices.DEFAULT_ENGINE) -> AudioSpec:
@@ -90,16 +96,38 @@ def build_spec(payload: object, default_engine: str = voices.DEFAULT_ENGINE) -> 
         if not low <= speed <= high:
             raise ValidationError(f"Скорость — от {low:g} до {high:g}.")
         speed = float(speed) if engine.tunable else None
-    return AudioSpec(text=text.strip() + "\n", engine=engine.id, voice=voice, speed=speed)
+    steps = payload.get("steps")
+    if steps in (None, ""):
+        steps = None
+    else:
+        if isinstance(steps, bool) or not isinstance(steps, int):
+            raise ValidationError("Шаги — целое число.")
+        low, high = STEPS_RANGE
+        if not low <= steps <= high:
+            raise ValidationError(f"Шаги — от {low} до {high}.")
+        steps = steps if engine.tunable else None
+    title = payload.get("title")
+    title = " ".join(title.split())[:TITLE_CHARS] if isinstance(title, str) else ""
+    return AudioSpec(
+        text=text.strip() + "\n",
+        engine=engine.id,
+        voice=voice,
+        speed=speed,
+        steps=steps,
+        verify=bool(payload.get("verify")),
+        title=title,
+    )
 
 
 class Progress:
     """Строки `narrate say` вне терминала: «<title> абзац n/N» и «[i/N] …» по готовым абзацам."""
 
-    def __init__(self) -> None:
+    def __init__(self, verify: bool = False) -> None:
         self.done = 0
         self.total = 0
         self.stage = "Загрузка модели"
+        self.verify = verify
+        self.checking = False
 
     def feed(self, line: str) -> None:
         if m := _STAGE.search(line):
@@ -111,9 +139,15 @@ class Progress:
             self.total = max(self.total, int(m[2]))
         elif "склеиваю" in line:
             self.stage = "Склейка и mp3"
+        elif self.verify and ".mp3  " in line:  # mp3 готов, дальше — распознавание
+            self.checking = True
+            self.stage = "Проверка распознаванием"
 
     def snapshot(self) -> dict:
-        percent = round(95.0 * self.done / self.total, 1) if self.total else 0.0
+        share = 80.0 if self.verify else 95.0
+        percent = round(share * self.done / self.total, 1) if self.total else 0.0
+        if self.checking:
+            percent = share
         return {"stage": self.stage, "step": self.done or None, "steps": self.total or None, "percent": percent}
 
 
@@ -198,9 +232,13 @@ class AudioJobs:
             "engine_label": engine.label,
             "voice": spec.voice,
             "speed": spec.speed,
+            "steps": spec.steps,
+            "verify": spec.verify,
+            "title": spec.title,
             "chars": len(spec.text.strip()),
             "preview": " ".join(spec.text.split())[:PREVIEW],
             "duration_s": None,
+            "check": None,
             "progress": {"stage": "В очереди", "step": None, "steps": None, "percent": 0.0},
             "error": None,
             "log": [],
@@ -319,12 +357,16 @@ class AudioJobs:
         argv = [*self._config.narrate_cmd, "say", str(source), "--engine", spec.engine, "--voice", spec.voice]
         if spec.speed is not None:
             argv += ["--speed", f"{spec.speed:g}"]
+        if spec.steps is not None:
+            argv += ["--steps", str(spec.steps)]
+        if spec.verify:
+            return [*argv, "--out", str(output), "--check-json", str(output.with_name(CHECK))]
         return [*argv, "--out", str(output), "--no-verify"]
 
     def _run(self, job: dict, spec: AudioSpec, cancel: threading.Event) -> None:
         folder = self._dir(job["id"])
         output = folder / OUTPUT
-        parser = Progress()
+        parser = Progress(spec.verify)
 
         def on_line(line: str) -> None:
             parser.feed(line)
@@ -345,9 +387,9 @@ class AudioJobs:
                 with self._lock:
                     job["progress"]["stage"] = "Загрузка модели"
                     job["started_at"] = time.time()
-                cwd = self._config.narrator_dir if self._config.narrator_dir.is_dir() else None
+                narrator = self._config.narrator
                 argv = self.argv(spec, folder / SOURCE, output)
-                runner.run(argv, on_line, cancel, cwd=cwd, missing_hint=INSTALL_HINT)
+                runner.run(argv, on_line, cancel, cwd=narrator.cwd, env=narrator.env, missing_hint=INSTALL_HINT)
             if not output.is_file() or output.stat().st_size == 0:
                 raise runner.RunFailed("Озвучка завершилась без ошибки, но mp3 не появился.")
             duration = media.duration(output, self._config.ffmpeg)
@@ -362,9 +404,20 @@ class AudioJobs:
             with self._lock:
                 self._finish(job, "failed", error=f"Внутренняя ошибка сервиса: {exc!r}")
         else:
+            check = _read_check(folder / CHECK) if spec.verify else None
             with self._lock:
                 job["duration_s"] = round(duration, 2) if duration else None
+                job["check"] = check
                 self._finish(job, "done")
+
+
+def _read_check(path: Path) -> dict | None:
+    """Отчёт проверки; нет файла — проверку пропустили (нет модели распознавания)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"skipped": "отчёта проверки нет — модель распознавания не найдена?"}
+    return data if isinstance(data, dict) else None
 
 
 def _error_text(reason: str, log: list[str]) -> str:

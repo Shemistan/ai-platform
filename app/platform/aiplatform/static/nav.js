@@ -8,14 +8,20 @@ const TABS = [
   { sep: true },
   { id: "digest", label: "Дайджест новостей", href: "/studio/?scenario=digest" },
   { id: "article", label: "Видео по статье", href: "/studio/?scenario=article" },
+  { id: "post", label: "Пост в канал", href: "/studio/?scenario=post" },
   { sep: true },
+  { id: "library", label: "Статьи", href: "/library/" },
+  { id: "news", label: "Новости", href: "/news/" },
+  { sep: true },
+  { id: "channels", label: "Каналы", href: "/channels/" },
   { id: "updates", label: "Обновления", href: "/updates/" },
 ];
 
 function currentTab() {
   const first = location.pathname.split("/").filter(Boolean)[0] || "";
   if (first === "studio") {
-    return new URLSearchParams(location.search).get("scenario") === "digest" ? "digest" : "article";
+    const wanted = new URLSearchParams(location.search).get("scenario");
+    return ["digest", "post"].includes(wanted) ? wanted : "article";
   }
   return first;
 }

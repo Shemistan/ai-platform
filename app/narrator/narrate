@@ -1,0 +1,12 @@
+#!/bin/sh
+# Обёртка над CLI narrator: ./narrate <команда> … (список — ./narrate -h).
+# Окружение — uv из pyproject.toml рядом, первый запуск ставит зависимости.
+# В sandbox агента ~/.cache/uv закрыт на запись — тогда кэш uv в $TMPDIR.
+DIR=$(cd "$(dirname "$0")" && pwd)
+if ! (mkdir -p "$HOME/.cache/uv" && : > "$HOME/.cache/uv/.narrate-probe") 2>/dev/null; then
+  export UV_CACHE_DIR="${TMPDIR:-/tmp}/uv-cache"
+fi
+rm -f "$HOME/.cache/uv/.narrate-probe" 2>/dev/null
+# ESpeech на видеокарте Mac: неподдержанные MPS операции — на CPU, а не падение.
+export PYTORCH_ENABLE_MPS_FALLBACK=1
+exec uv run --quiet --project "$DIR" --all-extras narrator "$@"

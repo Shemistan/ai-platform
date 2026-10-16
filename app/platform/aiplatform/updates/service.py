@@ -1,7 +1,7 @@
 """Вкладка «Обновления»: API под /api/updates/.
 
 Две проверки, обе в фоне (запустил → статус → результат):
-- модели и пайплайны — сверка установленных версий с PyPI, GitHub, Hugging Face и git;
+- модели и пайплайны — сверка установленных версий с PyPI, GitHub и Hugging Face;
 - реестр запрещённых организаций — LLM с веб-поиском сверяет его с перечнями
   Минюста и предлагает новую версию; применяет её человек, посмотрев разницу.
 """
@@ -18,8 +18,9 @@ from datetime import date
 from http import HTTPStatus
 from pathlib import Path
 
-from aiplatform.audio import config as audio_config
 from aiplatform.config import Config, pick
+from aiplatform.core import narrator as narrator_module
+from aiplatform.core import tasks as tasks_module
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import config as photo_config
 from aiplatform.studio.llm import StudioError, complete, extract_json
@@ -134,16 +135,17 @@ class UpdatesModule:
         folder = ctx.config.data_dir / "updates"
         self.models_job = Job(folder / "models.json")
         self.registry_job = Job(folder / "registry-check.json")
+        self.narrator = narrator_module.load(ctx.config)
+        self.tasks = tasks_module.Tasks(folder / "tasks")
         if ctx.config.fake:
             from aiplatform.fakes import fake_updates
 
             self.llm_cmd: tuple[str, ...] = (sys.executable, str(FAKES / "fake_llm.py"))
             self.fetch: checks.Fetch = fake_updates.fetch
-            self.git = fake_updates.git
             self.demo: dict[str, str] | None = fake_updates.INSTALLED
         else:
             self.llm_cmd = tuple(shlex.split(pick(ctx.config.env, "AIP_UPDATES_LLM_CMD", default=DEFAULT_LLM_CMD)))
-            self.fetch, self.git, self.demo = checks.http_fetch, checks.run_git, None
+            self.fetch, self.demo = checks.http_fetch, None
 
     # --- модели ---
 
@@ -151,7 +153,6 @@ class UpdatesModule:
         return checks.components(
             photo_config.load(self.config),
             video_config.load(self.config),
-            audio_config.load(self.config),
             demo=self.demo,
         )
 
@@ -164,7 +165,7 @@ class UpdatesModule:
                 if self.cancel.is_set():
                     return
                 self.models_job.update(progress=f"{component.label} ({n} из {len(todo)})")
-                results.append(checks.check(component, self.fetch, self.git).public())
+                results.append(checks.check(component, self.fetch).public())
                 self.models_job.update(results=results)
             updates = sum(r["status"] == checks.UPDATE for r in results)
             self.models_job.update(status=DONE, finished=time.time(), progress="", updates=updates)
@@ -245,8 +246,57 @@ class UpdatesModule:
     def problems(self) -> list[str]:
         return []
 
+    # --- модели озвучки движка ---
+
+    def voice_models(self) -> dict:
+        try:
+            data = self.narrator.bridge("models")
+        except narrator_module.NarratorError as exc:
+            raise HttpError(HTTPStatus.BAD_GATEWAY, str(exc)) from exc
+        return data | {"tasks": self.tasks.list()[:5]}
+
+    def download_voice_models(self, action: str, payload: object) -> dict:
+        """Скачать основные модели, модели mlx для сравнения или перенести модели из ~/.cache."""
+        if self.tasks.busy():
+            raise HttpError(HTTPStatus.CONFLICT, "Модели уже скачиваются — дождись конца.")
+        if action == "fetch":
+            argv, title = self.narrator.make("models"), "Скачать модели озвучки (~3,7 ГБ)"
+        elif action == "move":
+            argv, title = self.narrator.make("move-models"), "Перенести модели из ~/.cache"
+        else:
+            wanted = payload.get("engines") if isinstance(payload, dict) else None
+            known = {m["id"] for m in self.voice_models()["mlx"]}
+            if not isinstance(wanted, list) or not wanted or not set(wanted) <= known:
+                raise bad_request(f"Выбери модели для сравнения: {', '.join(sorted(known))}.")
+            argv = self.narrator.make("models-mlx", E=" ".join(wanted))
+            title = f"Скачать модели для сравнения: {', '.join(wanted)}"
+        spec = tasks_module.Spec(
+            kind="voice-models",
+            title=title,
+            argv=argv,
+            cwd=self.narrator.cwd,
+            env=self.narrator.env,
+            hint=narrator_module.INSTALL_HINT,
+            progress=lambda line: line.strip("= ")[:80] if line.startswith("==") else None,
+        )
+        return self.tasks.start(spec)
+
     def handle(self, req: Request) -> None:
         match (req.method, req.sub):
+            case ("GET", ["voice-models"]):
+                return req.send_json(self.voice_models())
+            case ("POST", ["voice-models", action]) if action in ("fetch", "mlx", "move"):
+                return req.send_json(self.download_voice_models(action, req.json()), HTTPStatus.ACCEPTED)
+            case ("GET", ["tasks", task_id]):
+                task = self.tasks.get(task_id)
+                if task is None:
+                    raise not_found("Задача не найдена.")
+                return req.send_json(task)
+            case ("POST", ["tasks", task_id, "cancel"]):
+                task = self.tasks.cancel(task_id)
+                if task is None:
+                    raise not_found("Задача не найдена.")
+                return req.send_json(task)
             case ("GET", ["state"] | ["config"]):
                 return req.send_json(self.describe())
             case ("POST", ["models", "check"]):
@@ -267,5 +317,6 @@ class UpdatesModule:
 
     def close(self) -> None:
         self.cancel.set()
+        self.tasks.close()
         self.models_job.join(5)
         self.registry_job.join(5)

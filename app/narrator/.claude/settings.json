@@ -1,0 +1,65 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "Skill",
+      "TodoWrite",
+      "NotebookEdit",
+      "EnterWorktree",
+      "ExitWorktree"
+    ],
+    "additionalDirectories": []
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": [
+      "docker *",
+      "gh *"
+    ],
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "*.githubusercontent.com",
+        "stash.msk.avito.ru",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "registry.npmjs.org",
+        "proxy.golang.org",
+        "*.golang.org",
+        "storage.googleapis.com",
+        "api.anthropic.com",
+        "statsig.anthropic.com",
+        "sentry.io",
+        "uber.com",
+        "*.uber.com",
+        "youtube.com",
+        "*.youtube.com",
+        "google.com",
+        "*.google.com",
+        "*.googleapis.com",
+        "cloudflare.com",
+        "*.cloudflare.com",
+        "reddit.com",
+        "*.reddit.com",
+        "deepmind.google",
+        "langchain.com",
+        "*.langchain.com",
+        "*.telegram.org"
+      ],
+      "allowLocalBinding": true
+    }
+  }
+}

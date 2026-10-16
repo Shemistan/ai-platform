@@ -41,6 +41,7 @@ export const STATUS = {
   canceled: "отменено",
   waiting: "ждёт вас",
   pending: "не начат",
+  skipped: "пропущен",
 };
 
 export function statusChip(status) {
@@ -66,4 +67,109 @@ export function seconds(value) {
   if (value === null || value === undefined) return "";
   const s = Math.round(value);
   return s >= 60 ? `${Math.floor(s / 60)} мин ${s % 60} с` : `${s} с`;
+}
+
+// --- Общие компоненты вкладок движка ---
+
+// fill(узел, ...дети) — как replaceChildren, но null и false пропускаются, как в h().
+export function fill(node, ...children) {
+  node.replaceChildren(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
+  return node;
+}
+
+// chip("готово", "ok") — метка состояния: ok, warn, bad, info или без тона.
+export function chip(text, tone = "") {
+  return h("span", { class: `chip${tone ? ` ${tone}` : ""}` }, text);
+}
+
+export function debounce(fn, ms) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+
+// «12 окт.», с годом — если не этот.
+export function shortDate(value) {
+  if (!value) return "";
+  const d = new Date(value.length <= 10 ? `${value}T12:00:00` : value);
+  if (Number.isNaN(d.getTime())) return value;
+  const opts = { day: "numeric", month: "short" };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString("ru-RU", opts);
+}
+
+export function minutes(value) {
+  if (!value) return "";
+  const m = Math.floor(value / 60);
+  const s = Math.round(value % 60);
+  return m ? `${m}:${String(s).padStart(2, "0")}` : `${s} с`;
+}
+
+export function copyButton(getText, label = "Скопировать") {
+  const btn = h("button", { type: "button", class: "small-btn" }, label);
+  btn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(typeof getText === "function" ? getText() : getText);
+      btn.textContent = "Скопировано";
+    } catch {
+      btn.textContent = "Не вышло";
+    }
+    setTimeout(() => (btn.textContent = label), 1500);
+  });
+  return btn;
+}
+
+// Модальное окно на <dialog>: modal("Заголовок", ...содержимое) → { dialog, body, close }.
+export function modal(title, ...children) {
+  const body = h("div", { class: "modal-body" }, ...children);
+  const close = h("button", { type: "button", class: "icon-btn", "aria-label": "Закрыть" }, "×");
+  const dialog = h("dialog", { class: "modal" }, h("div", { class: "modal-head" }, h("h2", {}, title), close), body);
+  close.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.addEventListener("click", (e) => e.target === dialog && dialog.close());
+  document.body.append(dialog);
+  dialog.showModal();
+  return { dialog, body, close: () => dialog.close() };
+}
+
+// Карточка фоновой задачи вкладки: статус, этап, сколько идёт, последняя строка или лог.
+export function taskCard(task, { onCancel, full = false } = {}) {
+  if (!task) return null;
+  const active = task.status === "queued" || task.status === "running";
+  const where = task.queue_position ? `перед ней ${task.queue_position}` : task.stage;
+  const meta = [active ? where : "", task.elapsed_s ? seconds(task.elapsed_s) : ""].filter(Boolean).join(" · ");
+  return h(
+    "div",
+    { class: "task" },
+    h(
+      "div",
+      { class: "task-head" },
+      statusChip(task.status),
+      h("span", { class: "task-title" }, task.title),
+      h("span", { class: "muted small" }, meta),
+      active && onCancel ? h("button", { type: "button", class: "link danger", onclick: () => onCancel(task) }, "Отменить") : null,
+    ),
+    task.error ? h("p", { class: "job-error" }, task.error) : null,
+    full ? logBlock(task.log) : task.last && active ? h("div", { class: "task-last" }, task.last) : null,
+  );
+}
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Опрос задачи до конца: onUpdate(задача) на каждом шаге, промис — итог.
+export async function followTask(url, onUpdate, interval = 1000) {
+  while (true) {
+    let task = null;
+    try {
+      task = await api("GET", url);
+    } catch {
+      await pause(interval * 2);
+      continue;
+    }
+    onUpdate(task);
+    if (task.status !== "queued" && task.status !== "running") return task;
+    await pause(interval);
+  }
 }

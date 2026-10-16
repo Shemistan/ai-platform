@@ -106,6 +106,28 @@ class SlidesTest(unittest.TestCase):
         again = slides.parse_plan([s.to_dict() for s in plan], 8)
         self.assertEqual([s.to_dict() for s in again], [s.to_dict() for s in plan])
 
+    def test_chapters_code_and_summary(self):
+        raw = [
+            {"kind": "bullets", "title": "вступление", "bullets": ["раз"]},
+            {"para": 1, "kind": "chapter", "title": "Очереди", "subtitle": "о брокерах"},
+            {"para": 2, "kind": "code", "title": "код", "code": "\n\tx := 1\n" + "y\n" * 30, "language": "go"},
+            {"para": 3, "kind": "chapter", "title": "Итоги"},
+            {"para": 4, "kind": "summary", "title": "что унести", "items": ["первое", "второе"]},
+            {"para": 5, "kind": "code", "title": "пустой код", "code": "  \n"},
+            {"para": 6, "kind": "summary", "title": "один пункт", "items": ["только"]},
+        ]
+        plan = slides.parse_plan(raw, 7)
+        kinds = [s.kind for s in plan]
+        self.assertEqual(kinds, ["bullets", "chapter", "code", "chapter", "summary", "bullets", "bullets"])
+        self.assertEqual([plan[1].data["number"], plan[3].data["number"]], [1, 2])
+        self.assertEqual(plan[1].data["subtitle"], "о брокерах")
+        code = plan[2].data["code"].split("\n")
+        self.assertEqual(code[0], "    x := 1")
+        self.assertEqual(len(code), slides.MAX_CODE_LINES)
+        self.assertEqual(slides.chapters(plan), ["", "Очереди", "Очереди", "Итоги", "Итоги", "Итоги", "Итоги"])
+        again = slides.parse_plan([s.to_dict() for s in plan], 7)
+        self.assertEqual([s.to_dict() for s in again], [s.to_dict() for s in plan])
+
     def test_spoken_and_starts_by_sentence(self):
         paras = ["раз два. три четыре.", "пять шесть"]
         plan = [slides.Slide(0, "a"), slides.Slide(0, "b", sent=1), slides.Slide(1, "c")]

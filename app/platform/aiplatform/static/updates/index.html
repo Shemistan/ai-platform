@@ -20,8 +20,21 @@
         <h2>Модели и пайплайны</h2>
         <button type="button" class="secondary" id="models-check">Проверить обновления</button>
       </div>
-      <p class="hint">Сверяет установленное с PyPI, GitHub, Hugging Face и git narrator. Сам ничего не ставит — подсказывает, как обновить.</p>
+      <p class="hint">Сверяет установленное с PyPI, GitHub и Hugging Face. Сам ничего не ставит — подсказывает, как обновить.</p>
       <div id="models"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <h2>Модели озвучки</h2>
+        <div class="toolbar">
+          <button type="button" class="secondary" id="voice-fetch">Скачать основные (~3,7 ГБ)</button>
+          <button type="button" class="small-btn" id="voice-move">Перенести из ~/.cache</button>
+        </div>
+      </div>
+      <p class="hint" id="voice-hint">Модели движка app/narrator лежат в общей папке моделей. Скачивание идёт с huggingface.co: нужна сеть, повторный запуск докачивает только недостающее.</p>
+      <div id="voice-task" class="tasks"></div>
+      <div id="voice-models"></div>
     </section>
 
     <section class="panel">

@@ -105,3 +105,5 @@
 .step-settings { display: grid; gap: 8px; justify-items: start; padding: 8px 12px; margin: 8px 0; border: 1px dashed var(--line); border-radius: 10px; }
 .step-settings summary { cursor: pointer; }
 .step-settings[open] summary { margin-bottom: 4px; }
+.note.verdict { display: grid; gap: 6px; justify-items: start; margin-bottom: 10px; }
+.note.verdict details { width: 100%; }
