@@ -1,5 +1,6 @@
 """Вкладка «Аудио»: проверка запроса, задача через fake_narrate, HTTP."""
 
+import json
 import shutil
 import unittest
 from pathlib import Path
@@ -147,6 +148,85 @@ class AudioFailureTest(AudioServerCase):
         self.assertEqual(failed["status"], "failed")
         self.assertIn("fake failure requested", failed["error"])
         self.assertIsNone(failed["audio_url"])
+
+
+class AudioEngineFeaturesTest(AudioServerCase):
+    """Произношение, файлы, библиотека, проверка и образцы голосов — через мост движка."""
+
+    def test_config_has_engine_state(self):
+        _, cfg = self.json("GET", "/api/audio/config")
+        by_id = {e["id"]: e for e in cfg["engines"]}
+        self.assertIn("модель не скачана", by_id["fish"]["problem"])
+        self.assertIsNone(by_id["higgs"]["problem"])
+        self.assertTrue(by_id["espeech"]["steps"])
+        self.assertEqual(by_id["espeech"]["default_steps"], 32)
+        self.assertTrue(cfg["verify_available"])
+        self.assertIsNone(cfg["engines_error"])
+
+    def test_preview_and_split(self):
+        status, preview = self.json("POST", "/api/audio/preview", {"text": "Docker 5\n"})
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["script"], "докер пять\n")
+        self.assertEqual(preview["changed"], 1)
+        _, split = self.json("POST", "/api/audio/split", {"text": "# Раз\n\nтекст\n\n# Два\n\nтекст\n"})
+        self.assertEqual([a["title"] for a in split["articles"]], ["Раз", "Два"])
+        self.assertEqual(self.json("POST", "/api/audio/preview", {})[0], 400)
+
+    def test_library_texts(self):
+        _, library = self.json("GET", "/api/audio/library")
+        kinds = {i["kind"] for i in library["items"]}
+        self.assertEqual(kinds, {"article", "digest"})
+        article = next(i for i in library["items"] if i["kind"] == "article")
+        _, item = self.json("GET", f"/api/audio/library/{article['id']}")
+        self.assertTrue(item["text"].strip())
+        self.assertEqual(self.json("GET", "/api/audio/library/nope")[0], 404)
+
+    def test_batch_steps_and_verify(self):
+        articles = [{"title": "Первая", "text": "Раз два три."}, {"title": "Вторая", "text": "Четыре пять."}]
+        payload = {"articles": articles, "engine": "espeech", "voice": "Charon", "steps": 16, "verify": True}
+        status, body = self.json("POST", "/api/audio/jobs/batch", payload)
+        self.assertEqual(status, 201, body)
+        self.assertEqual([j["title"] for j in body["jobs"]], ["Первая", "Вторая"])
+        self.assertEqual(body["jobs"][0]["steps"], 16)
+        done = self.wait(body["jobs"][1]["id"])
+        self.assertEqual(done["status"], "done", done)
+        self.assertEqual(done["check"]["overall"], 0.93)
+        self.assertEqual(done["check"]["weak"][0]["line"], 1)
+        self.assertEqual(self.json("POST", "/api/audio/jobs/batch", {"articles": []})[0], 400)
+        self.assertEqual(self.json("POST", "/api/audio/jobs", {"text": "т", "engine": "espeech", "steps": 500})[0], 400)
+
+    def test_no_verify_by_default(self):
+        _, job = self.json("POST", "/api/audio/jobs", {"text": TEXT, "engine": "silero", "voice": "baya"})
+        self.assertIsNone(self.wait(job["id"])["check"])
+
+    def test_voices_listing_sample_and_record(self):
+        _, data = self.json("GET", "/api/audio/voices")
+        by_stem = {v["stem"]: v for v in data["voices"]}
+        self.assertIsNone(by_stem["m1"]["record"])
+        status, headers, _ = self.call("GET", by_stem["charon"]["sample_url"])
+        self.assertEqual((status, headers["Content-Type"]), (200, "audio/wav"))
+        self.assertEqual(self.json("POST", "/api/audio/voices/m1", {})[0], 400)
+        self.assertEqual(self.json("POST", "/api/audio/voices/shem", {})[0], 400)
+
+        wav = (self.config.data_dir / "fake-narrator" / "voices" / "m1.wav").read_bytes()
+        status, _, raw = self.call("POST", "/api/audio/uploads", wav, {"Content-Type": "audio/wav"})
+        self.assertEqual(status, 201, raw)
+        upload = json.loads(raw)["id"]
+        self.assertEqual(self.json("POST", "/api/audio/voices/shem", {"upload": upload})[0], 400)
+        status, task = self.json("POST", "/api/audio/voices/shem", {"upload": upload, "text": "Мой голос."})
+        self.assertEqual(status, 202, task)
+        done = self.poll(f"/api/audio/tasks/{task['id']}", lambda t: t["status"] not in ("queued", "running"))
+        self.assertEqual(done["status"], "done", done)
+        _, data = self.json("GET", "/api/audio/voices")
+        shem = next(v for v in data["voices"] if v["stem"] == "shem")
+        self.assertTrue(shem["custom"])
+        self.assertEqual(shem["text"], "Мой голос.")
+
+    def test_gemini_record_needs_key(self):
+        _, task = self.json("POST", "/api/audio/voices/charon", {})
+        done = self.poll(f"/api/audio/tasks/{task['id']}", lambda t: t["status"] not in ("queued", "running"))
+        self.assertEqual(done["status"], "failed")
+        self.assertIn("GEMINI_API_KEY", done["error"])
 
 
 class AudioCancelTest(AudioServerCase):
