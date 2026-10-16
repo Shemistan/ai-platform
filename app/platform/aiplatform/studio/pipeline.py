@@ -47,7 +47,7 @@ STEPS = (
     Step("images", "Картинки слайдов", ("plan",)),
     Step("clips", "Ролики", ("plan",)),
     Step("voice", "Озвучка", ("text",)),
-    Step("render", "Сборка видео 16:9", ("poster", "plan", "images", "clips", "voice")),
+    Step("render", "Сборка видео", ("poster", "plan", "images", "clips", "voice")),
     Step("short", "Шортс 9:16", ("text", "poster", "images", "clips")),
     Step("publish", "Публикация", ("render", "short")),
 )

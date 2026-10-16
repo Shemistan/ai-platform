@@ -35,7 +35,7 @@ SETTING_STEPS = {
     "poster_mode": "poster",
     "draw_images": "images",
     "images_mode": "images",
-    "image_model": "images",
+    "image_model": ("poster", "images"),
     "upscale_images": ("poster", "images"),
     "clips": "clips",
     "clips_mode": "clips",
@@ -50,7 +50,7 @@ SETTING_STEPS = {
     "disclaimers": ("render", "short"),
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
-    "frame": ("images", "render"),
+    "frame": "render",  # готовые картинки остаются — кадр берёт их с обрезкой; новые рисуются под кадр
     "review_text": None,
 }
 # Правка файла на странице → (файл, шаг, чей это результат).
@@ -523,6 +523,20 @@ class StudioModule:
         self.studio.update(project_id, apply)
         return self.view(project_id)
 
+    def rerun(self, project_id: str, payload: object) -> dict:
+        """«Выполнить/Перезапустить шаг»: с settings — сначала параметры из карточки шага."""
+        only = payload.get("step") if isinstance(payload, dict) else None
+        if only is not None and only not in STEP_IDS:
+            raise bad_request("Нет такого шага.")
+        settings = payload.get("settings") if isinstance(payload, dict) else None
+        if settings is not None:
+            if only is None:
+                raise bad_request("settings передают вместе с шагом.")
+            self._guard(project_id)
+            self.update_settings(project_id, settings)
+        self.studio.run(project_id, only)
+        return self.view(project_id)
+
     # --- HTTP ---
 
     def handle(self, req: Request) -> None:
@@ -547,11 +561,7 @@ class StudioModule:
                 return req.send_json(self.update_settings(pid, req.json()))
             case ("POST", ["projects", pid, "run"]):
                 payload = req.json() or {}
-                only = payload.get("step") if isinstance(payload, dict) else None
-                if only is not None and only not in STEP_IDS:
-                    raise bad_request("Нет такого шага.")
-                self.studio.run(pid, only)
-                return req.send_json(self.view(pid))
+                return req.send_json(self.rerun(pid, payload))
             case ("POST", ["projects", pid, "cancel"]):
                 self.studio.cancel(pid)
                 return req.send_json(self.view(pid))

@@ -9,15 +9,19 @@ const HINTS = {
     "narrator собирает свежие новости и пишет пересказ → постер → слайды с картинками → озвучка → видео 16:9 (и шортс 9:16) → публикация.",
   article: "Вставь готовую статью → постер → слайды с картинками → озвучка → видео 16:9 (и шортс 9:16) → публикация.",
 };
-const state = { config: null, projects: [], project: null, signature: "", drafts: {}, timer: null, publish: {} };
+const state = { config: null, projects: [], project: null, signature: "", drafts: {}, stepDrafts: {}, timer: null, publish: {} };
 
-// --- настройки (общая форма для «нового выпуска» и «настроек выпуска») ---
+// --- настройки: поля по одному — из них собраны форма «нового выпуска», «настройки выпуска» и карточки шагов ---
 
-function settingsForm(values, prefix) {
+function fieldsOf(values, prefix) {
   const cfg = state.config;
   const id = (name) => `${prefix}-${name}`;
-  const radio = (name, value, label, checked) =>
-    h("label", {}, h("input", { type: "radio", name: id(name), value, checked }), label);
+  const radios = (name, options) =>
+    h(
+      "div",
+      { class: "radio-row" },
+      ...options.map(([value, label, checked]) => h("label", {}, h("input", { type: "radio", name: id(name), value, checked }), label)),
+    );
   const check = (name, label, hint, checked) =>
     h(
       "label",
@@ -25,41 +29,121 @@ function settingsForm(values, prefix) {
       h("input", { type: "checkbox", id: id(name), checked }),
       h("span", {}, label, hint ? h("span", { class: "hint" }, hint) : null),
     );
-  const engine = cfg.engines.find((e) => e.id === values.engine) || cfg.engines[0];
-  const voiceSelect = h(
-    "select",
-    { id: id("voice") },
-    h("option", { value: "" }, `по умолчанию (${engine.default_voice})`),
-    ...engine.voices.map((v) => h("option", { value: v, selected: v === values.voice }, v)),
-  );
-  const engineSelect = h(
-    "select",
-    {
-      id: id("engine"),
-      onchange: (event) => {
-        const e = cfg.engines.find((x) => x.id === event.target.value);
-        voiceSelect.replaceChildren(
-          h("option", { value: "" }, `по умолчанию (${e.default_voice})`),
-          ...e.voices.map((v) => h("option", { value: v }, v)),
-        );
-      },
+  const select = (name, hint, options) =>
+    h(
+      "label",
+      { class: "field" },
+      h("span", { class: "hint" }, hint),
+      h("select", { id: id(name) }, ...options.map(([value, label, selected]) => h("option", { value, selected }, label))),
+    );
+  const models = (list, current) => list.map((m) => [m.id, m.label + (m.installed ? "" : " — не установлена"), m.id === current]);
+  const modes = (name, local, upload) =>
+    radios(name, [
+      ["local", local, values[name] !== "upload"],
+      ["upload", upload, values[name] === "upload"],
+    ]);
+  return {
+    poster_mode: () => modes("poster_mode", "Сгенерировать локальной моделью", "Загружу сам по промпту"),
+    draw_images: () => check("draw_images", "Картинки на слайдах", "Иначе фон слайдов — градиент.", values.draw_images),
+    images_mode: () => modes("images_mode", "Сгенерировать локальной моделью", "Сделаю сам по промптам во внешней модели"),
+    image_model: () => select("image_model", "Модель для постера и картинок", models(cfg.image_models, values.image_model)),
+    upscale_images: () =>
+      select(
+        "upscale_images",
+        "Увеличить сгенерированные картинки и постер (SeedVR2: 2K ~20 с, 4K ~1,5 мин на картинку)",
+        [["none", "Не увеличивать"], ["2k", "До 2K"], ["4k", "До 4K"]].map(([v, label]) => [v, label, v === values.upscale_images]),
+      ),
+    clips: () =>
+      check(
+        "clips",
+        "Добавить ролики в ключевые моменты",
+        "LLM выберет до 3 самых динамичных слайдов — там вместо картинки будет ролик (крутится по кругу без своего звука). Остальные слайды — картинка с медленным наездом.",
+        values.clips,
+      ),
+    clips_mode: () => modes("clips_mode", "Сгенерировать локальной моделью", "Сделаю сам по промптам во внешней модели"),
+    video_model: () => select("video_model", "Модель видео (ролик 5 с, 704×448)", models(cfg.video_models, values.video_model)),
+    voice_mode: () =>
+      radios("voice_mode", [
+        ["tts", "Озвучить narrator", values.voice_mode !== "upload"],
+        ["upload", "Загружу свой mp3", values.voice_mode === "upload"],
+      ]),
+    engine: () => {
+      const engine = cfg.engines.find((e) => e.id === values.engine) || cfg.engines[0];
+      const voiceOptions = (e, current) => [
+        h("option", { value: "" }, `по умолчанию (${e.default_voice})`),
+        ...e.voices.map((v) => h("option", { value: v, selected: v === current }, v)),
+      ];
+      const voiceSelect = h("select", { id: id("voice") }, ...voiceOptions(engine, values.voice));
+      const engineSelect = h(
+        "select",
+        { id: id("engine"), onchange: (event) => voiceSelect.replaceChildren(...voiceOptions(cfg.engines.find((x) => x.id === event.target.value), "")) },
+        ...cfg.engines.map((e) => h("option", { value: e.id, selected: e.id === engine.id }, e.label)),
+      );
+      return h(
+        "div",
+        { class: "settings" },
+        h("label", { class: "field" }, h("span", { class: "hint" }, "Движок"), engineSelect),
+        h("label", { class: "field" }, h("span", { class: "hint" }, "Голос"), voiceSelect),
+      );
     },
-    ...cfg.engines.map((e) => h("option", { value: e.id, selected: e.id === values.engine }, e.label)),
-  );
-  const channels = cfg.channels.length
-    ? cfg.channels.map((c) =>
-        h(
-          "label",
-          { class: "channel" },
-          h("input", { type: "checkbox", name: id("channels"), value: c.id, checked: values.channels.includes(c.id) }),
-          c.label,
-          h("span", { class: "muted" }, c.format === "vertical" ? "9:16" : "16:9"),
-          c.problem ? h("span", { class: "status failed" }, c.problem) : null,
-          c.type === "telegram" ? h("button", { type: "button", class: "link danger", onclick: () => deleteChannel(c.id, prefix) }, "убрать") : null,
-        ),
-      )
-    : [h("p", { class: "hint" }, `Каналы не настроены: ${cfg.channels_file}`)];
-  const newChannel = h(
+    shorts: () => check("shorts", "Сделать и вертикальное видео 9:16", "Короткий сценарий 45–60 с для YouTube Shorts, TikTok, Reels.", values.shorts),
+    frame: () =>
+      select(
+        "frame",
+        "Кадр видео (шортс всегда 9:16)",
+        [
+          ["poster", "Как постер — пропорции картинки обложки"],
+          ["square", "Квадрат 1:1"],
+          ["landscape", "Широкий 16:9"],
+        ].map(([v, label]) => [v, label, v === (values.frame || "landscape")]),
+      ),
+    branding: () =>
+      check(
+        "branding",
+        "Плашка «подпишись» и кнопка «плей»",
+        "Первый кадр — обложка: постер притемнён, по центру плей, внизу крупная плашка; дальше плашка плавно уезжает в угол и остаётся до конца. Этот кадр — обложка видео в Telegram.",
+        values.branding,
+      ),
+    disclaimers: () =>
+      check(
+        "disclaimers",
+        "Помечать запрещённые в РФ организации",
+        h("span", {}, "Мелкий текст на слайдах, где упомянута, например, Meta, и строка в конце поста. Список — на вкладке ", h("a", { class: "link", href: "/updates/" }, "«Обновления»"), "."),
+        values.disclaimers,
+      ),
+    tempo: () =>
+      select(
+        "tempo",
+        "Скорость в видео — ускоряет озвучку без смены высоты голоса, слайды подстраиваются под неё",
+        [0.75, 1, 1.25, 1.5, 1.75, 2].map((t) => [t, `×${String(t).replace(".", ",")}`, t === Number(values.tempo || 1)]),
+      ),
+    channels: () =>
+      cfg.channels.length
+        ? h(
+            "div",
+            {},
+            ...cfg.channels.map((c) =>
+              h(
+                "label",
+                { class: "channel" },
+                h("input", { type: "checkbox", name: id("channels"), value: c.id, checked: values.channels.includes(c.id) }),
+                c.label,
+                h("span", { class: "muted" }, c.format === "vertical" ? "9:16" : "16:9"),
+                c.problem ? h("span", { class: "status failed" }, c.problem) : null,
+                c.type === "telegram" ? h("button", { type: "button", class: "link danger", onclick: () => deleteChannel(c.id, prefix) }, "убрать") : null,
+              ),
+            ),
+          )
+        : h("p", { class: "hint" }, `Каналы не настроены: ${cfg.channels_file}`),
+    auto_publish: () => check("auto_publish", "Публиковать сразу, без моей проверки", null, values.auto_publish),
+    review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
+  };
+}
+
+// Добавить канал Telegram — в форме настроек и прямо в шаге «Публикация».
+function channelAdder(prefix) {
+  const id = (name) => `${prefix}-${name}`;
+  return h(
     "details",
     { class: "add-channel" },
     h("summary", { class: "link" }, "Добавить канал Telegram"),
@@ -78,180 +162,55 @@ function settingsForm(values, prefix) {
     h("p", { class: "form-error", id: id("new-error"), hidden: true }),
     h("button", { type: "button", class: "secondary", onclick: () => addChannel(prefix) }, "Добавить"),
   );
+}
+
+function settingsForm(values, prefix) {
+  const f = fieldsOf(values, prefix);
+  const group = (legend, ...children) => h("fieldset", {}, h("legend", {}, legend), ...children);
   return h(
     "div",
     { class: "settings-form" },
-    h(
-      "fieldset",
-      {},
-      h("legend", {}, "Постер — первый кадр"),
-      h(
-        "div",
-        { class: "radio-row" },
-        radio("poster_mode", "local", "Сгенерировать локальной моделью", values.poster_mode === "local"),
-        radio("poster_mode", "upload", "Загружу сам по промпту", values.poster_mode === "upload"),
-      ),
-    ),
-    h(
-      "fieldset",
-      {},
-      h("legend", {}, "Картинки слайдов"),
-      check("draw_images", "Картинки на слайдах", "Иначе фон слайдов — градиент.", values.draw_images),
-      h(
-        "div",
-        { class: "radio-row" },
-        radio("images_mode", "local", "Сгенерировать локальной моделью", values.images_mode !== "upload"),
-        radio("images_mode", "upload", "Сделаю сам по промптам во внешней модели", values.images_mode === "upload"),
-      ),
-      h(
-        "label",
-        { class: "field" },
-        h("span", { class: "hint" }, "Модель для постера и картинок"),
-        h(
-          "select",
-          { id: id("image_model") },
-          ...cfg.image_models.map((m) =>
-            h("option", { value: m.id, selected: m.id === values.image_model }, m.label + (m.installed ? "" : " — не установлена")),
-          ),
-        ),
-      ),
-      h(
-        "label",
-        { class: "field" },
-        h("span", { class: "hint" }, "Увеличить сгенерированные картинки и постер (SeedVR2: 2K ~20 с, 4K ~1,5 мин на картинку)"),
-        h(
-          "select",
-          { id: id("upscale_images") },
-          ...[["none", "Не увеличивать"], ["2k", "До 2K"], ["4k", "До 4K"]].map(([v, label]) =>
-            h("option", { value: v, selected: v === values.upscale_images }, label),
-          ),
-        ),
-      ),
-    ),
-    h(
-      "fieldset",
-      {},
-      h("legend", {}, "Ролики"),
-      check(
-        "clips",
-        "Добавить ролики в ключевые моменты",
-        "LLM выберет до 3 самых динамичных слайдов — там вместо картинки будет ролик (крутится по кругу без своего звука). Остальные слайды — картинка с медленным наездом.",
-        values.clips,
-      ),
-      h(
-        "div",
-        { class: "radio-row" },
-        radio("clips_mode", "local", "Сгенерировать локальной моделью", values.clips_mode !== "upload"),
-        radio("clips_mode", "upload", "Сделаю сам по промптам во внешней модели", values.clips_mode === "upload"),
-      ),
-      h(
-        "label",
-        { class: "field" },
-        h("span", { class: "hint" }, "Модель видео (ролик 5 с, 704×448)"),
-        h(
-          "select",
-          { id: id("video_model") },
-          ...cfg.video_models.map((m) =>
-            h("option", { value: m.id, selected: m.id === values.video_model }, m.label + (m.installed ? "" : " — не установлена")),
-          ),
-        ),
-      ),
-    ),
-    h(
-      "fieldset",
-      {},
-      h("legend", {}, "Озвучка"),
-      h(
-        "div",
-        { class: "radio-row" },
-        radio("voice_mode", "tts", "Озвучить narrator", values.voice_mode === "tts"),
-        radio("voice_mode", "upload", "Загружу свой mp3", values.voice_mode === "upload"),
-      ),
-      h("div", { class: "settings" }, h("label", { class: "field" }, h("span", { class: "hint" }, "Движок"), engineSelect), h("label", { class: "field" }, h("span", { class: "hint" }, "Голос"), voiceSelect)),
-    ),
-    h(
-      "fieldset",
-      {},
-      h("legend", {}, "Шортс"),
-      check("shorts", "Сделать и вертикальное видео 9:16", "Короткий сценарий 45–60 с для YouTube Shorts, TikTok, Reels.", values.shorts),
-    ),
-    h(
-      "fieldset",
-      {},
-      h("legend", {}, "Оформление"),
-      h(
-        "label",
-        { class: "field" },
-        h("span", { class: "hint" }, "Кадр видео (шортс всегда 9:16)"),
-        h(
-          "select",
-          { id: id("frame") },
-          ...[
-            ["poster", "Как постер — пропорции картинки обложки"],
-            ["square", "Квадрат 1:1"],
-            ["landscape", "Широкий 16:9"],
-          ].map(([v, label]) => h("option", { value: v, selected: v === (values.frame || "landscape") }, label)),
-        ),
-      ),
-      check(
-        "branding",
-        "Плашка «подпишись» и кнопка «плей»",
-        "Первый кадр — обложка: постер притемнён, по центру плей, внизу крупная плашка; дальше плашка плавно уезжает в угол и остаётся до конца. Этот кадр — обложка видео в Telegram.",
-        values.branding,
-      ),
-      check(
-        "disclaimers",
-        "Помечать запрещённые в РФ организации",
-        h("span", {}, "Мелкий текст на слайдах, где упомянута, например, Meta, и строка в конце поста. Список — на вкладке ", h("a", { class: "link", href: "/updates/" }, "«Обновления»"), "."),
-        values.disclaimers,
-      ),
-    ),
-    h(
-      "fieldset",
-      {},
-      h("legend", {}, "Публикация"),
-      newChannel,
-      h(
-        "label",
-        { class: "field" },
-        h("span", { class: "hint" }, "Скорость в видео — ускоряет озвучку без смены высоты голоса, слайды подстраиваются под неё"),
-        h(
-          "select",
-          { id: id("tempo") },
-          ...[0.75, 1, 1.25, 1.5, 1.75, 2].map((t) => h("option", { value: t, selected: t === Number(values.tempo || 1) }, `×${String(t).replace(".", ",")}`)),
-        ),
-      ),
-      ...channels,
-      check("auto_publish", "Публиковать сразу, без моей проверки", null, values.auto_publish),
-    ),
-    check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
+    group("Постер — первый кадр", f.poster_mode()),
+    group("Картинки слайдов", f.draw_images(), f.images_mode(), f.image_model(), f.upscale_images()),
+    group("Ролики", f.clips(), f.clips_mode(), f.video_model()),
+    group("Озвучка", f.voice_mode(), f.engine()),
+    group("Шортс", f.shorts()),
+    group("Оформление", f.frame(), f.branding(), f.disclaimers()),
+    group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish()),
+    f.review_text(),
   );
 }
 
-function readSettings(prefix) {
+const SETTING_NAMES = [
+  "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
+  "voice_mode", "engine", "shorts", "review_text", "disclaimers", "branding", "tempo", "frame", "auto_publish", "channels",
+]; // prettier-ignore
+
+// Читает поля формы с этим префиксом; names — какие именно (engine читается вместе с голосом).
+function readSettings(prefix, names = SETTING_NAMES) {
   const get = (name) => document.getElementById(`${prefix}-${name}`);
   const radio = (name) => document.querySelector(`input[name="${prefix}-${name}"]:checked`)?.value;
-  return {
-    poster_mode: radio("poster_mode"),
-    draw_images: get("draw_images").checked,
-    images_mode: radio("images_mode"),
-    image_model: get("image_model").value,
-    upscale_images: get("upscale_images").value,
-    clips: get("clips").checked,
-    clips_mode: radio("clips_mode"),
-    video_model: get("video_model").value,
-    voice_mode: radio("voice_mode"),
-    engine: get("engine").value,
-    voice: get("voice").value,
-    shorts: get("shorts").checked,
-    review_text: get("review_text").checked,
-    disclaimers: get("disclaimers").checked,
-    branding: get("branding").checked,
-    tempo: Number(get("tempo").value),
-    frame: get("frame").value,
-    auto_publish: get("auto_publish").checked,
-    channels: [...document.querySelectorAll(`input[name="${prefix}-channels"]:checked`)].map((i) => i.value),
+  const special = {
+    poster_mode: () => radio("poster_mode"),
+    images_mode: () => radio("images_mode"),
+    clips_mode: () => radio("clips_mode"),
+    voice_mode: () => radio("voice_mode"),
+    engine: () => ({ engine: get("engine").value, voice: get("voice").value }),
+    tempo: () => ({ tempo: Number(get("tempo").value) }),
+    channels: () => ({ channels: [...document.querySelectorAll(`input[name="${prefix}-channels"]:checked`)].map((i) => i.value) }),
   };
+  const out = {};
+  for (const name of names) {
+    const read = special[name];
+    if (read) {
+      const value = read();
+      Object.assign(out, typeof value === "object" ? value : { [name]: value });
+    } else {
+      const input = get(name);
+      out[name] = input.type === "checkbox" ? input.checked : input.value;
+    }
+  }
+  return out;
 }
 
 // --- создание ---
@@ -328,6 +287,7 @@ async function loadProjects() {
 
 async function open(id) {
   state.drafts = {};
+  state.stepDrafts = {};
   show(await api("GET", `${API}/projects/${id}`));
   loadProjects();
   history.replaceState(null, "", `?scenario=${scenario}&project=${id}`);
@@ -349,6 +309,7 @@ async function addChannel(prefix) {
   try {
     const res = await api("POST", `${API}/channels`, { label: get("new-label").value, chat_id: get("new-chat").value, format: get("new-format").value });
     state.config.channels = res.channels;
+    if (prefix === "step-publish") publishPick(state.project).channels.add(res.added); // канал из шага — сразу в выбранные
     rerenderSettings(prefix);
   } catch (err) {
     error.hidden = false;
@@ -380,9 +341,51 @@ async function publishNow(project) {
 async function act(path, body) {
   try {
     show(await api("POST", `${API}/projects/${state.project.id}/${path}`, body ?? {}));
+    return true;
   } catch (err) {
     alertBox(err.message);
+    return false;
   }
+}
+
+// Параметры шага прямо в его карточке: поменял → «Перезапустить шаг» пересобирает шаг уже с ними.
+const STEP_FIELDS = {
+  text: ["review_text"],
+  poster: ["poster_mode", "image_model", "upscale_images"],
+  images: ["draw_images", "images_mode", "image_model", "upscale_images"],
+  clips: ["clips", "clips_mode", "video_model"],
+  voice: ["voice_mode", "engine"],
+  render: ["frame", "tempo", "branding", "disclaimers"],
+  short: ["shorts", "tempo", "branding", "disclaimers"],
+};
+
+const openSettings = new Set();
+
+function stepSettings(step) {
+  const names = STEP_FIELDS[step.id];
+  if (!names) return null;
+  const prefix = `step-${step.id}`;
+  const f = fieldsOf({ ...state.project.settings, ...state.stepDrafts[step.id] }, prefix);
+  return h(
+    "details",
+    // Раскрытость и набросок правки живут между перерисовками, пока шаг не перезапустили.
+    {
+      class: "step-settings",
+      id: `${prefix}-settings`,
+      open: openSettings.has(step.id),
+      ontoggle: (e) => (e.target.open ? openSettings.add(step.id) : openSettings.delete(step.id)),
+      onchange: () => (state.stepDrafts[step.id] = readSettings(prefix, names)),
+    },
+    h("summary", { class: "link" }, "Параметры шага"),
+    ...names.map((name) => f[name]()),
+    h("p", { class: "hint" }, "Поменяй и нажми «Перезапустить шаг». Шаги после него сбросятся — «Запустить всё» соберёт их заново."),
+  );
+}
+
+async function rerunStep(step) {
+  const names = STEP_FIELDS[step.id];
+  const settings = names && document.getElementById(`step-${step.id}-settings`) ? readSettings(`step-${step.id}`, names) : undefined;
+  if (await act("run", { step: step.id, settings })) delete state.stepDrafts[step.id];
 }
 
 function alertBox(message) {
@@ -605,7 +608,7 @@ function stepBody(step) {
       return [
         disclaimerBox(),
         ...(f.video
-          ? [h("video", { controls: true, src: f.video, preload: "metadata", poster: f.poster || null }), h("a", { class: "link", href: `${f.video.split("?")[0]}?download=1` }, "Скачать видео 16:9")]
+          ? [h("video", { controls: true, src: f.video, preload: "metadata", poster: f.poster || null }), h("a", { class: "link", href: `${f.video.split("?")[0]}?download=1` }, "Скачать видео")]
           : []),
       ];
     case "short":
@@ -623,6 +626,7 @@ function stepBody(step) {
         h(
           "div",
           { class: "publish-box" },
+          h("strong", {}, "Куда опубликовать"),
           h(
             "div",
             { class: "publish-channels" },
@@ -644,6 +648,7 @@ function stepBody(step) {
             h("input", { type: "checkbox", checked: pick.force, onchange: (e) => (pick.force = e.target.checked) }),
             h("span", {}, "Опубликовать повторно", h("span", { class: "hint" }, "Отправить и туда, куда выпуск уже ушёл — как FORCE=1 у make news-publish.")),
           ),
+          channelAdder("step-publish"),
           h("button", { type: "button", class: "primary", disabled: p.running, onclick: () => publishNow(p) }, "Опубликовать"),
         ),
         p.published
@@ -681,7 +686,7 @@ function renderStep(step) {
       h("h3", {}, step.label),
       statusChip(step.status),
       step.status !== "running"
-        ? h("button", { type: "button", class: "link", disabled: p.running, onclick: () => act("run", { step: step.id }) }, step.status === "pending" ? "Выполнить шаг" : "Перезапустить шаг")
+        ? h("button", { type: "button", class: "link", disabled: p.running, onclick: () => rerunStep(step) }, step.status === "pending" ? "Выполнить шаг" : "Перезапустить шаг")
         : null,
     ),
     step.status === "running" ? progressBar(step.progress || { stage: "…", percent: 0 }) : null,
@@ -691,6 +696,7 @@ function renderStep(step) {
       ? h("p", { class: "hint" }, `Начнётся, когда будет готово: ${step.blocked_by.join(", ")}.`)
       : null,
     canApprove ? h("button", { type: "button", class: "primary", onclick: () => act("approve", { step: step.id }) }, approveLabel) : null,
+    stepSettings(step),
     h("div", { class: "step-body" }, ...stepBody(step)),
   );
 }
