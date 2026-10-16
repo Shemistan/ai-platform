@@ -17,7 +17,7 @@ from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
-from aiplatform.studio import news, prompts, publish, schedule, series, slides, steps
+from aiplatform.studio import news, prompts, publish, schedule, series, slides, stats, steps
 from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError, complete
 from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, attention, blockers, dependents
@@ -124,6 +124,20 @@ def _read_text(path) -> str:
         return ""
 
 
+def _write_json(path, data: object) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def video_seconds(project: dict) -> float | None:
+    """Длина готового видео: озвучка из сборки с учётом скорости."""
+    render = project.get("steps", {}).get("render", {})
+    if not render.get("media_s"):
+        return None
+    return render["media_s"] / float(project.get("settings", {}).get("tempo") or 1.0)
+
+
 def _read_json_list(path) -> list[dict]:
     try:
         data = json.loads(_read_text(path) or "[]")
@@ -144,6 +158,9 @@ class StudioModule:
         self.scheduler = schedule.Scheduler(self, self.config.data_dir, self.config.schedule_tick_s)
         self._rates: tuple[float, estimate_module.Rates] | None = None
         self._durations: dict[tuple[str, int], float] = {}
+        self._stats_lock = threading.Lock()
+        self._stats_thread: threading.Thread | None = None
+        self.scheduler.daily["stats"] = self._daily_stats
 
     def bind(self) -> None:
         """Соседние вкладки готовы — сценарии будут ставить задачи в их очереди."""
@@ -156,6 +173,11 @@ class StudioModule:
             cache=MediaCache(self.config.cache_dir),
         )
         self.scheduler.start()
+
+    def _daily_stats(self) -> str | None:
+        if not self.ctx.config.settings.load()["stats"]["auto"]:
+            return None
+        return self.refresh_stats_now()
 
     # --- уведомления ---
 
@@ -242,7 +264,8 @@ class StudioModule:
 
     def board(self, archived: bool = False) -> dict:
         """Все выпуски всех сценариев по группам: ждёт тебя, идёт, опубликовано, черновики."""
-        channels = {c.id: c.label for c in self.channels()}
+        known = {c.id: c for c in self.channels()}
+        channels = {c.id: c.label for c in known.values()}
         items = []
         for item in self.studio.list(archived=archived):
             project = self.studio.get(item["id"]) or {}
@@ -257,16 +280,84 @@ class StudioModule:
                     "group": board_group(item, project),
                     "channels": [{"id": c, "label": channels.get(c, c)} for c in chosen],
                     "published": [
-                        {"channel": r["channel"], "label": r.get("label") or channels.get(r["channel"], r["channel"])}
+                        {
+                            "channel": r["channel"],
+                            "label": r.get("label") or channels.get(r["channel"], r["channel"]),
+                            "type": known[r["channel"]].type if r["channel"] in known else None,
+                            "format": known[r["channel"]].format if r["channel"] in known else None,
+                            "public": r.get("public"),
+                            "message_id": r.get("message_id"),
+                            **stats.latest(r),
+                        }
                         for r in published
-                        if r.get("ok") and not r.get("skipped")
+                        if r.get("ok")
                     ],
+                    "video_s": video_seconds(project),
                     "verdict": steps.verdict(review) if review else None,
                     "poster": self._poster_url(item["id"], folder),
                 }
             )
         counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
-        return {"groups": list(BOARD_GROUPS.items()), "counts": counts, "projects": items}
+        return {
+            "groups": list(BOARD_GROUPS.items()),
+            "counts": counts,
+            "projects": items,
+            "response": stats.summary(items),
+            "stats": {"running": self._stats_thread is not None, "at": self.scheduler.state().get("stats_at")},
+        }
+
+    # --- отклик ---
+
+    def refresh_stats(self) -> dict:
+        """«Обновить отклик»: подписчики и просмотры в фоне — сеть бывает медленной."""
+        with self._stats_lock:
+            if self._stats_thread is None:
+                self._stats_thread = threading.Thread(target=self._refresh_worker, name="studio-stats", daemon=True)
+                self._stats_thread.start()
+        return {"running": True}
+
+    def _refresh_worker(self) -> None:
+        try:
+            self.refresh_stats_now()
+        finally:
+            with self._stats_lock:
+                self._stats_thread = None
+
+    def refresh_stats_now(self) -> str:
+        """Пройти все опубликованные в Telegram выпуски и дописать снимок отклика."""
+        refresher = stats.Refresher({c.id: c for c in self.channels()})
+        updated = 0
+        for item in self.studio.list() + self.studio.list(archived=True):
+            if item["running"]:
+                continue
+            path = self.studio.project_dir(item["id"]) / steps.PUBLISHED
+            records = _read_json_list(path)
+            fresh = [refresher.record(r) if r.get("ok") else r for r in records]
+            if fresh != records:
+                _write_json(path, fresh)
+                updated += 1
+        self.scheduler.note("stats_at", time.strftime("%Y-%m-%d %H:%M"))
+        return f"отклик: обновлено выпусков {updated}"
+
+    def manual_stats(self, project_id: str, payload: object) -> dict:
+        """Просмотры, внесённые руками: у пакетов для YouTube, TikTok и у приватных каналов."""
+        if not isinstance(payload, dict):
+            raise bad_request("Тело запроса — не объект JSON.")
+        channel, views = payload.get("channel"), payload.get("views")
+        if isinstance(views, bool) or not isinstance(views, int) or views < 0:
+            raise bad_request("views — целое число от 0.")
+        if self.studio.get(project_id) is None:
+            raise not_found("Проект не найден.")
+        path = self.studio.project_dir(project_id) / steps.PUBLISHED
+        records = _read_json_list(path)
+        if channel not in {r["channel"] for r in records}:
+            raise bad_request("В этот канал выпуск не публиковался.")
+        records = [
+            stats.add_snapshot(r, {"views": views, "members": None, "manual": True}) if r["channel"] == channel else r
+            for r in records
+        ]
+        _write_json(path, records)
+        return self.view(project_id)
 
     def _poster_url(self, project_id: str, folder) -> str | None:
         path = steps.find(folder, "poster", steps.IMAGE_EXT)
@@ -985,6 +1076,10 @@ class StudioModule:
                 return req.send_json({"projects": self.studio.list(req.arg("scenario"))})
             case ("POST", ["preflight"]):
                 return req.send_json(self.check_draft(req.json(MAX_BODY)))
+            case ("POST", ["stats", "refresh"]):
+                return req.send_json(self.refresh_stats(), HTTPStatus.ACCEPTED)
+            case ("POST", ["projects", pid, "stats"]):
+                return req.send_json(self.manual_stats(pid, req.json()))
             case ("GET", ["board"]):
                 return req.send_json(self.board(archived=req.arg("archived") in ("1", "true")))
             case ("POST", ["projects", pid, "split"]):

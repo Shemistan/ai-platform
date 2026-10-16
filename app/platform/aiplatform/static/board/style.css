@@ -32,3 +32,16 @@
   .board-card { grid-template-columns: 48px minmax(0, 1fr); }
   .board-card .thumb { width: 48px; height: 48px; }
 }
+.board-card .reach { display: grid; gap: 4px; font-size: 13px; list-style: none; padding: 0; margin: 0; }
+.board-card .reach li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.manual-views { display: inline-flex; gap: 6px; align-items: center; }
+.views-input { width: 110px; padding: 2px 6px; font-size: 13px; }
+.response { display: grid; gap: 12px; }
+.response-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.response-head h2 { margin: 0; }
+.reach-tables { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+.reach-table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.reach-table caption { text-align: left; font-weight: 600; padding-bottom: 4px; }
+.reach-table th, .reach-table td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+.reach-table th:first-child { text-align: left; font-weight: 400; }
+.reach-table thead th { color: var(--muted); font-weight: 400; }

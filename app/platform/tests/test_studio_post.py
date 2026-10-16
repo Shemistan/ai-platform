@@ -83,7 +83,8 @@ class PostFlowTest(StudioCase):
             self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["tg"]})
             done = self.settle(pid)
         self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
-        self.assertEqual([c[0] for c in calls], ["sendPhoto", "sendAudio"])
+        # Последним — число подписчиков: от него считается прирост в «Что работает».
+        self.assertEqual([c[0] for c in calls], ["sendPhoto", "sendAudio", "getChatMemberCount"])
         self.assertIn(b"<b>", calls[0][1])
         self.assertIn(b'name="duration"', calls[1][1])
         self.assertIn("двумя постами", done["published"][0]["message"])

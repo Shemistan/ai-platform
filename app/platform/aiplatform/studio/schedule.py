@@ -31,6 +31,7 @@ class Scheduler:
         # Ежедневные работы: имя → функция; идут один раз в день, после времени дайджеста не ждут.
         self.daily: dict[str, Callable[[], str | None]] = {}
         self._lock = threading.Lock()
+        self._lock_state = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -58,12 +59,17 @@ class Scheduler:
             return {}
         return data if isinstance(data, dict) else {}
 
+    def note(self, name: str, value: str) -> None:
+        """Записать отметку (например, когда последний раз обновлялся отклик)."""
+        self._mark(name, value)
+
     def _mark(self, name: str, value: str) -> None:
-        data = self.state() | {name: value}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(self.path)
+        with self._lock_state:
+            data = self.state() | {name: value}
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            tmp.replace(self.path)
 
     # --- работа ---
 

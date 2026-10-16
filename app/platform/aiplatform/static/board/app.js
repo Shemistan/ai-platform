@@ -4,7 +4,7 @@ import { $, api, fill, h, statusChip } from "/ui.js";
 const API = "/api/studio";
 const state = { archived: false, timer: null, busy: new Set(), errors: {} };
 // Дополнения над группами (сводка отклика и т.п.): функции data → узел.
-const extras = [];
+const extras = [responsePanel];
 
 const href = (p) => `/studio/?scenario=${p.scenario}&project=${p.id}`;
 
@@ -55,13 +55,82 @@ function actions(p) {
   return h("div", { class: "actions" }, ...out);
 }
 
+const number = (n) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}K` : String(n));
+
+// Куда ушёл выпуск и что там с ним: просмотры, прирост подписчиков; руками — у пакетов и приватных каналов.
+function reachRow(p, r) {
+  const facts = [];
+  if (r.views !== null && r.views !== undefined) facts.push(`${number(r.views)} просм.`);
+  if (r.growth !== null && r.growth !== undefined) facts.push(`${r.growth >= 0 ? "+" : ""}${r.growth} подп.`);
+  const manual = r.type === "manual" || (r.type === "telegram" && r.public === false);
+  const input = h("input", { type: "number", min: "0", class: "views-input", placeholder: "просмотры", "aria-label": `Просмотры: ${r.label}` });
+  return h(
+    "li",
+    {},
+    h("span", {}, `✓ ${r.label}`),
+    facts.length ? h("span", { class: "muted" }, ` · ${facts.join(" · ")}`) : null,
+    manual
+      ? h(
+          "span",
+          { class: "manual-views" },
+          input,
+          h("button", { type: "button", class: "small-btn", onclick: () => input.value !== "" && act(p, "stats", { channel: r.channel, views: Number(input.value) }) }, "Сохранить"),
+        )
+      : null,
+  );
+}
+
+// «Что работает»: средние просмотры по сценарию, длине и формату — по опубликованному с известными просмотрами.
+function responsePanel(data) {
+  const s = data.stats || {};
+  const refresh = h(
+    "button",
+    {
+      type: "button",
+      class: "small-btn",
+      disabled: s.running,
+      onclick: async () => {
+        try {
+          await api("POST", `${API}/stats/refresh`);
+        } catch (err) {
+          $("error").textContent = err.message;
+          $("error").hidden = false;
+        }
+        load();
+      },
+    },
+    s.running ? "Обновляю…" : "Обновить отклик",
+  );
+  const tables = (data.response || []).map((d) =>
+    h(
+      "table",
+      { class: "reach-table" },
+      h("caption", {}, d.dimension),
+      h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "постов"), h("th", {}, "просмотров в среднем"), h("th", {}, "подписчиков в среднем"))),
+      h(
+        "tbody",
+        {},
+        ...d.rows.map((r) => h("tr", {}, h("th", {}, r.label), h("td", {}, String(r.posts)), h("td", {}, number(r.avg_views)), h("td", {}, r.avg_growth === null ? "—" : `${r.avg_growth >= 0 ? "+" : ""}${r.avg_growth}`))),
+      ),
+    ),
+  );
+  return h(
+    "section",
+    { class: "panel response" },
+    h("div", { class: "response-head" }, h("h2", {}, "Что работает"), refresh, h("span", { class: "muted small" }, s.at ? `обновлено ${s.at}` : "ещё не обновлялось")),
+    tables.length
+      ? h("div", { class: "reach-tables" }, ...tables)
+      : h("p", { class: "hint" }, "Просмотров пока нет. Публичные каналы Telegram подтягиваются сами (раз в сутки или кнопкой), у пакетов для YouTube и TikTok и у приватных каналов просмотры вносятся руками в карточке выпуска."),
+  );
+}
+
 function card(p) {
   const need = p.attention;
   const meta = [
     h("span", {}, p.scenario_label),
     h("span", {}, when(p.updated_at)),
     p.running && p.current ? h("span", {}, `сейчас: ${p.current}`) : null,
-    p.published.length ? h("span", {}, `✓ ${p.published.map((r) => r.label).join(", ")}`) : null,
+
     p.verdict ? h("span", {}, `судья: ${p.verdict}`) : null,
   ];
   return h(
@@ -75,6 +144,7 @@ function card(p) {
       h("a", { class: "title", href: href(p) }, p.title),
       h("div", { class: "meta" }, ...meta),
       need ? h("div", { class: "need" }, h("strong", {}, `${need.label}: `), need.text || (need.status === "failed" ? "ошибка" : "ждёт тебя")) : null,
+      p.published.length ? h("ul", { class: "reach" }, ...p.published.map((r) => reachRow(p, r))) : null,
       state.errors[p.id] ? h("div", { class: "error", role: "alert" }, state.errors[p.id]) : null,
       actions(p),
     ),

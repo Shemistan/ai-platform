@@ -879,7 +879,8 @@ def step_publish(ctx: StepContext) -> None:
             continue
         if channel.type == publish.TELEGRAM and ctx.settings.get("post_format") == "photo":
             ctx.progress(f"{channel.label} ({n} из {len(chosen)})", 100.0 * (n - 1) / len(chosen))
-            results.append(publish_photo(ctx, channel, title, post) | {"label": channel.label, "sent": time.time()})
+            result = publish_photo(ctx, channel, title, post)
+            results.append(result | {"label": channel.label, "sent": time.time(), **audience(channel)})
             ctx.log(f"{channel.label}: {results[-1]['message']}")
             continue
         video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
@@ -902,11 +903,16 @@ def step_publish(ctx: StepContext) -> None:
             thumb=thumb if thumb.is_file() else None,
         )
         ctx.log(f"{channel.label}: {result['message']}")
-        sent = {"sent": time.time()} if channel.type == publish.TELEGRAM else {}
+        sent = {"sent": time.time(), **audience(channel)} if channel.type == publish.TELEGRAM else {}
         results.append(result | {"label": channel.label} | sent)
     done = {r["channel"] for r in results}
     kept = [r for r in read_published(ctx) if r["channel"] not in done]  # прошлые отправки в другие каналы
     ctx.write(PUBLISHED, json.dumps(results + kept, ensure_ascii=False, indent=2) + "\n")
+
+
+def audience(channel: publish.Channel) -> dict:
+    """Подписчики канала в момент публикации — от них считается прирост в «Что работает»."""
+    return {"members_at_publish": publish.members(channel)}
 
 
 def publish_photo(ctx: StepContext, channel: publish.Channel, title: str, post: str) -> dict:

@@ -80,7 +80,8 @@ class NarratorChannelsTest(unittest.TestCase):
         sent = {}
 
         def fake_post(url, body, ctype):
-            sent["body"] = body
+            if url.endswith("/sendVideo"):
+                sent["body"] = body
             return {"ok": True, "result": {"message_id": 7}}
 
         with mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}):
@@ -118,6 +119,8 @@ class PublishButtonTest(StudioCase):
         calls = []
 
         def fake_post(url, body, ctype):
+            if url.endswith("/getChatMemberCount"):  # подписчики в момент публикации — для отклика
+                return {"ok": True, "result": 120}
             calls.append(body)
             return {"ok": True, "result": {"message_id": len(calls)}}
 
@@ -132,6 +135,10 @@ class PublishButtonTest(StudioCase):
             self.assertEqual(done["settings"]["channels"], ["tg"])
             self.assertEqual(len(calls), 1)
             self.assertTrue(done["published"][0]["sent"])
+            record = done["published"][0]
+            self.assertEqual(
+                (record["message_id"], record["chat_id"], record["members_at_publish"]), (1, "-1003755616451", 120)
+            )
 
             again = press(channels=["tg"])
             self.assertEqual(len(calls), 1, "уже опубликовано — без «повторно» не шлём")

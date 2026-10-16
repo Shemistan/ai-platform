@@ -28,6 +28,7 @@ class ScheduleTest(StudioCase):
         self.assertEqual(status, 404)
 
     def test_digest_runs_once_a_day_after_its_time(self):
+        self.section("stats", {"auto": False})  # ежедневный отклик — отдельный тест
         self.section("schedule", {"enabled": True, "time": "07:00"})
         today = date.today()
         yesterday = (today - timedelta(days=1)).isoformat()
@@ -49,7 +50,14 @@ class ScheduleTest(StudioCase):
         self.assertIn("Дайджест запущен по расписанию", log)
 
     def test_disabled_schedule_does_nothing(self):
+        self.section("stats", {"auto": False})
         self.assertEqual(self.studio.scheduler.tick(datetime.combine(date.today(), time(23, 0))), [])
+
+    def test_daily_response_refresh_once_a_day(self):
+        today = datetime.combine(date.today(), time(8, 0))
+        self.assertEqual(self.studio.scheduler.tick(today), ["отклик: обновлено выпусков 0"])
+        self.assertEqual(self.studio.scheduler.tick(today), [])
+        self.assertTrue(self.json("GET", "/api/studio/board")[1]["stats"]["at"])
 
     def test_notifications_on_waiting_and_published(self):
         self.section("notify", {"enabled": True})
