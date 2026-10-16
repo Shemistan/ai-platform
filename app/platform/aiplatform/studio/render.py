@@ -278,6 +278,41 @@ def note_parts(lay: Layout, font: str, note_file: Path) -> list[str]:
     ]
 
 
+@dataclass(frozen=True)
+class Progress:
+    """Где слайд в ролике: начало и конец, секунды от начала слайдов, и вся их длина; глава — над полосой."""
+
+    begin: float
+    end: float
+    total: float
+    chapter: str = ""
+
+
+PROGRESS_STEPS = 16  # ступеней роста полосы за слайд
+
+
+def progress_parts(lay: Layout, font: str, work: Path, progress: Progress, seconds: float) -> list[str]:
+    """Тонкая полоса прогресса по верху кадра и название главы под ней."""
+    unit = min(lay.width, lay.height) / 1080
+    bar = max(round(6 * unit), 2)
+    parts = [f"drawbox=x=0:y=0:w={lay.width}:h={bar}:color=white@0.16:t=fill"]
+    total = max(progress.total, 0.001)
+    a, b = progress.begin / total, min(progress.end / total, 1.0)
+    for k, (t0, t1) in enumerate(motion.windows(0.0, max(seconds - 0.05, 0.05), PROGRESS_STEPS), start=1):
+        width = max(round(lay.width * (a + (b - a) * k / PROGRESS_STEPS)), 1)
+        parts.append(f"drawbox=x=0:y=0:w={width}:h={bar}:color={motion.ACCENT}:t=fill:enable='{motion.window(t0, t1)}'")
+    if progress.chapter:
+        size = max(round(28 * unit), 10)
+        label = work / "chapter.txt"
+        label.write_text(wrap(progress.chapter.upper(), lay.title_chars * 2, 1), encoding="utf-8")
+        font_opt = f"fontfile={_quote(font)}:" if font else ""
+        parts.append(
+            f"drawtext={font_opt}textfile={_quote(label)}:expansion=none:fontsize={size}:fontcolor=white@0.75"
+            f":x={lay.margin}:y={bar + round(14 * unit)}:box=1:boxcolor=black@0.35:boxborderw={round(8 * unit)}"
+        )
+    return parts
+
+
 @dataclass
 class Renderer:
     ffmpeg: str
@@ -375,9 +410,10 @@ class Renderer:
         branding: Branding | None = None,
         kind: str = IMAGE,
         data: dict | None = None,
+        progress: Progress | None = None,
     ) -> Path:
         """Слайд. kind — вид из плана: картинка (без картинки и ролика — пункты на тёмном фоне)
-        или динамическая сцена; data — её данные."""
+        или динамическая сцена; data — её данные. progress — полоса ролика с названием главы."""
         lay = layout(orientation, self.scale)
         work = out.with_suffix("")
         work.mkdir(parents=True, exist_ok=True)
@@ -402,6 +438,8 @@ class Renderer:
                 bullet_files.append(path)
             args, chain = _background(image, lay, frames, clip)
             text = slide_filter(lay, self.font, title_file, bullet_files, seconds, note_file)
+        if progress is not None:
+            text = ",".join([text, *progress_parts(lay, self.font, work, progress, seconds)])
         graph = f"{chain},{text},format=yuv420p[v]"
         if branding is not None:  # плашка «подпишись» в углу — весь слайд
             args += ["-loop", "1", "-framerate", str(FPS), "-i", str(branding.sticker)]
@@ -504,6 +542,7 @@ class Renderer:
                     branding=branding,
                     kind=scene.get("kind") or IMAGE,
                     data=scene.get("data"),
+                    progress=scene.get("progress"),
                     out=work / f"{n:02d}.mp4",
                     seconds=scene["seconds"],
                     orientation=orientation,

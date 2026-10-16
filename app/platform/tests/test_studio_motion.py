@@ -36,6 +36,9 @@ SCENES = {
     ),
     "quote": ("quote", {"text": "Лучшая пауза — та, которой нет.", "author": "Автор"}, []),
     "title": ("bullets", {}, []),
+    "chapter": ("chapter", {"number": 2, "subtitle": "Как брокер теряет сообщения"}, []),
+    "code": ("code", {"code": 'func main() {\n\tfmt.Println("привет")\n}\n// 100% покрытие', "language": "go"}, []),
+    "summary": ("summary", {"items": ["Брокер — не база", "Сообщения повторяются", "Идемпотентность"]}, []),
 }
 
 
@@ -135,6 +138,21 @@ class RhythmTest(unittest.TestCase):
                 with self.subTest(name, orientation=orientation):
                     video = self.render(name, kind, data, bullets, orientation)
                     self.assertLessEqual(max(still_spans(video)), MAX_STILL_S)
+
+    def test_progress_bar_with_chapter(self):
+        out = self.dir / "progress.mp4"
+        self.renderer.slide_clip(
+            title="Слайд",
+            bullets=["Пункт"],
+            image=None,
+            out=out,
+            seconds=4.0,
+            orientation=render.LANDSCAPE,
+            cancel=threading.Event(),
+            progress=render.Progress(10.0, 14.0, 40.0, "Глава про очереди"),
+        )
+        self.assertTrue(out.is_file())
+        self.assertEqual((out.with_suffix("") / "chapter.txt").read_text(encoding="utf-8"), "ГЛАВА ПРО ОЧЕРЕДИ")
 
     def test_image_slide_changes_shot(self):
         image = self.dir / "bg.png"

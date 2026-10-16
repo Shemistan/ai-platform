@@ -25,7 +25,10 @@ WORDS_PER_S = 2.2  # ~130 слов в минуту, как у оценки дл�
 TARGET_SLIDE_S = 4.5  # ориентир для LLM: слайд держится 3–6 с
 
 IMAGE = "image"
-DYNAMIC = ("bullets", "stat", "chart", "flow", "compare", "quote")
+DYNAMIC = ("bullets", "stat", "chart", "flow", "compare", "quote", "chapter", "code", "summary")
+CHAPTER = "chapter"
+MAX_CODE_LINES = 14
+MAX_CODE_LINE = 64
 KINDS = (IMAGE, *DYNAMIC)
 CHARTS = ("bar", "line")
 
@@ -140,6 +143,20 @@ def scene_data(kind: str, item: dict) -> dict | None:
     if kind == "quote":
         text = _short(item.get("text"), MAX_QUOTE)
         return {"text": text, "author": _short(item.get("author"), 60)} if text else None
+    if kind == CHAPTER:
+        return {"subtitle": _short(item.get("subtitle"), MAX_BULLET)}
+    if kind == "code":
+        raw = str(item.get("code") or "").replace("\t", "    ").rstrip()
+        lines = [line.rstrip()[:MAX_CODE_LINE] for line in raw.splitlines()]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        lines = lines[:MAX_CODE_LINES]
+        if not any(line.strip() for line in lines):
+            return None
+        return {"code": "\n".join(lines), "language": _short(item.get("language"), 16)}
+    if kind == "summary":
+        items = _texts(item.get("items") or item.get("bullets"), MAX_BULLET, MAX_ITEMS)
+        return {"items": items} if len(items) >= 2 else None
     return {}
 
 
@@ -192,7 +209,22 @@ def parse_plan(obj: object, paras: list[str] | int) -> list[Slide]:
         raise StudioError("В плане ни одного слайда с заголовком.")
     ordered = [slides[k] for k in sorted(slides)]
     ordered[0].para, ordered[0].sent = 0, 0
+    number = 0
+    for slide in ordered:  # главы нумеруются по порядку: «Глава 2» — вторая из встретившихся
+        if slide.kind == CHAPTER:
+            number += 1
+            slide.data["number"] = number
     return ordered
+
+
+def chapters(plan: list[Slide]) -> list[str]:
+    """Название главы, в которой идёт каждый слайд; до первой главы — пусто."""
+    out, current = [], ""
+    for slide in plan:
+        if slide.kind == CHAPTER:
+            current = slide.title
+        out.append(current)
+    return out
 
 
 def fallback_plan(paras: list[str], title: str) -> list[Slide]:

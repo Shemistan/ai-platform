@@ -609,8 +609,14 @@ def scenes(
             own = found[kind][(n - 1) % len(found[kind])]
         return own
 
+    # Есть главы — сверху ролика полоса прогресса с названием текущей главы.
+    names = slides.chapters(plan)
+    total = sum(durations)
+    begin = 0.0
     out = []
     for n, (slide, seconds) in enumerate(zip(plan, durations, strict=True), start=1):
+        progress = render.Progress(begin, begin + seconds, total, names[n - 1]) if any(names) else None
+        begin += seconds
         out.append(
             {
                 "title": slide.title,
@@ -621,6 +627,7 @@ def scenes(
                 "seconds": seconds,
                 "kind": slide.kind,
                 "data": slide.data,
+                "progress": progress,
             }
         )
     return out
