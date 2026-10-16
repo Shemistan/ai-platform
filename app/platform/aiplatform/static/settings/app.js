@@ -16,6 +16,7 @@ async function toggle(body) {
   } catch (err) {
     showError(err.message);
     load();
+loadCleanup();
   }
 }
 
@@ -79,6 +80,7 @@ async function section(name, body) {
   } catch (err) {
     showError(err.message);
     load();
+loadCleanup();
   }
 }
 
@@ -126,8 +128,84 @@ function renderSchedule(data) {
   );
 }
 
+const mb = (bytes) => (bytes >= 2 ** 30 ? `${(bytes / 2 ** 30).toFixed(1)} ГБ` : `${Math.round(bytes / 2 ** 20)} МБ`);
+const cleanupState = { data: null, confirm: false, busy: false };
+
+async function loadCleanup() {
+  try {
+    cleanupState.data = await api("GET", `${API}/cleanup`);
+  } catch (err) {
+    showError(`Уборка: ${err.message}`);
+  }
+  if (state.data) renderUpkeep(state.data);
+}
+
+async function runCleanup() {
+  if (!cleanupState.confirm) {
+    cleanupState.confirm = true;
+    return renderUpkeep(state.data);
+  }
+  cleanupState.busy = true;
+  renderUpkeep(state.data);
+  try {
+    cleanupState.data = await api("POST", `${API}/cleanup/run`);
+    cleanupState.result = cleanupState.data.found;
+    cleanupState.data = await api("GET", `${API}/cleanup`);
+  } catch (err) {
+    showError(`Уборка: ${err.message}`);
+  }
+  Object.assign(cleanupState, { confirm: false, busy: false });
+  renderUpkeep(state.data);
+}
+
+function renderUpkeep(data) {
+  const c = cleanupState.data;
+  const found = c?.found;
+  const what = found ? [found.jobs && `задач вкладок: ${found.jobs}`, found.cache && `записей кэша: ${found.cache}`, found.archived && `выпусков из архива: ${found.archived}`].filter(Boolean) : [];
+  const done = cleanupState.result;
+  fill(
+    $("upkeep"),
+    h(
+      "div",
+      { class: "settings-stack" },
+      checkRow("Обновлять отклик каналов раз в сутки", "Подписчики и просмотры публичных каналов Telegram — на доске «Выпуски», в «Что работает».", data.stats.auto, (v) => section("stats", { auto: v })),
+      c
+        ? h(
+            "table",
+            { class: "usage" },
+            h("tbody", {}, ...c.usage.map((u) => h("tr", {}, h("th", {}, u.label), h("td", {}, mb(u.bytes))))),
+          )
+        : h("p", { class: "muted" }, "Считаю место…"),
+      h(
+        "div",
+        { class: "inline-fields" },
+        h(
+          "label",
+          { class: "field" },
+          h("span", { class: "hint" }, "Удалять старше"),
+          h("select", { onchange: (e) => section("cleanup", { days: Number(e.target.value) }).then(loadCleanup) }, ...data.cleanup.choices.map((d) => h("option", { value: d, selected: d === data.cleanup.days }, `${d} дней`))),
+        ),
+      ),
+      checkRow("Убирать раз в сутки сам", null, data.cleanup.auto, (v) => section("cleanup", { auto: v })),
+      h("p", { class: "hint" }, "Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша и выпуски из архива. Неархивные выпуски и идущие задачи не трогаются."),
+      found ? h("p", {}, what.length ? `Сейчас под уборку: ${what.join(", ")} — ${mb(found.bytes)}.` : "Сейчас убирать нечего.") : null,
+      h(
+        "div",
+        { class: "actions" },
+        h("button", { type: "button", class: cleanupState.confirm ? "small-btn danger" : "small-btn", disabled: cleanupState.busy || !what.length, onclick: runCleanup }, cleanupState.busy ? "Убираю…" : cleanupState.confirm ? `Да, удалить ${found ? mb(found.bytes) : ""}` : "Убрать сейчас"),
+        cleanupState.confirm ? h("button", { type: "button", class: "link", onclick: () => ((cleanupState.confirm = false), renderUpkeep(state.data)) }, "Отмена") : null,
+        done ? h("span", { class: "hint" }, `Освобождено ${mb(done.bytes)}.`) : null,
+      ),
+    ),
+  );
+}
+
+const state = { data: null };
+
 function render(data) {
+  state.data = data;
   renderSchedule(data);
+  renderUpkeep(data);
   const { photo, video, audio } = data.sections;
   fill($("photo"), h("div", { class: "toggle-list" }, ...photo.map((m) => row(m, "photo", m.note))));
   fill($("video"), h("div", { class: "toggle-list" }, ...video.map((m) => row(m, "video", m.note))));
@@ -148,3 +226,4 @@ async function load() {
 }
 
 load();
+loadCleanup();

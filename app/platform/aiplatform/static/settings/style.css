@@ -18,3 +18,6 @@
 .inline-fields { display: flex; flex-wrap: wrap; gap: 12px; }
 .inline-fields .field { min-width: 140px; }
 .notes { display: grid; gap: 4px; font-size: 13px; list-style: none; padding: 0; margin: 6px 0 0; }
+.usage { border-collapse: collapse; font-size: 14px; }
+.usage th { text-align: left; font-weight: 400; padding: 3px 16px 3px 0; color: var(--muted); }
+.usage td { text-align: right; font-variant-numeric: tabular-nums; padding: 3px 0; }

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from aiplatform.audio import voices
 from aiplatform.core import settings as settings_module
+from aiplatform.core.cleanup import Cleaner
 from aiplatform.core.http import Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.video import models as video_models
@@ -31,6 +32,25 @@ class SettingsModule:
     def __init__(self, ctx) -> None:
         self.ctx = ctx
         self.settings = ctx.config.settings
+        self.cleaner = Cleaner(ctx)
+
+    def bind(self) -> None:
+        """Уборка по флажку — ежедневной работой расписания сценариев."""
+        studio = self.ctx.modules.get("studio")
+        if studio is not None:
+            studio.scheduler.daily["cleanup"] = self._daily_cleanup
+
+    def _daily_cleanup(self) -> str | None:
+        plan = self.settings.load()["cleanup"]
+        if not plan["auto"]:
+            return None
+        found = self.cleaner.run(plan["days"], dry=False)
+        return f"уборка: освобождено {found['bytes'] // 2**20} МБ"
+
+    def cleanup(self, run: bool) -> dict:
+        days = self.settings.load()["cleanup"]["days"]
+        found = self.cleaner.run(days, dry=not run)
+        return {"days": days, "done": run, "found": found, "usage": self.cleaner.usage()}
 
     def describe(self) -> dict:
         return {"file": str(self.settings.path)}
@@ -106,6 +126,10 @@ class SettingsModule:
                 return req.send_json(self.toggle(req.json()))
             case ("POST", ["section", name]) if name in SECTIONS:
                 return req.send_json(self.update_section(name, req.json()))
+            case ("GET", ["cleanup"]):
+                return req.send_json(self.cleanup(run=False))
+            case ("POST", ["cleanup", "run"]):
+                return req.send_json(self.cleanup(run=True))
             case ("POST", ["notify-test"]):
                 self.ctx.notifier.send("Проверка уведомлений", "Так будет выглядеть уведомление о выпуске.", show=True)
                 return req.send_json(self.state())

@@ -24,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import runner
+from aiplatform.core import cleanup, runner
 from aiplatform.studio.llm import StudioError
 
 PENDING, RUNNING, DONE, FAILED, WAITING, SKIPPED = "pending", "running", "done", "failed", "waiting", "skipped"
@@ -226,6 +226,15 @@ class Studio:
                 }
                 for p in items
             ]
+
+    def delete(self, project_id: str) -> int:
+        """Уборка: удалить выпуск из архива целиком. Возвращает, сколько байт освободилось."""
+        with self._lock:
+            project = self._require(project_id)
+            if project["running"] or not project.get("archived"):
+                return 0
+            del self._projects[project_id]
+        return cleanup.remove_tree(self.project_dir(project_id))
 
     def archive(self, project_id: str, archived: bool) -> dict:
         """Убрать выпуск с доски и из списков (файлы остаются) или вернуть его."""
