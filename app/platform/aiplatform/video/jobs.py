@@ -105,10 +105,12 @@ class JobManager:
         available = self._config.models()
         if not model_id:
             model = models.default(available)
+            if model is None:
+                raise ValidationError("Все модели видео выключены — включи модель во вкладке «Настройки».")
         else:
             model = next((m for m in available if m.id == model_id), None)
             if model is None:
-                raise ValidationError("Неизвестная модель.")
+                raise ValidationError(models.unknown(model_id))
         if not model.installed:
             raise ValidationError(f"Модель {model.label} не установлена: запусти ./setup-model.sh {model.id}.")
         return model

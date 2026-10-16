@@ -71,7 +71,11 @@ class AudioSpec:
     title: str = ""  # название в истории; пусто — начало текста
 
 
-def build_spec(payload: object, default_engine: str = voices.DEFAULT_ENGINE) -> AudioSpec:
+def build_spec(
+    payload: object, default_engine: str = voices.DEFAULT_ENGINE, engines: dict[str, voices.Engine] | None = None
+) -> AudioSpec:
+    """engines — включённые движки и голоса; по умолчанию весь список voices.ENGINES."""
+    engines = voices.ENGINES if engines is None else engines
     if not isinstance(payload, dict):
         raise ValidationError("Тело запроса — не объект JSON.")
     text = payload.get("text")
@@ -80,12 +84,12 @@ def build_spec(payload: object, default_engine: str = voices.DEFAULT_ENGINE) -> 
     if len(text) > MAX_TEXT:
         raise ValidationError(f"Текст длиннее {MAX_TEXT:,} знаков — раздели его.".replace(",", " "))
     engine_id = payload.get("engine") or default_engine
-    engine = voices.ENGINES.get(engine_id) if isinstance(engine_id, str) else None
+    engine = engines.get(engine_id) if isinstance(engine_id, str) else None
     if engine is None:
-        raise ValidationError("Неизвестный движок озвучки.")
+        raise ValidationError(voices.unknown(engine_id))
     voice = payload.get("voice") or engine.default_voice
     if voice not in engine.voices:
-        raise ValidationError(f"У движка {engine.label} нет голоса {voice!r}.")
+        raise ValidationError(voices.unknown(engine.id, voice))
     speed = payload.get("speed")
     if speed in (None, ""):
         speed = None
@@ -217,7 +221,7 @@ class AudioJobs:
     # --- запись ---
 
     def create(self, payload: object) -> dict:
-        return self.submit(build_spec(payload, self._config.default_engine))
+        return self.submit(build_spec(payload, self._config.default_engine, self._config.engines()))
 
     def submit(self, spec: AudioSpec) -> dict:
         engine = voices.ENGINES[spec.engine]

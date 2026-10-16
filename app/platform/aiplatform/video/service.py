@@ -27,7 +27,7 @@ class VideoModule:
         available = self.config.models()
         return {
             "models": [m.public() for m in available],
-            "default_model": models.default(available).id,
+            "default_model": getattr(models.default(available), "id", None),
             "backend": self.config.backend,
             "runner_available": self.config.fake or self.config.runner_available(),
             "runner_cmd": self.config.ltx_cmd[0],

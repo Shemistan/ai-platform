@@ -10,6 +10,7 @@ from pathlib import Path
 
 from aiplatform import config as platform_config
 from aiplatform.config import Config, pick
+from aiplatform.core.settings import Settings
 from aiplatform.video import models
 
 DEFAULT_LTX_CMD = "ltx-2-mlx"
@@ -28,6 +29,7 @@ class VideoConfig:
     model: str  # VIDEOGEN_MODEL как задано; пусто — брать модели из models_dir
     models_dir: Path | None
     low_ram: bool
+    settings: Settings | None = None  # что выключено во вкладке «Настройки»
 
     @property
     def jobs_dir(self) -> Path:
@@ -46,7 +48,10 @@ class VideoConfig:
         return str(local) if local and local.is_dir() else None
 
     def models(self) -> list[models.Available]:
-        return models.resolve(models_dir=self.models_dir, explicit=self.model, fake=self.fake)
+        """Модели каталога без выключенных в настройках; своя из VIDEOGEN_MODEL не выключается."""
+        off = self.settings.disabled("video") if self.settings else set()
+        found = models.resolve(models_dir=self.models_dir, explicit=self.model, fake=self.fake)
+        return [m for m in found if m.id not in off]
 
 
 def load(config: Config) -> VideoConfig:
@@ -82,4 +87,5 @@ def load(config: Config) -> VideoConfig:
         model=model,
         models_dir=models_dir,
         low_ram=platform_config.flag(env, "AIP_LOW_RAM", "VIDEOGEN_LOW_RAM"),
+        settings=config.settings,
     )

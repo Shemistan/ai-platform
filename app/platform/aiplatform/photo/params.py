@@ -113,10 +113,14 @@ def _choose_model(payload: dict, mode: str, available: list[Available]) -> Avail
     model_id = payload.get("model")
     if model_id in (None, ""):
         chosen = models.default(available, mode)
+        if chosen is None:
+            raise ValidationError(
+                f"Режим «{MODE_LABELS[mode]}» не умеет ни одна включённая модель — включи её во вкладке «Настройки»."
+            )
     else:
         chosen = next((m for m in available if m.id == model_id), None)
         if chosen is None:
-            raise ValidationError("Неизвестная модель.")
+            raise ValidationError(models.unknown(model_id))
     if mode not in chosen.model.modes:
         raise ValidationError(f"{chosen.label} не умеет режим «{MODE_LABELS[mode]}». Выбери другую модель.")
     if not chosen.installed:

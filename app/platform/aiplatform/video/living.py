@@ -54,7 +54,7 @@ def pick_model(available: list[models.Available], model_id: object = None) -> mo
         return model
     model = next((m for m in available if m.id == model_id), None)
     if model is None:
-        raise ValidationError("Неизвестная модель.")
+        raise ValidationError(models.unknown(model_id))
     if model not in fitting:
         raise ValidationError(f"Модель {model.label} не умеет оживлять фото: выбери LTX.")
     if not model.installed:

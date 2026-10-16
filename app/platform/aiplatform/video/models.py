@@ -83,11 +83,19 @@ def resolve(*, models_dir: Path | None, explicit: str, fake: bool) -> list[Avail
     return found
 
 
+def unknown(model_id: object, missing: str = "Неизвестная модель.") -> str:
+    """Почему модели нет в списке: выключена в настройках или такой нет вовсе."""
+    model = next((m for m in CATALOG if m.id == model_id), None)
+    if model:
+        return f"Модель {model.label} выключена — включи её во вкладке «Настройки»."
+    return missing
+
+
 DEFAULT_ID = "ltx-2.5-q4"  # модель по умолчанию везде: вкладка «Видео», живое фото, ролики сценариев
 
 
-def default(found: list[Available]) -> Available:
-    """Заданная в VIDEOGEN_MODEL, иначе DEFAULT_ID, иначе первая установленная."""
+def default(found: list[Available]) -> Available | None:
+    """Заданная в VIDEOGEN_MODEL, иначе DEFAULT_ID, иначе первая установленная; None — все выключены."""
     installed = [m for m in found if m.installed]
     preferred = [m for m in installed if m.id in (CUSTOM_ID, DEFAULT_ID)]
-    return (preferred or installed or found)[0]
+    return (preferred or installed or found or [None])[0]

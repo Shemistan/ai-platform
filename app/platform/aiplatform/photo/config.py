@@ -10,6 +10,7 @@ from pathlib import Path
 
 from aiplatform import config as platform_config
 from aiplatform.config import Config, pick
+from aiplatform.core.settings import Settings
 from aiplatform.photo import models, upscale
 
 DEFAULT_FLUX2_CMD = "Flux2CLI"
@@ -24,6 +25,7 @@ class PhotoConfig:
     flux2_cmd: tuple[str, ...]
     models_dir: Path | None
     low_ram: bool
+    settings: Settings | None = None  # что выключено во вкладке «Настройки»
 
     @property
     def jobs_dir(self) -> Path:
@@ -56,7 +58,9 @@ class PhotoConfig:
         return shutil.which(str(self.mflux_bin / command) if self.mflux_bin else command) is not None
 
     def models(self) -> list[models.Available]:
-        return models.resolve(models_dir=self.models_dir, fake=self.fake)
+        """Модели каталога без выключенных в настройках."""
+        off = self.settings.disabled("photo") if self.settings else set()
+        return [m for m in models.resolve(models_dir=self.models_dir, fake=self.fake) if m.id not in off]
 
 
 def _fake_cmd() -> tuple[str, ...]:
@@ -75,4 +79,5 @@ def load(config: Config) -> PhotoConfig:
         flux2_cmd=flux2_cmd,
         models_dir=Path(models_dir).expanduser(),
         low_ram=platform_config.flag(env, "AIP_LOW_RAM", "PHOTOGEN_LOW_RAM"),
+        settings=config.settings,
     )

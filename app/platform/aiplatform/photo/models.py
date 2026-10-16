@@ -144,11 +144,22 @@ def resolve(*, models_dir: Path | None, fake: bool) -> list[Available]:
     return found
 
 
-def default(found: list[Available], mode: str = TXT2IMG) -> Available:
-    """Модель по умолчанию для режима: установленная, по возможности — рекомендованная для него."""
+def default(found: list[Available], mode: str = TXT2IMG) -> Available | None:
+    """Модель по умолчанию для режима: установленная, по возможности — рекомендованная для него.
+
+    None — режим не умеет ни одна модель: все такие выключены в настройках.
+    """
     fits = [m for m in found if mode in m.model.modes]
     ready = [m for m in fits if m.installed]
-    return next((m for m in ready if mode in m.model.default_for), (ready or fits)[0])
+    return next((m for m in ready if mode in m.model.default_for), (ready or fits or [None])[0])
+
+
+def unknown(model_id: object, missing: str = "Неизвестная модель.") -> str:
+    """Почему модели нет в списке: выключена в настройках или такой нет вовсе."""
+    model = next((m for m in CATALOG if m.id == model_id), None)
+    if model:
+        return f"Модель {model.label} выключена — включи её во вкладке «Настройки»."
+    return missing
 
 
 def setup_line(model: Model) -> str:

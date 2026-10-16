@@ -12,6 +12,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from aiplatform.core import settings as settings_module
+from aiplatform.core.settings import Settings
+
 DEFAULT_PORT = 8780
 DEFAULT_MODELS_DIR = "/Volumes/External SSD/local_models"
 FONT_CANDIDATES = (
@@ -54,6 +57,10 @@ class Config:
     @property
     def uploads_dir(self) -> Path:
         return self.data_dir / "uploads"
+
+    @property
+    def settings(self) -> Settings:
+        return settings_module.at(self.data_dir)
 
 
 def default_font() -> str:
