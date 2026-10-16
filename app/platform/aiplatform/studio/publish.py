@@ -157,9 +157,10 @@ def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, st
     for name, value in fields.items():
         parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     for name, path in files.items():
+        ctype = "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "video/mp4"
         head = (
             f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{path.name}"\r\n'
-            f"Content-Type: video/mp4\r\n\r\n"
+            f"Content-Type: {ctype}\r\n\r\n"
         )
         parts.append(head.encode() + path.read_bytes() + b"\r\n")
     parts.append(f"--{boundary}--\r\n".encode())
@@ -177,8 +178,14 @@ def publish(
     width: int = 0,
     height: int = 0,
     seconds: float = 0.0,
+    cover: Path | None = None,
+    thumb: Path | None = None,
 ) -> dict:
-    """Отправить видео в канал; результат — {channel, ok, message, files?}."""
+    """Отправить видео в канал; результат — {channel, ok, message, files?}.
+
+    cover и thumb — обложка видео (первый кадр с плеем и плашкой) и её миниатюра:
+    без них Telegram сам берёт случайный кадр.
+    """
     if channel.type == MANUAL:
         target = out_dir / channel.id
         target.mkdir(parents=True, exist_ok=True)
@@ -207,7 +214,13 @@ def publish(
         fields |= {"width": str(width), "height": str(height)}
     if seconds:
         fields["duration"] = str(int(round(seconds)))
-    body, ctype = multipart(fields, {"video": video})
+    files = {"video": video}
+    if cover is not None:
+        fields["cover"] = "attach://cover"
+        files["cover"] = cover
+    if thumb is not None:
+        files["thumbnail"] = thumb
+    body, ctype = multipart(fields, files)
     answer = http_post(f"{TELEGRAM_API}/bot{token}/sendVideo", body, ctype)
     if not answer.get("ok"):
         description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")

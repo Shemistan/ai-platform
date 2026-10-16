@@ -19,6 +19,7 @@ from aiplatform.studio.llm import StudioError
 
 NARRATION = "narration.md"
 POST = "post.md"
+IMAGE_PROMPT = "image_prompt.md"  # промпт обложки: сцена по событиям дня и заголовки на картинке
 _WHERE = re.compile(r"Озвучить:\s+(.+?" + re.escape(NARRATION) + r")")
 INSTALL_HINT = "Нужен narrator (07_offline_text-to-word) и claude CLI; путь — AIP_NARRATOR_DIR."
 

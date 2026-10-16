@@ -47,6 +47,7 @@ SETTING_STEPS = {
     "channels": "publish",
     "auto_publish": "publish",
     "disclaimers": ("render", "short"),
+    "branding": ("render", "short"),
     "review_text": None,
 }
 # Правка файла на странице → (файл, шаг, чей это результат).
@@ -122,6 +123,7 @@ class StudioModule:
             "shorts": False,
             "review_text": False,
             "disclaimers": True,
+            "branding": False,
             "auto_publish": False,
             "channels": [],
         }
@@ -175,7 +177,7 @@ class StudioModule:
             raise bad_request("voice_mode — tts или upload.")
         if out["upscale_images"] not in UPSCALE_CHOICES:
             raise bad_request("upscale_images — none, 2k или 4k.")
-        for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers"):
+        for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding"):
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
         engine = voices.ENGINES.get(out["engine"])
@@ -212,7 +214,9 @@ class StudioModule:
         scenario = payload.get("scenario")
         if scenario not in SCENARIOS:
             raise bad_request("Сценарий — digest или article.")
-        settings = self.check_settings(payload.get("settings"), self.defaults())
+        # Оформление канала (плашка «подпишись», плей) — по умолчанию у дайджеста, как в narrator.
+        base = self.defaults() | {"branding": scenario == "digest"}
+        settings = self.check_settings(payload.get("settings"), base)
         title = " ".join(str(payload.get("title") or "").split())[:200]
         extra: dict = {"auto_title": not title}
         if scenario == "digest":

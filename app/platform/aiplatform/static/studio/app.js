@@ -158,7 +158,13 @@ function settingsForm(values, prefix) {
     h(
       "fieldset",
       {},
-      h("legend", {}, "Пометки"),
+      h("legend", {}, "Оформление"),
+      check(
+        "branding",
+        "Плашка «подпишись» и кнопка «плей»",
+        "Первый кадр — обложка: постер притемнён, по центру плей, внизу крупная плашка; дальше плашка плавно уезжает в угол и остаётся до конца. Этот кадр — обложка видео в Telegram.",
+        values.branding,
+      ),
       check(
         "disclaimers",
         "Помечать запрещённые в РФ организации",
@@ -195,6 +201,7 @@ function readSettings(prefix) {
     shorts: get("shorts").checked,
     review_text: get("review_text").checked,
     disclaimers: get("disclaimers").checked,
+    branding: get("branding").checked,
     auto_publish: get("auto_publish").checked,
     channels: [...document.querySelectorAll(`input[name="${prefix}-channels"]:checked`)].map((i) => i.value),
   };

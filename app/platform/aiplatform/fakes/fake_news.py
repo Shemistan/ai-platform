@@ -1,8 +1,9 @@
 """Имитация сбора новостей narrator для демо и тестов.
 
-`collect --root R --date D` пишет R/D/digest/narration.md и post.md, как
-`make news DAY=D`; `where --root R --date D` печатает строку «Озвучить: …»,
-как `narrate news where`. FAKE_NEWS_EMPTY=1 — выпуск не собрался.
+`collect --root R --date D` пишет R/D/digest/narration.md, post.md и
+image_prompt.md (промпт обложки), как `make news DAY=D`; FAKE_NEWS_COVER=1 —
+ещё и готовую cover.png. `where --root R --date D` печатает строку
+«Озвучить: …», как `narrate news where`. FAKE_NEWS_EMPTY=1 — выпуск не собрался.
 """
 
 from __future__ import annotations
@@ -20,6 +21,10 @@ NEWS = (
     "На этом всё. Подписывайтесь на канал, чтобы не пропустить завтрашний выпуск.",
 )
 POST = "**Дайджест дня**\n\n— релиз Go\n— сбой в облаке\n— локальная генерация видео\n"
+IMAGE_PROMPT = (
+    "Create a square 1:1 poster for the cover of a developer news digest. The Go gopher catches a falling cloud.\n"
+    'Title: "Дайджест разработчика"\nHeadlines:\n- "Go: новый релиз"\n- "Облако упало"\n'
+)
 
 
 def folder(root: Path, day: str) -> Path:
@@ -42,6 +47,11 @@ def main(argv: list[str] | None = None) -> int:
         d.mkdir(parents=True, exist_ok=True)
         (d / "narration.md").write_text("\n\n".join(NEWS) + "\n", encoding="utf-8")
         (d / "post.md").write_text(POST, encoding="utf-8")
+        (d / "image_prompt.md").write_text(IMAGE_PROMPT, encoding="utf-8")
+        if os.environ.get("FAKE_NEWS_COVER"):
+            from fake_gen import write_png  # запускается скриптом из каталога fakes
+
+            write_png(str(d / "cover.png"), 96, 96, 3)
         return 0
     if not (d / "narration.md").exists():
         print(f"Дайджеста за {args.date} нет")

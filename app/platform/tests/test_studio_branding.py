@@ -1,0 +1,132 @@
+"""Оформление выпуска как у narrator: обложка дайджеста из его промпта, плей и плашка «подпишись»."""
+
+import os
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from aiplatform.core import media
+from aiplatform.fakes import fake_news
+from aiplatform.studio import publish, render
+from aiplatform.studio.config import ASSETS
+from tests.test_studio_flow import FAST, NEEDS_FFMPEG, StudioCase, png_bytes
+
+BRANDING = render.Branding(sticker=ASSETS / "subscribe.png", play=ASSETS / "play.png")
+
+
+class StickerTest(unittest.TestCase):
+    def test_assets_are_png_with_size(self):
+        self.assertEqual(render.png_size(BRANDING.sticker), (1200, 400))
+        self.assertAlmostEqual(BRANDING.ratio, 3.0)
+        with tempfile.NamedTemporaryFile(suffix=".png") as bad:
+            bad.write(b"not a png at all, honestly....")
+            bad.flush()
+            with self.assertRaisesRegex(Exception, "не PNG"):
+                render.png_size(Path(bad.name))
+
+    def test_boxes_bottom_then_corner(self):
+        lay = render.layout(render.LANDSCAPE)
+        bottom, corner = render.sticker_boxes(lay, 3.0)
+        self.assertEqual(bottom.width, 908)  # не выше 28 % кадра: 1080 × 0,28 × 3
+        self.assertEqual((bottom.x, bottom.y), ((1920 - 908) // 2, 1080 - 303 - 32))
+        self.assertEqual((corner.width, corner.x, corner.y), (460, 1920 - 460 - 32, 32))
+        bottom, corner = render.sticker_boxes(render.layout(render.VERTICAL), 3.0)
+        self.assertEqual((bottom.width, corner.width), (994, 540))
+
+    def test_ease_is_smoothstep_in_time(self):
+        p = "min(1,max(0,(t-0.800)/1.000))"
+        self.assertEqual(render._ease(0.8, 1.0), f"({p})*({p})*(3-2*({p}))")
+
+
+@NEEDS_FFMPEG
+class RenderBrandingTest(unittest.TestCase):
+    def test_poster_and_slide_with_branding(self):
+        renderer = render.Renderer("ffmpeg", "", scale=0.25)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            square = folder / "cover.png"
+            square.write_bytes(png_bytes())
+            cancel = threading.Event()
+            poster = renderer.poster_clip(square, folder / "p.mp4", 3.0, render.LANDSCAPE, cancel, BRANDING)
+            self.assertEqual(media.video_size(poster), (480, 270))
+            self.assertAlmostEqual(media.duration(poster), 3.0, delta=0.1)
+            slide = renderer.slide_clip(
+                title="Т", bullets=[], image=None, out=folder / "s.mp4", seconds=1.0,
+                orientation=render.VERTICAL, cancel=cancel, branding=BRANDING,
+            )  # fmt: skip
+            self.assertEqual(media.video_size(slide), (270, 480))
+            renderer.cover_frames(poster, folder / "c.jpg", folder / "t.jpg", cancel)
+            self.assertLessEqual(max(media.video_size(folder / "t.jpg")), 320)
+
+
+class TelegramCoverTest(unittest.TestCase):
+    def test_cover_and_thumbnail_are_attached(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            video, cover, thumb = folder / "v.mp4", folder / "v-cover.jpg", folder / "v-thumb.jpg"
+            for path in (video, cover, thumb):
+                path.write_bytes(b"data")
+            channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@x", token_env="AIP_TEST_TG")
+            sent = {}
+
+            def fake_post(url, body, ctype):
+                sent["body"] = body
+                return {"ok": True, "result": {"message_id": 1}}
+
+            with mock.patch.dict(os.environ, {"AIP_TEST_TG": "1:S"}):
+                publish.publish(
+                    channel, video=video, title="Т", post="П", out_dir=folder, http_post=fake_post,
+                    cover=cover, thumb=thumb,
+                )  # fmt: skip
+        body = sent["body"]
+        self.assertIn(b'name="cover"\r\n\r\nattach://cover', body)
+        self.assertIn(b'name="cover"; filename="v-cover.jpg"\r\nContent-Type: image/jpeg', body)
+        self.assertIn(b'name="thumbnail"; filename="v-thumb.jpg"', body)
+        self.assertIn(b'name="video"; filename="v.mp4"\r\nContent-Type: video/mp4', body)
+
+
+@NEEDS_FFMPEG
+class DigestBrandingTest(StudioCase):
+    def test_digest_uses_narrator_prompt_and_branding(self):
+        project = self.create(scenario="digest", day="2026-10-01", run=True)
+        self.assertTrue(project["settings"]["branding"], "у дайджеста оформление по умолчанию")
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["render"], "done", done["log"])
+        self.assertEqual(done["artifacts"]["poster_prompt"].strip(), fake_news.IMAGE_PROMPT.strip())
+        self.assertIn("промпт обложки — из выпуска narrator", "\n".join(done["log"]))
+        _, photos = self.json("GET", "/api/photo/jobs")
+        poster_job = photos["jobs"][-1]  # история — новые сверху: постер ставится первым
+        self.assertEqual((poster_job["width"], poster_job["height"]), (1024, 1024))
+        folder = self.folder(project["id"])
+        self.assertTrue((folder / "video-cover.jpg").is_file())
+        self.assertTrue((folder / "video-thumb.jpg").is_file())
+        voice_s = media.duration(folder / "voice.mp3")
+        self.assertAlmostEqual(media.duration(folder / "video.mp4"), voice_s, delta=0.6)
+
+    def test_article_has_no_branding_by_default(self):
+        project = self.create(scenario="article", text="Заголовок\n\nПервый абзац. Второе предложение.", run=True)
+        self.assertFalse(project["settings"]["branding"])
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["render"], "done", done["log"])
+        self.assertFalse((self.folder(project["id"]) / "video-cover.jpg").exists())
+
+
+@NEEDS_FFMPEG
+class DigestNarratorCoverTest(StudioCase):
+    process_env = FAST | {"FAKE_NEWS_COVER": "1"}
+
+    def test_ready_cover_from_narrator_is_the_poster(self):
+        project = self.create(scenario="digest", day="2026-10-03", run=True)
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["poster"], "done", done["log"])
+        self.assertIn("постер — готовая обложка выпуска narrator", "\n".join(done["log"]))
+        folder = self.folder(project["id"])
+        self.assertEqual((folder / "poster.png").read_bytes(), (folder / "narrator" / "cover.png").read_bytes())
+        _, photos = self.json("GET", "/api/photo/jobs")
+        self.assertTrue(all(job["width"] != 1024 or job["height"] != 1024 for job in photos["jobs"]))
+
+
+if __name__ == "__main__":
+    unittest.main()
