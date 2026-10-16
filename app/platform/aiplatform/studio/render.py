@@ -34,6 +34,8 @@ from aiplatform.studio.llm import StudioError
 
 LANDSCAPE, VERTICAL = "landscape", "vertical"
 SIZES = {LANDSCAPE: (1920, 1080), VERTICAL: (1080, 1920)}
+# Кроме двух раскладок — любой кадр строкой «ШxВ»: видео дайджеста в пропорциях постера, как у narrator.
+POSTER_SIDE = 1080  # ширина кадра «как постер» — как VIDEO_SIDE у narrator
 FPS = 25
 ZOOM_PER_FRAME = 0.0007
 ZOOM_MAX = 1.18
@@ -47,7 +49,7 @@ FADE_S = 0.5  # притемнение и плей гаснут
 COVER_SHADE = 0.6  # притемнение обложки, чтобы плей не терялся в картинке
 PLAY_SHARE = 0.26  # кнопка — доля короткой стороны кадра, как у narrator
 STICKER_BOTTOM = (0.92, 0.28)  # плашка на обложке: доля ширины, не выше доли высоты
-STICKER_CORNER = {"landscape": 0.24, "vertical": 0.5}  # плашка в углу: доля ширины
+STICKER_CORNER = {"landscape": 0.24, "square": 0.32, "vertical": 0.5}  # плашка в углу: доля ширины
 MARGIN = 0.03  # отступ от края — доля короткой стороны
 FFMPEG_HINT = "Нужен ffmpeg: brew install ffmpeg (или путь в AIP_FFMPEG)."
 
@@ -100,7 +102,7 @@ def sticker_boxes(lay: Layout, ratio: float) -> tuple[Box, Box]:
     w, h = lay.width, lay.height
     margin = round(min(w, h) * MARGIN)
     big = _even(min(w * STICKER_BOTTOM[0], h * STICKER_BOTTOM[1] * ratio))
-    corner = _even(w * STICKER_CORNER[VERTICAL if h > w else LANDSCAPE])
+    corner = _even(w * STICKER_CORNER[shape(w, h)])
     bottom = Box(big, (w - big) // 2, h - round(big / ratio) - margin)
     return bottom, Box(corner, w - corner - margin, margin)
 
@@ -111,9 +113,44 @@ def _ease(start: float, seconds: float) -> str:
     return f"({p})*({p})*(3-2*({p}))"
 
 
+def shape(w: int, h: int) -> str:
+    """Вид кадра для долей плашки: вытянутый вверх, квадратный (±20 %) или широкий."""
+    if h > w * 1.2:
+        return VERTICAL
+    return LANDSCAPE if w > h * 1.2 else "square"
+
+
+def frame(width: int, height: int) -> str:
+    """Кадр «как постер»: ширина POSTER_SIDE, пропорции картинки (не уже 9:16 и не шире 16:9)."""
+    if width <= 0 or height <= 0:
+        return f"{POSTER_SIDE}x{POSTER_SIDE}"
+    ratio = min(max(height / width, 9 / 16), 16 / 9)
+    return f"{POSTER_SIDE}x{_even(POSTER_SIDE * ratio)}"
+
+
+def size_of(orientation: str) -> tuple[int, int]:
+    if orientation in SIZES:
+        return SIZES[orientation]
+    w, _, h = orientation.partition("x")
+    try:
+        return int(w), int(h)
+    except ValueError as exc:
+        raise StudioError(f"Кадр {orientation!r}: ждём landscape, vertical или ШxВ.") from exc
+
+
 def layout(orientation: str, scale: float = 1.0) -> Layout:
-    w, h = SIZES[orientation]
+    w, h = size_of(orientation)
     w, h = _even(w * scale), _even(h * scale)
+    if orientation not in SIZES:  # свой кадр: размеры от короткой стороны, знаков — сколько влезет
+        side = min(w, h)
+        title, bullet, margin = round(side * 0.055), round(side * 0.036), round(w * 0.06)
+        note = max(round(side * 0.017), 8)
+        room = w - 2 * margin
+        return Layout(
+            w, h, title, bullet, margin, round(h * 0.58), round(h * 0.36),
+            max(int(room / (title * 0.55)), 10), max(int(room / (bullet * 0.55)), 14),
+            note, max(int(room / (note * 0.52)), 30),
+        )  # fmt: skip
     if orientation == VERTICAL:
         title, bullet, margin = round(h * 0.036), round(h * 0.024), round(w * 0.07)
         top = round(h * 0.58)

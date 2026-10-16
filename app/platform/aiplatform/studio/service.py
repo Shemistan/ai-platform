@@ -50,6 +50,7 @@ SETTING_STEPS = {
     "disclaimers": ("render", "short"),
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
+    "frame": ("images", "render"),
     "review_text": None,
 }
 # Правка файла на странице → (файл, шаг, чей это результат).
@@ -178,6 +179,7 @@ class StudioModule:
             "disclaimers": True,
             "branding": False,
             "tempo": 1.0,
+            "frame": "landscape",
             "auto_publish": False,
             "channels": [],
         }
@@ -229,6 +231,8 @@ class StudioModule:
             raise bad_request("clips_mode — local или upload.")
         if out["voice_mode"] not in VOICE_MODES:
             raise bad_request("voice_mode — tts или upload.")
+        if out["frame"] not in steps.FRAMES:
+            raise bad_request("frame — landscape, square или poster.")
         if out["upscale_images"] not in UPSCALE_CHOICES:
             raise bad_request("upscale_images — none, 2k или 4k.")
         for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding"):
@@ -276,7 +280,7 @@ class StudioModule:
         # из ChatGPT по промпту выпуска — постер загружает человек.
         base = self.defaults()
         if scenario == "digest":
-            base |= {"branding": True, "poster_mode": "upload", "tempo": 1.25}
+            base |= {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster"}
             usual = [c.id for c in self.channels() if c.id == DIGEST_CHANNEL]  # VOICE_NEWS narrator
             if usual:
                 base["channels"] = usual

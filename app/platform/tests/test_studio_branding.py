@@ -35,6 +35,22 @@ class StickerTest(unittest.TestCase):
         bottom, corner = render.sticker_boxes(render.layout(render.VERTICAL), 3.0)
         self.assertEqual((bottom.width, corner.width), (994, 540))
 
+    def test_frame_follows_poster(self):
+        self.assertEqual(render.frame(1024, 1024), "1080x1080")
+        self.assertEqual(render.frame(1024, 1536), "1080x1620")
+        self.assertEqual(render.frame(1536, 1024), "1080x720")
+        self.assertEqual(render.frame(100, 1000), "1080x1920", "не уже 9:16")
+        self.assertEqual(render.frame(1000, 100), "1080x608", "не шире 16:9")
+        self.assertEqual(render.frame(0, 0), "1080x1080")
+        lay = render.layout("1080x1080")
+        self.assertEqual((lay.width, lay.height, lay.margin), (1080, 1080, 65))
+        self.assertGreater(lay.title_chars, 20)
+        self.assertEqual(render.layout("1080x1080", 0.25).width, 270)
+        bottom, corner = render.sticker_boxes(lay, 3.0)
+        self.assertEqual(corner.width, 346, "в квадрате плашка в углу — треть ширины, как у narrator")
+        with self.assertRaisesRegex(Exception, "Кадр"):
+            render.layout("квадрат")
+
     def test_ease_is_smoothstep_in_time(self):
         p = "min(1,max(0,(t-0.800)/1.000))"
         self.assertEqual(render._ease(0.8, 1.0), f"({p})*({p})*(3-2*({p}))")
@@ -102,6 +118,11 @@ class DigestBrandingTest(StudioCase):
         folder = self.folder(project["id"])
         self.assertTrue((folder / "video-cover.jpg").is_file())
         self.assertTrue((folder / "video-thumb.jpg").is_file())
+        # Кадр — как постер (квадрат), картинки слайдов — тоже квадратные.
+        self.assertEqual(done["settings"]["frame"], "poster")
+        self.assertEqual(media.video_size(folder / "video.mp4"), (270, 270))  # 1080×1080 при AIP_RENDER_SCALE=0.25
+        self.assertTrue(all((j["width"], j["height"]) == (1024, 1024) for j in photos["jobs"]), photos["jobs"])
+        self.assertIn("кадр 1080×1080", "\n".join(done["log"]))
         # Публикуют на ×1,25, как в narrator: видео короче озвучки во столько же раз.
         self.assertEqual(done["settings"]["tempo"], 1.25)
         voice_s = media.duration(folder / "voice.mp3")
@@ -164,7 +185,8 @@ class DigestNarratorCoverTest(StudioCase):
         folder = self.folder(project["id"])
         self.assertEqual((folder / "poster.png").read_bytes(), (folder / "narrator" / "cover.png").read_bytes())
         _, photos = self.json("GET", "/api/photo/jobs")
-        self.assertTrue(all(job["width"] != 1024 or job["height"] != 1024 for job in photos["jobs"]))
+        slides_n = len(done["artifacts"]["plan"]["slides"])
+        self.assertEqual(len(photos["jobs"]), slides_n, "задачи «Фото» — только картинки слайдов, постер не рисовали")
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ from pathlib import Path
 
 from aiplatform.core import media
 from aiplatform.core.runner import Canceled
-from aiplatform.studio import news, prompts, publish, slides
+from aiplatform.studio import news, prompts, publish, render, slides
 from aiplatform.studio.config import StudioConfig
 from aiplatform.studio.llm import StudioError, complete, extract_json, plain
 from aiplatform.studio.pipeline import Skip, StepContext, Waiting
@@ -47,6 +47,8 @@ IMAGES, CLIPS = "images", "clips"
 MEDIA = {IMAGES: (IMAGE_EXT, "картинки"), CLIPS: (CLIP_EXT, "видео")}
 IMAGE_SIZE = "1344x768"  # 16:9 из размеров вкладки «Фото»
 DIGEST_POSTER_SIZE = "1024x1024"  # обложка дайджеста квадратная, как у narrator: в кадре — целиком
+FRAMES = ("landscape", "square", "poster")  # кадр видео: 16:9, 1:1 или в пропорциях постера
+SQUARE_IMAGE_SIZE = "1024x1024"  # картинки слайдов под кадр, который не 16:9
 NARRATOR_PROMPT = "narrator/image_prompt.md"
 NARRATOR_COVER = "narrator/cover"
 NARRATOR_FOLDER = "narrator/folder.txt"  # каталог выпуска: туда же человек кладёт обложку из ChatGPT
@@ -401,7 +403,8 @@ def step_poster(ctx: StepContext) -> None:
 def step_plan(ctx: StepContext) -> None:
     text = require_text(ctx)
     paras = slides.paragraphs(text)
-    answer = llm(ctx, prompts.plan(paras, ctx.project["title"], slides.max_slides(len(paras))))
+    aspect = "16:9" if ctx.settings.get("frame", "landscape") == "landscape" else "1:1"
+    answer = llm(ctx, prompts.plan(paras, ctx.project["title"], slides.max_slides(len(paras)), aspect))
     data = extract_json(answer)
     plan = slides.parse_plan(data, len(paras))
     title = str(data.get("title") or "").strip() if isinstance(data, dict) else ""
@@ -428,6 +431,7 @@ def step_images(ctx: StepContext) -> None:
         return
     model = ctx.settings["image_model"]
     upscale = ctx.settings.get("upscale_images") or "none"
+    size = slide_image_size(ctx)
     photo = services(ctx).photo
     for i, (n, prompt) in enumerate(todo, start=1):
         meta_path = folder / f"{n:02d}.json"
@@ -435,7 +439,12 @@ def step_images(ctx: StepContext) -> None:
         if meta.get("uploaded") and slide_media(folder, n, IMAGES, prompt):
             continue  # свою картинку человек положил сам — не перерисовываем
         target, what = folder / f"{n:02d}.png", f"Картинка слайда {n}"
-        same = meta.get("prompt") == prompt and meta.get("model") == model and target.is_file()
+        same = (
+            meta.get("prompt") == prompt
+            and meta.get("model") == model
+            and meta.get("size", IMAGE_SIZE) == size
+            and target.is_file()
+        )
         if same and meta.get("upscale", "none") == upscale:
             continue
         ctx.progress(f"Картинка {i} из {len(todo)}", 100.0 * (i - 1) / len(todo))
@@ -445,9 +454,23 @@ def step_images(ctx: StepContext) -> None:
         else:
             for old in (folder / f"{n:02d}{ext}" for ext in IMAGE_EXT):
                 old.unlink(missing_ok=True)
-            job_id = generate_image(ctx, prompt, target, what)
-        want = {"prompt": prompt, "model": model, "job": job_id, "upscale": upscale}
+            job_id = generate_image(ctx, prompt, target, what, size)
+        want = {"prompt": prompt, "model": model, "job": job_id, "upscale": upscale, "size": size}
         meta_path.write_text(json.dumps(want, ensure_ascii=False), encoding="utf-8")
+
+
+def slide_image_size(ctx: StepContext) -> str:
+    return IMAGE_SIZE if ctx.settings.get("frame", "landscape") == "landscape" else SQUARE_IMAGE_SIZE
+
+
+def video_frame(ctx: StepContext, poster: Path | None) -> str:
+    """Кадр видео 16:9 из настройки frame: широкий, квадрат или в пропорциях постера (нет постера — квадрат)."""
+    choice = ctx.settings.get("frame", "landscape")
+    if choice == "landscape":
+        return LANDSCAPE
+    if choice == "poster" and poster is not None:
+        return render.frame(*media.video_size(poster, services(ctx).config.ffmpeg))
+    return render.frame(1, 1)
 
 
 def step_clips(ctx: StepContext) -> None:
@@ -574,7 +597,8 @@ def render_video(
     else:
         cover.unlink(missing_ok=True)
         thumb.unlink(missing_ok=True)
-    ctx.log(f"{out.name}: {audio_s:.0f} с, {len(scene_list)} слайдов")
+    size = "×".join(map(str, render.size_of(orientation)))
+    ctx.log(f"{out.name}: {audio_s:.0f} с, {len(scene_list)} слайдов, кадр {size}")
 
 
 def paced(ctx: StepContext, audio: Path) -> Path:
@@ -608,7 +632,8 @@ def step_render(ctx: StepContext) -> None:
     audio = find(ctx.dir, "voice", AUDIO_EXT)
     if audio is None:
         raise StudioError("Нет озвучки — выполни шаг «Озвучка».")
-    render_video(ctx, text=text, plan=plan, audio=audio, out=ctx.path(VIDEO), orientation=LANDSCAPE, cycle=False)
+    orientation = video_frame(ctx, find(ctx.dir, "poster", IMAGE_EXT))
+    render_video(ctx, text=text, plan=plan, audio=audio, out=ctx.path(VIDEO), orientation=orientation, cycle=False)
 
 
 def parse_short(obj: object) -> list[dict]:
