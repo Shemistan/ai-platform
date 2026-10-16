@@ -153,6 +153,13 @@ function fieldsOf(values, prefix) {
         ]),
       ),
     review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
+    draft: () =>
+      check(
+        "draft",
+        "Черновик: без картинок и роликов, кадр вполовину",
+        "Быстро посмотреть структуру и ритм. «Сделать чистовик» дорисует картинки и соберёт видео в полном кадре.",
+        values.draft,
+      ),
   };
 }
 
@@ -197,6 +204,7 @@ function settingsForm(values, prefix) {
   return h(
     "div",
     { class: "settings-form" },
+    f.draft(),
     group("Постер — первый кадр", f.poster_mode()),
     group("Картинки слайдов", f.draw_images(), f.images_mode(), f.image_model(), f.upscale_images()),
     group("Ролики", f.clips(), f.clips_mode(), f.video_model()),
@@ -211,7 +219,7 @@ function settingsForm(values, prefix) {
 const SETTING_NAMES = [
   "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
   "voice_mode", "engine", "shorts", "review_text", "disclaimers", "branding", "tempo", "frame", "auto_publish", "channels",
-  "post_format",
+  "post_format", "draft",
 ]; // prettier-ignore
 // Поля формы поста: остальные настройки у него не меняются.
 const POST_SETTINGS = [
@@ -379,6 +387,34 @@ async function create(event, forceNew = false) {
   }
 }
 
+async function makeFinal() {
+  if (await act("settings", { draft: false })) await act("run", {});
+}
+
+// Длинная статья: серия выпусков по главам или выжимка на 5–8 минут — отдельным выпуском.
+function longTextActions(project) {
+  if (project.scenario !== "article" || !project.preflight?.some((x) => x.text.includes("серии"))) return null;
+  const summary = project.summary || {};
+  return h(
+    "div",
+    { class: "actions" },
+    h("button", { type: "button", class: "secondary", disabled: project.running, onclick: splitProject }, "Разбить на серию"),
+    h("button", { type: "button", class: "secondary", disabled: summary.status === "running", onclick: () => act("summary") }, summary.status === "running" ? "Выжимка пишется…" : "Сделать выжимку"),
+    summary.status === "done" ? h("a", { class: "link", href: `?scenario=article&project=${summary.project}` }, "Открыть выжимку") : null,
+    summary.status === "failed" ? h("span", { class: "job-error" }, summary.error) : null,
+  );
+}
+
+async function splitProject() {
+  try {
+    const { projects } = await api("POST", `${API}/projects/${state.project.id}/split`, {});
+    await loadProjects();
+    await open(projects[0].id);
+  } catch (err) {
+    alertBox(err.message);
+  }
+}
+
 async function cloneProject() {
   try {
     const copy = await api("POST", `${API}/projects/${state.project.id}/clone`);
@@ -482,7 +518,7 @@ const STEP_FIELDS = {
   images: ["draw_images", "images_mode", "image_model", "upscale_images"],
   clips: ["clips", "clips_mode", "video_model"],
   voice: ["voice_mode", "engine"],
-  render: ["frame", "tempo", "branding", "disclaimers"],
+  render: ["draft", "frame", "tempo", "branding", "disclaimers"],
   short: ["shorts", "tempo", "branding", "disclaimers"],
 };
 
@@ -902,6 +938,10 @@ function show(project) {
       running
         ? h("button", { type: "button", class: "secondary", onclick: () => act("cancel") }, "Остановить")
         : h("button", { type: "button", class: "primary", onclick: () => act("run", {}) }, "Запустить всё"),
+      project.settings.draft ? h("span", { class: "status waiting" }, "черновик") : null,
+      project.settings.draft && !running
+        ? h("button", { type: "button", class: "secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: makeFinal }, "Сделать чистовик")
+        : null,
       project.archived ? h("span", { class: "status skipped" }, "в архиве") : null,
       running
         ? null
@@ -936,7 +976,7 @@ function show(project) {
         h("span", { class: "hint" }, "Изменённые настройки сбросят только затронутые шаги."),
       ),
     ),
-    check ? h("div", { class: "panel" }, check) : null,
+    check ? h("div", { class: "panel" }, check, longTextActions(project)) : null,
     h("div", { class: "steps" }, ...project.steps.filter((s) => !HIDDEN_STEPS[project.scenario]?.has(s.id)).map(renderStep)),
     h("div", { class: "panel" }, logBlock(project.log, "Журнал выпуска") || h("p", { class: "muted small" }, "Журнал пуст.")),
   );

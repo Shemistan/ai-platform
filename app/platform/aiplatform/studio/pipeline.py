@@ -424,6 +424,20 @@ class Studio:
             project["steps"][step_id].update(values)
             self._save(project)
 
+    def annotate(self, project_id: str, **fields) -> None:
+        """Поля проекта вне шагов (например, ход выжимки) — можно и во время запуска."""
+        with self._lock:
+            project = self._require(project_id)
+            project.update(fields)
+            self._save(project)
+
+    def log(self, project_id: str, message: str) -> None:
+        with self._lock:
+            self._require(project_id)
+        self._log(project_id, message)
+        with self._lock:
+            self._save(self._projects[project_id])
+
     def _set_title(self, project_id: str, title: str) -> None:
         with self._lock:
             project = self._projects[project_id]

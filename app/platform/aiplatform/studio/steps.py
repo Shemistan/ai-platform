@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import shutil
@@ -67,6 +68,7 @@ MAX_CLIPS = 3  # роликов на выпуск: ключевые момент
 UPSCALE_TARGETS = ("2k", "4k")
 TEMPOS = (0.75, 1.0, 1.25, 1.5, 1.75, 2.0)  # скорость озвучки в видео, как DOWNLOAD_TEMPOS у narrator
 SHORT_WORDS = 140
+DRAFT_SCALE = 0.5  # черновик — половина кадра
 POLL_S = 0.3
 
 
@@ -513,6 +515,8 @@ def step_images(ctx: StepContext) -> None:
     no_slides(ctx)
     if not ctx.settings["draw_images"]:
         raise Skip("Картинки выключены: фон слайдов — градиент.")
+    if ctx.settings.get("draft"):
+        raise Skip("Черновик: без картинок — «Сделать чистовик» нарисует их.")
     _, plan = load_plan(ctx)
     todo = media_prompts(IMAGES, plan)
     folder = ctx.path(IMAGES)
@@ -569,6 +573,8 @@ def step_clips(ctx: StepContext) -> None:
     no_slides(ctx)
     if not ctx.settings.get("clips"):
         raise Skip("Ролики выключены: фон слайдов — картинки с медленным наездом.")
+    if ctx.settings.get("draft"):
+        raise Skip("Черновик: без роликов — «Сделать чистовик» сделает их.")
     _, plan = load_plan(ctx)
     todo = media_prompts(CLIPS, plan)
     folder = ctx.path(CLIPS)
@@ -674,15 +680,22 @@ def render_video(
     marked = [n for n, found in enumerate(notes or [], start=1) if found]
     if marked:
         ctx.log(f"пометки о запрещённых организациях: слайды {', '.join(map(str, marked))}")
+    draft = bool(settings.get("draft"))
     scene_list = scenes(
-        ctx.dir, plan, durations, cycle, images=settings["draw_images"], clips=bool(settings.get("clips")), notes=notes
+        ctx.dir,
+        plan,
+        durations,
+        cycle,
+        images=settings["draw_images"] and not draft,
+        clips=bool(settings.get("clips")) and not draft,
+        notes=notes,
     )
 
     def on_progress(done: int, total: int) -> None:
         ctx.progress(f"Кадры: {done} из {total}", 90.0 * done / total)
 
     ctx.progress("Рисую кадры…", 0.0)
-    svc.renderer.build(
+    renderer(ctx).build(
         poster=poster if intro else None,
         scenes=scene_list,
         audio=audio,
@@ -702,6 +715,12 @@ def render_video(
     size = "×".join(map(str, render.size_of(orientation)))
     ctx.log(f"{out.name}: {audio_s:.0f} с, {len(scene_list)} слайдов, кадр {size}")
     ctx.remember(media_s=round(audio_s, 1))  # для оценки времени следующих сборок
+
+
+def renderer(ctx: StepContext) -> Renderer:
+    """Черновик собирается в половинном кадре: быстро посмотреть структуру и ритм."""
+    base = services(ctx).renderer
+    return dataclasses.replace(base, scale=base.scale * DRAFT_SCALE) if ctx.settings.get("draft") else base
 
 
 def paced(ctx: StepContext, audio: Path) -> Path:
@@ -746,7 +765,7 @@ def render_still(ctx: StepContext) -> None:
     out = ctx.path(VIDEO)
     ctx.progress("Собираю видео: постер под звук…", 10.0)
     orientation = video_frame(ctx, poster)
-    svc.renderer.still(
+    renderer(ctx).still(
         poster=poster, audio=audio, audio_s=audio_s, out=out, orientation=orientation, cancel=ctx.cancel, branding=brand
     )
     cover, thumb = covers(out)

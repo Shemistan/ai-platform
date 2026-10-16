@@ -6,6 +6,7 @@ import hashlib
 import json
 import mimetypes
 import re
+import threading
 import time
 from http import HTTPStatus
 
@@ -16,9 +17,9 @@ from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
-from aiplatform.studio import news, publish, slides, steps
+from aiplatform.studio import news, prompts, publish, series, slides, steps
 from aiplatform.studio.cache import MediaCache, place
-from aiplatform.studio.llm import StudioError
+from aiplatform.studio.llm import StudioError, complete
 from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, blockers, dependents
 from aiplatform.studio.render import Renderer
 from aiplatform.updates import registry
@@ -56,6 +57,7 @@ SETTING_STEPS = {
     "disclaimers": ("render", "short"),
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
+    "draft": ("images", "clips", "render", "short"),  # черновик: без картинок и роликов, половинный кадр
     "frame": "render",  # готовые картинки остаются — кадр берёт их с обрезкой; новые рисуются под кадр
     "review_text": None,
 }
@@ -74,6 +76,7 @@ _FILE = re.compile(
 )
 _SLIDE = re.compile(r"^\d{2}$")
 RATES_TTL_S = 60
+SUMMARY_WORDS = 900  # ~7 минут озвучки
 # Копия выпуска: что не переносится (итоги сборки и публикации) и чьи статусы переносятся.
 CLONE_SKIP = {
     "project.json",
@@ -87,6 +90,13 @@ CLONE_SKIP = {
 CLONE_STEPS = ("text", "poster_prompt", "poster", "plan", "images", "clips", "voice")
 # Группы доски «Выпуски» в порядке показа.
 BOARD_GROUPS = {"attention": "Ждут тебя", "running": "Идут", "published": "Опубликованы", "drafts": "Черновики"}
+
+
+def prose(answer: str) -> str:
+    """Текст ответа LLM абзацами: без ```-обрамления. Пустые строки вывод CLI теряет (runner режет
+    по переводам строк), поэтому каждая непустая строка — свой абзац, как LLM их и пишет."""
+    lines = [ln.strip() for ln in answer.strip().splitlines() if ln.strip() and not ln.strip().startswith("```")]
+    return "\n\n".join(lines)
 
 
 def source_id(scenario: str, *, day: str | None = None, text: str = "") -> str:
@@ -289,6 +299,7 @@ class StudioModule:
             "speed": None,
             "shorts": False,
             "review_text": False,
+            "draft": False,
             "disclaimers": True,
             "branding": False,
             "tempo": 1.0,
@@ -375,7 +386,8 @@ class StudioModule:
             raise bad_request("post_format — video или photo.")
         if out["upscale_images"] not in UPSCALE_CHOICES:
             raise bad_request("upscale_images — none, 2k или 4k.")
-        for key in ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding"):
+        bools = ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding", "draft")
+        for key in bools:
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
         tempo = out["tempo"]
@@ -521,6 +533,72 @@ class StudioModule:
 
         self.studio.update(copy["id"], apply)
         return self.view(copy["id"])
+
+    # --- длинная статья: серия и выжимка ---
+
+    def _article_source(self, project_id: str) -> tuple[dict, str]:
+        project = self.studio.get(project_id)
+        if project is None:
+            raise not_found("Проект не найден.")
+        if project["scenario"] != "article":
+            raise bad_request("Серия и выжимка — для выпусков «Видео по статье».")
+        text = _read_text(self.studio.project_dir(project_id) / steps.TEXT).strip()
+        if not text:
+            raise bad_request("Нет текста статьи.")
+        return project, text
+
+    def split(self, project_id: str, payload: object) -> dict:
+        """Серия: по выпуску на часть (по главам, ~8 мин), с теми же настройками. Исходный — в архив."""
+        project, text = self._article_source(project_id)
+        parts = series.split(text)
+        if len(parts) < 2:
+            raise bad_request("Статья и так короткая — делить нечего.")
+        run = isinstance(payload, dict) and payload.get("run") is True
+        created = []
+        for n, part in enumerate(parts, start=1):
+            title = f"{project['title']} — часть {n} из {len(parts)}"
+            if part.title:
+                title += f": {part.title}"
+            extra = {"auto_title": False, "source": source_id("article", text=part.text), "series_of": project_id}
+            new = self.studio.create("article", title[:200], project["settings"], extra)
+            (self.studio.project_dir(new["id"]) / steps.TEXT).write_text(part.text + "\n", encoding="utf-8")
+            if run:
+                self.studio.run(new["id"])
+            created.append({"id": new["id"], "title": new["title"], "words": part.words})
+        if not project["running"]:
+            self.studio.archive(project_id, True)
+        return {"projects": created}
+
+    def summarize(self, project_id: str) -> dict:
+        """Выжимка: LLM в фоне пишет текст на 5–8 минут, из него — новый выпуск. Ход — в журнале исходного."""
+        project, text = self._article_source(project_id)
+        if (project.get("summary") or {}).get("status") == "running":
+            raise HttpError(HTTPStatus.CONFLICT, "Выжимка уже пишется.")
+        self.studio.annotate(project_id, summary={"status": "running"})
+        self.studio.log(project_id, "Выжимка: LLM пишет текст на 5–8 минут…")
+
+        def work() -> None:
+            try:
+                answer = complete(
+                    prompts.summary(text, project["title"], SUMMARY_WORDS),
+                    cmd=self.config.llm_cmd,
+                    cancel=threading.Event(),
+                )
+                short = prose(answer)
+                if len(short.split()) < 50:
+                    raise StudioError("LLM вернула слишком короткую выжимку.")
+                extra = {"auto_title": False, "source": source_id("article", text=short), "summary_of": project_id}
+                title = f"{project['title']} — коротко"[:200]
+                new = self.studio.create("article", title, project["settings"], extra)
+                (self.studio.project_dir(new["id"]) / steps.TEXT).write_text(short + "\n", encoding="utf-8")
+                self.studio.annotate(project_id, summary={"status": "done", "project": new["id"]})
+                self.studio.log(project_id, f"Выжимка готова: {len(short.split())} слов — выпуск «{title}».")
+            except StudioError as exc:
+                self.studio.annotate(project_id, summary={"status": "failed", "error": str(exc)})
+                self.studio.log(project_id, f"Выжимка: {exc}")
+
+        threading.Thread(target=work, name=f"summary-{project_id}", daemon=True).start()
+        return self.view(project_id)
 
     def view(self, project_id: str) -> dict:
         project = self.studio.get(project_id)
@@ -886,6 +964,10 @@ class StudioModule:
                 return req.send_json(self.check_draft(req.json(MAX_BODY)))
             case ("GET", ["board"]):
                 return req.send_json(self.board(archived=req.arg("archived") in ("1", "true")))
+            case ("POST", ["projects", pid, "split"]):
+                return req.send_json(self.split(pid, req.json() or {}), HTTPStatus.CREATED)
+            case ("POST", ["projects", pid, "summary"]):
+                return req.send_json(self.summarize(pid), HTTPStatus.ACCEPTED)
             case ("POST", ["projects", pid, "clone"]):
                 return req.send_json(self.clone(pid), HTTPStatus.CREATED)
             case ("POST", ["projects", pid, "archive"]):
