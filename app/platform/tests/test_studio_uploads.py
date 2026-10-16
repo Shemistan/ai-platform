@@ -78,8 +78,9 @@ class ExternalImagesTest(StudioCase):
         self.assertEqual(self.statuses(waiting)["images"], "waiting", waiting["log"])
         self.assertEqual(self.json("GET", "/api/photo/jobs")[1]["jobs"], [], "локальная модель не запускалась")
 
-        rows = waiting["slides"]
-        self.assertEqual([s["key"] for s in rows], ["01", "02", "03", "04"])
+        # Картинки нужны только слайдам-картинкам: динамические рисует сборка.
+        rows = [s for s in waiting["slides"] if s["image_prompt"]]
+        self.assertEqual([s["key"] for s in rows], ["01", "03", "05", "07"])
         self.assertTrue(all(s["image_prompt"] for s in rows))
         self.assertEqual(
             [bool(s["video_prompt"]) for s in rows], [False, True, True, True], "ролики — ключевые моменты"
@@ -93,7 +94,7 @@ class ExternalImagesTest(StudioCase):
         self.assertIsNotNone(view["slides"][0]["image"])
         self.assertEqual(self.call("GET", view["slides"][0]["image"])[0], 200)
 
-        for key in ("02", "03", "04"):
+        for key in ("03", "05", "07"):
             status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/{key}", png_bytes())
         self.assertEqual(self.statuses(view)["images"], "done", "все на месте — шаг готов сам")
         self.json("POST", f"/api/studio/projects/{pid}/run", {})
@@ -104,7 +105,7 @@ class ExternalImagesTest(StudioCase):
         # Замена картинки готового выпуска — видео пересобирается само.
         video = self.folder(pid) / "video.mp4"
         before = video.stat().st_mtime_ns
-        status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/02", png_bytes())
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/03", png_bytes())
         self.assertEqual((status, self.statuses(view)["images"]), (200, "done"))
         rebuilt = self.settle(pid)
         self.assertEqual(self.statuses(rebuilt)["render"], "done", rebuilt["log"])
@@ -122,7 +123,7 @@ class ExternalImagesTest(StudioCase):
         self.assertEqual(status, 200)
         done = self.settle(pid)
         self.assertEqual(self.statuses(done)["render"], "done", done["log"])
-        self.assertTrue(any("без картинки: слайды 1, 2, 4" in line for line in done["log"]), done["log"])
+        self.assertTrue(any("без картинки: слайды 1, 5, 7" in line for line in done["log"]), done["log"])
 
 
 @NEEDS_FFMPEG
@@ -137,12 +138,12 @@ class ExternalClipsTest(StudioCase):
         self.assertIn("готово 0 из 3", clips_step["note"])
 
         clip = clip_bytes()
-        for key in ("02", "03", "04"):
+        for key in ("03", "05", "07"):
             status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/clips/{key}", clip)
             self.assertEqual(status, 200, view)
         self.assertEqual(self.statuses(view)["clips"], "done")
         self.assertIsNone(view["slides"][0]["clip"], "первому слайду ролик не нужен")
-        self.assertEqual(self.call("GET", view["slides"][1]["clip"])[0], 200)
+        self.assertEqual(self.call("GET", view["slides"][2]["clip"])[0], 200)
 
         self.json("POST", f"/api/studio/projects/{pid}/run", {})
         done = self.settle(pid)
@@ -201,7 +202,7 @@ class UploadWhileRunningTest(StudioCase):
         status, err = self.json("POST", f"/api/studio/projects/{pid}/upload/voice", b"ID3" + b"\0" * 64)
         self.assertEqual(status, 409, err)
         self.assertIn("Озвучка", err["error"])
-        for key in ("01", "02", "03", "04"):
+        for key in ("01", "03", "05", "07"):
             status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/{key}", png_bytes())
             self.assertEqual(status, 200, view)
 
@@ -240,7 +241,7 @@ class LocalClipsTest(StudioCase):
         self.assertEqual(len(videos["jobs"]), 3, "ролики — только в ключевых моментах, не на каждый слайд")
         job = videos["jobs"][0]
         self.assertEqual((job["duration_s"], job["width"], job["height"], job["frames"]), (5, 704, 448, []))
-        self.assertEqual([bool(s["clip"]) for s in done["slides"]], [False, True, True, True])
+        self.assertEqual([bool(s["clip"]) for s in done["slides"]], [False, False, True, False, True, False, True])
 
         # Повторный запуск шага не перегенерирует готовые ролики.
         self.json("POST", f"/api/studio/projects/{project['id']}/run", {"step": "clips"})

@@ -6,8 +6,8 @@
   poster_prompt.md   — промпт постера (первого кадра)
   poster.png|jpg|webp — постер: сгенерирован локально или загружен
   narrator/image_prompt.md, narrator/cover.* — промпт и картинка обложки из выпуска narrator (дайджест)
-  plan.json          — {title, post, slides: [{para, title, bullets, image_prompt}]}
-  images/NN.png|jpg|webp — картинки слайдов (+ NN.json — каким промптом, uploaded — загрузил человек)
+  plan.json          — {title, post, slides: [{para, sent, kind, title, bullets, image_prompt, …}]} (см. slides.py)
+  images/NN.png|jpg|webp — картинки слайдов-картинок (+ NN.json — каким промптом, uploaded — загрузил человек)
   clips/NN.mp4|mov|webm  — видео-фоны слайдов: из вкладки «Видео» или от человека (+ NN.json)
   voice.mp3|wav|m4a  — озвучка
   video.mp4          — 16:9
@@ -258,10 +258,21 @@ def slide_notes(paras: list[str], plan: list[slides.Slide], entries: list[regist
     """Пометки каждого слайда: об организациях из его абзацев, заголовка и тезисов."""
     out = []
     for n, slide in enumerate(plan):
-        end = plan[n + 1].para if n + 1 < len(plan) else len(paras)
-        said = "\n".join([*paras[slide.para : max(end, slide.para + 1)], slide.title, *slide.bullets])
+        said = "\n".join([slides.spoken(paras, plan, n), slide.title, *slide.bullets, *scene_texts(slide)])
         out.append(registry.notes(said, entries))
     return out
+
+
+def scene_texts(slide: slides.Slide) -> list[str]:
+    """Тексты динамической сцены, которые видно на экране: подписи, шаги, сравнение, цитата."""
+    data = slide.data
+    out = [str(data.get(k) or "") for k in ("label", "text", "author")]
+    out += data.get("steps") or []
+    out += [str(p.get("label") or "") for p in data.get("data") or []]
+    for side in (data.get("left"), data.get("right")):
+        if side:
+            out += [side.get("title") or "", *side.get("items", [])]
+    return [t for t in out if t]
 
 
 def load_plan(ctx: StepContext) -> tuple[dict, list[slides.Slide]]:
@@ -270,7 +281,7 @@ def load_plan(ctx: StepContext) -> tuple[dict, list[slides.Slide]]:
         raise StudioError("Нет плана слайдов — выполни шаг «Слайды».")
     data = json.loads(raw)
     paras = slides.paragraphs(require_text(ctx))
-    return data, slides.parse_plan(data, len(paras))
+    return data, slides.parse_plan(data, paras)
 
 
 # --- шаги ---
@@ -404,9 +415,9 @@ def step_plan(ctx: StepContext) -> None:
     text = require_text(ctx)
     paras = slides.paragraphs(text)
     aspect = "16:9" if ctx.settings.get("frame", "landscape") == "landscape" else "1:1"
-    answer = llm(ctx, prompts.plan(paras, ctx.project["title"], slides.max_slides(len(paras)), aspect))
+    answer = llm(ctx, prompts.plan(paras, ctx.project["title"], slides.target_slides(paras), aspect))
     data = extract_json(answer)
-    plan = slides.parse_plan(data, len(paras))
+    plan = slides.parse_plan(data, paras)
     title = str(data.get("title") or "").strip() if isinstance(data, dict) else ""
     post = str(data.get("post") or "").strip() if isinstance(data, dict) else ""
     out = {"title": title or ctx.project["title"], "post": post, "slides": [s.to_dict() for s in plan]}
@@ -415,7 +426,8 @@ def step_plan(ctx: StepContext) -> None:
         ctx.write(POST, post + "\n")
     if title and ctx.project.get("auto_title"):
         ctx.set_title(title)
-    ctx.log(f"{len(plan)} слайдов")
+    images = sum(s.kind == slides.IMAGE for s in plan)
+    ctx.log(f"{len(plan)} слайдов: {images} с картинкой, {len(plan) - images} динамических")
 
 
 def step_images(ctx: StepContext) -> None:
@@ -549,6 +561,8 @@ def scenes(
                 "clip": pick(CLIPS, n),
                 "notes": notes[n - 1] if notes else [],
                 "seconds": seconds,
+                "kind": slide.kind,
+                "data": slide.data,
             }
         )
     return out
@@ -665,6 +679,7 @@ def step_short(ctx: StepContext) -> None:
     script = "\n\n".join(b["text"] for b in beats) + "\n"
     ctx.write("short/script.md", script)
     audio = speak(ctx, script, ctx.path("short/voice.mp3"), "Озвучка шортса")
+    # Части шортса — картинки основного видео по кругу; нет картинок — крупный заголовок.
     plan = [slides.Slide(para=n, title=b["title"] or f"Часть {n + 1}") for n, b in enumerate(beats)]
     render_video(ctx, text=script, plan=plan, audio=audio, out=ctx.path(SHORT_VIDEO), orientation=VERTICAL, cycle=True)
 

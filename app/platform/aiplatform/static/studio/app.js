@@ -521,6 +521,27 @@ function promptRow(label, prompt, zone) {
   );
 }
 
+// Виды слайдов плана: картинка или динамическая сцена, которую рисует сборка.
+const SLIDE_KINDS = { image: "картинка", bullets: "пункты", stat: "число", chart: "график", flow: "схема", compare: "сравнение", quote: "цитата" };
+
+function slideItems(s) {
+  const num = (p) => `${p.label}: ${p.value}${s.unit ? " " + s.unit : ""}`;
+  switch (s.kind) {
+    case "stat":
+      return [`${s.prefix || ""}${s.value}${s.suffix || ""} — ${s.label || ""}`];
+    case "chart":
+      return (s.data || []).map(num);
+    case "flow":
+      return [(s.steps || []).join(" → ")];
+    case "compare":
+      return [`${s.left?.title || "Было"}: ${(s.left?.items || []).join("; ")}`, `${s.right?.title || "Стало"}: ${(s.right?.items || []).join("; ")}`];
+    case "quote":
+      return [`«${s.text}»${s.author ? " — " + s.author : ""}`];
+    default:
+      return s.bullets || [];
+  }
+}
+
 function mediaRows(kind) {
   const field = kind === "clips" ? "video_prompt" : "image_prompt";
   const fileField = kind === "clips" ? "clip" : "image";
@@ -580,15 +601,20 @@ function stepBody(step) {
       const cards = a.plan.slides.map((s, i) => {
         const key = String(i + 1).padStart(2, "0");
         const img = f.images[key];
+        const kind = s.kind || (s.image_prompt ? "image" : "bullets");
+        const where = `абзац ${s.para + 1}, фраза ${(s.sent || 0) + 1} · ${SLIDE_KINDS[kind] || kind}`;
+        const items = slideItems(s);
         return h(
           "div",
           { class: "slide-card" },
-          img ? h("img", { src: img, alt: "" }) : h("div", { class: "ph" }),
-          h("div", {}, h("strong", {}, s.title), h("div", { class: "para" }, `с абзаца ${s.para + 1}`), s.bullets.length ? h("ul", {}, ...s.bullets.map((b) => h("li", {}, b))) : null),
+          img ? h("img", { src: img, alt: "" }) : h("div", { class: "ph" }, kind === "image" ? "" : SLIDE_KINDS[kind] || ""),
+          h("div", {}, h("strong", {}, s.title), h("div", { class: "para" }, where), items.length ? h("ul", {}, ...items.map((b) => h("li", {}, b))) : null),
         );
       });
+      const dynamic = a.plan.slides.filter((s) => (s.kind || (s.image_prompt ? "image" : "bullets")) !== "image").length;
       return [
         a.plan.title ? h("p", {}, h("span", { class: "muted" }, "Название: "), a.plan.title) : null,
+        h("p", { class: "muted small" }, `${a.plan.slides.length} слайдов: ${a.plan.slides.length - dynamic} с картинкой, ${dynamic} динамических`),
         h("div", { class: "slides-list" }, ...cards),
         h("details", {}, h("summary", { class: "link" }, "Править план (JSON)"), editor("plan", JSON.stringify(a.plan, null, 2), 14, true)),
       ];

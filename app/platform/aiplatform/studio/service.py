@@ -376,8 +376,8 @@ class StudioModule:
     def _plan(folder) -> list[slides.Slide]:
         try:
             data = json.loads((folder / steps.PLAN).read_text(encoding="utf-8"))
-            count = len(slides.paragraphs((folder / steps.TEXT).read_text(encoding="utf-8")))
-            return slides.parse_plan(data, max(count, 1))
+            paras = slides.paragraphs((folder / steps.TEXT).read_text(encoding="utf-8"))
+            return slides.parse_plan(data, paras or 1)
         except (OSError, json.JSONDecodeError, StudioError):
             return []
 
@@ -445,8 +445,7 @@ class StudioModule:
         if name == "plan":
             try:
                 data = json.loads(text)
-                count = len(slides.paragraphs((folder / steps.TEXT).read_text(encoding="utf-8")))
-                plan = slides.parse_plan(data, count)
+                plan = slides.parse_plan(data, slides.paragraphs((folder / steps.TEXT).read_text(encoding="utf-8")))
             except (json.JSONDecodeError, OSError, StudioError) as exc:
                 raise bad_request(f"План не годится: {exc}") from exc
             data = data if isinstance(data, dict) else {"slides": data}

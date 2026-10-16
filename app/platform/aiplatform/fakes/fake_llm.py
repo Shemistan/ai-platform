@@ -2,7 +2,7 @@
 
 Задачу узнаёт по первой строке промпта (`### task: poster|plan|short|registry`)
 и отвечает детерминированно по тексту: промпт постера, план слайдов на
-каждый абзац (до 8), сценарий шортса из первых фраз, реестр организаций —
+каждую фразу (картинки вперемешку с динамическими сценами), сценарий шортса из первых фраз, реестр организаций —
 текущий список плюс одна демо-запись.
 
 Окружение: FAKE_LLM_FAIL=1 — упасть; FAKE_LLM_GARBAGE=1 — ответить не JSON.
@@ -16,6 +16,8 @@ import re
 import sys
 
 _PARA = re.compile(r"^\[(\d+)\]\s*(.+)$", re.M)
+_SENT = re.compile(r"\((\d+)\)\s*(.+?)(?=\s*\(\d+\)\s|$)")
+KINDS = ("image", "bullets", "image", "stat", "image", "chart", "image", "flow", "image", "compare")
 DEMO_ENTRY = {
     "id": "demo-corp",
     "name": "Демо-корпорация",
@@ -32,6 +34,37 @@ def _words(text: str, n: int) -> str:
     return " ".join(words[:n]) + ("…" if len(words) > n else "")
 
 
+def _slide(n: int, para: int, sent: int, text: str) -> dict:
+    """Слайд демо-плана на фразу: виды по кругу — картинка, затем динамическая сцена, и так далее."""
+    words = text.split()
+    kind = KINDS[n % len(KINDS)]
+    out = {"para": para, "sent": sent, "kind": kind, "title": _words(text, 6)}
+    if kind == "image":
+        out["bullets"] = [_words(" ".join(words[6:]), 8)] if len(words) > 6 else []
+        out["image_prompt"] = f"editorial illustration, scene {para}.{sent}: {_words(text, 10)}"
+        # Как просит промпт: ролики — только в ключевых моментах (здесь — у картинок со второго абзаца).
+        out["video_prompt"] = f"slow dolly-in, scene {para}.{sent}: {_words(text, 10)}" if para >= 1 else ""
+    elif kind == "bullets":
+        out["bullets"] = [_words(" ".join(words[i : i + 4]), 4) for i in range(0, min(len(words), 12), 4)]
+    elif kind == "stat":
+        out |= {"value": len(text) % 90 + 10, "suffix": "%", "label": _words(text, 8)}
+    elif kind == "chart":
+        lens = [len(w) for w in words[:5]] or [1, 2]
+        out |= {
+            "chart": "line" if n % 2 else "bar",
+            "unit": "",
+            "data": [{"label": f"{2020 + i}", "value": v} for i, v in enumerate(lens)],
+        }
+    elif kind == "flow":
+        out["steps"] = [_words(w, 1) for w in words[:3]] or ["Шаг"]
+    elif kind == "compare":
+        out |= {
+            "left": {"title": "Было", "items": [_words(text, 3)]},
+            "right": {"title": "Стало", "items": [_words(" ".join(words[3:]) or text, 3)]},
+        }
+    return out
+
+
 def _body(prompt: str) -> str:
     marker = "Текст ролика:" if "Текст ролика:" in prompt else "Текст:"
     return prompt.split(marker, 1)[-1].strip()
@@ -45,22 +78,14 @@ def answer(prompt: str) -> str:
     if os.environ.get("FAKE_LLM_GARBAGE"):
         return "Извини, не могу ответить в JSON."
     if task == "plan":
-        paras = _PARA.findall(prompt)
+        paras = [(num, _SENT.findall(text) or [("0", text)]) for num, text in _PARA.findall(prompt)]
         slides = []
-        for num, text in paras[:8]:
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-            slides.append(
-                {
-                    "para": int(num),
-                    "title": _words(sentences[0] if sentences else text, 7),
-                    "bullets": [_words(s, 9) for s in sentences[1:3]],
-                    "image_prompt": f"editorial illustration, scene {num}: {_words(text, 10)}",
-                    # Как просит промпт: ролики — только в ключевых моментах (здесь — со второго слайда).
-                    "video_prompt": f"slow dolly-in, scene {num}: {_words(text, 10)}" if int(num) >= 1 else "",
-                }
-            )
+        for num, sentences in paras:
+            for sent, text in sentences:
+                slides.append(_slide(len(slides), int(num), int(sent), text.strip()))
+        first = paras[0][1][0][1] if paras else ""
         data = {
-            "title": f"Видео: {_words(paras[0][1], 6) if paras else 'без названия'}",
+            "title": f"Видео: {_words(first, 6) if paras else 'без названия'}",
             "post": "**Главное** за день.",
             "slides": slides,
         }

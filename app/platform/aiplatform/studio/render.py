@@ -1,11 +1,12 @@
 """Сборка видео ffmpeg'ом: постер, «живые» слайды под озвучку, склейка со звуком.
 
-Слайд — видео-фон (ролик из внешней модели: по кругу, без своего звука) или
-картинка-фон с медленным наездом (zoompan), затемнение снизу,
-заголовок и тезисы, которые появляются по очереди (drawtext с alpha по
-времени), и мелкая пометка внизу кадра — о запрещённой в РФ организации,
-если она упоминается на слайде. Без картинки — тёмный фон с лёгким
-градиентом.
+Слайд-картинка — видео-фон (ролик из внешней модели: по кругу, без своего
+звука) или картинка-фон планами до SHOT_MAX_S секунд, у каждого своё
+движение камеры (zoompan: наезд, панорама, отъезд), затемнение снизу,
+заголовок и тезисы, которые появляются по очереди, растянуто по слайду
+(drawtext с alpha по времени). Динамические слайды (и картинка без картинки)
+— тёмный фон и сцена из motion.py. Внизу кадра — мелкая пометка о
+запрещённой в РФ организации, если она упоминается на слайде.
 
 Постер — первый кадр: картинка целиком (не влезла по пропорциям — по бокам
 её же размытая копия). С оформлением (Branding), как у видео narrator:
@@ -21,24 +22,29 @@
 
 from __future__ import annotations
 
+import math
 import struct
 import subprocess
-import textwrap
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from aiplatform.core import runner
+from aiplatform.studio import motion
 from aiplatform.studio.llm import StudioError
+from aiplatform.studio.motion import quote as _quote
+from aiplatform.studio.motion import wrap
+from aiplatform.studio.slides import DYNAMIC, IMAGE
 
 LANDSCAPE, VERTICAL = "landscape", "vertical"
 SIZES = {LANDSCAPE: (1920, 1080), VERTICAL: (1080, 1920)}
 # Кроме двух раскладок — любой кадр строкой «ШxВ»: видео дайджеста в пропорциях постера, как у narrator.
 POSTER_SIDE = 1080  # ширина кадра «как постер» — как VIDEO_SIDE у narrator
 FPS = 25
-ZOOM_PER_FRAME = 0.0007
-ZOOM_MAX = 1.18
+SHOT_MAX_S = 5.0  # дольше план картинки не держится: дальше — следующий план с другим движением
+ZOOM_SHOT = 1.15  # наезд и отъезд плана
+ZOOM_PAN = 1.12  # запас по краям для панорамы
 BACKGROUND = "0x141a26"
 ACCENT = "0x7ea2ff"
 INTRO_S = 2.0
@@ -164,34 +170,50 @@ def _even(value: float) -> int:
     return max(2, int(round(value / 2)) * 2)
 
 
-def wrap(text: str, chars: int, lines: int) -> str:
-    out = textwrap.wrap(" ".join(text.split()), width=chars) or [""]
-    if len(out) > lines:
-        out = out[:lines]
-        out[-1] = out[-1].rstrip(" .,;:") + "…"
-    return "\n".join(out)
+def shots(seconds: float) -> list[int]:
+    """Планы картинки в кадрах: слайд дольше SHOT_MAX_S режется на равные планы не длиннее его."""
+    frames = max(int(seconds * FPS), 1)
+    count = max(1, math.ceil(seconds / SHOT_MAX_S - 1e-9))
+    base = frames // count
+    return [base + (1 if i < frames % count else 0) for i in range(count)]
 
 
-def _quote(path: Path | str) -> str:
-    """Путь в аргументе фильтра ffmpeg: в одинарных кавычках, кавычки и \\ экранированы."""
-    return "'" + str(path).replace("\\", "\\\\").replace("'", r"'\''") + "'"
+def _zoompan(n: int, frames: int, w: int, h: int) -> str:
+    """Движение камеры плана n: наезд, панорама вправо, отъезд, панорама влево — по кругу."""
+    d = max(frames - 1, 1)
+    center_x, center_y = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+    z, x, y = [
+        (f"1+{ZOOM_SHOT - 1}*on/{d}", center_x, center_y),
+        (f"{ZOOM_PAN}", f"(iw-iw/zoom)*on/{d}", center_y),
+        (f"{ZOOM_SHOT}-{ZOOM_SHOT - 1}*on/{d}", center_x, center_y),
+        (f"{ZOOM_PAN}", f"(iw-iw/zoom)*(1-on/{d})", center_y),
+    ][n % 4]
+    return f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={w}x{h}:fps={FPS}"
 
 
 def _background(image: Path | None, lay: Layout, frames: int, clip: Path | None = None) -> tuple[list[str], str]:
-    """Вход и цепочка фильтров фона: видео (по кругу, без звука), картинка с наездом или градиент."""
+    """Вход и цепочка фильтров фона: видео (по кругу, без звука), картинка планами или градиент.
+
+    Картинка — без -loop: один кадр на план, zoompan растягивает его на длину плана."""
     w, h = lay.width, lay.height
     if clip is not None:
         args = ["-stream_loop", "-1", "-i", str(clip)]
         chain = f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={FPS},setsar=1"
         return args, chain
     if image is not None:
-        args = ["-loop", "1", "-framerate", str(FPS), "-i", str(image)]
-        chain = (
-            f"[0:v]scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2},"
-            f"zoompan=z='min(zoom+{ZOOM_PER_FRAME},{ZOOM_MAX})':d={frames}"
-            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps={FPS},setsar=1"
-        )
-        return args, chain
+        args = ["-i", str(image)]
+        cuts = shots(frames / FPS)
+        head = f"[0:v]scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2},setsar=1"
+        if len(cuts) == 1:
+            return args, f"{head},{_zoompan(0, cuts[0], w, h)},setsar=1"
+        names = [f"[s{n}]" for n in range(len(cuts))]
+        graph = [f"{head},split={len(cuts)}{''.join(names)}"]
+        graph += [
+            f"{name}{_zoompan(n, f, w, h)},setpts=PTS-STARTPTS[z{n}]"
+            for n, (name, f) in enumerate(zip(names, cuts, strict=True))
+        ]
+        joined = "".join(f"[z{n}]" for n in range(len(cuts)))
+        return args, ";".join(graph) + f";{joined}concat=n={len(cuts)}:v=1:a=0,setsar=1"
     args = ["-f", "lavfi", "-i", f"color=c={BACKGROUND}:s={w}x{h}:r={FPS}"]
     chain = f"[0:v]drawbox=x=0:y=0:w=iw*0.012:h=ih:color={ACCENT}@0.9:t=fill,setsar=1"
     return args, chain
@@ -223,9 +245,8 @@ def slide_filter(
         f":alpha='min(1,max(0,(t-0.2)/0.5))'"
     )
     y += title_lines * round(lay.title_size * 1.3) + lay.bullet_size
-    step = min(0.7, max(seconds - 1.2, 0.3) / max(len(bullet_files), 1))
-    for n, path in enumerate(bullet_files):
-        appear = 0.8 + n * step
+    # Тезисы — по одному, растянуто на весь слайд: каждые несколько секунд в кадре новое.
+    for path, appear in zip(bullet_files, motion.reveal_times(len(bullet_files), seconds, start=0.8), strict=True):
         lines = path.read_text(encoding="utf-8").count("\n") + 1
         parts.append(
             f"drawtext={font_arg}textfile={_quote(path)}:expansion=none:fontsize={lay.bullet_size}"
@@ -234,16 +255,27 @@ def slide_filter(
         )
         y += lines * round(lay.bullet_size * 1.35) + lay.bullet_size // 2
     if note_file is not None:
-        lines = note_file.read_text(encoding="utf-8").count("\n") + 1
-        size = lay.note_size
-        top = lay.height - round(size * 1.2) - lines * round(size * 1.25)
-        pad = size // 2
-        parts.append(f"drawbox=x=0:y={top - pad}:w=iw:h=ih-{top - pad}:color=black@0.55:t=fill")
-        parts.append(
-            f"drawtext={font_arg}textfile={_quote(note_file)}:expansion=none:fontsize={size}"
-            f":fontcolor=white@0.85:line_spacing={size // 4}:x={lay.margin}:y={top}"
-        )
+        parts += note_parts(lay, font, note_file)
     return ",".join(parts)
+
+
+def note_top(lay: Layout, note_file: Path) -> int:
+    """Верх тёмной полосы пометки внизу кадра."""
+    lines = note_file.read_text(encoding="utf-8").count("\n") + 1
+    size = lay.note_size
+    return lay.height - round(size * 1.2) - lines * round(size * 1.25) - size // 2
+
+
+def note_parts(lay: Layout, font: str, note_file: Path) -> list[str]:
+    """Пометка о запрещённой организации: мелко, во всю ширину внизу, на своей тёмной полосе."""
+    size = lay.note_size
+    band = note_top(lay, note_file)
+    font_arg = f"fontfile={_quote(font)}:" if font else ""
+    return [
+        f"drawbox=x=0:y={band}:w=iw:h=ih-{band}:color=black@0.55:t=fill",
+        f"drawtext={font_arg}textfile={_quote(note_file)}:expansion=none:fontsize={size}"
+        f":fontcolor=white@0.85:line_spacing={size // 4}:x={lay.margin}:y={band + size // 2}",
+    ]
 
 
 @dataclass
@@ -341,24 +373,35 @@ class Renderer:
         clip: Path | None = None,
         notes: list[str] | None = None,
         branding: Branding | None = None,
+        kind: str = IMAGE,
+        data: dict | None = None,
     ) -> Path:
+        """Слайд. kind — вид из плана: картинка (без картинки и ролика — пункты на тёмном фоне)
+        или динамическая сцена; data — её данные."""
         lay = layout(orientation, self.scale)
         work = out.with_suffix("")
         work.mkdir(parents=True, exist_ok=True)
-        title_file = work / "title.txt"
-        title_file.write_text(wrap(title, lay.title_chars, 3), encoding="utf-8")
-        bullet_files = []
-        for n, bullet in enumerate(bullets):
-            path = work / f"bullet{n}.txt"
-            path.write_text(wrap("• " + bullet, lay.bullet_chars, 2), encoding="utf-8")
-            bullet_files.append(path)
+        for old in work.glob("*.txt"):
+            old.unlink()
         note_file = None
         if notes:
             note_file = work / "note.txt"
             note_file.write_text("\n".join(wrap(n, lay.note_chars, 4) for n in notes), encoding="utf-8")
         frames = max(int(seconds * FPS), 1)
-        args, chain = _background(image, lay, frames, clip)
-        text = slide_filter(lay, self.font, title_file, bullet_files, seconds, note_file)
+        if kind in DYNAMIC or (image is None and clip is None):
+            args, chain = _background(None, lay, frames)
+            scene = (data or {}) | {"kind": kind if kind in DYNAMIC else "bullets", "title": title, "bullets": bullets}
+            text = self._dynamic(lay, work, scene, seconds, note_file, branding)
+        else:
+            title_file = work / "title.txt"
+            title_file.write_text(wrap(title, lay.title_chars, 3), encoding="utf-8")
+            bullet_files = []
+            for n, bullet in enumerate(bullets):
+                path = work / f"bullet{n}.txt"
+                path.write_text(wrap("• " + bullet, lay.bullet_chars, 2), encoding="utf-8")
+                bullet_files.append(path)
+            args, chain = _background(image, lay, frames, clip)
+            text = slide_filter(lay, self.font, title_file, bullet_files, seconds, note_file)
         graph = f"{chain},{text},format=yuv420p[v]"
         if branding is not None:  # плашка «подпишись» в углу — весь слайд
             args += ["-loop", "1", "-framerate", str(FPS), "-i", str(branding.sticker)]
@@ -372,6 +415,24 @@ class Renderer:
         argv += ["-an", str(out)]
         self._run(argv, cancel, "слайд")
         return out
+
+    def _dynamic(
+        self, lay: Layout, work: Path, scene: dict, seconds: float, note_file: Path | None, branding: Branding | None
+    ) -> str:
+        """Фильтры динамической сцены: сверху — место под плашку канала, снизу — под пометку."""
+        w, h = lay.width, lay.height
+        top = round(h * (0.1 if w > h else 0.12))
+        if branding is not None:
+            _, corner = sticker_boxes(lay, branding.ratio)
+            top = max(top, corner.y + round(corner.width / branding.ratio) + round(min(w, h) * MARGIN))
+        bottom = round(h * 0.92)
+        if note_file is not None:
+            bottom = min(bottom, note_top(lay, note_file) - round(min(w, h) * MARGIN))
+        canvas = motion.Canvas(w=w, h=h, margin=lay.margin, font=self.font, work=work, top=top, bottom=bottom)
+        parts = [motion.draw(canvas, scene, seconds)]
+        if note_file is not None:
+            parts += note_parts(lay, self.font, note_file)
+        return ",".join(parts)
 
     def concat(self, clips: list[Path], audio: Path, out: Path, seconds: float, cancel: threading.Event) -> Path:
         listing = out.with_suffix(".txt")
@@ -400,7 +461,7 @@ class Renderer:
     ) -> Path:
         """Видео целиком: постер intro_seconds(branding) секунд (если есть), затем сцены.
 
-        Сцена — {title, bullets, image, clip, notes, seconds}.
+        Сцена — {title, bullets, image, clip, notes, seconds, kind, data}.
         """
         work = out.parent / f".{out.stem}-clips"
         work.mkdir(parents=True, exist_ok=True)
@@ -424,6 +485,8 @@ class Renderer:
                     clip=scene.get("clip"),
                     notes=scene.get("notes"),
                     branding=branding,
+                    kind=scene.get("kind") or IMAGE,
+                    data=scene.get("data"),
                     out=work / f"{n:02d}.mp4",
                     seconds=scene["seconds"],
                     orientation=orientation,
