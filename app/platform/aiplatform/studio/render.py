@@ -274,6 +274,15 @@ class Renderer:
         self._run(argv, cancel, "постер")
         return out
 
+    def retime(self, audio: Path, out: Path, tempo: float, cancel: threading.Event) -> Path:
+        """Озвучка в другом темпе, как retime_mp3 у narrator: длина делится на tempo, высота голоса та же."""
+        tmp = out.with_name(out.stem + ".part.mp3")
+        argv = [self.ffmpeg, "-y", "-loglevel", "error", "-i", str(audio), "-filter:a", f"atempo={tempo:g}"]
+        argv += ["-codec:a", "libmp3lame", "-b:a", "128k", str(tmp)]
+        self._run(argv, cancel, f"скорость ×{tempo:g}")
+        tmp.replace(out)
+        return out
+
     def cover_frames(self, video: Path, cover: Path, thumb: Path, cancel: threading.Event) -> None:
         """Первый кадр ролика — обложка для Telegram — и её миниатюра (до 320 px, JPEG)."""
         argv = [self.ffmpeg, "-y", "-loglevel", "error", "-i", str(video), "-frames:v", "1", "-q:v", "3", str(cover)]

@@ -176,6 +176,16 @@ function settingsForm(values, prefix) {
       "fieldset",
       {},
       h("legend", {}, "Публикация"),
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "hint" }, "Скорость в видео — ускоряет озвучку без смены высоты голоса, слайды подстраиваются под неё"),
+        h(
+          "select",
+          { id: id("tempo") },
+          ...[0.75, 1, 1.25, 1.5, 1.75, 2].map((t) => h("option", { value: t, selected: t === Number(values.tempo || 1) }, `×${String(t).replace(".", ",")}`)),
+        ),
+      ),
       ...channels,
       check("auto_publish", "Публиковать сразу, без моей проверки", null, values.auto_publish),
     ),
@@ -202,6 +212,7 @@ function readSettings(prefix) {
     review_text: get("review_text").checked,
     disclaimers: get("disclaimers").checked,
     branding: get("branding").checked,
+    tempo: Number(get("tempo").value),
     auto_publish: get("auto_publish").checked,
     channels: [...document.querySelectorAll(`input[name="${prefix}-channels"]:checked`)].map((i) => i.value),
   };
