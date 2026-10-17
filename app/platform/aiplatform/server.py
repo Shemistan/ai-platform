@@ -64,7 +64,7 @@ SECURITY_HEADERS = (
 NO_AUTH = (("GET", ("api", "health")), ("GET", ("api", "ready")))  # пробы живости — без токена
 LOGIN_PAGE = """<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Вход — AI Platform</title></head>
+<title>Вход — AI Platform</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"></head>
 <body style="font-family:system-ui,sans-serif;max-width:420px;margin:15vh auto;padding:0 16px">
 <h1>AI Platform</h1><p>Нужен токен доступа (AIP_AUTH_TOKEN).</p>
 <form method="get" action="{action}"><input type="password" name="token" autocomplete="current-password"
@@ -462,6 +462,8 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 1 and (STATIC_DIR / parts[0]).is_dir() and not path.endswith("/"):
             return req.redirect(f"/{parts[0]}/")
         name = path.lstrip("/")
+        if name == "favicon.ico":  # браузер просит его сам у страниц без <link rel=icon> (вход, JSON)
+            name = "favicon.svg"
         if name.endswith("/") or (STATIC_DIR / name).is_dir():
             name = name.rstrip("/") + "/index.html"
         target = (STATIC_DIR / name).resolve()

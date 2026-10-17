@@ -106,6 +106,34 @@ class ShellTest(PlatformCase):
         status, _, _ = self.call("GET", "/../server.py")
         self.assertEqual(status, 404)
 
+    def test_static_etag_and_304(self):
+        """FE-006: статика с ETag и Last-Modified; повтор с валидатором — 304 без тела."""
+        status, headers, body = self.call("GET", "/nav.js")
+        self.assertEqual(status, 200)
+        etag, modified = headers["ETag"], headers["Last-Modified"]
+        self.assertTrue(etag.startswith('"') and body)
+        self.assertEqual(headers["Cache-Control"], "no-cache")
+        for cond in ({"If-None-Match": etag}, {"If-None-Match": f'"x", W/{etag}'}, {"If-Modified-Since": modified}):
+            status, headers, body = self.call("GET", "/nav.js", headers=cond)
+            self.assertEqual((status, body), (304, b""), cond)
+            self.assertEqual(headers["ETag"], etag)
+        status, _, body = self.call("GET", "/nav.js", headers={"If-None-Match": '"old"'})
+        self.assertEqual(status, 200)
+        self.assertTrue(body)
+        # If-None-Match главнее If-Modified-Since: другой тег — полный ответ.
+        status, _, _ = self.call("GET", "/nav.js", headers={"If-None-Match": '"old"', "If-Modified-Since": modified})
+        self.assertEqual(status, 200)
+
+    def test_favicon(self):
+        status, headers, body = self.call("GET", "/favicon.ico")
+        self.assertEqual(status, 200)
+        self.assertIn("svg", headers["Content-Type"])
+        self.assertIn(b"<svg", body)
+        pages = sorted(server_module.STATIC_DIR.glob("*/index.html"))
+        self.assertTrue(pages)
+        for page in pages:
+            self.assertIn('rel="icon" href="/favicon.svg"', page.read_text(encoding="utf-8"), page)
+
     def test_config_lists_tabs_and_problems(self):
         status, body = self.json("GET", "/api/config")
         self.assertEqual(status, 200)

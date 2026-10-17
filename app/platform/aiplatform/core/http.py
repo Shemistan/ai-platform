@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from email.utils import formatdate, parsedate_to_datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -128,10 +129,21 @@ class Request:
         ranged: bool = False,
     ) -> None:
         h = self._h
-        size = path.stat().st_size
+        stat = path.stat()
+        size = stat.st_size
         start, end, status = 0, size - 1, HTTPStatus.OK
         header = self.headers.get("Range")
         self.started = True
+        # Валидаторы (FE-006): с ними no-cache превращается в дешёвый 304 без тела при каждом переходе.
+        etag = f'"{stat.st_mtime_ns:x}-{size:x}"'
+        modified = formatdate(stat.st_mtime, usegmt=True)
+        if not_modified(self.headers, etag, stat.st_mtime):
+            h.send_response(HTTPStatus.NOT_MODIFIED)
+            h.send_header("ETag", etag)
+            h.send_header("Last-Modified", modified)
+            h.send_header("Cache-Control", cache)
+            h.end_headers()
+            return
         if ranged and header:
             parsed = parse_range(header, size)
             if parsed is None:
@@ -146,6 +158,8 @@ class Request:
         h.send_header("Content-Type", ctype)
         h.send_header("Content-Length", str(max(end - start + 1, 0)))
         h.send_header("Cache-Control", cache)
+        h.send_header("ETag", etag)
+        h.send_header("Last-Modified", modified)
         if attachment:
             h.send_header("Content-Disposition", f'attachment; filename="{attachment}"')
         if ranged:
@@ -164,6 +178,21 @@ class Request:
                     break
                 h.wfile.write(chunk)
                 remaining -= len(chunk)
+
+
+def not_modified(headers, etag: str, mtime: float) -> bool:
+    """Условный GET: If-None-Match (главнее) или If-Modified-Since совпали с файлом → 304."""
+    match = headers.get("If-None-Match")
+    if match is not None:
+        tags = {t.strip().removeprefix("W/") for t in match.split(",")}
+        return "*" in tags or etag in tags
+    since = headers.get("If-Modified-Since")
+    if not since:
+        return False
+    try:
+        return int(mtime) <= parsedate_to_datetime(since).timestamp()
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return False
 
 
 def parse_range(header: str, size: int) -> tuple[int, int] | None:
