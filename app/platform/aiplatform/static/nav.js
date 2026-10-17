@@ -2,6 +2,10 @@
 // Подключается каждой страницей вкладки: <script type="module" src="/nav.js"></script>.
 import { api, poller } from "/ui.js";
 
+// Раздел «Если не работает при установке» (app/platform/README.md) — ссылка из баннера проблем.
+const HELP_URL =
+  "https://github.com/Shemistan/ai-platform/blob/main/app/platform/README.md#если-не-работает-при-установке";
+
 const TABS = [
   { id: "photo", label: "Фото", href: "/photo/" },
   { id: "video", label: "Видео", href: "/video/" },
@@ -119,6 +123,8 @@ async function showProblems(nav) {
     const list = el("ul");
     for (const p of data.problems) list.append(el("li", {}, p));
     box.append(list);
+    // Что делать с каждой проблемой — таблица «Если не работает при установке» в README сервиса.
+    box.append(el("a", { class: "help", href: HELP_URL, target: "_blank", rel: "noopener" }, "Что делать →"));
     nav.after(box);
   } catch {
     /* шапка работает и без конфига */

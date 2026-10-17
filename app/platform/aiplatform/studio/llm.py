@@ -10,10 +10,24 @@ from __future__ import annotations
 import json
 import re
 import threading
+from pathlib import Path
 
 from aiplatform.core import runner
 
 INSTALL_HINT = "Нужен CLI модели: claude (Claude Code) или своя команда в AIP_LLM_CMD."
+
+
+def missing_cli(cmd: str) -> str:
+    """Баннер «Проблемы»: нет CLI модели. Один текст из студии и новостей — шапка покажет его раз."""
+    if Path(cmd).name == "claude":
+        return (
+            "Нет claude CLI — дайджест и тексты сценариев не соберутся: поставь Claude Code "
+            "(npm install -g @anthropic-ai/claude-code), залогинься и проверь claude --version; "
+            "под launchd — полный путь в AIP_LLM_CMD и CLAUDE."
+        )
+    return f"LLM-команда «{cmd}» не найдена — дайджест и тексты сценариев не соберутся: проверь AIP_LLM_CMD."
+
+
 _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.S)
 
 
