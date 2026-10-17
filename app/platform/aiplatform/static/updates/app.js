@@ -210,8 +210,8 @@ function renderVoiceModels(data) {
     $("voice-models"),
     data.root_exists ? null : h("p", { class: "job-error" }, `Папки моделей ${data.root} нет: ${data.hint}`),
     h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Основные"), h("th", {}, ""))), h("tbody", {}, ...main)),
-    h("table", { class: "data-table", style: "margin-top:var(--sp-4)" }, h("thead", {}, h("tr", {}, h("th", {}, "Для сравнения (mlx-audio, Apple Silicon)"), h("th", {}, ""))), h("tbody", {}, ...mlx)),
-    h("div", { class: "toolbar", style: "margin-top:var(--sp-2)" }, pick, h("span", { class: "hint" }, "Higgs и Fish на huggingface.co просят принять лицензию — открой страницу модели и согласись.")),
+    h("table", { class: "data-table mt-4" }, h("thead", {}, h("tr", {}, h("th", {}, "Для сравнения (mlx-audio, Apple Silicon)"), h("th", {}, ""))), h("tbody", {}, ...mlx)),
+    h("div", { class: "toolbar mt-2" }, pick, h("span", { class: "hint" }, "Higgs и Fish на huggingface.co просят принять лицензию — открой страницу модели и согласись.")),
   );
   renderVoiceButton();
 }

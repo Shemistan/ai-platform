@@ -1,0 +1,25 @@
+/* Только своё для вкладки «Новости»: токены — в /tokens.css, общие элементы — в /ui.css. */
+.page-tabs { justify-self: start; }
+.usefulness .chip { justify-self: start; }
+/* Оценка важности события — бейдж тона: .tone-danger (8+), .tone-warning (6–7), без тона — нейтральный. */
+.importance {
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--r-md);
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  background: var(--tone-bg, var(--sunken));
+  color: var(--tone, inherit);
+}
+.event { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-3); align-items: start; padding: var(--sp-3) 0; border-bottom: 1px solid var(--line); }
+.event:last-child { border-bottom: 0; }
+.event h3 { font-size: var(--fs-md); }
+.event a { color: inherit; }
+.usefulness { display: grid; gap: var(--sp-1); min-width: 90px; }
+.usefulness .bar { height: 6px; }
+.review-card { cursor: pointer; text-align: left; background: var(--panel); color: inherit; font: inherit; }
+.review-card:hover { background: var(--sunken); }
+/* Текст обзора недели/месяца: выше общего .preview-text. */
+.preview-text.tall { max-height: 55vh; }

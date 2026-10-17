@@ -34,7 +34,7 @@ function renderChannels() {
       h(
         "td",
         { class: "num" },
-        h("span", { class: "toolbar", style: "justify-content:flex-end" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => editChannel(c) }, "Изменить"), h("button", { type: "button", class: "btn btn--danger btn--sm", onclick: () => removeChannel(c) }, "Убрать")),
+        h("span", { class: "toolbar toolbar--end" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => editChannel(c) }, "Изменить"), h("button", { type: "button", class: "btn btn--danger btn--sm", onclick: () => removeChannel(c) }, "Убрать")),
       ),
     ),
   );
@@ -42,7 +42,7 @@ function renderChannels() {
     data.channels.length
       ? h("div", { class: "table-wrap" }, h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Канал"), h("th", {}, "Что уходит"), h("th", {}, "Состояние"), h("th", {}, ""))), h("tbody", {}, ...rows)))
       : h("p", { class: "empty" }, "Каналов нет — добавь первый ниже."),
-    h("p", { class: "hint", style: "margin-top:var(--sp-2)" }, data.custom ? `Список — ${data.file}.` : `Пока своего списка нет: показаны каналы движка (telegram_tems.md) и пакеты для ручной загрузки. Первая правка сохранит список в ${data.file}.`),
+    h("p", { class: "hint mt-2" }, data.custom ? `Список — ${data.file}.` : `Пока своего списка нет: показаны каналы движка (telegram_tems.md) и пакеты для ручной загрузки. Первая правка сохранит список в ${data.file}.`),
   );
   const tools = $("channel-tools");
   fill(tools, 
@@ -168,7 +168,7 @@ function renderServe() {
   fill($("serve"), 
     h(
       "div",
-      { class: "card", style: "margin-bottom:var(--sp-3)" },
+      { class: "card mb-3" },
       h("label", { class: "switch" }, toggle, "Принимать подписки", s.running ? chip(`идёт ${since}`, "ok") : chip("выключено")),
       h("p", { class: "hint" }, "Пока включено, бот отвечает на /start и /stop. Подписчикам озвучки статей идут в личку, когда канал статей выключен (NARRATOR_TELEGRAM_CHANNEL=off)."),
       s.error ? errorState({ title: "Приём подписок остановился", error: s.error }) : null,
@@ -187,7 +187,7 @@ function renderSubscribers() {
     total
       ? h(
           "div",
-          { class: "table-wrap", style: "margin-top:var(--sp-3)" },
+          { class: "table-wrap mt-3" },
           h(
             "table",
             { class: "data-table" },

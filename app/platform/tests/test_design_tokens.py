@@ -85,3 +85,24 @@ class ToastTest(unittest.TestCase):
     def test_toast_layer_from_tokens(self):
         ui = (STATIC / "ui.css").read_text(encoding="utf-8")
         self.assertRegex(ui, r"\.toasts \{[^}]*z-index: var\(--z-toast\)")
+
+
+class InlineStylesTest(unittest.TestCase):
+    """DS-012: статических inline-стилей и <style> в страницах нет — только классы из CSS."""
+
+    def test_no_style_in_html(self):
+        for path in sorted(STATIC.rglob("*.html")):
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(page=str(path.relative_to(STATIC))):
+                self.assertNotIn("style=", text)
+                self.assertNotIn("<style>", text)
+
+    def test_js_style_only_dynamic(self):
+        # style в h() — только вычисляемый (ширина полосы, позиция маркера): шаблон с ${…}.
+        found = [
+            f"{p.relative_to(STATIC)}:{n}: {line.strip()}"
+            for p in sorted(STATIC.rglob("*.js"))
+            for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+            if re.search(r"\bstyle: *(\"|'|`[^`$]*`)", line)
+        ]
+        self.assertEqual(found, [])

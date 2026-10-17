@@ -133,7 +133,7 @@ function renderList() {
                 {},
                 h("button", { type: "button", class: "row-link", "data-article": a.id, "aria-current": a.id === state.selected ? "true" : null }, a.title),
                 h("span", { class: "sub" }, [shortDate(a.added), a.duration_sec ? minutes(a.duration_sec) : "", a.engine ? engineLabel(a.engine) : ""].filter(Boolean).join(" · ")),
-                h("span", { class: "toolbar", style: "margin-top:var(--sp-2)" }, ...statusChips(a)),
+                h("span", { class: "toolbar mt-2" }, ...statusChips(a)),
               ),
             ),
           ),

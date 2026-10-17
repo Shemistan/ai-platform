@@ -17,11 +17,11 @@
   <main class="wide">
     <section class="panel">
       <div class="stat-row" id="stats"></div>
-      <div class="toolbar" style="margin-top:var(--sp-3)" id="bulk"></div>
-      <div class="tasks" id="tasks" style="margin-top:var(--sp-3)"></div>
+      <div class="toolbar mt-3" id="bulk"></div>
+      <div class="tasks mt-3" id="tasks"></div>
     </section>
 
-    <div class="cols-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1.25fr)">
+    <div class="cols-2 cols-2--reverse">
       <div class="side">
         <section class="panel">
           <div class="card-head">
@@ -31,14 +31,14 @@
               <button type="button" value="text" aria-pressed="false">Свой текст</button>
             </div>
           </div>
-          <form id="add-url" class="field" novalidate style="margin-top:var(--sp-3)">
-            <div class="toolbar" style="flex-wrap:nowrap">
-              <input type="text" id="url" placeholder="https://…" aria-label="Ссылка на статью" style="flex:1">
+          <form id="add-url" class="field mt-3" novalidate>
+            <div class="toolbar toolbar--nowrap">
+              <input type="text" id="url" placeholder="https://…" aria-label="Ссылка на статью" class="grow">
               <button type="submit" class="btn btn--secondary" id="url-btn">Скачать</button>
             </div>
             <p class="hint">Движок скачает текст страницы. Текст для озвучки потом подготовит агент или возьмёшь исходный как есть.</p>
           </form>
-          <form id="add-text" class="field" novalidate hidden style="margin-top:var(--sp-3)">
+          <form id="add-text" class="field mt-3" novalidate hidden>
             <label class="field"><span class="field-label">Название</span><input type="text" id="new-title"></label>
             <label class="field"><span class="field-label">Текст</span><textarea id="new-text" rows="6" placeholder="Текст статьи — его и озвучим"></textarea></label>
             <label class="field"><span class="field-label">Описание <span class="muted">— увидят в канале перед прослушиванием</span></span><input type="text" id="new-summary"></label>
@@ -57,7 +57,7 @@
               <button type="button" value="unsent" aria-pressed="false">Не в канале</button>
             </div>
           </div>
-          <input type="text" id="search" placeholder="Поиск по названию" aria-label="Поиск" style="margin:var(--sp-3) 0">
+          <input type="text" id="search" placeholder="Поиск по названию" aria-label="Поиск" class="my-3">
           <div id="articles"><p class="muted">Загружаю…</p></div>
         </section>
       </div>

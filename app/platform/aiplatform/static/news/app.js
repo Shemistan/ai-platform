@@ -111,7 +111,7 @@ async function showSources() {
       segmentedButtons(filters, state.sourceFilter, (v) => ((state.sourceFilter = v), showSources())),
       h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => runTask(`${API}/sources/collect`, {}, taskBox), "sources/collect") }, "Собрать все"),
     ),
-    h("p", { class: "hint", style: "margin:var(--sp-2) 0" }, `Вес — авторитет источника в оценке важности. «Мало пользы» — разобрано от ${data.useless_after} материалов, а в выпуски не попало ничего: понизить вес или выключить в config/news-sources.toml движка.`),
+    h("p", { class: "hint my-2" }, `Вес — авторитет источника в оценке важности. «Мало пользы» — разобрано от ${data.useless_after} материалов, а в выпуски не попало ничего: понизить вес или выключить в config/news-sources.toml движка.`),
     taskBox,
     rows.length
       ? h("div", { class: "table-wrap" }, h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Источник"), h("th", {}, "Вес"), h("th", {}, "Последний сбор"), h("th", {}, "Польза"), h("th", {}, ""))), h("tbody", {}, ...rows)))
@@ -124,7 +124,7 @@ async function showSources() {
 
 async function showTop() {
   const data = await load(`${API}/top?day=${state.day}`);
-  const dayInput = h("input", { type: "date", value: state.day, max: yesterday(), style: "width:auto" });
+  const dayInput = h("input", { type: "date", value: state.day, max: yesterday(), class: "input-auto" });
   dayInput.addEventListener("change", () => {
     state.day = dayInput.value || yesterday();
     showTop();
@@ -145,7 +145,7 @@ async function showTop() {
         h("a", { class: "btn btn--link", href: "/studio/?scenario=digest" }, "Дайджест новостей →"),
       ),
     ),
-    h("p", { class: "hint", style: "margin:var(--sp-2) 0" }, "События, опубликованные в этот день, по важности 1–10: в выпуск идёт от 7, обязательные — от 9 и уязвимости. Видно, что не вошло."),
+    h("p", { class: "hint my-2" }, "События, опубликованные в этот день, по важности 1–10: в выпуск идёт от 7, обязательные — от 9 и уязвимости. Видно, что не вошло."),
     data.events.length
       ? h(
           "div",
@@ -154,10 +154,10 @@ async function showTop() {
             h(
               "div",
               { class: "event" },
-              h("span", { class: `importance${e.importance >= 8 ? " high" : e.importance >= 6 ? " mid" : ""}`, title: `балл ${e.score}` }, String(e.importance)),
+              h("span", { class: `importance${e.importance >= 8 ? " tone-danger" : e.importance >= 6 ? " tone-warning" : ""}`, title: `балл ${e.score}` }, String(e.importance)),
               h(
                 "div",
-                { style: "display:grid;gap:var(--sp-1)" },
+                { class: "stack-1" },
                 h("h3", {}, e.url ? h("a", { href: e.url, target: "_blank", rel: "noopener" }, e.title) : e.title),
                 e.why ? h("p", { class: "muted small" }, e.why) : null,
                 h("div", { class: "toolbar" }, chip(KINDS[e.kind] || e.kind, "info"), e.issued ? chip("в выпуске", "ok") : chip("не вошло"), h("span", { class: "muted small" }, e.sources.join(", "))),
@@ -174,14 +174,14 @@ async function showTop() {
 async function showFailed() {
   const data = await load(`${API}/failed`);
   const taskBox = h("div", { class: "tasks" });
-  const day = h("input", { type: "date", value: state.day, max: yesterday(), style: "width:auto" });
+  const day = h("input", { type: "date", value: state.day, max: yesterday(), class: "input-auto" });
   fill(
     $("view"),
     h("p", { class: "hint" }, "Источники, у которых упал последний сбор (404, 429, лента не разобралась). Агент открывает их страницы сам и добавляет найденное в базу — то же делает и агент выпуска на шаге «Добор». Источник от этого не чинится: сбой остаётся с пометкой «добрал агент»."),
     data.failed.length
       ? h(
           "div",
-          { class: "table-wrap", style: "margin-top:var(--sp-3)" },
+          { class: "table-wrap mt-3" },
           h(
             "table",
             { class: "data-table" },
@@ -192,7 +192,7 @@ async function showFailed() {
       : h("p", { class: "empty" }, "Упавших источников нет — добирать нечего."),
     h(
       "div",
-      { class: "toolbar", style: "margin-top:var(--sp-3)" },
+      { class: "toolbar mt-3" },
       h("span", { class: "field-label" }, "Материалы за"),
       day,
       h("button", { type: "button", class: "btn btn--secondary", disabled: !data.failed.length, onclick: busyClick(() => runTask(`${API}/failed/rescue`, { day: day.value }, taskBox), "failed/rescue") }, "Добрать агентом"),
@@ -210,7 +210,7 @@ function openReview(id) {
   api("GET", `${API}/reviews/${encodeURIComponent(id)}`).then((r) => {
     const names = Object.keys(r.files);
     let current = names[0];
-    const text = h("pre", { class: "preview-text", style: "max-height:55vh" });
+    const text = h("pre", { class: "preview-text tall" });
     const tools = h("div", { class: "toolbar" });
     const tabs = h("div", { class: "segmented", role: "group" });
     const render = () => {
@@ -228,13 +228,13 @@ async function showReviews() {
   const data = await load(`${API}/reviews`);
   const taskBox = h("div", { class: "tasks" });
   const now = new Date();
-  const month = h("input", { type: "month", value: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`, style: "width:auto" });
+  const month = h("input", { type: "month", value: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`, class: "input-auto" });
   fill(
     $("view"),
     h("p", { class: "hint" }, "Видео, которое снимаешь сам и читаешь с суфлёра. Агент отбирает события за неделю (суббота–пятница) или за месяц и пишет суфлёр, материалы для монтажа и пост."),
     h(
       "div",
-      { class: "toolbar", style: "margin:var(--sp-3) 0" },
+      { class: "toolbar my-3" },
       h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => runTask(`${API}/reviews/weekly`, {}, taskBox), "reviews/weekly") }, "Обзор недели"),
       h("span", { class: "muted" }, "или"),
       month,
@@ -244,7 +244,7 @@ async function showReviews() {
     data.reviews.length
       ? h(
           "div",
-          { class: "list", style: "margin-top:var(--sp-3)" },
+          { class: "list mt-3" },
           ...data.reviews.map((r) =>
             h(
               "button",

@@ -301,6 +301,9 @@ dialog.modal::backdrop { background: var(--overlay); }
   cursor: pointer;
 }
 .list-row:hover { background: var(--sunken); }
+/* Строка-пункт без действия (состав пакета): тот же вид, но не кликается. */
+.list-row--static { cursor: default; }
+.list-row--static:hover { background: var(--panel); }
 .group-title { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-top: var(--sp-1); }
 .card { display: grid; gap: var(--sp-2); padding: var(--pad-card); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
@@ -316,6 +319,8 @@ blockquote.quote { margin: 0; padding: var(--sp-2) var(--sp-3); border-left: 3px
 
 .wide { max-width: var(--container); margin: 0 auto; padding: var(--sp-4) var(--sp-6) var(--sp-12); display: grid; gap: var(--sp-5); }
 .cols-2 { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--sp-5); align-items: start; }
+/* Узкая левая колонка (Статьи: список слева, карточка справа шире); на узком экране — одна колонка. */
+.cols-2--reverse { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
 @media (max-width: 960px) {
   .cols-2 { grid-template-columns: minmax(0, 1fr); }
   .wide { padding-inline: var(--sp-4); }
@@ -457,3 +462,19 @@ button[aria-busy="true"] { pointer-events: none; opacity: 0.55; cursor: progress
 .toast .icon-btn { font-size: var(--fs-lg); }
 @keyframes toast-in { from { opacity: 0; translate: 0 8px; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+/* --- Утилиты вместо статических inline-стилей (DS-012): отступы — только ступени --sp-*. ---
+   Динамику (ширина полосы, позиция маркера) задаёт JS через style, остальное — эти классы. */
+.mt-1 { margin-top: var(--sp-1); }
+.mt-2 { margin-top: var(--sp-2); }
+.mt-3 { margin-top: var(--sp-3); }
+.mt-4 { margin-top: var(--sp-4); }
+.mb-3 { margin-bottom: var(--sp-3); }
+.my-2 { margin-block: var(--sp-2); }
+.my-3 { margin-block: var(--sp-3); }
+.stack-1 { display: grid; gap: var(--sp-1); }
+.grow { flex: 1; min-width: 0; }
+.toolbar--nowrap { flex-wrap: nowrap; }
+.toolbar--end { justify-content: flex-end; }
+/* Поле даты или месяца шириной по содержимому, а не во всю строку. */
+input.input-auto { width: auto; }
