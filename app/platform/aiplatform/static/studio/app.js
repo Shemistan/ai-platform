@@ -935,14 +935,23 @@ function stepBody(step) {
           ? h(
               "ul",
               { class: "results" },
-              ...p.published.map((r) =>
-                h(
+              ...p.published.map((r) => {
+                // Журнал публикации (BE-001): ответа Telegram не было — решает человек, проверив канал.
+                const unclear = r.parts ? Object.values(r.parts).some((x) => ["sending", "unknown"].includes(x.state)) : ["sending", "unknown"].includes(r.state) && !r.message_id;
+                const mark = unclear ? "?" : r.skipped ? "↷" : r.state === "failed" ? "✗" : "✓";
+                return h(
                   "li",
                   {},
-                  `${r.skipped ? "↷" : "✓"} ${r.label}: ${r.message} `,
+                  `${mark} ${r.label}: ${r.message} `,
                   ...(r.files || []).filter((x) => x.endsWith(".mp4")).map((x) => h("a", { class: "link", href: `${API}/projects/${p.id}/files/${x}?download=1` }, "скачать")),
-                ),
-              ),
+                  ...(unclear && !p.running
+                    ? [
+                        h("button", { type: "button", onclick: () => act("publish/resolve", { channel: r.channel, posted: true }) }, "Пост есть"),
+                        h("button", { type: "button", onclick: () => act("publish/resolve", { channel: r.channel, posted: false }) }, "Поста нет"),
+                      ]
+                    : []),
+                );
+              }),
             )
           : null,
       ];

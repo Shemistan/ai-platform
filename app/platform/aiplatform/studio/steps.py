@@ -16,7 +16,7 @@
   video.mp4          — 16:9
   video-cover.jpg, video-thumb.jpg — первый кадр (обложка для Telegram) и миниатюра, если есть оформление
   short.json, short/voice.mp3, short.mp4 — шортс 9:16
-  published.json     — куда и что отправлено
+  published.json     — журнал публикации: по каналу (и части поста) sending/sent/unknown/failed
 
 Если в тексте упомянута организация из реестра запрещённых в РФ
 (updates/registry.py), на её слайдах внизу идёт мелкая пометка, а в подпись
@@ -30,6 +30,7 @@ import json
 import re
 import shutil
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -848,6 +849,71 @@ def step_short(ctx: StepContext) -> None:
     render_video(ctx, text=script, plan=plan, audio=audio, out=ctx.path(SHORT_VIDEO), orientation=VERTICAL, cycle=True)
 
 
+# published.json — журнал публикации: запись на канал, у поста «картинка и аудио» — и на каждую часть.
+# Состояние пишется до отправки (sending) и сразу после ответа (sent / failed / unknown), а не одной
+# записью в конце: сбой второго канала или рестарт посреди цикла не теряют отметку о первом.
+SENDING, SENT, UNKNOWN, SEND_FAILED = "sending", "sent", "unknown", "failed"
+UNCLEAR = (SENDING, UNKNOWN)  # ушёл ли пост — неизвестно: решает человек
+UNCLEAR_NOTE = "Статус неизвестен — проверь канал"
+
+
+def send_state(record: dict) -> str:
+    """Состояние записи; записи до журнала — sent, если в них есть время отправки."""
+    return record.get("state") or (SENT if record.get("sent") else SEND_FAILED)
+
+
+def is_unclear(record: dict | None) -> bool:
+    """Ушёл ли пост (или его часть) — неизвестно: была отправка, а ответа нет."""
+    if not record:
+        return False
+    if record.get("parts"):
+        return any(p.get("state") in UNCLEAR for p in record["parts"].values())
+    return send_state(record) in UNCLEAR and not record.get("message_id")
+
+
+def resolve_record(record: dict, posted: bool) -> dict:
+    """Решение человека по неясной записи: «Пост есть» — sent, «Поста нет» — failed (повтор дошлёт)."""
+    now = time.time()
+    parts = {
+        name: (part | {"state": SENT if posted else SEND_FAILED, "resolved": True, "at": now})
+        if part.get("state") in UNCLEAR
+        else part
+        for name, part in (record.get("parts") or {}).items()
+    }
+    out = {k: v for k, v in record.items() if k != "skipped"} | {"resolved": True, "at": now}
+    if parts:
+        out["parts"] = parts
+    if posted and (not parts or all(parts.get(name, {}).get("state") == SENT for name in publish.PHOTO_PARTS)):
+        return out | {"state": SENT, "ok": True, "sent": now, "message": "Пост есть — отмечено вручную."}
+    message = (
+        "Отмечено вручную: часть поста есть, повтор дошлёт остальное."
+        if posted
+        else ("Поста нет — отмечено вручную, повтор отправит.")
+    )
+    return out | {"state": SEND_FAILED, "ok": False, "message": message}
+
+
+class Journal:
+    """published.json как журнал: файл переписывается атомарно при каждой смене состояния записи."""
+
+    def __init__(self, ctx: StepContext) -> None:
+        self.ctx = ctx
+        self.records = read_published(ctx)
+
+    def get(self, channel_id: str) -> dict | None:
+        return next((r for r in self.records if r["channel"] == channel_id), None)
+
+    def put(self, record: dict) -> dict:
+        # Запись канала — на своём месте, новый канал — в конец: порядок как в выборе каналов.
+        same = [n for n, r in enumerate(self.records) if r["channel"] == record["channel"]]
+        if same:
+            self.records[same[0]] = record
+        else:
+            self.records.append(record)
+        self.ctx.write(PUBLISHED, json.dumps(self.records, ensure_ascii=False, indent=2) + "\n")
+        return record
+
+
 def step_publish(ctx: StepContext) -> None:
     svc = services(ctx)
     chosen = ctx.settings.get("channels") or []
@@ -860,10 +926,11 @@ def step_publish(ctx: StepContext) -> None:
             "Судья сказал «не готово» — см. его отчёт в шаге «Текст». Поправь выпуск или включи "
             "«Опубликовать несмотря на вердикт» и нажми «Опубликовать»."
         )
-    channels = {c.id: c for c in svc.config.channels()}
-    # Как `news publish` у narrator: в канал, куда уже ушло, повторно — только с «Опубликовать повторно».
-    before = {r["channel"]: r for r in read_published(ctx) if r.get("sent")}
     force = bool(ctx.state.get("force"))
+    # Подтверждение одноразовое: чем бы ни кончился шаг, «Запустить всё» или перезапуск
+    # без нового нажатия «Опубликовать» ничего не отправят.
+    ctx.remember(force=False, **({} if ctx.settings.get("auto_publish") else {"approved": False}))
+    channels = {c.id: c for c in svc.config.channels()}
     plan_title = ""
     if ctx.read(PLAN):
         plan_title = json.loads(ctx.read(PLAN)).get("title", "")
@@ -888,47 +955,107 @@ def step_publish(ctx: StepContext) -> None:
                 problems.append(f"{channel.label}: нет видео — {hint}")
     if problems:
         raise StudioError("Ничего не отправлено: " + "; ".join(problems) + ".")
-    results = []
+    journal = Journal(ctx)
+    # Неясные записи (отправка была, ответа нет) повтор не трогает, пока человек не проверит канал.
+    unclear = [channels[c].label for c in chosen if not force and is_unclear(journal.get(c))]
+    if unclear:
+        raise Waiting(unclear_note(unclear))
     for n, channel_id in enumerate(chosen, start=1):
-        channel = channels.get(channel_id)
-        if channel is None:
-            raise StudioError(f"Канала {channel_id} нет в {svc.config.channels_file.name}.")
-        if channel.type == publish.TELEGRAM and channel_id in before and not force:
+        channel = channels[channel_id]
+        prev = journal.get(channel_id)
+        # Как `news publish` у narrator: в канал, куда уже ушло, повторно — только с «Опубликовать повторно».
+        if channel.type == publish.TELEGRAM and prev and send_state(prev) == SENT and not force:
             message = "уже опубликовано — включи «Опубликовать повторно», чтобы отправить ещё раз"
             ctx.log(f"{channel.label}: {message}")
-            results.append(before[channel_id] | {"label": channel.label, "skipped": True, "message": message})
+            journal.put(prev | {"label": channel.label, "skipped": True, "message": message})
             continue
-        if channel.type == publish.TELEGRAM and ctx.settings.get("post_format") == "photo":
-            ctx.progress(f"{channel.label} ({n} из {len(chosen)})", 100.0 * (n - 1) / len(chosen))
-            result = publish_photo(ctx, channel, title, post)
-            results.append(result | {"label": channel.label, "sent": time.time(), **audience(channel)})
-            ctx.log(f"{channel.label}: {results[-1]['message']}")
-            continue
-        video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
-        if not video.is_file():
-            hint = "включи «Шортс» и собери его" if channel.format == VERTICAL else "собери видео"
-            raise StudioError(f"{channel.label}: нет видео — {hint}.")
         ctx.progress(f"{channel.label} ({n} из {len(chosen)})", 100.0 * (n - 1) / len(chosen))
-        width, height = media.video_size(video, svc.config.ffmpeg)
-        cover, thumb = covers(video)
-        result = publish.publish(
-            channel,
-            video=video,
-            title=title,
-            post=post,
-            out_dir=ctx.path("publish"),
-            width=width,
-            height=height,
-            seconds=media.duration(video, svc.config.ffmpeg),
-            cover=cover if cover.is_file() else None,
-            thumb=thumb if thumb.is_file() else None,
+        if channel.type == publish.TELEGRAM and photo_post:
+            record = publish_photo(ctx, journal, channel, title, post, None if force else prev)
+        elif channel.type == publish.TELEGRAM:
+            record = publish_video(ctx, journal, channel, title, post)
+        else:
+            video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
+            result = publish.publish(channel, video=video, title=title, post=post, out_dir=ctx.path("publish"))
+            record = journal.put(result | {"label": channel.label})
+        ctx.log(f"{channel.label}: {record['message']}")
+
+
+def unclear_note(labels: list[str]) -> str:
+    return (
+        f"{UNCLEAR_NOTE}: {', '.join(labels)}. Telegram не ответил на отправку — пост мог уйти. "
+        "Нажми «Пост есть» или «Поста нет»: повтор отправит только недостающее."
+    )
+
+
+def journaled(journal: Journal, channel: publish.Channel, record: dict, part: str | None, send) -> dict:
+    """Одна отправка под журналом: до — sending, после — ответ Telegram; без ответа — unknown и ожидание.
+
+    send() возвращает id сообщения. part — часть поста «картинка и аудио» (её состояние — в parts;
+    запись целиком станет sent, только когда уйдут все части). Возвращает запись после ответа."""
+
+    def mark(state: str, message_id: int | None = None, message: str | None = None) -> dict:
+        nonlocal record
+        now = time.time()
+        top = state if part is None or state != SENT else SENDING
+        record = record | {"state": top, "at": now} | ({"message": message} if message else {})
+        if part is None:
+            record |= {"message_id": message_id} if message_id is not None else {}
+        else:
+            entry = {"state": state, "at": now} | ({"message_id": message_id} if message_id is not None else {})
+            record = record | {"parts": dict(record.get("parts") or {}) | {part: entry}}
+        return journal.put(record)
+
+    mark(SENDING)
+    try:
+        message_id = send()
+    except publish.Unknown as exc:
+        mark(UNKNOWN, message=f"{exc}.")
+        raise Waiting(unclear_note([channel.label])) from exc
+    except StudioError as exc:
+        mark(SEND_FAILED, message=str(exc))
+        raise
+    except Exception as exc:
+        # Сбой уже после начала отправки: ушёл ли пост — неизвестно, повтор сам не шлём.
+        mark(UNKNOWN, message=f"Сбой при отправке: {exc!r}.")
+        raise Waiting(unclear_note([channel.label])) from exc
+    return mark(SENT, message_id=message_id)
+
+
+def publish_video(ctx: StepContext, journal: Journal, channel: publish.Channel, title: str, post: str) -> dict:
+    svc = services(ctx)
+    video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
+    width, height = media.video_size(video, svc.config.ffmpeg)
+    seconds = media.duration(video, svc.config.ffmpeg)
+    cover, thumb = covers(video)
+    result: dict = {}
+
+    def send() -> int | None:
+        result.update(
+            publish.publish(
+                channel,
+                video=video,
+                title=title,
+                post=post,
+                out_dir=ctx.path("publish"),
+                width=width,
+                height=height,
+                seconds=seconds,
+                cover=cover if cover.is_file() else None,
+                thumb=thumb if thumb.is_file() else None,
+            )
         )
-        ctx.log(f"{channel.label}: {result['message']}")
-        sent = {"sent": time.time(), **audience(channel)} if channel.type == publish.TELEGRAM else {}
-        results.append(result | {"label": channel.label} | sent)
-    done = {r["channel"] for r in results}
-    kept = [r for r in read_published(ctx) if r["channel"] not in done]  # прошлые отправки в другие каналы
-    ctx.write(PUBLISHED, json.dumps(results + kept, ensure_ascii=False, indent=2) + "\n")
+        return result.get("message_id")
+
+    record = {
+        "channel": channel.id,
+        "label": channel.label,
+        "ok": False,
+        "attempt_id": uuid.uuid4().hex[:12],
+        "message": "Отправляется…",
+    }
+    record = journaled(journal, channel, record, None, send)  # уже sent в журнале — дальше ничего не теряем
+    return journal.put(record | result | {"ok": True, "state": SENT, "sent": time.time()} | audience(channel))
 
 
 def audience(channel: publish.Channel) -> dict:
@@ -936,23 +1063,59 @@ def audience(channel: publish.Channel) -> dict:
     return {"members_at_publish": publish.members(channel)}
 
 
-def publish_photo(ctx: StepContext, channel: publish.Channel, title: str, post: str) -> dict:
-    """Вид поста «картинка и аудио»: постер с подписью, затем mp3 озвучки."""
+def publish_photo(
+    ctx: StepContext, journal: Journal, channel: publish.Channel, title: str, post: str, prev: dict | None
+) -> dict:
+    """Вид поста «картинка и аудио»: постер с подписью, затем mp3 озвучки.
+
+    Каждая часть отмечается в журнале отдельно: повтор досылает только недостающие."""
     poster = find(ctx.dir, "poster", IMAGE_EXT)
     audio = find(ctx.dir, "voice", AUDIO_EXT)
     if poster is None or audio is None:
         raise StudioError(f"{channel.label}: для поста «картинка и аудио» нужны постер и озвучка.")
     audio = paced(ctx, audio)
+    problem = publish.photo_problem(channel, poster, audio)
+    if problem:
+        raise StudioError(problem)
     seconds = media.duration(audio, services(ctx).config.ffmpeg)
-    return publish.publish_photo(channel, poster=poster, audio=audio, title=title, post=post, seconds=seconds)
+    done = {k: v for k, v in ((prev or {}).get("parts") or {}).items() if v.get("state") == SENT}
+    if prev and done:
+        record = {k: v for k, v in prev.items() if k != "skipped"} | {"parts": done}
+    else:
+        record = {"channel": channel.id, "attempt_id": uuid.uuid4().hex[:12]}
+    record |= {"label": channel.label, "ok": False, "message": "Отправляется…"}
+    for part in publish.PHOTO_PARTS:
+        if part in done:
+            ctx.log(f"{channel.label}: {'картинка' if part == 'photo' else 'аудио'} уже в канале — не повторяем")
+            continue
+
+        def send(part: str = part) -> int | None:
+            return publish.send_photo_part(
+                channel, part, poster=poster, audio=audio, title=title, post=post, seconds=seconds
+            )
+
+        record = journaled(journal, channel, record, part, send)
+    ids = {name: p.get("message_id") for name, p in record["parts"].items()}
+    done_record = record | publish.photo_result(channel, ids) | {"state": SENT, "sent": time.time()}
+    return journal.put(done_record | audience(channel))
 
 
 def read_published(ctx: StepContext) -> list[dict]:
+    return load_published(ctx.dir)
+
+
+def load_published(folder: Path) -> list[dict]:
     try:
-        data = json.loads(ctx.read(PUBLISHED) or "[]")
-    except json.JSONDecodeError:
+        data = json.loads((folder / PUBLISHED).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return []
     return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
+
+
+def save_published(folder: Path, records: list[dict]) -> None:
+    tmp = folder / (PUBLISHED + ".tmp")
+    tmp.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(folder / PUBLISHED)
 
 
 STEPS = {
