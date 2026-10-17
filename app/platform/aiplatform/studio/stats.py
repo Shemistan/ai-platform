@@ -520,3 +520,33 @@ def summary(items: list[dict]) -> list[dict]:
         if rows:
             out.append({"dimension": dimension, "rows": rows})
     return out
+
+
+# --- плашка недели (AN-016): продуктовые числа доски из project.json и published.json ---
+WEEK_DAYS = 7
+STALE_H = 72  # ждущий выпуск без движения дольше — брошен
+
+
+def week(projects: list[dict], now: float | None = None) -> dict:
+    """Опубликовано за 7 дней, ждут публикации, брошено и медиана часов от готового видео до публикации.
+
+    projects — по выпуску: published_at (первая вышедшая публикация: Telegram sent или пакет, залитый
+    руками со ссылкой; пакет без ссылки — не публикация, AN-003), ready_at (готово видео), waiting
+    (видео готово, не опубликован, не в архиве и не идёт), updated_at (последнее движение)."""
+    now = time.time() if now is None else now
+    since = now - WEEK_DAYS * DAY
+    published = [p for p in projects if p.get("published_at") is not None and since <= p["published_at"] <= now]
+    waiting = [p for p in projects if p.get("waiting")]
+    stale = [p for p in waiting if now - (p.get("updated_at") or now) > STALE_H * HOUR]
+    lead = [
+        (p["published_at"] - p["ready_at"]) / HOUR
+        for p in published
+        if p.get("ready_at") is not None and p["ready_at"] <= p["published_at"]
+    ]
+    return {
+        "published": len(published),
+        "waiting": len(waiting) - len(stale),
+        "abandoned": len(stale),
+        "median_lead_h": round(_median(lead), 1) if lead else None,
+        "days": WEEK_DAYS,
+    }

@@ -485,6 +485,8 @@ class StudioModule:
             "response": stats.summary(everything),
             # Покрытие сводки: учтено X из Y вышедших публикаций и почему выпали остальные (AN-007).
             "coverage": stats.coverage(everything),
+            # Плашка недели: опубликовано, ждут, брошено, медиана до публикации — по обеим вкладкам (AN-016).
+            "week": stats.week(self._week_facts()),
             "stats": {"running": self._stats_thread is not None, "at": self.scheduler.state().get("stats_at")},
         }
 
@@ -515,6 +517,27 @@ class StudioModule:
             for r in published
             if r.get("ok")
         ]
+
+    def _week_facts(self) -> list[dict]:
+        """Для плашки недели — по выпуску: когда вышел, когда готово видео, ждёт ли публикации."""
+        out = []
+        for archived in (False, True):
+            for item in self.studio.list(archived=archived):
+                project = self.studio.get(item["id"]) or {}
+                records = _read_json_list(self.studio.project_dir(item["id"]) / steps.PUBLISHED)
+                live = [t for r in records if steps.is_live(r) and (t := stats.sent_at(r)) is not None]
+                render = project.get("steps", {}).get("render", {})
+                ready = render.get("status") == "done"
+                out.append(
+                    {
+                        "published_at": min(live) if live else None,
+                        "ready_at": render.get("updated_at") if ready else None,
+                        # Ждёт: видео готово, а поста нет (пакет без «Залил» — тоже ждёт), не в архиве и не идёт.
+                        "waiting": ready and not live and not archived and not item["running"],
+                        "updated_at": item["updated_at"],
+                    }
+                )
+        return out
 
     def _response_items(self, archived: bool, known: dict, facts: stats.Facts) -> list[dict]:
         """Для «Что работает» сверх показанных: выпуски другой вкладки доски и удалённые уборкой."""

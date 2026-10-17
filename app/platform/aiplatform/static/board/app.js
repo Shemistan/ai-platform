@@ -4,7 +4,22 @@ import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, h, pol
 const API = "/api/studio";
 const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
 // Дополнения над группами (сводка отклика и т.п.): sig(data) — подпись блока, build(data) → узел.
-const extras = [{ key: "response", sig: (d) => [d.stats, d.response, d.coverage], build: (d) => responsePanel(d) }];
+const extras = [
+  { key: "week", sig: (d) => [d.week], build: (d) => weekLine(d.week) },
+  { key: "response", sig: (d) => [d.stats, d.response, d.coverage], build: (d) => responsePanel(d) },
+];
+
+// Плашка недели (AN-016): сколько вышло, ждёт и брошено, медиана от готового видео до публикации.
+function weekLine(w) {
+  if (!w) return h("span", {});
+  const lead = w.median_lead_h === null ? "—" : `${w.median_lead_h} ч`;
+  return h(
+    "p",
+    { class: "week-line", title: `за ${w.days} дней; брошено — ждут публикации без движения больше 72 ч` },
+    h("strong", {}, "Неделя: "),
+    `опубликовано ${w.published} · ждут ${w.waiting} · брошено ${w.abandoned} · медиана до публикации ${lead}`,
+  );
+}
 
 const href = (p) => `/studio/?scenario=${p.scenario}&project=${p.id}`;
 

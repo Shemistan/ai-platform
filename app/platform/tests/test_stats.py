@@ -312,6 +312,27 @@ class RobustSummaryTest(unittest.TestCase):
         self.assertEqual(stats.coverage(items), {"counted": 1, "total": 3, "fresh": 1, "no_data": 1})
 
 
+class WeekTest(unittest.TestCase):
+    """Плашка недели (AN-016) на фикстурах."""
+
+    def test_four_numbers(self):
+        now = T0 + 30 * D
+        projects = [
+            {"published_at": now - 20 * H, "ready_at": now - 30 * H},  # вышел, 10 ч до публикации
+            {"published_at": now - 6 * H, "ready_at": now - 10 * H},  # вышел, 4 ч
+            {"published_at": now - 3 * H},  # вышел, когда готово видео — неизвестно
+            {"published_at": now - 10 * D, "ready_at": now - 11 * D},  # вне недели
+            {"waiting": True, "updated_at": now - H},  # ждёт
+            {"waiting": True, "updated_at": now - 100 * H},  # брошен
+            {"waiting": False, "updated_at": now - 200 * H},  # черновик
+        ]
+        self.assertEqual(
+            stats.week(projects, now=now),
+            {"published": 3, "waiting": 1, "abandoned": 1, "median_lead_h": 7.0, "days": 7},
+        )
+        self.assertIsNone(stats.week([], now=now)["median_lead_h"])
+
+
 class StatsHttpTest(StudioCase):
     def setUp(self):
         folder = Path(tempfile.mkdtemp())
@@ -419,6 +440,43 @@ class StatsHttpTest(StudioCase):
             self.assertIn(text, json.dumps(err, ensure_ascii=False), body)
         self.assertEqual(
             self.json("POST", url, {"channel": "yt", "subs_gained": -2})[0], 200, "отписки с ролика — минус"
+        )
+
+
+class WeekHttpTest(StudioCase):
+    """Плашка недели на доске (AN-016): из project.json и published.json, пакет без ссылки — не публикация."""
+
+    def project(self, *, ready_at=None, updated_at=None, records=None, archived=False):
+        self.made = getattr(self, "made", 0) + 1  # свой текст — иначе 409 «уже есть выпуск»
+        pid = self.create(scenario="article", text=f"{ARTICLE}\n\nВыпуск {self.made}.")["id"]
+        self.settle(pid)
+        studio = self.app.modules["studio"].studio
+        with studio._lock:
+            project = studio._projects[pid]
+            render = project["steps"]["render"]
+            if ready_at is not None:
+                render.update(status="done", updated_at=ready_at)
+            else:
+                render.update(status="pending")
+            project["archived"] = archived
+            project["updated_at"] = updated_at or time.time()
+        if records is not None:
+            (self.folder(pid) / "published.json").write_text(json.dumps(records), encoding="utf-8")
+        return pid
+
+    def test_week_on_board(self):
+        now = time.time()
+        sent = {"channel": "tg", "ok": True, "state": "sent", "sent": now - 20 * 3600, "message_id": 1}
+        self.project(ready_at=now - 30 * 3600, records=[sent])
+        uploaded = {"channel": "yt", "ok": True, "state": "uploaded", "published_at": now - 6 * 3600, "files": ["v"]}
+        self.project(ready_at=now - 10 * 3600, records=[uploaded], archived=True)
+        package = {"channel": "yt", "ok": True, "files": ["publish/yt/video.mp4"]}
+        self.project(ready_at=now - 5 * 3600, records=[package])
+        self.project(ready_at=now - 200 * 3600, updated_at=now - 100 * 3600)
+        self.project()  # черновик: видео нет
+        week = self.json("GET", "/api/studio/board")[1]["week"]
+        self.assertEqual(
+            (week["published"], week["waiting"], week["abandoned"], week["median_lead_h"]), (2, 1, 1, 7.0), week
         )
 
 

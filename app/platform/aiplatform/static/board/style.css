@@ -34,6 +34,8 @@
 .manual-views { display: inline-flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
 .views-input { width: 110px; padding: 2px var(--sp-2); font-size: var(--fs-sm); }
 .views-input[type="datetime-local"] { width: auto; }
+.week-line { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
+.week-line strong { color: var(--text); }
 .response { display: grid; gap: var(--sp-3); }
 .response-head { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); align-items: center; }
 .response-head h2 { margin: 0; }
