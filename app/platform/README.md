@@ -149,8 +149,8 @@ sh app/narrator/tools/import-old.sh <old-narrator-dir>
 | `SyntaxError` на `match` при `python3 -m aiplatform.server`, или `make run` останавливается с подсказкой про Python | системный `python3` на Mac — 3.9 из Xcode CLT, сервису нужен 3.11+ | `brew install python@3.12` (или `uv python install 3.12`), затем `make PYTHON=python3.12 run`; запускать через `make`, а не голым `python3` |
 | Баннер «Аудио: у движка по умолчанию … нет весов» или озвучка падает с «нет модели …» | `make models` в `app/narrator` не запускали, или веса лежат на неподключённом диске | `cd app/narrator && make models`; для MLX-движков — `make models-mlx E=higgs`; другой каталог — `NARRATOR_MODELS_DIR=~/local_models` |
 | Модели фото или видео нет в списке или задача падает без весов | `make models M=…` не запускали, `AIP_MODELS_DIR` указывает на неподключённый `/Volumes/External SSD` | подключить диск или `make models M=<id> AIP_MODELS_DIR=~/local_models`; что стоит — вкладка «Обновления» |
-| FLUX.2 падает: `MLX error: Failed to load the default metallib` | релиз Flux2CLI v3.1.0 идёт без `mlx.metallib`, а `setup-model.sh` его не докладывает | положить рядом с бинарником `mlx.metallib` из колеса `mlx-metal==0.31.1` (версия MLX у mlx-swift 0.31.6): `D=$(mktemp -d) && uv pip install --target "$D" mlx-metal==0.31.1 && cp "$D"/mlx/lib/mlx.metallib ~/.local/share/photogen/flux2cli-v3.1.0/`. Переустановка Flux2CLI возвращает ошибку — повторить |
-| Первая генерация FLUX.2 Klein долго «висит» на старте, на системном диске растёт `~/.cache/huggingface` | текстовый энкодер Klein (`Qwen3-8B-MLX-8bit`, ~8 ГБ) `setup-model.sh` не ставит — Flux2CLI качает его при первом запуске | подождать первый запуск (нужна сеть); руками Flux2CLI запускать с `HF_HOME="$AIP_MODELS_DIR/.photogen-cache/hf"`, иначе копия ляжет в `~/.cache` |
+| FLUX.2 падает: `MLX error: Failed to load the default metallib` | рядом с бинарником Flux2CLI нет `mlx.metallib` (в релизном zip его нет; `setup-model.sh` докладывает его из колеса `mlx-metal==0.31.1`, но Flux2CLI переставили руками или докладка упала без сети к PyPI) | `make models M=flux2-klein-9b` (или `flux2-dev`) — повторный запуск доложит файл; без сети — `MLX_METALLIB=/путь/к/mlx.metallib make models M=flux2-klein-9b` |
+| Первая генерация FLUX.2 Klein долго «висит» на старте, растёт `AIP_MODELS_DIR/models` | текстовый энкодер Klein (`lmstudio-community/Qwen3-8B-MLX-4bit`, ~5 ГБ) не поставлен: Klein ставили до того, как `setup-model.sh` научился его предзагружать | `make models M=flux2-klein-9b` — докачает энкодер в `AIP_MODELS_DIR/models/`; или подождать первый запуск (нужна сеть) |
 | Дайджест или промпты слайдов падают: `claude: command not found` | claude CLI (Claude Code) не установлен или его нет в `PATH` процесса — у launchd `PATH` короче, чем в терминале | установить Claude Code, залогиниться, проверить `claude --version`; под launchd — полный путь в `AIP_LLM_CMD` и `CLAUDE=/полный/путь/claude` для `make news` движка |
 | Агент (Claude Code) не может скачать модели, `make check` движка падает на `uv`, нет GPU | sandbox агента: сети к Hugging Face и PyPI нет, GPU нет, `~/.cache/uv` закрыт на запись | модели и первую установку зависимостей — в обычном терминале (`make models`, `make check` в `app/narrator`); `./narrate` сам переносит кэш uv в `$TMPDIR`, для своих команд — `UV_CACHE_DIR=$TMPDIR/uv-cache` |
 | Шаг «Постер» дайджеста ждёт картинку, локальная модель обложку не рисует | так задумано: обложку дайджеста делают в ChatGPT по `image_prompt.md` выпуска — кириллические заголовки локальные модели рисуют хуже | сгенерировать в ChatGPT по промпту шага 2 и перетащить в шаг или положить `cover.*` в каталог выпуска narrator; локально — галочка «локальная модель» |
@@ -488,6 +488,10 @@ make run
 трогает. Повторный запуск докачивает недостающее, установленное пропускает.
 Нет внешнего диска — другой каталог:
 `make models M=z-image-turbo AIP_MODELS_DIR=~/local_models`.
+Перенести уже скачанные веса на другой диск (каталог целиком, `AIP_MODELS_DIR`
+в `local.mk` правится сам): `make move-models TO=~/local_models`.
+Для FLUX.2 скрипт сам докладывает `mlx.metallib` рядом с Flux2CLI и
+предзагружает текстовый энкодер Klein в `AIP_MODELS_DIR/models/`.
 
 Закрытые лицензией веса (FLUX.2, Ideogram 4, LTX-2.5): открыть страницу
 модели на Hugging Face, принять условия, создать токен типа Read и запустить
@@ -498,9 +502,9 @@ make run
 | `z-image-turbo` | фото | ~10 ГБ | по умолчанию для постеров и слайдов, без токена |
 | `krea-2` | фото | ~15 ГБ | без токена |
 | `qwen-image-2512` | фото | ~26 ГБ | без токена |
-| `ideogram-4` | фото | не замерено (q4 mflux — обычно 10–25 ГБ) | нужен `HF_TOKEN` |
-| `flux2-klein-9b` | фото | ~18 ГБ + текстовый энкодер при первой генерации | Flux2CLI, нужен `HF_TOKEN` |
-| `flux2-dev` | фото | ~65 ГБ — оценка, не замерено (Flux2CLI хранит bf16-веса 32B) | Flux2CLI, нужен `HF_TOKEN` |
+| `ideogram-4` | фото | требует замера (q4 mflux — обычно 10–25 ГБ) | нужен `HF_TOKEN` |
+| `flux2-klein-9b` | фото | ~18 ГБ + ~5 ГБ текстовый энкодер Qwen3-8B (ставится вместе с моделью) | Flux2CLI, нужен `HF_TOKEN` |
+| `flux2-dev` | фото | требует замера (оценка ~65 ГБ: Flux2CLI хранит bf16-веса 32B) | Flux2CLI, нужен `HF_TOKEN` |
 | `ltx-2.3-q4` | видео | ~19 ГБ + 7,5 ГБ энкодер Gemma 3 12B | без токена; живое фото |
 | `ltx-2.5-q4` | видео | ~27 ГБ (энкодер внутри) | модель видео по умолчанию, нужен `HF_TOKEN` |
 | `wan-2.2-t2v-q4` | видео | ~27 ГБ | только по промпту, без звука |
