@@ -208,7 +208,14 @@ class App:
     def problems(self) -> list[str]:
         out = []
         if not media.ffmpeg_available(self.config.ffmpeg):
-            out.append("ffmpeg не найден: сборка видео и демо-генерация не работают — brew install ffmpeg.")
+            out.append("ffmpeg не найден: сборка видео и демо-генерация не работают — brew install ffmpeg-full.")
+        elif not media.has_filter(self.config.ffmpeg, "drawtext"):
+            # Формула ffmpeg в Homebrew собрана без freetype: постер и слайды не соберутся.
+            out.append(
+                f"В ffmpeg ({self.config.ffmpeg}) нет фильтра drawtext — сборка видео упадёт на постере. "
+                "Поставь полную сборку: brew install ffmpeg-full "
+                "и задай AIP_FFMPEG=$(brew --prefix ffmpeg-full)/bin/ffmpeg."
+            )
         if not self.config.font:
             out.append("Не найден шрифт с кириллицей для слайдов — задай AIP_FONT=/путь/к/шрифту.ttf.")
         models = self.models_dir()

@@ -61,7 +61,7 @@ PLAY_SHARE = 0.26  # кнопка — доля короткой стороны �
 STICKER_BOTTOM = (0.92, 0.28)  # плашка на обложке: доля ширины, не выше доли высоты
 STICKER_CORNER = {"landscape": 0.24, "square": 0.32, "vertical": 0.5}  # плашка в углу: доля ширины
 MARGIN = 0.03  # отступ от края — доля короткой стороны
-FFMPEG_HINT = "Нужен ffmpeg: brew install ffmpeg (или путь в AIP_FFMPEG)."
+FFMPEG_HINT = "Нужен ffmpeg с drawtext: brew install ffmpeg-full (путь — в PATH или AIP_FFMPEG)."
 
 
 @dataclass(frozen=True)
