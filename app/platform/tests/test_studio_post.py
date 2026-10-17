@@ -11,7 +11,8 @@ from unittest import mock
 from aiplatform.core import media
 from aiplatform.fakes import fake_narrate
 from aiplatform.studio import publish
-from tests.test_studio_flow import NEEDS_FFMPEG, StudioCase, png_bytes
+from tests.fixtures import NEEDS_FFMPEG, png_bytes
+from tests.helpers import StudioCase
 
 TOKEN = "123456:" + "A" * 35
 CAPTION = "**Новая статья**\n\nО том, как устроены очереди — [читать](https://example.dev/q)"

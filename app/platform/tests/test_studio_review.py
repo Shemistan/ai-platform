@@ -12,8 +12,8 @@ import unittest
 from aiplatform.channels.service import BotServe
 from aiplatform.studio import review as review_module
 from aiplatform.studio import steps
-from tests.test_studio_flow import ARTICLE
-from tests.test_studio_publish_journal import JournalCase
+from tests.fixtures import ARTICLE
+from tests.helpers import JournalCase
 
 OWNER = 42
 

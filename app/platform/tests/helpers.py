@@ -1,18 +1,64 @@
-"""Общая обвязка тестов: платформа на фейковых бэкендах в отдельном потоке."""
+"""Общая обвязка тестов: платформа на фейковых бэкендах в отдельном потоке.
+
+Базовые классы вкладок (StudioCase, PhotoServerCase, VideoServerCase, JournalCase) — здесь,
+константы — в tests/fixtures.py: тест-модули друг друга не импортируют (QA-017).
+"""
 
 import http.client
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
 import unittest
 import urllib.error
 import urllib.request
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+from unittest import mock
 
 from aiplatform import config as config_module
 from aiplatform import server as server_module
+from aiplatform.core import runner
+from aiplatform.photo import config as photo_config
+from aiplatform.photo.service import PhotoModule
+from aiplatform.studio import publish
+from aiplatform.video import config as video_config
+from aiplatform.video.service import VideoModule
 from tests import MISSING_MODELS_DIR, TMP_ROOT
+from tests.fixtures import ARTICLE, FAST, PNG_STUB, RENDER_SCALE, SOURCE, TOKEN, png
+
+# Множитель всех ожиданий: под нагрузкой (параллельный прогон, рендер в фоне) — AIP_TEST_TIMEOUT_SCALE=3.
+TIMEOUT_SCALE = float(os.environ.get("AIP_TEST_TIMEOUT_SCALE") or 1)
+
+
+def scaled(seconds: float) -> float:
+    return seconds * TIMEOUT_SCALE
+
+
+def poll(fetch: Callable[[], Any], done: Callable[[Any], bool], timeout: float = 30, interval: float = 0.05, what=""):
+    """Звать fetch(), пока done(результат) не станет истинным; возвращает последний результат.
+
+    Единственное ожидание по стенным часам в тестах: timeout умножается на AIP_TEST_TIMEOUT_SCALE.
+    Не дождались — AssertionError с последним результатом.
+    """
+    deadline = time.monotonic() + scaled(timeout)
+    value = None
+    while True:
+        value = fetch()
+        if done(value):
+            return value
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"не дождались {what}: {value}")
+        time.sleep(interval)
+
+
+def live_processes() -> list:
+    """Живые подпроцессы раннера (Popen) — чтобы после отмены проверить, что их убили."""
+    with runner._live_lock:
+        return list(runner._live.values())
 
 
 def isolated_config(env: dict[str, str]) -> dict[str, str]:
@@ -32,7 +78,10 @@ def isolated_config(env: dict[str, str]) -> dict[str, str]:
 
 
 class PlatformCase(unittest.TestCase):
-    """Сервер на порту 0 с фейковыми бэкендами; modules — какие вкладки поднять."""
+    """Сервер на порту 0 с фейковыми бэкендами; modules — какие вкладки поднять.
+
+    Рендер студии по умолчанию в четверть размера (AIP_RENDER_SCALE): extra_env может переопределить.
+    """
 
     extra_env: dict[str, str] = {}
     process_env: dict[str, str] = {}  # то, что читают фейковые CLI в подпроцессах
@@ -51,7 +100,8 @@ class PlatformCase(unittest.TestCase):
                 self.addCleanup(os.environ.pop, key, None)
             else:
                 self.addCleanup(os.environ.__setitem__, key, old)
-        env = isolated_config({"AIP_BACKEND": "fake", "AIP_DATA_DIR": self.tmp.name, "AIP_PORT": "0", **self.extra_env})
+        base = {"AIP_BACKEND": "fake", "AIP_DATA_DIR": self.tmp.name, "AIP_PORT": "0", "AIP_RENDER_SCALE": RENDER_SCALE}
+        env = isolated_config(base | self.extra_env)
         self.config = config_module.load(env)
         self.server, self.app = server_module.make_server(self.config, type(self).modules)
         self.port = self.server.server_address[1]
@@ -72,7 +122,7 @@ class PlatformCase(unittest.TestCase):
         headers = {k: v for k, v in {"X-AIP": "1", **(headers or {})}.items() if v is not None}
         req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
+            with urllib.request.urlopen(req, timeout=scaled(20)) as resp:
                 return resp.status, resp.headers, resp.read()
         except urllib.error.HTTPError as err:
             return err.code, err.headers, err.read()
@@ -83,7 +133,7 @@ class PlatformCase(unittest.TestCase):
 
     def raw(self, method, path):
         """Без перехода по редиректам: (статус, заголовки)."""
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=scaled(10))
         try:
             conn.request(method, path)
             resp = conn.getresponse()
@@ -94,11 +144,201 @@ class PlatformCase(unittest.TestCase):
 
     def poll(self, path, done, timeout=30, interval=0.05):
         """GET path, пока done(ответ) не станет истинным; возвращает последний ответ."""
-        deadline = time.time() + timeout
-        body = None
-        while time.time() < deadline:
-            _, body = self.json("GET", path)
-            if done(body):
-                return body
-            time.sleep(interval)
-        self.fail(f"не дождались {path}: {body}")
+        try:
+            return poll(lambda: self.json("GET", path)[1], done, timeout, interval, what=path)
+        except AssertionError as exc:
+            self.fail(str(exc))
+
+    def wait_job(self, path, statuses=("done", "failed", "canceled"), timeout=20):
+        """Задача вкладки (фото, видео) до одного из statuses: (последний ответ, все ответы по пути)."""
+        seen = []
+
+        def fetch():
+            seen.append(self.json("GET", path)[1])
+            return seen[-1]
+
+        try:
+            job = poll(fetch, lambda j: j["status"] in statuses, timeout, 0.02, what=f"{path} → {statuses}")
+        except AssertionError as exc:
+            self.fail(str(exc))
+        return job, seen
+
+
+class StudioCase(PlatformCase):
+    """Студия на быстрых фейках: проекты, ожидание конвейера, каталог проекта."""
+
+    process_env = FAST
+
+    def create(self, **payload):
+        if payload.get("scenario") == "article":  # без источника статья не публикуется (CMP-005)
+            payload["settings"] = SOURCE | (payload.get("settings") or {})
+        status, project = self.json("POST", "/api/studio/projects", payload)
+        self.assertEqual(status, 201, project)
+        return project
+
+    def settle(self, pid, timeout=90):
+        return self.poll(f"/api/studio/projects/{pid}", lambda p: not p["running"], timeout=timeout, interval=0.1)
+
+    @staticmethod
+    def statuses(project):
+        return {s["id"]: s["status"] for s in project["steps"]}
+
+    def folder(self, pid) -> Path:
+        return Path(self.tmp.name) / "studio" / "projects" / pid
+
+
+# --- вкладки «Фото» и «Видео» отдельно от остальных ---
+
+
+def photo_only(ctx):
+    return [PhotoModule(ctx)]
+
+
+def photo_load(env):
+    return photo_config.load(config_module.load(isolated_config(env)))
+
+
+class PhotoServerCase(PlatformCase):
+    step_delay = "0.01"
+    fail_flag = ""
+    modules = staticmethod(photo_only)
+
+    def setUp(self):
+        self.process_env = {"FAKE_GEN_STEP_DELAY": self.step_delay, "FAKE_GEN_FAIL": self.fail_flag}
+        super().setUp()
+
+    def upload(self, width=512, height=384):
+        status, body = self.json("POST", "/api/photo/uploads", png(width, height, 1))
+        self.assertEqual(status, 201, body)
+        self.assertEqual((body["width"], body["height"]), (width, height))
+        return body["id"]
+
+    def wait(self, job_id, statuses=("done", "failed", "canceled"), timeout=20):
+        return self.wait_job(f"/api/photo/jobs/{job_id}", statuses, timeout)
+
+    def run_job(self, payload):
+        status, job = self.json("POST", "/api/photo/jobs", payload)
+        self.assertEqual(status, 201, job)
+        done, seen = self.wait(job["id"])
+        self.assertEqual(done["status"], "done", done)
+        _, _, image = self.call("GET", done["image_url"])
+        return done, seen, image
+
+
+def video_only(ctx):
+    return [VideoModule(ctx)]
+
+
+def video_load(env):
+    return video_config.load(config_module.load(isolated_config(env)))
+
+
+class VideoServerCase(PlatformCase):
+    step_delay = "0.01"
+    fail_flag = ""
+    modules = staticmethod(video_only)
+    extra_env = {"AIP_MODELS_DIR": "/nonexistent-models"}  # не зависеть от весов на этой машине
+
+    def setUp(self):
+        self.process_env = {
+            "FAKE_LTX_STEP_DELAY": self.step_delay,
+            "FAKE_LTX_NO_FFMPEG": "1",
+            "FAKE_LTX_FAIL": self.fail_flag,
+        }
+        super().setUp()
+
+    def upload(self):
+        status, body = self.json("POST", "/api/video/uploads", PNG_STUB)
+        self.assertEqual(status, 201, body)
+        return body["id"]
+
+    def wait(self, job_id, statuses=("done", "failed", "canceled"), timeout=20):
+        return self.wait_job(f"/api/video/jobs/{job_id}", statuses, timeout)
+
+
+# --- публикация в два Telegram-канала с журналом (BE-001) ---
+
+CHATS = {"tg-a": "-1001111111111", "tg-b": "-1002222222222"}
+
+
+def chat_of(body: bytes) -> str:
+    for cid, chat in CHATS.items():
+        if f'name="chat_id"\r\n\r\n{chat}\r\n'.encode() in body:
+            return cid
+    return "?"
+
+
+class FakeTelegram:
+    """Подмена publish._http_post: пишет вызовы, по флагам отвечает отказом или «рвёт» ответ."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, str, bool]] = []  # (канал, метод, принят ли пост)
+        self.refuse: set[tuple[str, str]] = set()  # Telegram ответил ok=false
+        self.drop: set[tuple[str, str]] = set()  # ответа нет: обрыв после отправки
+
+    def __call__(self, url, body, ctype):
+        method = url.rsplit("/", 1)[-1]
+        if method in ("getChatMemberCount", "getChat"):
+            return {"ok": True, "result": 10}
+        key = (chat_of(body), method)
+        if key in self.drop:
+            self.calls.append((*key, False))
+            raise ConnectionResetError("обрыв посреди ответа")
+        if key in self.refuse:
+            self.calls.append((*key, False))
+            return {"ok": False, "description": "Too Many Requests: retry after 5"}
+        self.calls.append((*key, True))
+        return {"ok": True, "result": {"message_id": len(self.calls)}}
+
+    def count(self, channel, method, *, accepted=None):
+        return sum(
+            1 for c, m, ok in self.calls if c == channel and m == method and (accepted is None or ok == accepted)
+        )
+
+
+class JournalCase(StudioCase):
+    """Два Telegram-канала (CHATS) с токеном из AIP_TG_TEST; self.tg — фейковый Bot API."""
+
+    def setUp(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder)
+        self.channels_file = folder / "channels.json"
+        self.channels_file.write_text(
+            json.dumps(
+                [
+                    {"id": cid, "label": cid.upper(), "type": "telegram", "chat_id": chat, "token_env": "AIP_TG_TEST"}
+                    for cid, chat in CHATS.items()
+                ]
+            ),
+            encoding="utf-8",
+        )
+        self.extra_env = StudioCase.extra_env | {"AIP_CHANNELS": str(self.channels_file)}
+        super().setUp()
+        self.tg = FakeTelegram()
+        for patcher in (
+            mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}),
+            mock.patch.object(publish, "_http_post", self.tg),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def video_project(self) -> str:
+        pid = self.create(scenario="article", text=ARTICLE)["id"]
+        (self.folder(pid) / "video.mp4").write_bytes(b"x")
+        return pid
+
+    def press(self, pid, **body):
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", body)
+        self.assertEqual(status, 200, view)
+        return self.settle(pid)
+
+    def resolve(self, pid, channel, posted):
+        status, view = self.json(
+            "POST", f"/api/studio/projects/{pid}/publish/resolve", {"channel": channel, "posted": posted}
+        )
+        self.assertEqual(status, 200, view)
+        return self.settle(pid)
+
+    def journal(self, pid) -> dict:
+        data = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        return {r["channel"]: r for r in data}

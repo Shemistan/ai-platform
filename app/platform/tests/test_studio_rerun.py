@@ -3,7 +3,8 @@
 import unittest
 
 from aiplatform.core import media
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG
+from tests.helpers import StudioCase
 
 
 @NEEDS_FFMPEG

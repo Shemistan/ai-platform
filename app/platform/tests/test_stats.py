@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest import mock
 
 from aiplatform.studio import publish, stats
-from tests.test_studio_channels import TOKEN
-from tests.test_studio_flow import ARTICLE, StudioCase
+from tests.fixtures import ARTICLE, TOKEN
+from tests.helpers import StudioCase
 
 EMBED = '<div class="tgme_widget_message_info"><span class="tgme_widget_message_views">1.2K</span></div>'
 
