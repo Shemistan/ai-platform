@@ -422,7 +422,7 @@ async function create(event, forceNew = false) {
             " ",
             h("button", { type: "button", class: "link", onclick: () => (existing.scenario === scenario ? open(existing.id) : (location.href = `?scenario=${existing.scenario}&project=${existing.id}`)) }, "Открыть"),
             " · ",
-            h("button", { type: "button", class: "link", onclick: busyClick(() => create(null, true)) }, "Создать новый"),
+            h("button", { type: "button", class: "link", onclick: busyClick(() => create(null, true)) }, existing.similar ? "Создать всё равно" : "Создать новый"),
           ]
         : []),
     );

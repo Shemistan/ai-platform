@@ -44,11 +44,14 @@ class SettingsModule:
             studio.scheduler.daily["cleanup"] = self._daily_cleanup
 
     def _daily_cleanup(self) -> str | None:
+        """Брошенные выпуски — в архив (свой порог draft_days, 0 — выкл.); уборка — по флажку."""
         plan = self.settings.load()["cleanup"]
-        if not plan["auto"]:
-            return None
-        found = self.cleaner.run(plan["days"], dry=False)
-        return f"уборка: освобождено {found['bytes'] // 2**20} МБ"
+        stale = self.cleaner.archive_stale(plan["draft_days"])
+        done = [f"в архив без движения: {len(stale)}"] if stale else []
+        if plan["auto"]:
+            found = self.cleaner.run(plan["days"], dry=False)
+            done.append(f"освобождено {found['bytes'] // 2**20} МБ")
+        return f"уборка: {', '.join(done)}" if done else None
 
     def cleanup(self, run: bool) -> dict:
         days = self.settings.load()["cleanup"]["days"]

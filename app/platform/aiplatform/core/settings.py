@@ -53,8 +53,16 @@ def _empty() -> dict:
         # Уборка (core/cleanup.py): days — задачи вкладок, кэш, архив и загрузки старше; trim_days —
         # через сколько дней после публикации у выпуска удаляются картинки и исходники клипов;
         # archive_days — когда опубликованный выпуск уходит в архив сам (0 — никогда);
-        # min_free_gb — порог места до GPU-задач и сборки (None — 10 ГБ, в демо без проверки).
-        "cleanup": {"auto": True, "days": 30, "trim_days": 14, "archive_days": 60, "min_free_gb": None},
+        # min_free_gb — порог места до GPU-задач и сборки (None — 10 ГБ, в демо без проверки);
+        # draft_days — неопубликованный выпуск без движения дольше уходит в архив сам (0 — никогда).
+        "cleanup": {
+            "auto": True,
+            "days": 30,
+            "trim_days": 14,
+            "archive_days": 60,
+            "draft_days": 7,
+            "min_free_gb": None,
+        },
         # Реестр запрещённых организаций: ежедневная сверка в фоне и порог свежести, дни (CMP-013).
         "registry": {"auto_check": True, "max_age_days": REGISTRY_MAX_AGE_DAYS},
         # Лимиты времени процессов по виду (runner.LIMITS), минуты: {"llm": {"total": 10, "idle": 5}}.
@@ -118,7 +126,7 @@ def normalize(raw: object) -> dict:
     out["cleanup"]["auto"] = _flag(cleanup.get("auto"), True)
     if cleanup.get("days") in CLEANUP_DAYS:
         out["cleanup"]["days"] = cleanup["days"]
-    for name in ("trim_days", "archive_days"):
+    for name in ("trim_days", "archive_days", "draft_days"):
         if _number(cleanup.get(name), MAX_POLICY_DAYS) and float(cleanup[name]).is_integer():
             out["cleanup"][name] = int(cleanup[name])
     if _number(cleanup.get("min_free_gb"), MAX_FREE_GB):

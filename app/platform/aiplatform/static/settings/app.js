@@ -204,9 +204,15 @@ function renderUpkeep(data) {
           h("span", { class: "hint" }, "Удалять старше"),
           h("select", { onchange: (e) => section("cleanup", { days: Number(e.target.value) }).then(loadCleanup) }, ...data.cleanup.choices.map((d) => h("option", { value: d, selected: d === data.cleanup.days }, `${d} дней`))),
         ),
+        h(
+          "label",
+          { class: "field" },
+          h("span", { class: "hint" }, "Брошенные выпуски — в архив через"),
+          h("select", { onchange: (e) => section("cleanup", { draft_days: Number(e.target.value) }) }, ...[...new Set([0, 3, 7, 14, 30, data.cleanup.draft_days ?? 7])].sort((a, b) => a - b).map((d) => h("option", { value: d, selected: d === (data.cleanup.draft_days ?? 7) }, d ? `${d} дн. без движения` : "никогда"))),
+        ),
       ),
       checkRow("Убирать раз в сутки сам", null, data.cleanup.auto, (v) => section("cleanup", { auto: v })),
-      h("p", { class: "hint" }, `Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша, загрузки и выпуски из архива. У опубликованных через ${data.cleanup.trim_days ?? 14} дн. убираются картинки слайдов и исходники клипов (видео и журнал публикаций остаются), через ${data.cleanup.archive_days ?? 60} дн. выпуск уходит в архив сам. Неопубликованные выпуски и идущие задачи не трогаются.`),
+      h("p", { class: "hint" }, `Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша, загрузки и выпуски из архива. У опубликованных через ${data.cleanup.trim_days ?? 14} дн. убираются картинки слайдов и исходники клипов (видео и журнал публикаций остаются), через ${data.cleanup.archive_days ?? 60} дн. выпуск уходит в архив сам. Неопубликованный выпуск без движения уходит в архив по сроку выше (с уведомлением, файлы остаются); идущие задачи не трогаются.`),
       found ? h("p", {}, what.length ? `Сейчас под уборку: ${what.join(", ")} — ${mb(found.bytes)}.` : "Сейчас убирать нечего.") : null,
       h(
         "div",
