@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from aiplatform.studio import slides, steps
-from aiplatform.studio.render import Layout, slide_filter
+from aiplatform.studio.render import Layout, note_text, slide_filter
 from aiplatform.updates import checks, registry
 from tests.helpers import PlatformCase
 from tests.test_studio_flow import NEEDS_FFMPEG, StudioCase
@@ -49,6 +49,25 @@ class RegistryTest(unittest.TestCase):
         for text, want in found.items():
             with self.subTest(text=text):
                 self.assertEqual(ids(text), want)
+
+    def test_case_declensions_and_products(self):
+        # CMP-014: регистр, склонения через «Мет*» со стоп-словами и продукты Meta.
+        for text in ["META", "meta", "Метой", "Меты", "о Мете", "Threads", "Meta AI", "Llama 4", "Quest 3"]:
+            with self.subTest(text=text):
+                self.assertEqual(ids(text), ["meta"])
+        for text in ["метод", "метрика", "метаданные", "Метро", "метафора", "мета-анализ", "threads в Python"]:
+            with self.subTest(text=text):
+                self.assertEqual(ids(text), [])
+
+    def test_stopwords_and_exact_case(self):
+        item = {"id": "x", "name": "X", "status": "extremist", "disclaimer": "X"}
+        entry = registry.parse([item | {"aliases": ["Икс*", "=Zed"], "stopwords": ["иксы-*", "иксер*"]}])[0]
+        self.assertTrue(entry.mentioned_in("про Иксов"))
+        self.assertFalse(entry.mentioned_in("иксеры и иксы-игреки"))
+        self.assertTrue(entry.mentioned_in("Zed вышел") and not entry.mentioned_in("zed"))
+        self.assertEqual(entry.stored()["stopwords"], ["иксы-*", "иксер*"])
+        with self.assertRaisesRegex(ValueError, "stopwords"):
+            registry.parse([item | {"aliases": ["X Corp"], "stopwords": "x"}])
 
     def test_footnotes_once(self):
         post = registry.with_footnotes("**Главное** за день.", "Instagram запустил ленту", DEFAULT)
@@ -124,6 +143,15 @@ class SlideNotesTest(unittest.TestCase):
         self.assertNotIn("n.txt", without)
         self.assertIn("n.txt", with_note)
         self.assertTrue(with_note.endswith(":y=240"), "две строки по 10 px над отступом снизу")
+
+    def test_long_note_not_cut(self):
+        # CMP-014: в вертикальном шортсе (66 знаков в строке) длинная пометка не режется «…».
+        long_note = META_NOTE + " " + "Решение суда вступило в силу, сноска сверена с перечнем. " * 4
+        text = note_text([long_note, META_NOTE], 66)
+        self.assertNotIn("…", text)
+        self.assertEqual(" ".join(text.split()), " ".join(f"{long_note} {META_NOTE}".split()))
+        self.assertTrue(all(len(line) <= 66 for line in text.splitlines()))
+        self.assertGreater(len(text.splitlines()), 5, "строк больше прежнего лимита в 4")
 
 
 class ChecksTest(unittest.TestCase):

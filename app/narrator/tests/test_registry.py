@@ -48,6 +48,27 @@ def test_default_copy_matches_platform():
     assert ours == json.loads(platform.read_text(encoding="utf-8"))["entries"]
 
 
+@pytest.mark.parametrize(
+    "text,found",
+    [
+        ("META", True),
+        ("meta", True),
+        ("Метой", True),
+        ("Меты", True),
+        ("Threads", True),
+        ("Llama 4", True),
+        ("метод", False),
+        ("метрика", False),
+        ("метаданные", False),
+        ("мета-анализ", False),
+        ("threads в Python", False),
+    ],
+)
+def test_mentions_case_declensions_products(text, found):
+    """CMP-014: поиск тот же, что у платформы: регистр, склонения со стоп-словами, продукты."""
+    assert bool(registry.notes(text, registry.load())) is found
+
+
 def test_registry_from_env_and_fallback(tmp_path, monkeypatch):
     own = tmp_path / "registry.json"
     entry = {

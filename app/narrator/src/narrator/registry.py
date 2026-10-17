@@ -11,12 +11,17 @@ data/registry.json — его правят на вкладке «Обновле�
 disclaimer}, …]}`. Испорченный файл из env — откат на копию по умолчанию.
 
 Псевдоним — слово или фраза; `*` в конце слова — любое окончание
-(«Фейсбук*» найдёт «Фейсбуке»). Короткие псевдонимы без `*` (до 4 букв,
-например «Meta») ищутся с учётом регистра, чтобы не ловить обычные слова.
+(«Фейсбук*» найдёт «Фейсбуке»). Регистр не важен («META», «meta»); короткий
+псевдоним без `*` (до 4 букв) не ищется внутри слова с дефисом («мета-анализ»).
+`=` в начале — точный регистр: «=Threads» найдёт продукт Meta, но не «threads»
+в тексте про потоки. stopwords записи — слова, которые псевдоним с `*` ловить
+не должен («Мет*» → «Метой», но не «метод»): слово целиком, с дефисными
+частями, сверяется с ними так же, с `*` на конце.
 """
 
 from __future__ import annotations
 
+import functools
 import html
 import json
 import os
@@ -27,7 +32,7 @@ from pathlib import Path
 REGISTRY_ENV = "NARRATOR_REGISTRY"
 DEFAULT_FILE = Path(__file__).with_name("registry.json")
 STATUSES = ("extremist", "terrorist", "undesirable")
-_CASE_SENSITIVE_MAX = 4
+_SHORT = 4
 CAPTION_LIMIT = 1024
 # Неудаляемый хвост подписи: сноски («* Компания … признана …») и строки об источнике.
 _TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор)\b)")
@@ -47,19 +52,52 @@ class Entry:
     name: str
     aliases: tuple[str, ...]
     disclaimer: str
+    stopwords: tuple[str, ...] = ()
 
     def mentioned_in(self, text: str) -> bool:
-        return any(alias_pattern(a).search(text) for a in self.aliases)
+        return alias_found(text, self.aliases, self.stopwords)
 
 
-def alias_pattern(alias: str) -> re.Pattern[str]:
+def _body(alias: str) -> str:
     words = alias.split()
     parts = [re.escape(w[:-1]) + r"\w*" if w.endswith("*") else re.escape(w) for w in words]
-    body = r"[\s -]+".join(parts)
-    if "*" not in alias and len(alias) <= _CASE_SENSITIVE_MAX:
-        # «Meta», но не «мета» и не «Мета-анализ».
-        return re.compile(rf"(?<![\w-]){body}(?![\w-])")
-    return re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
+    return r"[\s -]+".join(parts)
+
+
+@functools.lru_cache(maxsize=1024)
+def alias_pattern(alias: str) -> re.Pattern[str]:
+    flags = 0 if alias.startswith("=") else re.IGNORECASE
+    alias = alias.lstrip("=")
+    body = _body(alias)
+    if "*" not in alias and len(alias) <= _SHORT:
+        # «Meta» и «META», но не «Мета-анализ».
+        return re.compile(rf"(?<![\w-]){body}(?![\w-])", flags)
+    return re.compile(rf"(?<!\w){body}(?!\w)", flags)
+
+
+@functools.lru_cache(maxsize=1024)
+def stop_pattern(word: str) -> re.Pattern[str]:
+    return re.compile(_body(word), re.IGNORECASE)
+
+
+def _whole_word(text: str, start: int, end: int) -> str:
+    """Найденное с остатком слова и частями через дефис: «мета» в «мета-анализ» → «мета-анализ»."""
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] in "-_"):
+        start -= 1
+    while end < len(text) and (text[end].isalnum() or text[end] in "-_"):
+        end += 1
+    return text[start:end]
+
+
+def alias_found(text: str, aliases: tuple[str, ...], stopwords: tuple[str, ...] = ()) -> bool:
+    """Есть ли в тексте хоть один псевдоним, кроме совпадений со стоп-словами."""
+    stops = [stop_pattern(w) for w in stopwords]
+    for alias in aliases:
+        for m in alias_pattern(alias).finditer(text):
+            whole = _whole_word(text, m.start(), m.end())
+            if not any(s.fullmatch(whole) for s in stops):
+                return True
+    return False
 
 
 def parse(obj: object) -> list[Entry]:
@@ -77,9 +115,11 @@ def parse(obj: object) -> list[Entry]:
         disclaimer = " ".join(str(item.get("disclaimer") or "").split()).rstrip(".")
         if not aliases or not disclaimer:
             raise ValueError(f"у записи {item.get('id') or '?'} нет псевдонимов или пометки")
-        out.append(
-            Entry(str(item.get("id") or ""), str(item.get("name") or ""), aliases, disclaimer)
+        stopwords = tuple(
+            " ".join(str(w).split()) for w in item.get("stopwords") or [] if str(w).strip("* ")
         )
+        entry_id, name = str(item.get("id") or ""), str(item.get("name") or "")
+        out.append(Entry(entry_id, name, aliases, disclaimer, stopwords))
     return out
 
 

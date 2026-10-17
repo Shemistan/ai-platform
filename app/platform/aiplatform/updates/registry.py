@@ -7,12 +7,17 @@
 ложатся в data/registry.json и действуют со следующей сборки видео.
 
 Псевдоним — слово или фраза; `*` в конце слова — любое окончание
-(«Фейсбук*» найдёт «Фейсбуке»). Короткие псевдонимы без `*` (до 4 букв,
-например «Meta») ищутся с учётом регистра, чтобы не ловить обычные слова.
+(«Фейсбук*» найдёт «Фейсбуке»). Регистр не важен («META», «meta»); короткий
+псевдоним без `*` (до 4 букв) не ищется внутри слова с дефисом («мета-анализ»).
+`=` в начале — точный регистр: «=Threads» найдёт продукт Meta, но не «threads»
+в тексте про потоки. stopwords записи — слова, которые псевдоним с `*` ловить
+не должен («Мет*» → «Метой», но не «метод»): слово целиком, с дефисными
+частями, сверяется с ними так же, с `*` на конце.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import threading
@@ -29,8 +34,9 @@ STATUSES = {
     "undesirable": "нежелательная",
 }
 MAX_ENTRIES = 200
+MAX_STOPWORDS = 80
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-_CASE_SENSITIVE_MAX = 4
+_SHORT = 4
 
 
 @dataclass(frozen=True)
@@ -42,22 +48,59 @@ class Entry:
     disclaimer: str
     basis: str = ""
     source: str = ""
+    stopwords: tuple[str, ...] = ()
 
     def public(self) -> dict:
-        return asdict(self) | {"aliases": list(self.aliases), "status_label": STATUSES[self.status]}
+        return self.stored() | {"status_label": STATUSES[self.status]}
+
+    def stored(self) -> dict:
+        """Запись для JSON: кортежи — списками."""
+        return asdict(self) | {"aliases": list(self.aliases), "stopwords": list(self.stopwords)}
 
     def mentioned_in(self, text: str) -> bool:
-        return any(alias_pattern(a).search(text) for a in self.aliases)
+        return alias_found(text, self.aliases, self.stopwords)
 
 
-def alias_pattern(alias: str) -> re.Pattern[str]:
+def _body(alias: str) -> str:
     words = alias.split()
     parts = [re.escape(w[:-1]) + r"\w*" if w.endswith("*") else re.escape(w) for w in words]
-    body = r"[\s -]+".join(parts)
-    if "*" not in alias and len(alias) <= _CASE_SENSITIVE_MAX:
-        # «Meta», но не «мета» и не «Мета-анализ».
-        return re.compile(rf"(?<![\w-]){body}(?![\w-])")
-    return re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
+    return r"[\s -]+".join(parts)
+
+
+@functools.lru_cache(maxsize=1024)
+def alias_pattern(alias: str) -> re.Pattern[str]:
+    flags = 0 if alias.startswith("=") else re.IGNORECASE
+    alias = alias.lstrip("=")
+    body = _body(alias)
+    if "*" not in alias and len(alias) <= _SHORT:
+        # «Meta» и «META», но не «Мета-анализ».
+        return re.compile(rf"(?<![\w-]){body}(?![\w-])", flags)
+    return re.compile(rf"(?<!\w){body}(?!\w)", flags)
+
+
+@functools.lru_cache(maxsize=1024)
+def stop_pattern(word: str) -> re.Pattern[str]:
+    return re.compile(_body(word), re.IGNORECASE)
+
+
+def _whole_word(text: str, start: int, end: int) -> str:
+    """Найденное с остатком слова и частями через дефис: «мета» в «мета-анализ» → «мета-анализ»."""
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] in "-_"):
+        start -= 1
+    while end < len(text) and (text[end].isalnum() or text[end] in "-_"):
+        end += 1
+    return text[start:end]
+
+
+def alias_found(text: str, aliases: tuple[str, ...], stopwords: tuple[str, ...] = ()) -> bool:
+    """Есть ли в тексте хоть один псевдоним, кроме совпадений со стоп-словами."""
+    stops = [stop_pattern(w) for w in stopwords]
+    for alias in aliases:
+        for m in alias_pattern(alias).finditer(text):
+            whole = _whole_word(text, m.start(), m.end())
+            if not any(s.fullmatch(whole) for s in stops):
+                return True
+    return False
 
 
 def _text(item: dict, key: str, limit: int, *, required: bool = True) -> str:
@@ -71,6 +114,10 @@ def _web(url: str) -> str:
     """Источник — только http(s)-ссылка: вкладка «Обновления» ставит его в href."""
     parts = urlsplit(url)
     return url if parts.scheme.lower() in ("http", "https") and parts.netloc else ""
+
+
+def _words(items: list) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(" ".join(str(a).split()) for a in items if str(a or "").strip()))
 
 
 def parse(obj: object) -> list[Entry]:
@@ -94,9 +141,12 @@ def parse(obj: object) -> list[Entry]:
         aliases = item.get("aliases")
         if not isinstance(aliases, list):
             raise ValueError(f"у записи {entry_id} aliases — список")
-        names = tuple(dict.fromkeys(" ".join(str(a).split()) for a in aliases if str(a or "").strip()))
-        if not names or any(a.strip("*") == "" for a in names):
+        names = _words(aliases)
+        if not names or any(a.strip("=*") == "" for a in names):
             raise ValueError(f"у записи {entry_id} нет псевдонимов для поиска")
+        stopwords = item.get("stopwords") or []
+        if not isinstance(stopwords, list):
+            raise ValueError(f"у записи {entry_id} stopwords — список")
         seen.add(entry_id)
         out.append(
             Entry(
@@ -107,6 +157,7 @@ def parse(obj: object) -> list[Entry]:
                 disclaimer=_text(item, "disclaimer", 400).rstrip("."),
                 basis=_text(item, "basis", 400, required=False),
                 source=_web(_text(item, "source", 400, required=False)),
+                stopwords=tuple(w for w in _words(stopwords) if w.strip("*"))[:MAX_STOPWORDS],
             )
         )
     return out
@@ -167,7 +218,7 @@ class Registry:
     def save(self, entries: list[Entry], checked: str | None = None) -> None:
         data = {
             "checked": checked or date.today().isoformat(),
-            "entries": [asdict(e) | {"aliases": list(e.aliases)} for e in entries],
+            "entries": [e.stored() for e in entries],
         }
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)

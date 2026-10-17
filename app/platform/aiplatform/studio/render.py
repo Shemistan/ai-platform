@@ -27,6 +27,7 @@ from __future__ import annotations
 import math
 import struct
 import subprocess
+import textwrap
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -272,6 +273,11 @@ def slide_filter(
     return ",".join(parts)
 
 
+def note_text(notes: list[str], chars: int) -> str:
+    """Пометки для кадра целиком, без «…»: длинная переносится на сколько угодно строк — полоса растёт."""
+    return "\n".join("\n".join(textwrap.wrap(" ".join(n.split()), width=chars)) for n in notes if n.strip())
+
+
 def note_top(lay: Layout, note_file: Path) -> int:
     """Верх тёмной полосы пометки внизу кадра."""
     lines = note_file.read_text(encoding="utf-8").count("\n") + 1
@@ -385,7 +391,7 @@ class Renderer:
             last = "branded"
         if notes:
             note_file = out.with_name(f"{out.stem}-note.txt")
-            note_file.write_text("\n".join(wrap(n, lay.note_chars, 4) for n in notes), encoding="utf-8")
+            note_file.write_text(note_text(notes, lay.note_chars), encoding="utf-8")
             graph.append(f"[{last}]{','.join(note_parts(lay, self.font, note_file))}[noted]")
             last = "noted"
         graph.append(f"[{last}]format=yuv420p[v]")
@@ -440,7 +446,7 @@ class Renderer:
         note_file = None
         if notes:
             note_file = work / "note.txt"
-            note_file.write_text("\n".join(wrap(n, lay.note_chars, 4) for n in notes), encoding="utf-8")
+            note_file.write_text(note_text(notes, lay.note_chars), encoding="utf-8")
         frames = max(int(seconds * FPS), 1)
         # Концовка закрывает слайд плашкой — пункты и элементы сцены успевают показаться до неё.
         ending = branding is not None and outro and outro_start(seconds) >= 1.0
