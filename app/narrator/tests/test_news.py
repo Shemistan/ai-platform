@@ -224,6 +224,30 @@ def test_store_window_baseline_and_dedup(tmp_path):
         assert {r["title"] for r in store.pending()} == {"Go 1.26 is released", "B b b"}
 
 
+def test_store_prune_archives_old_items(tmp_path):
+    # CMP-016: старше 180 дней — `old`, свежие не трогаются, повтор ничего не меняет.
+    with Store(tmp_path / "news.db") as store:
+        s = src()
+        old = Item("https://x.test/old", "Old", published="2026-01-01T00:00:00+00:00")
+        fresh = Item("https://x.test/new", "New", published="2026-09-22T00:00:00+00:00")
+        store.add(s, [old, fresh], NOW, days=400, baseline=False)
+        assert store.prune(NOW) == 1
+        status = {r["url"]: r["status"] for r in store.db.execute("SELECT url, status FROM items")}
+        assert status == {"https://x.test/old": "old", "https://x.test/new": "new"}
+        assert store.prune(NOW) == 0
+        assert store.add(s, [old], NOW, days=400) == 0, "архивный не возвращается при сборе"
+
+
+def test_cli_news_prune(lib, capsys):
+    from narrator.news.store import db_path
+
+    with Store(db_path(lib)) as store:
+        old = Item("https://x.test/old", "Old", published="2020-01-01T00:00:00+00:00")
+        store.add(src(), [old], NOW, days=10_000, baseline=False)
+    assert main(["news", "prune"]) == 0
+    assert "в архив старше 180 дней: 1" in capsys.readouterr().out
+
+
 # --- оценка -----------------------------------------------------------------
 
 

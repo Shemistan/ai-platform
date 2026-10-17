@@ -26,6 +26,8 @@ RESCUED = "· добрал агент"
 # Параметры-метки рекламы и шаринга: от них ссылка не становится другой.
 _TRACKING = {"fbclid", "gclid", "ref", "ref_src", "mc_cid", "mc_eid"}
 
+RETENTION_DAYS = 180  # `news prune`: старше — в архив (CMP-016)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
     id           TEXT PRIMARY KEY,
@@ -254,6 +256,25 @@ class Store:
 
     def commit(self) -> None:
         self.db.commit()
+
+    # --- ретенция ---------------------------------------------------------
+
+    def prune(self, now: datetime, days: float = RETENTION_DAYS) -> int:
+        """Материалы старше days — в архив (`old`), база сжимается VACUUM (CMP-016).
+
+        Записи не удаляются: по id сбор узнаёт уже виденную ссылку и не
+        приносит её снова. Сжатие — только если что-то ушло в архив.
+        """
+        cutoff = iso(now - timedelta(days=days))
+        cur = self.db.execute(
+            "UPDATE items SET status = 'old'"
+            " WHERE status != 'old' AND coalesce(published, collected) < ?",
+            (cutoff,),
+        )
+        self.db.commit()
+        if cur.rowcount:
+            self.db.execute("VACUUM")
+        return cur.rowcount
 
     # --- отбор ------------------------------------------------------------
 

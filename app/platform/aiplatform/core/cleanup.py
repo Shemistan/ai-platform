@@ -3,7 +3,8 @@
 Удаляется только то, что выпуски уже скопировали к себе или что можно
 сделать заново: завершённые задачи вкладок «Фото», «Видео», «Аудио», записи
 кэша генераций, к которым давно не обращались, загрузки и выпуски из архива
-(старше `days`). Опубликованные выпуски (шаг «Публикация» готов):
+(старше `days`). Загрузка (фото людей, записи голоса) удаляется, только если на неё
+не ссылается ни одна оставшаяся задача вкладки или выпуск (CMP-016). Опубликованные выпуски (шаг «Публикация» готов):
 
 - через `trim_days` после публикации — без тяжёлых промежуточных файлов
   (картинки слайдов, исходники клипов, файлы шортса, озвучка в другом
@@ -19,6 +20,8 @@ project.json и published.json остаются в архиве аналитик
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -31,6 +34,7 @@ ACTIVE = ("queued", "running")
 # Тяжёлые промежуточные файлы опубликованного выпуска: каталоги и шаблоны файлов (steps.py).
 TRIM_DIRS = ("images", "clips", "short")
 TRIM_GLOBS = ("voice-x*.mp3", "*.tmp")
+_UPLOAD_ID = re.compile(r"[0-9a-f]{32}")  # id загрузки (core/uploads.py) в записи задачи или выпуска
 AUTO_ARCHIVED = "cleanup"  # project["archived_by"]: выпуск убрала в архив уборка
 
 
@@ -91,6 +95,7 @@ class Cleaner:
         if policy is None:
             policy = self.ctx.config.settings.load()["cleanup"]
         found = {"jobs": 0, "cache": 0, "archived": 0, "uploads": 0, "trimmed": 0, "auto_archived": 0, "bytes": 0}
+        used: set[str] = set()  # id загрузок, на которые ссылаются оставшиеся задачи и выпуски
         for tab in JOB_TABS:
             module = self.ctx.modules.get(tab)
             if module is None:
@@ -98,18 +103,22 @@ class Cleaner:
             for job in module.jobs.list():
                 stamp = job.get("finished_at") or job.get("created_at") or 0
                 if job.get("status") in ACTIVE or stamp >= cutoff:
+                    used |= upload_ids(job)
                     continue
                 found["jobs"] += 1
                 folder = self.ctx.config.data_dir / tab / "jobs" / job["id"]
                 found["bytes"] += size_of(folder) if dry else module.jobs.forget(job["id"])
         uploads = self.ctx.config.uploads_dir
+        studio = self.studio
+        if studio is not None:
+            for project in studio.studio.list(archived=False) + studio.studio.list(archived=True):
+                used |= upload_ids(studio.studio.get(project["id"]) or project)
         for entry in uploads.iterdir() if uploads.is_dir() else []:
-            if entry.is_file() and entry.stat().st_mtime < cutoff:
+            if entry.is_file() and entry.stat().st_mtime < cutoff and entry.stem not in used:
                 found["uploads"] += 1
                 found["bytes"] += entry.stat().st_size
                 if not dry:
                     entry.unlink(missing_ok=True)
-        studio = self.studio
         if studio is not None:
             cache = studio.config.cache_dir
             for entry in cache.iterdir() if cache.is_dir() else []:
@@ -157,6 +166,11 @@ class Cleaner:
                 if not dry:
                     studio.archive(project["id"], True)
                     studio.annotate(project["id"], archived_by=AUTO_ARCHIVED)
+
+
+def upload_ids(record: dict) -> set[str]:
+    """Id загрузок, упомянутых в записи задачи или выпуска (source_url, upload_id, keyframes…)."""
+    return set(_UPLOAD_ID.findall(json.dumps(record, ensure_ascii=False, default=str)))
 
 
 def trim(folder: Path, *, dry: bool) -> int:
