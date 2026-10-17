@@ -10,6 +10,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
@@ -150,6 +151,52 @@ def source_id(scenario: str, *, day: str | None = None, text: str = "") -> str:
     if scenario == "digest":
         return f"digest:{day}"
     return f"{scenario}:" + hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()[:16]
+
+
+# Транслит латиницы в кирилицу для ключа материала: «Discord» и «Дискорд» — один ключ (PRD-004).
+# Сначала сочетания, потом буквы; кирилица затем сводится (й→и, э→е, ъ/ь — прочь).
+_TRANSLIT = (
+    ("shch", "щ"), ("sch", "щ"), ("sh", "ш"), ("ch", "ч"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"),
+    ("ya", "я"), ("yu", "ю"), ("yo", "е"), ("ph", "ф"), ("ck", "к"), ("ee", "и"), ("oo", "у"),
+    ("a", "а"), ("b", "б"), ("c", "к"), ("d", "д"), ("e", "е"), ("f", "ф"), ("g", "г"), ("h", "х"),
+    ("i", "и"), ("j", "дж"), ("k", "к"), ("l", "л"), ("m", "м"), ("n", "н"), ("o", "о"), ("p", "п"),
+    ("q", "к"), ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"), ("v", "в"), ("w", "в"), ("x", "кс"),
+    ("y", "и"), ("z", "з"),
+)  # fmt: skip
+_FOLD = str.maketrans({"ё": "е", "й": "и", "э": "е", "ъ": None, "ь": None})
+_TRANSLIT_MAP = dict(_TRANSLIT)
+_LATIN = re.compile("|".join(src for src, _ in _TRANSLIT))
+_COPY = re.compile(r"\s*\((?:копия|copy)\)\s*$", re.I)
+# Заголовки по умолчанию ничего о материале не говорят — по ним дубль не ищем.
+GENERIC_TITLES = {"пост в канал", "видео по статье"}
+
+
+def norm_title(title: str) -> str:
+    """Заголовок для сравнения: регистр, ё/е, латиница → кирилица, без пунктуации и «(копия)»."""
+    text = _COPY.sub("", title or "").lower()
+    if " ".join(text.split()) in GENERIC_TITLES:
+        return ""
+    text = _LATIN.sub(lambda m: _TRANSLIT_MAP[m.group(0)], text).translate(_FOLD)
+    return " ".join(re.sub(r"[^\w]+", " ", text).split())
+
+
+def norm_url(url: str) -> str:
+    """Адрес источника без схемы, www, якоря, utm-меток и завершающего «/»."""
+    parts = urllib.parse.urlsplit((url or "").strip())
+    host = parts.netloc.lower().removeprefix("www.")
+    if not host:
+        return ""
+    query = "&".join(q for q in parts.query.split("&") if q and not q.lower().startswith("utm_"))
+    return f"{host}{parts.path.rstrip('/')}" + (f"?{query}" if query else "")
+
+
+def material_keys(scenario: str, *, day: str | None = None, title: str = "", url: str = "") -> list[str]:
+    """Ключи материала выпуска (PRD-004), первый — главный: дайджест — день; статья и пост —
+    адрес источника и нормализованный заголовок. Совпал любой — это похожий выпуск."""
+    if scenario == "digest":
+        return [f"digest:{day}"] if day else []
+    keys = [f"url:{u}"] if (u := norm_url(url)) else []
+    return keys + ([f"title:{t}"] if (t := norm_title(title)) else [])
 
 
 def board_group(item: dict, project: dict, published: list[dict] | None = None) -> str:
@@ -446,6 +493,7 @@ class StudioModule:
         channels = {c.id: c.label for c in known.values()}
         facts = self._facts()
         items = []
+        defaults: dict[str, list[str]] = {}  # каналы по умолчанию по сценарию — один раз на доску
         for item in self.studio.list(archived=archived):
             project = self.studio.get(item["id"]) or {}
             folder = self.studio.project_dir(item["id"])
@@ -453,6 +501,9 @@ class StudioModule:
             chosen = project.get("settings", {}).get("channels") or []
             review = _read_text(folder / steps.NARRATOR_REVIEW)
             group = board_group(item, project, published)
+            if not chosen and item["scenario"] not in defaults:
+                defaults[item["scenario"]] = self.default_channels(item["scenario"])
+            fallback = [] if chosen else defaults[item["scenario"]]
             items.append(
                 item
                 | {
@@ -472,6 +523,13 @@ class StudioModule:
                     # Копия — вариант оригинала (AN-009): доля переделок и сравнение вариантов.
                     "variant_of": project.get("variant_of"),
                     "variant": project.get("variant"),
+                    # Каналы не выбраны — доска предлагает каналы по умолчанию сценария (PRD-005).
+                    "default_channels": [
+                        {"id": c, "label": channels.get(c, c), "type": known[c].type if c in known else None}
+                        for c in fallback
+                    ],
+                    # Ключ материала (PRD-004) — по нему доска группирует копии и дубли (UX-009).
+                    "material": self.material(item, project),
                 }
             )
         counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
@@ -768,17 +826,14 @@ class StudioModule:
 
     def scenario_defaults(self, scenario: str) -> dict:
         """Чем настройки сценария отличаются от общих: их и показывает форма нового выпуска."""
+        out: dict = {}
         if scenario == "digest":
             # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
             # по промпту выпуска — постер загружает человек.
-            out: dict = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
-            usual = [c.id for c in self.channels() if c.id == DIGEST_CHANNEL]  # VOICE_NEWS narrator
-            if usual:
-                out["channels"] = usual
-            return out
-        if scenario == "post":
+            out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
+        elif scenario == "post":
             # Пост — из готового: свой постер и свой mp3, оформление канала, кадр по постеру.
-            return {
+            out = {
                 "branding": True,
                 "poster_mode": "upload",
                 "voice_mode": "upload",
@@ -787,7 +842,19 @@ class StudioModule:
                 "clips": False,
                 "shorts": False,
             }
-        return {}
+        chosen = self.default_channels(scenario)
+        if chosen:
+            out["channels"] = chosen
+        return out
+
+    def default_channels(self, scenario: str) -> list[str]:
+        """Каналы по умолчанию сценария (PRD-005): из настроек, только существующие; не заданы —
+        у дайджеста VOICE_NEWS движка, если такой канал есть, у остальных — пусто."""
+        known = [c.id for c in self.channels()]
+        chosen = self.ctx.config.settings.load().get("default_channels", {}).get(scenario)
+        if chosen is None:
+            chosen = [DIGEST_CHANNEL] if scenario == "digest" else []
+        return [c for c in chosen if c in known]
 
     def describe(self) -> dict:
         return {
@@ -994,8 +1061,9 @@ class StudioModule:
     def create_unique(self, scenario: str, title: str, settings: dict, extra: dict, *, force_new: bool) -> dict:
         """Проверка дубля по source и создание — под одним замком: двойной сабмит формы или
         расписание вместе с ручным запуском не дают два выпуска на один материал (второй — 409)."""
+        keys = material_keys(scenario, day=extra.get("day"), title=title, url=settings.get("source_url") or "")
         with self._create_lock:
-            self._no_duplicate(extra["source"], force_new)
+            self._no_duplicate(extra["source"], force_new, keys)
             return self.studio.create(scenario, title, settings, extra)
 
     def create_once(self, payload: object, key: str | None) -> dict:
@@ -1027,17 +1095,55 @@ class StudioModule:
                 while len(self._idem) > IDEMPOTENCY_KEEP:
                     self._idem.pop(next(iter(self._idem)))
 
-    def _no_duplicate(self, source: str, force_new: bool) -> None:
-        """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый)."""
+    def _no_duplicate(self, source: str, force_new: bool, keys: list[str] | None = None) -> None:
+        """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый).
+        keys — ключи материала (PRD-004): тот же заголовок с правками текста, Discord/Дискорд, тот же
+        адрес источника — «похожий выпуск уже есть» с выбором «Создать всё равно»."""
         if force_new:
             return
-        existing = next((p for p in self.studio.list() if self.source_of(p) == source), None)
-        if existing is not None:
-            raise HttpError(
-                HTTPStatus.CONFLICT,
-                f"Уже есть выпуск «{existing['title']}» по этому же материалу — открой его или создай новый.",
-                {"existing": {"id": existing["id"], "title": existing["title"], "scenario": existing["scenario"]}},
+        items = self.studio.list()
+        existing = next((p for p in items if self.source_of(p) == source), None)
+        similar = False
+        if existing is None and keys:
+            wanted = set(keys)
+            # Части серии и выжимка — нарочно из того же источника: похожими на новый выпуск не считаются.
+            existing = next(
+                (p for p in items if not self._derived(p) and wanted & set(self.material_of(p))),
+                None,
             )
+            similar = existing is not None
+        if existing is None:
+            return
+        found = {"id": existing["id"], "title": existing["title"], "scenario": existing["scenario"]}
+        found["url"] = f"/studio/?scenario={existing['scenario']}&project={existing['id']}"
+        if similar:
+            message = f"Похожий выпуск уже есть: «{existing['title']}» — открой его или создай всё равно."
+        else:
+            message = f"Уже есть выпуск «{existing['title']}» по этому же материалу — открой его или создай новый."
+        raise HttpError(HTTPStatus.CONFLICT, message, {"existing": found | {"similar": similar}})
+
+    def _derived(self, item: dict) -> bool:
+        project = self.studio.get(item["id"]) or item
+        return bool(project.get("series_of") or project.get("summary_of"))
+
+    def material(self, item: dict, project: dict | None = None) -> str | None:
+        """Главный ключ материала; у копии (AN-009) — ключ оригинала, чтобы вся цепочка была одной группой."""
+        root = (project or {}).get("variant_of")
+        if root and self.studio.get(root) is not None:
+            item = {"id": root}
+        keys = self.material_of(item)
+        return keys[0] if keys else f"project:{item['id']}"
+
+    def material_of(self, item: dict) -> list[str]:
+        """Ключи материала выпуска (material_keys) — по заголовку, дню и источнику из project.json."""
+        project = self.studio.get(item["id"]) or item
+        settings = project.get("settings") or {}
+        return material_keys(
+            project.get("scenario", ""),
+            day=project.get("day"),
+            title=project.get("title", ""),
+            url=settings.get("source_url") or "",
+        )
 
     def source_of(self, item: dict) -> str | None:
         """Источник выпуска; у выпусков из прошлых версий — по дню или по тексту на диске."""
@@ -1179,6 +1285,11 @@ class StudioModule:
 
         project["settings"] = self.defaults() | project["settings"]  # выпуски из версий без новых настроек
         project["scenario_label"] = SCENARIOS[project["scenario"]]
+        project["material"] = self.material({"id": project_id}, project)  # ключ материала (PRD-004)
+        # Каналы не выбраны (выпуск из старой версии) — студия предлагает каналы сценария (PRD-005).
+        project["default_channels"] = (
+            [] if project["settings"]["channels"] else self.default_channels(project["scenario"])
+        )
         raw = project["steps"]
         project["steps"] = [
             {
