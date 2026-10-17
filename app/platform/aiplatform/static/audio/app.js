@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, api, chip, debounce, fill, followTask, h, logBlock, modal, progressBar, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, narratorApi as api, chip, debounce, fill, followTask, h, logBlock, modal, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -359,7 +359,7 @@ function renderJob(job) {
         job.duration_s ? h("span", { class: "muted small" }, `Длительность ${seconds(job.duration_s)}`) : null,
         job.elapsed_s ? h("span", { class: "muted small" }, `Озвучка заняла ${seconds(job.elapsed_s)}`) : null,
         job.text ? h("button", { type: "button", class: "link", onclick: () => setText(job.text) }, "Текст в редактор") : null,
-        active ? h("button", { type: "button", class: "link danger", onclick: () => cancel(job.id) }, "Отменить") : null,
+        active ? h("button", { type: "button", class: "link danger", onclick: safe(() => cancel(job.id)) }, "Отменить") : null,
       ),
       checkBlock(job.check),
       logBlock(job.log),
@@ -376,7 +376,7 @@ function renderHistory() {
             {},
             h(
               "button",
-              { type: "button", class: `history-item${state.selected?.id === job.id ? " current" : ""}`, onclick: () => select(job.id) },
+              { type: "button", class: `history-item${state.selected?.id === job.id ? " current" : ""}`, onclick: safe(() => select(job.id)) },
               h(
                 "span",
                 { class: "history-text" },
@@ -526,8 +526,15 @@ async function startRecord(stem, payload, taskBox, reload) {
 async function watchVoiceTask(task, taskBox, reload) {
   if (taskBox.dataset.watching === task.id) return;
   taskBox.dataset.watching = task.id;
-  const final = await followTask(`${API}/tasks/${task.id}`, (t) => fill(taskBox, taskCard(t, { full: true })));
-  delete taskBox.dataset.watching;
+  let final;
+  try {
+    final = await followTask(`${API}/tasks/${task.id}`, (t) => fill(taskBox, taskCard(t, { full: true })));
+  } catch (err) {
+    fill(taskBox, h("p", { class: "job-error" }, err.message));
+    return;
+  } finally {
+    delete taskBox.dataset.watching;
+  }
   if (final.status === "done") {
     await reload();
     await refreshConfig();

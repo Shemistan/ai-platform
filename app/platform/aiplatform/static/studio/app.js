@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, progressBar, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, progressBar, safe, STATUS, statusChip } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -476,11 +476,14 @@ async function loadProjects() {
   );
 }
 
+// Фоновое обновление списка: сбой — в общую плашку ошибок, без «Uncaught (in promise)».
+const reloadList = safe(() => loadProjects());
+
 async function open(id) {
   state.drafts = {};
   state.stepDrafts = {};
   show(await api("GET", `${API}/projects/${id}`));
-  loadProjects();
+  reloadList();
   history.replaceState(null, "", `?scenario=${scenario}&project=${id}`);
 }
 
@@ -1149,7 +1152,7 @@ function renderHead(project) {
       ? null
       : h(
           "button",
-          { type: "button", class: "link", onclick: async () => (await act("archive", { archived: !state.project.archived })) && loadProjects() },
+          { type: "button", class: "link", onclick: async () => (await act("archive", { archived: !state.project.archived })) && reloadList() },
           project.archived ? "Вернуть из архива" : "В архив",
         ),
     h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
@@ -1393,7 +1396,7 @@ async function refresh() {
       if (state.project.id !== id) return; // пока ждали ответ, открыли другой выпуск
       // Блоки с полем в фокусе не пересобираются или возвращают фокус и курсор — см. reconcile.
       show(fresh);
-      if (fresh.running !== running) loadProjects();
+      if (fresh.running !== running) reloadList();
     }
   } catch {
     schedule();
@@ -1421,7 +1424,7 @@ async function init() {
   const wanted = new URLSearchParams(location.search).get("project");
   const first = wanted || state.projects[0]?.id;
   if (first) await open(first).catch(() => {});
-  setInterval(loadProjects, 10000);
+  setInterval(reloadList, 10000);
 }
 
 init().catch((err) => {
