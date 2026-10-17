@@ -309,6 +309,7 @@ class StudioModule:
         """Все выпуски всех сценариев по группам: ждёт тебя, идёт, опубликовано, черновики."""
         known = {c.id: c for c in self.channels()}
         channels = {c.id: c.label for c in known.values()}
+        facts = self._facts()
         items = []
         for item in self.studio.list(archived=archived):
             project = self.studio.get(item["id"]) or {}
@@ -335,7 +336,7 @@ class StudioModule:
                             "format": known[r["channel"]].format if r["channel"] in known else None,
                             "public": r.get("public"),
                             "message_id": r.get("message_id"),
-                            **stats.latest(r),
+                            **stats.reach(r, facts),
                         }
                         for r in published
                         if r.get("ok")
@@ -432,6 +433,13 @@ class StudioModule:
                 age_h=snapshot.get("age_h"),
                 source="manual" if snapshot.get("manual") else "telegram",
             )
+
+    def _facts(self) -> stats.Facts:
+        """Подписчики и посты по каналам из всех выпусков, архивных тоже: прирост канала общий."""
+        records: list[dict] = []
+        for item in self.studio.list() + self.studio.list(archived=True):
+            records += _read_json_list(self.studio.project_dir(item["id"]) / steps.PUBLISHED)
+        return stats.Facts(records)
 
     def _poster_url(self, project_id: str, folder) -> str | None:
         path = steps.find(folder, "poster", steps.IMAGE_EXT)
@@ -853,7 +861,11 @@ class StudioModule:
             "short_voice": url(folder / "short" / "voice.mp3"),
             "short_video": url(folder / steps.SHORT_VIDEO),
         }
-        project["published"] = as_json(steps.PUBLISHED)
+        published = as_json(steps.PUBLISHED)
+        if isinstance(published, list):  # отклик в окнах 24ч/72ч/7д — рядом с записью, не поверх её полей
+            facts = self._facts()
+            published = [r | {"reach": stats.reach(r, facts)} if isinstance(r, dict) else r for r in published]
+        project["published"] = published
         review = read(steps.NARRATOR_REVIEW)
         project["review"] = {"verdict": steps.verdict(review), "text": review} if review else None
         found = registry.mentioned(f"{project['title']}\n{read(steps.TEXT)}\n{read(steps.POST)}", self.banned())
