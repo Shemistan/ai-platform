@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import cleanup, events, runner, schema
+from aiplatform.core import audit, cleanup, events, runner, schema
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.log import event as log_event
 from aiplatform.studio.llm import StudioError
@@ -179,6 +179,8 @@ class Studio:
         self.steps = steps
         self.services = services  # то, чем шаги пользуются: вкладки, LLM, рендер — см. steps.Services
         self.events = journal or events.EventLog(None)  # журнал событий; без него — не пишется
+        # Журнал комплаенса (CMP-015) — рядом с журналом событий, в корне data.
+        self.audit = audit.AuditLog(self.events.path.with_name(audit.FILE) if self.events.path else None)
         # Запуск закончился: (проект, статусы шагов на старте) — для уведомлений; зовётся вне замка.
         self.on_stop: Callable[[dict, dict[str, str]], None] | None = None
         # Перед удалением выпуска уборкой (проект, каталог): сохранить то, что нужно аналитике.
@@ -282,6 +284,7 @@ class Studio:
                 self.before_delete(copy.deepcopy(project), self.project_dir(project_id))
             del self._projects[project_id]
         self._emit(project, "project.deleted", actor=events.actor())
+        self.audit.write("delete", project_id=project_id, title=project.get("title"))
         return cleanup.remove_tree(self.project_dir(project_id))
 
     def archive(self, project_id: str, archived: bool) -> dict:

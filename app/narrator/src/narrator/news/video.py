@@ -6,6 +6,9 @@ Telegram показывает видео крупно, с подписью по�
 внизу. Она же — первый кадр. Дальше идёт
 картинка дня с маленькой плашкой в правом нижнем углу. Кадры собирает
 Pillow, видео склеивает ffmpeg.
+
+ИИ-контент (CMP-011): на обоих кадрах в левом верхнем углу мелкая плашка
+«ИИ» (выключить — NARRATOR_AI_BADGE=0), в mp4 — метка comment=AI-generated.
 """
 
 from __future__ import annotations
@@ -32,6 +35,10 @@ SUBSCRIBE_CORNER = 0.32  # плашка в углу: доля ширины
 MARGIN = 0.03  # отступ от края — доля короткой стороны
 THUMB_SIDE = 320
 NOTE_SHARE = 0.022  # кегль пометки — доля короткой стороны
+BADGE = "ИИ"
+BADGE_SHARE = 0.03  # кегль плашки «ИИ» — доля короткой стороны
+BADGE_ENV = "NARRATOR_AI_BADGE"
+AI_METADATA = ["-metadata", "comment=AI-generated", "-metadata", "AI_GENERATED=1"]
 FONT_CANDIDATES = (  # нужен шрифт с кириллицей; свой — $NARRATOR_FONT
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -117,6 +124,26 @@ def draw_notes(img, notes: list[str]):
     return img, band
 
 
+def badge_on() -> bool:
+    return os.environ.get(BADGE_ENV, "1").strip().lower() not in ("0", "off", "false", "no")
+
+
+def draw_badge(img):
+    """Плашка «ИИ» мелко в левом верхнем углу: картинка и озвучка сделаны нейросетью."""
+    from PIL import ImageDraw
+
+    w, h = img.size
+    size = max(round(min(w, h) * BADGE_SHARE), 10)
+    font = _font(size)
+    margin = round(min(w, h) * MARGIN)
+    draw = ImageDraw.Draw(img)
+    left, top, right, bottom = draw.textbbox((margin, margin), BADGE, font=font)
+    pad = max(size // 3, 2)
+    draw.rectangle((left - pad, top - pad, right + pad, bottom + pad), fill=(0, 0, 0, 150))
+    draw.text((margin, margin), BADGE, font=font, fill=(255, 255, 255, 235))
+    return img
+
+
 def make_frames(cover: Path, notes: list[str] | None = None) -> tuple[Path, Path, Path]:
     """Обложка видео, её миниатюра и обычный кадр — рядом с картинкой дня.
 
@@ -150,6 +177,8 @@ def make_frames(cover: Path, notes: list[str] | None = None) -> tuple[Path, Path
     img = _backdrop(base)
     img.alpha_composite(play, ((w - play.width) // 2, (h - play.height) // 2))
     img.alpha_composite(banner, ((w - banner.width) // 2, h - banner.height - margin))
+    if badge_on():
+        img = draw_badge(img)
     img = img.convert("RGB")
     img.save(poster, "JPEG", quality=90)
     small = img.copy()
@@ -163,6 +192,8 @@ def make_frames(cover: Path, notes: list[str] | None = None) -> tuple[Path, Path
     else:
         lift = 0
     img.alpha_composite(corner, (w - corner.width - margin, h - corner.height - margin - lift))
+    if badge_on():
+        img = draw_badge(img)
     img.convert("RGB").save(frame, "PNG")
     if notes:
         note_file.write_text(wanted, encoding="utf-8")
@@ -193,7 +224,7 @@ def make_video(poster: Path, frame: Path, audio: Path, out: Path, seconds: float
         "-map", "[v]", "-map", "2:a",
         "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k",
+        "-c:a", "aac", "-b:a", "128k", *AI_METADATA,
         "-t", f"{seconds:.3f}", "-movflags", "+faststart",
         str(out),
     ]  # fmt: skip

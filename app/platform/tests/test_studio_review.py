@@ -5,9 +5,14 @@
 Telegram владельца — DemoTelegram (демо-режим), каналы публикации — FakeTelegram журнала BE-001.
 """
 
+import fcntl
 import json
+import re
+import tempfile
 import time
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from aiplatform.channels.service import BotServe
 from aiplatform.studio import review as review_module
@@ -182,6 +187,96 @@ class CaptionTest(ReviewCase):
         self.assertIn("Подпись ответом на видео", (self.folder(pid) / steps.POST).read_text(encoding="utf-8"))
 
 
+def field(body: bytes, name: str) -> str | None:
+    """Поле multipart-запроса к Bot API (подпись поста и т.п.)."""
+    found = re.search(rb'name="' + name.encode() + rb'"\r\n\r\n(.*?)\r\n--', body, re.S)
+    return found.group(1).decode() if found else None
+
+
+class FinalCaptionTest(ReviewCase):
+    """PRD-016: владелец одобряет ровно ту подпись, что уйдёт в канал — со сносками и источником."""
+
+    def test_preview_caption_equals_channel_caption(self):
+        sent: list[tuple[str, str | None]] = []
+        fake = self.tg
+
+        def capture(url, body, ctype):
+            sent.append((url.rsplit("/", 1)[-1], field(body, "caption")))
+            return fake(url, body, ctype)
+
+        patcher = mock.patch.object(review_module.publish, "_http_post", capture)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        settings = {"channels": ["tg-a"]}
+        pid = self.create(scenario="article", text=ARTICLE, settings=settings)["id"]
+        (self.folder(pid) / "video.mp4").write_bytes(b"x")
+        (self.folder(pid) / steps.POST).write_text("Компания Meta показала **очки**.\n", encoding="utf-8")
+        self.json("POST", f"/api/studio/projects/{pid}/run", {"step": "publish"})
+        self.settle(pid)
+        deadline = time.time() + 10
+        while self.review.record(pid) is None and time.time() < deadline:
+            time.sleep(0.05)
+        preview = self.tg_owner.calls[0][1]["caption"]
+        self.assertIn("Источник", preview)
+        self.assertIn("экстремистской", preview, "сноска реестра — в превью")
+
+        self.review.handle(click(pid, self.review.record(pid)["nonce"], "ok"))
+        done = self.settle(pid)
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+        channel = [c for m, c in sent if m == "sendVideo" and c]
+        self.assertEqual(channel, [preview])
+
+    def test_article_without_source_preview_warns(self):
+        pid = self.waiting()
+        project = self.studio.studio.get(pid)
+        project["settings"]["source_url"] = ""
+        caption, problem = self.review._caption(project, self.folder(pid), "T")
+        self.assertIn("Главное", caption)
+        self.assertIn("Не опубликуется", problem)
+
+
+class RetryTest(ReviewCase):
+    """PRD-016: публикация упала после «Да» — новое превью с «Повторить», повтор шлёт ровно раз."""
+
+    def test_failure_after_yes_sends_retry_preview(self):
+        pid = self.waiting()
+        old = self.review.record(pid)["nonce"]
+        self.tg.refuse.add(("tg-b", "sendVideo"))
+        self.review.handle(click(pid, old, "ok"))
+        failed = self.settle(pid)
+        self.assertEqual(self.statuses(failed)["publish"], "failed", failed["log"])
+        deadline = time.time() + 10
+        while self.review.record(pid)["nonce"] == old and time.time() < deadline:
+            time.sleep(0.05)
+        rec = self.review.record(pid)
+        self.assertNotEqual(rec["nonce"], old, "новое превью — новый ключ")
+        self.assertFalse(rec["used"])
+        panel = self.last("sendMessage")
+        self.assertEqual(self.keyboard(panel)[0], "Повторить")
+        self.assertIn("не удалась", panel[1]["text"])
+
+        self.review.handle(click(pid, old, "ok"))  # кнопка старого превью ничего не шлёт
+        time.sleep(0.2)
+        self.settle(pid)
+        self.assertEqual(self.tg.count("tg-b", "sendVideo"), 1)
+
+        self.tg.refuse.clear()
+        self.review.handle(click(pid, rec["nonce"], "ok"))
+        self.review.handle(click(pid, rec["nonce"], "ok"))  # двойное нажатие «Повторить»
+        done = self.settle(pid)
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+        self.assertEqual(self.tg.count("tg-a", "sendVideo", accepted=True), 1, "в tg-a не задублировали")
+        self.assertEqual(self.tg.count("tg-b", "sendVideo", accepted=True), 1, "в tg-b — ровно раз")
+
+    def test_failure_without_bot_yes_no_retry_preview(self):
+        pid = self.waiting()
+        before = len(self.tg_owner.calls)
+        self.tg.refuse.add(("tg-a", "sendVideo"))
+        self.press(pid, channels=["tg-a"])
+        time.sleep(0.3)
+        self.assertNotIn("Повторить", json.dumps([c[1] for c in self.tg_owner.calls[before:]], ensure_ascii=False))
+
+
 class OwnerTest(unittest.TestCase):
     def test_owner_by_id_or_username(self):
         self.assertTrue(review_module.is_owner({"id": 42}, "42"))
@@ -203,3 +298,16 @@ class BotServeUpdatesTest(unittest.TestCase):
         serve._dispatch('{"update_id": 1, "callback_query": {"id": "q"}}')
         serve._dispatch("не json")  # сбой разбора — в лог процесса, не исключение
         self.assertEqual(got, [{"update_id": 1, "callback_query": {"id": "q"}}])
+
+    def test_external_serve_is_flagged(self):
+        """Замок `bot serve` держит чужой процесс (терминал) — вкладка «Каналы» предупреждает."""
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "telegram.serve.lock"
+            serve = BotServe(narrator=None, lock=lock)
+            self.assertFalse(serve.view()["external"], "замка нет")
+            with open(lock, "a+") as fh:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assertTrue(serve.view()["external"])
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            self.assertFalse(serve.view()["external"], "замок отпущен")
+            self.assertFalse(BotServe(narrator=None).view()["external"], "демо — без проверки")

@@ -303,8 +303,36 @@ def plain_text(text: str) -> str:
     return _LINK.sub(r"\1 (\2)", text).replace("**", "").strip()
 
 
-# Неудаляемый хвост подписи: сноски реестра («* Компания … признана …») и строки об источнике.
-_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор)\b)")
+# Неудаляемый хвост подписи: сноски реестра («* Компания … признана …»), строки об источнике
+# и строка об ИИ-контенте (CMP-011).
+AI_PREFIX = "ИИ-контент"
+_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор|ИИ-контент)\b)")
+SYNTHETIC_FLAG = (
+    "Синтетический контент: да — при загрузке включи раскрытие ИИ («изменённый или синтетический контент»)."
+)
+
+
+def ai_line(*, voice: bool = False, images: bool = False, video: bool = False) -> str:
+    """Строка об ИИ по фактически использованным генераторам; ничего не генерировали — пусто."""
+    parts = [
+        text
+        for used, text in (
+            (voice, "озвучено ИИ-голосом"),
+            (images, "иллюстрации сгенерированы нейросетью"),
+            (video, "видео сгенерировано нейросетью"),
+        )
+        if used
+    ]
+    return f"{AI_PREFIX}: {'; '.join(parts)}." if parts else ""
+
+
+def with_ai_line(post: str, line: str) -> str:
+    """Пост со строкой об ИИ в неудаляемом хвосте (после сносок и источника)."""
+    if not line or line in post:
+        return post
+    return f"{post.rstrip()}\n\n{line}\n" if post.strip() else f"{line}\n"
+
+
 # Где можно резать тело: после конца предложения или абзаца; запасной вариант — по пробелу.
 _SENTENCE_END = re.compile(r"[.!?…»)](?=\s)|\n")
 _SPACE = re.compile(r"\s+")
@@ -634,8 +662,12 @@ def publish(
     seconds: float = 0.0,
     cover: Path | None = None,
     thumb: Path | None = None,
+    synthetic: bool = False,
 ) -> dict:
     """Отправить видео в канал; результат — {channel, ok, message, files?}.
+
+    synthetic — в выпуске есть сгенерированное ИИ: ручному каналу в описание
+    идёт флаг для раскрытия на площадке (YouTube, TikTok, VK его требуют).
 
     cover и thumb — обложка видео (первый кадр с плеем и плашкой) и её миниатюра:
     без них Telegram сам берёт случайный кадр.
@@ -645,7 +677,8 @@ def publish(
         target.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(video, target / "video.mp4")
         (target / "title.txt").write_text(title.strip() + "\n", encoding="utf-8")
-        (target / "description.txt").write_text(plain_text(post) + "\n", encoding="utf-8")
+        flag = f"\n\n{SYNTHETIC_FLAG}" if synthetic else ""
+        (target / "description.txt").write_text(plain_text(post) + flag + "\n", encoding="utf-8")
         return {
             "channel": channel.id,
             "ok": True,
