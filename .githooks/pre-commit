@@ -1,7 +1,7 @@
 #!/bin/sh
 # 1. Коммит агента в main/master — запрещён на git-уровне (не регексом guard'а):
 #    закрывает составные команды вида `git switch main && git commit`.
-#    Человеку (без CLAUDECODE) коммит в main оставлен — см. README, шаг 5.
+#    Человеку (без CLAUDECODE) коммит в main оставлен — см. CLAUDE.md, «Задачи и ветки».
 if [ -n "$CLAUDECODE" ]; then
   BR=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   case "$BR" in
