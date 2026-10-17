@@ -262,6 +262,34 @@ class StudioModule:
         self.studio.run(project_id, "publish", state=state)
         return self.view(project_id)
 
+    def resolve_publish(self, project_id: str, payload: object) -> dict:
+        """«Пост есть» / «Поста нет» по каналу, где ответа Telegram не было; затем публикация
+        продолжается: досылает только недостающее. Нажатие — и есть подтверждение публикации."""
+        if not isinstance(payload, dict) or not isinstance(payload.get("channel"), str):
+            raise bad_request("Укажи канал.")
+        posted = payload.get("posted")
+        if not isinstance(posted, bool):
+            raise bad_request("posted — true или false.")
+        folder = self.studio.project_dir(project_id)
+
+        def apply(project: dict) -> set[str]:
+            # Под замком студии и только когда выпуск не запущен: шаг публикации журнал сейчас не пишет.
+            records = steps.load_published(folder)
+            found = next((r for r in records if r["channel"] == payload["channel"]), None)
+            if not steps.is_unclear(found):
+                raise bad_request("По этому каналу нечего решать: статус отправки известен.")
+            fixed = steps.resolve_record(found, posted)
+            steps.save_published(folder, [fixed if r is found else r for r in records])
+            return set()
+
+        project = self.studio.update(project_id, apply)
+        chosen = project["settings"].get("channels") or []
+        records = {r["channel"]: r for r in steps.load_published(folder)}
+        if not any(steps.is_unclear(records.get(c)) for c in chosen):
+            ignore = bool(project["steps"]["publish"].get("ignore_verdict"))
+            self.studio.run(project_id, "publish", state={"approved": True, "ignore_verdict": ignore})
+        return self.view(project_id)
+
     # --- доска выпусков ---
 
     def board(self, archived: bool = False) -> dict:
@@ -1129,6 +1157,8 @@ class StudioModule:
                 return req.send_json(self.view(pid))
             case ("POST", ["projects", pid, "publish"]):
                 return req.send_json(self.publish_now(pid, req.json()))
+            case ("POST", ["projects", pid, "publish", "resolve"]):
+                return req.send_json(self.resolve_publish(pid, req.json()))
             case ("POST", ["channels"]):
                 return req.send_json(self.add_channel(req.json()), HTTPStatus.CREATED)
             case ("POST", ["channels", channel_id, "delete"]):

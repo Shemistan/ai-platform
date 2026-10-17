@@ -3,7 +3,7 @@
 # check → push ветки задачи → staging fast-forward на HEAD → push staging →
 # PR staging → main (создать или обновить). Запускать из ветки задачи
 # (любой, кроме main/master/staging); обычно это делает агент.
-# Дизайн: docs/superpowers/specs/2026-09-07-staging-flow-design.md
+# Поток веток: CLAUDE.md, раздел «Задачи и ветки».
 set -e
 cd "$(dirname "$0")" || exit 1
 fail() { echo "⛔ finish: $1" >&2; exit 1; }
