@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -26,6 +28,8 @@ from aiplatform.core.uploads import UploadStore
 
 STATIC_DIR = Path(__file__).with_name("static")
 HOME = "/photo/"
+ALLOW = "GET, HEAD, POST"
+log = logging.getLogger("aiplatform")
 
 
 class Module(Protocol):
@@ -155,18 +159,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._dispatch("POST")
 
+    def _not_allowed(self) -> None:  # без них BaseHTTPRequestHandler отвечает HTML-страницей 501
+        self._dispatch(self.command)
+
+    do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _not_allowed
+
     def _dispatch(self, method: str, *, head: bool = False) -> None:
         url = urlsplit(self.path)
         parts = [p for p in url.path.split("/") if p]
         req = Request(self, method, parts, parse_qs(url.query), head=head)
         try:
+            if method not in ("GET", "POST"):
+                raise HttpError(HTTPStatus.METHOD_NOT_ALLOWED, "Метод не поддерживается.", headers={"Allow": ALLOW})
             # Чужая страница в браузере не должна запускать генерацию на localhost.
             origin = self.headers.get("Origin")
             if method == "POST" and origin and urlsplit(origin).netloc != self.headers.get("Host"):
                 raise HttpError(HTTPStatus.FORBIDDEN, "Запрос с чужого сайта отклонён.")
             if parts[:1] != ["api"]:
                 if method != "GET":
-                    raise HttpError(HTTPStatus.METHOD_NOT_ALLOWED, "Метод не поддерживается.")
+                    raise HttpError(
+                        HTTPStatus.METHOD_NOT_ALLOWED, "Метод не поддерживается.", headers={"Allow": "GET, HEAD"}
+                    )
                 return self._static(req, url.path, parts)
             match (method, parts[1:]):
                 case ("GET", ["config"]):
@@ -180,8 +193,23 @@ class Handler(BaseHTTPRequestHandler):
                     return self.app.modules[prefix].handle(req)
             raise not_found()
         except HttpError as exc:
-            req.send_json({"error": exc.message, **exc.extra}, exc.status)
+            req.send_json({"error": exc.message, **exc.extra}, exc.status, exc.headers)
         except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+        except Exception:  # баг в модуле: ответить JSON, а не рвать соединение молча
+            self._internal_error(req)
+
+    def _internal_error(self, req: Request) -> None:
+        request_id = uuid.uuid4().hex[:12]
+        log.exception("необработанная ошибка %s %s [request_id=%s]", self.command, self.path, request_id)
+        if req.started:  # часть ответа уже ушла — второй не склеить
+            self.close_connection = True
+            return
+        body = {"error": "Внутренняя ошибка", "code": "internal", "request_id": request_id}
+        self.close_connection = True  # тело запроса могло остаться непрочитанным
+        try:
+            req.send_json(body, HTTPStatus.INTERNAL_SERVER_ERROR)
+        except OSError:
             self.close_connection = True
 
     def _static(self, req: Request, path: str, parts: list[str]) -> None:

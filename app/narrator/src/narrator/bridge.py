@@ -42,7 +42,16 @@ _RULE = re.compile(r"^\s*(-{3,}|\*{3,}|_{3,})\s*$")
 
 
 class BridgeError(Exception):
-    """Ошибка для человека: уходит полем error."""
+    """Ошибка для человека: уходит полем error, тип — полем kind.
+
+    kind: invalid — неверный запрос (по умолчанию), not_found — нет такого объекта,
+    unavailable — движку не хватает зависимости (команда упала, нет сети/модели).
+    Платформа выбирает HTTP-код по kind, а не по тексту.
+    """
+
+    def __init__(self, message: str, kind: str = "invalid") -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 # --- текст ---------------------------------------------------------------
@@ -348,7 +357,7 @@ def find_entry(article_id: str) -> tuple[Path, Entry]:
     for path, entry in library.entries(root) if root.exists() else []:
         if library.article_id(path) == article_id:
             return path, entry
-    raise BridgeError(f"Статьи {article_id} нет в библиотеке.")
+    raise BridgeError(f"Статьи {article_id} нет в библиотеке.", kind="not_found")
 
 
 def _read(path: Path) -> str:
@@ -701,9 +710,13 @@ def cmd_bridge(args) -> int:
     try:
         payload, code = run(args), 0
     except BridgeError as e:
-        payload, code = {"error": str(e)}, 1
+        payload, code = {"error": str(e), "kind": e.kind}, 1
     except SystemExit as e:  # команды news падают через fail() → SystemExit с текстом в stderr
-        payload, code = {"error": "команда движка завершилась с ошибкой — подробности в логе"}, 1
+        payload = {
+            "error": "команда движка завершилась с ошибкой — подробности в логе",
+            "kind": "unavailable",
+        }
+        code = 1
         if isinstance(e.code, str):
             payload["error"] = e.code
     sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
