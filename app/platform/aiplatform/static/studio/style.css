@@ -3,7 +3,7 @@
   grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
-  max-width: 1440px;
+  max-width: var(--container-wide);
   margin: 0 auto;
   padding: 16px 24px 48px;
 }
@@ -35,17 +35,13 @@
 .step {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-left: 4px solid var(--line);
+  border-left: 4px solid var(--tone-line, var(--line));
   border-radius: 12px;
   padding: 14px 16px;
   display: grid;
   gap: 10px;
   min-width: 0;
 }
-.step.running { border-left-color: var(--accent); }
-.step.done { border-left-color: var(--ok); }
-.step.waiting { border-left-color: var(--warn); }
-.step.failed { border-left-color: var(--bad); }
 .step.skipped { opacity: 0.7; }
 .step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .step-head h3 { font-size: 15px; margin: 0; flex: 1 1 auto; }
@@ -120,7 +116,7 @@
 .stepper {
   position: sticky;
   top: var(--nav-h, 52px);
-  z-index: 10;
+  z-index: var(--z-sticky);
   background: var(--bg);
   padding: 6px 0;
 }
@@ -130,7 +126,7 @@
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--panel);
   color: var(--text);
@@ -139,17 +135,17 @@
   white-space: nowrap;
 }
 .stepper-item:hover { background: var(--sunken); }
-.stepper-item .mark { font-weight: 700; color: var(--muted); }
-.stepper-item.done .mark { color: var(--ok); }
-.stepper-item.running { border-color: var(--accent); }
-.stepper-item.running .mark { color: var(--accent); }
-.stepper-item.waiting { border-color: var(--warn); }
-.stepper-item.waiting .mark { color: var(--warn); }
-.stepper-item.failed { border-color: var(--bad); }
-.stepper-item.failed .mark { color: var(--bad); }
+.stepper-item .mark { font-weight: 700; color: var(--tone, var(--muted)); }
+/* Рамкой выделены шаги, где что-то происходит; готовый — только цветом отметки. */
+.stepper-item:is(.tone-info, .tone-warning, .tone-danger) { border-color: var(--tone-line); }
 .stepper-item.skipped { opacity: 0.7; }
 /* Переход к шагу не прячет его заголовок под шапкой и степпером. */
 .step { scroll-margin-top: calc(var(--nav-h, 52px) + 64px); }
+/* На узком экране шапка не липнет (common.css) — степпер липнет к самому верху. */
+@media (max-width: 640px) {
+  .stepper { top: 0; }
+  .step { scroll-margin-top: 64px; }
+}
 .step:focus { outline: none; }
 .step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .step-main { display: grid; gap: 10px; min-width: 0; }
@@ -178,7 +174,7 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--switch-thumb);
   transition: transform 0.15s;
 }
 .auto-publish input:checked { background: var(--warn); }
