@@ -419,7 +419,8 @@ class NcVoicePublishTest(StudioCase):
     def test_engine_flag(self):
         from aiplatform.audio import voices
 
-        self.assertEqual([e.id for e in voices.ENGINES.values() if e.license_nc], ["silero"])
+        # Silero — CC BY-NC, Fish — fish-audio-research (ADR 0010); Higgs — Creator Use Grant, не NC.
+        self.assertEqual(sorted(e.id for e in voices.ENGINES.values() if e.license_nc), ["fish", "silero"])
         self.assertTrue(voices.ENGINES["silero"].public()["license_nc"])
 
 

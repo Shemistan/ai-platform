@@ -54,7 +54,15 @@ ENGINES: dict[str, Engine] = {
             True,
         ),
         Engine("higgs", "Higgs (MLX)", "клон голоса на Apple Silicon; движок дайджеста", CLONES, "Charon"),
-        Engine("fish", "Fish (MLX)", "клон голоса на Apple Silicon", CLONES, "Charon"),
+        # fish-audio-research: бесплатно только некоммерческое использование (карточка модели, ADR 0010).
+        Engine(
+            "fish",
+            "Fish (MLX)",
+            "клон голоса на Apple Silicon; лицензия некоммерческая — для черновиков",
+            CLONES,
+            "Charon",
+            license_nc=True,
+        ),
         Engine("moss", "MOSS (MLX)", "клон голоса на Apple Silicon", CLONES, "Charon"),
         Engine("qwen3", "Qwen3 TTS (MLX)", "клон голоса на Apple Silicon", CLONES, "Charon"),
         Engine("chatterbox", "Chatterbox (MLX)", "клон голоса на Apple Silicon", CLONES, "Charon"),
