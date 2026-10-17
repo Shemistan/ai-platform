@@ -1,5 +1,5 @@
 // Вкладка «Каналы»: каналы публикации, бот движка, подписчики и приём подписок.
-import { $, narratorApi as api, chip, fill, h, modal, shortDate } from "/ui.js";
+import { $, busy, busyClick, chip, errorState, fill, h, modal, narratorApi as api, poller, reportError, safe, shortDate } from "/ui.js";
 
 const API = "/api/channels";
 const FORMATS = { landscape: "Видео 16:9", vertical: "Шортс 9:16" };
@@ -21,7 +21,7 @@ function renderChannels() {
   const data = state.data;
   const box = $("channels");
   if (data.error) {
-    fill(box, h("p", { class: "job-error" }, `Каналы не читаются: ${data.error}`));
+    fill(box, errorState({ title: "Каналы не читаются", error: data.error, onRetry: load }));
     return;
   }
   const rows = data.channels.map((c) =>
@@ -47,7 +47,7 @@ function renderChannels() {
   const tools = $("channel-tools");
   fill(tools, 
     data.importable.length
-      ? h("button", { type: "button", class: "small-btn accent", title: data.importable.map((c) => c.label).join(", "), onclick: importNarrator }, `Взять каналы движка (${data.importable.length})`)
+      ? h("button", { type: "button", class: "small-btn accent", title: data.importable.map((c) => c.label).join(", "), onclick: busyClick(importNarrator, "import") }, `Взять каналы движка (${data.importable.length})`)
       : null,
   );
 }
@@ -75,7 +75,7 @@ function editChannel(channel) {
     h("div", { class: "field" }, h("span", { class: "field-label" }, "Что уходит"), formats),
     channel.type === "telegram" ? h("label", { class: "field" }, h("span", { class: "field-label" }, "Переменная с токеном бота"), token, h("span", { class: "hint" }, "Свой бот у канала — имя переменной окружения с его токеном. Сам токен в файлы не пишется.")) : null,
     error,
-    h("div", { class: "toolbar" }, h("button", { type: "button", class: "primary", onclick: save }, "Сохранить")),
+    h("div", { class: "toolbar" }, h("button", { type: "button", class: "primary", onclick: busyClick(save) }, "Сохранить")),
   );
 }
 
@@ -91,11 +91,11 @@ async function removeChannel(channel) {
         {
           type: "button",
           class: "primary",
-          onclick: async () => {
+          onclick: busyClick(async () => {
             state.data = { ...state.data, ...(await api("POST", `${API}/channels/${channel.id}/delete`)) };
             renderChannels();
             close();
-          },
+          }, `delete:${channel.id}`),
         },
         "Убрать",
       ),
@@ -136,12 +136,12 @@ function renderBot(extra = {}) {
       bot.token ? chip("токен найден", "ok") : chip("токена нет", "bad"),
       bot.username ? h("span", {}, `@${bot.username}`) : bot.token ? h("span", { class: "muted small" }, "«Проверить» спросит имя у Telegram") : null,
     ),
-    bot.token_error ? h("p", { class: "hint warn" }, bot.token_error) : null,
+    bot.token_error ? errorState({ title: "Бот не отвечает", error: bot.token_error, onRetry: checkBot }) : null,
     h("p", { class: "hint" }, "Бот движка шлёт озвучки статей и посты сценариев. Токен — в переменной NARRATOR_TELEGRAM_TOKEN или в bot_token.md движка; в браузер он не попадает."),
     names.length
       ? h("div", { class: "field" }, h("span", { class: "field-label" }, "Каналы движка (telegram_tems.md)"), h("ul", { class: "list" }, ...names.map(([n, id]) => h("li", { class: "toolbar" }, h("code", {}, n), h("span", { class: "muted small" }, id)))))
-      : bot.channels_error
-        ? h("p", { class: "hint warn" }, bot.channels_error)
+      : bot.channels_error && bot.channels_error !== bot.token_error // одна причина — один блок
+        ? errorState({ title: "Каналы движка не читаются", error: bot.channels_error, onRetry: load })
         : null,
   );
 }
@@ -149,12 +149,18 @@ function renderBot(extra = {}) {
 function renderServe() {
   const s = state.data.serve;
   const toggle = h("input", { type: "checkbox", checked: s.running });
-  toggle.addEventListener("change", async () => {
-    toggle.disabled = true;
-    state.data.serve = await api("POST", `${API}/serve/${toggle.checked ? "start" : "stop"}`);
-    renderServe();
-    schedulePoll(1500);
-  });
+  toggle.addEventListener(
+    "change",
+    safe(async () => {
+      toggle.disabled = true;
+      try {
+        state.data.serve = await api("POST", `${API}/serve/${toggle.checked ? "start" : "stop"}`);
+      } finally {
+        renderServe();
+      }
+      servePoll.later();
+    }),
+  );
   const since = s.running && s.started_at ? `с ${new Date(s.started_at * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : "";
   fill($("serve"), 
     h(
@@ -162,7 +168,7 @@ function renderServe() {
       { class: "card", style: "margin-bottom:12px" },
       h("label", { class: "switch" }, toggle, "Принимать подписки", s.running ? chip(`идёт ${since}`, "ok") : chip("выключено")),
       h("p", { class: "hint" }, "Пока включено, бот отвечает на /start и /stop. Подписчикам озвучки статей идут в личку, когда канал статей выключен (NARRATOR_TELEGRAM_CHANNEL=off)."),
-      s.error ? h("p", { class: "hint warn" }, s.error) : null,
+      s.error ? errorState({ title: "Приём подписок остановился", error: s.error }) : null,
       s.log.length ? h("pre", { class: "log" }, s.log.slice(-8).join("\n")) : null,
     ),
   );
@@ -193,7 +199,7 @@ function renderSubscribers() {
           ),
         )
       : h("p", { class: "empty" }, "Пока никто не подписался."),
-    data.error ? h("p", { class: "hint warn" }, data.error) : null,
+    data.error ? errorState({ title: "Подписчики не обновились", error: data.error, onRetry: () => loadSubscribers(true) }) : null,
   );
 }
 
@@ -210,9 +216,20 @@ async function loadSubscribers(sync = false) {
     state.subscribers = await api("GET", `${API}/subscribers${sync ? "?sync=1" : ""}`);
     renderSubscribers();
   } catch (err) {
-    fill($("subscribers"), h("p", { class: "job-error" }, err.message));
+    fill($("subscribers"), errorState({ title: "Подписчики не загрузились", error: err, onRetry: () => loadSubscribers() }));
   } finally {
     $("subs-sync").disabled = false;
+  }
+}
+
+async function checkBot() {
+  $("bot-check").disabled = true;
+  try {
+    renderBot(await api("POST", `${API}/bot/check`));
+  } catch (err) {
+    renderBot({ token_error: err.message });
+  } finally {
+    $("bot-check").disabled = false;
   }
 }
 
@@ -224,43 +241,28 @@ async function load() {
   renderUnsent();
 }
 
-let pollTimer = null;
+// Пока бот принимает подписки — его лог и список подписчиков свежие: раз в 3 с, иначе раз в 15 с
+// (poller из ui.js: в скрытой вкладке — раз в минуту, после сбоя — реже).
+const servePoll = poller({ run: pollServe, fast: 3000, slow: 15000, isActive: () => state.data?.serve.running });
 
-function schedulePoll(ms) {
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(pollServe, ms);
-}
-
-// Пока бот принимает подписки — его лог и список подписчиков свежие.
-async function pollServe() {
-  try {
-    const wasRunning = state.data.serve.running;
-    state.data.serve = await api("GET", `${API}/serve`);
-    renderServe();
-    if (state.data.serve.running || wasRunning) loadSubscribers();
-  } catch {
-    /* сервер мог перезапуститься */
-  }
-  schedulePoll(state.data.serve.running ? 3000 : 15000);
+async function pollServe(signal) {
+  const wasRunning = state.data.serve.running;
+  state.data.serve = await api("GET", `${API}/serve`, undefined, { signal });
+  renderServe();
+  if (state.data.serve.running || wasRunning) loadSubscribers();
 }
 
 async function init() {
   segmented($("add-format"), "landscape", (v) => (state.addFormat = v));
-  $("add-form").addEventListener("submit", addChannel);
-  $("bot-check").addEventListener("click", async () => {
-    $("bot-check").disabled = true;
-    try {
-      renderBot(await api("POST", `${API}/bot/check`));
-    } catch (err) {
-      renderBot({ token_error: err.message });
-    } finally {
-      $("bot-check").disabled = false;
-    }
+  $("add-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    busy(e.submitter || $("add-form").querySelector("[type=submit]"), () => addChannel(e), "add-channel").catch(reportError);
   });
+  $("bot-check").addEventListener("click", checkBot);
   $("subs-sync").addEventListener("click", () => loadSubscribers(true));
   await load();
   loadSubscribers();
-  schedulePoll(3000);
+  servePoll.start(3000);
 }
 
-init().catch((err) => fill($("channels"), h("p", { class: "job-error" }, `Не удалось загрузить: ${err.message}`)));
+init().catch((err) => fill($("channels"), errorState({ title: "Не удалось загрузить каналы", error: err, onRetry: () => location.reload() })));

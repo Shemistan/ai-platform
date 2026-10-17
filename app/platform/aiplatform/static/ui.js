@@ -68,7 +68,9 @@ export async function api(method, path, body, { signal, timeout } = {}) {
     data = null;
   }
   if (!res.ok) {
-    const message = data?.error || httpMessage(res.status, data ? "" : text);
+    let message = data?.error || httpMessage(res.status, data ? "" : text);
+    // 500 от сервера несёт request_id — по нему ошибку находят в логе.
+    if (data?.request_id) message = `${message.replace(/\.$/, "")}. Код для поиска в логе: ${data.request_id}`;
     throw new ApiError(message, { kind: "http", status: res.status, data: data || {} });
   }
   return data || {};
@@ -182,7 +184,7 @@ export function jobProgress(job, { onCancel, elapsed = seconds } = {}) {
       "div",
       { class: "progress-foot" },
       h("span", { class: "muted small" }, queued || job.elapsed_s == null ? "" : `Прошло ${elapsed(job.elapsed_s)}`),
-      onCancel ? h("button", { type: "button", class: "link danger", onclick: () => onCancel(job) }, "Отменить") : null,
+      onCancel ? h("button", { type: "button", class: "link danger", onclick: busyClick(() => onCancel(job), `cancel:${job.id}`) }, "Отменить") : null,
     ),
   );
 }
@@ -345,11 +347,101 @@ export function taskCard(task, { onCancel, full = false } = {}) {
       statusChip(task.status),
       h("span", { class: "task-title" }, task.title),
       h("span", { class: "muted small" }, meta),
-      active && onCancel ? h("button", { type: "button", class: "link danger", onclick: safe(() => onCancel(task)) }, "Отменить") : null,
+      active && onCancel ? h("button", { type: "button", class: "link danger", onclick: busyClick(() => onCancel(task), `cancel:${task.id}`) }, "Отменить") : null,
     ),
     task.error ? h("p", { class: "job-error" }, task.error) : null,
     full ? logBlock(task.log) : task.last && active ? h("div", { class: "task-last" }, task.last) : null,
   );
+}
+
+// --- Понятные ошибки ---
+
+// Известные ошибки → человеческий текст: reason — что случилось, help — что делать.
+// engine — поломка движка narrator: она одна на все вкладки и подробно описана в баннере шапки,
+// поэтому на странице — коротко и со ссылкой на «Настройки». Формулировки уточняет TXT-003.
+const ENGINE_TEXT = /invalid choice|unrecognized arguments|usage: narrate|\bbridge\b|движок (упал|не ответил)|движок narrator|команда «[^»]+» не найдена|нужен движок/i;
+const KNOWN_ERRORS = [
+  {
+    test: (err) => err?.kind === "network",
+    reason: "Сервис платформы не отвечает.",
+    help: "Проверь, что он запущен (make run), и нажми «Повторить».",
+  },
+  {
+    test: (err) => err?.kind === "timeout",
+    reason: "Сервис не ответил вовремя.",
+    help: "Возможно, он занят тяжёлой задачей — повтори через минуту.",
+  },
+  {
+    test: (err, text) => err?.data?.kind === "unavailable" || ENGINE_TEXT.test(text),
+    engine: true,
+    reason: "Движок narrator недоступен или устарел.",
+    help: "Что именно не так — в баннере вверху страницы; путь к движку — в «Настройках».",
+  },
+  {
+    test: (_err, text) => /unauthorized|invalid token|bot token|токен (не принят|неверный)|\b401\b/i.test(text),
+    reason: "Telegram не принял токен бота.",
+    help: "Проверь NARRATOR_TELEGRAM_TOKEN или bot_token.md движка.",
+  },
+  {
+    test: (_err, text) => /network is unreachable|getaddrinfo|nodename nor servname|name or service not known|temporary failure in name resolution|connection refused|urlopen error/i.test(text),
+    reason: "Нет связи с внешним сервисом.",
+    help: "Проверь интернет и нажми «Повторить».",
+  },
+];
+
+// explainError(ошибка или текст) → { reason, help, details, engine }: details — сырой текст для
+// «Подробностей», если он не совпадает с reason. Неизвестная короткая однострочная ошибка сервера
+// уже написана для человека — показываем как есть; длинная или многострочная — общий текст.
+export function explainError(error) {
+  const text = String((typeof error === "string" ? error : error?.message) || "");
+  const known = KNOWN_ERRORS.find((k) => k.test(typeof error === "string" ? null : error, text));
+  const requestId = typeof error === "object" ? error?.data?.request_id : null;
+  if (known) return { reason: known.reason, help: known.help, details: text || null, engine: Boolean(known.engine) };
+  if (requestId) return { reason: "Внутренняя ошибка сервиса.", help: `Код для поиска в логе: ${requestId}.`, details: text, engine: false };
+  if (text && text.length <= 200 && !text.includes("\n")) return { reason: text, help: null, details: null, engine: false };
+  return { reason: "Что-то пошло не так.", help: "Нажми «Повторить»; если не поможет — пришли «Подробности».", details: text || null, engine: false };
+}
+
+// Блок ошибки загрузки: заголовок, одна фраза причины, «что делать», «Повторить» и сырой вывод
+// под «Подробностями». errorState({ title, error, onRetry }) — reason/help/details можно задать сами.
+export function errorState({ title = "Не удалось загрузить", error = null, reason, help, details, onRetry = null, note = null } = {}) {
+  const auto = explainError(error);
+  const why = reason ?? auto.reason;
+  const what = help ?? auto.help;
+  const raw = details ?? auto.details;
+  return h(
+    "div",
+    { class: "error-state", role: "alert" },
+    h("strong", { class: "error-title" }, title),
+    note ? h("p", { class: "hint" }, note) : null,
+    why ? h("p", {}, why) : null,
+    what || auto.engine ? h("p", { class: "hint" }, what || "", auto.engine ? [" ", h("a", { class: "link", href: "/settings/" }, "Открыть «Настройки»")] : null) : null,
+    onRetry ? h("div", { class: "toolbar" }, h("button", { type: "button", class: "small-btn", onclick: busyClick(onRetry) }, "Повторить")) : null,
+    raw && raw !== why ? h("details", { class: "inline" }, h("summary", {}, "Подробности"), h("pre", { class: "log" }, raw)) : null,
+  );
+}
+
+// Последний удачный ответ в браузере: при поломке страница показывает его с пометкой «данные от …».
+export function saveLast(key, data) {
+  try {
+    localStorage.setItem(`aip:last:${key}`, JSON.stringify({ at: Date.now(), data }));
+  } catch {
+    /* переполнено или запрещено — просто без запаса */
+  }
+}
+
+export function loadLast(key) {
+  try {
+    const raw = localStorage.getItem(`aip:last:${key}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+// «12 окт., 14:05» — когда сохранили запас.
+export function stamp(ms) {
+  return new Date(ms).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 // --- Ошибки обработчиков ---
@@ -387,20 +479,163 @@ export function safe(fn) {
   };
 }
 
-const pause = (ms, signal) =>
-  new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
-  });
+// --- Кнопки на время запроса ---
+
+const inflight = new Map();
+
+// busy(кнопка, () => промис, ключ) — кнопка неактивна (aria-busy, aria-disabled, стиль в ui.css
+// гасит её и клики) до ответа. disabled не трогаем: его ставит перерисовка по состоянию, и снятие
+// в finally не должно его перебить. Повторный вызов, пока первый не кончился, нового запроса не шлёт:
+// с тем же ключом (или той же кнопкой) возвращает промис первого. Ключ нужен, когда перерисовка
+// подменяет кнопку новой.
+export function busy(btn, work, key = null) {
+  const id = key ?? btn;
+  if (id && inflight.has(id)) return inflight.get(id);
+  const target = typeof btn?.setAttribute === "function" ? btn : null;
+  target?.setAttribute("aria-busy", "true");
+  target?.setAttribute("aria-disabled", "true");
+  const run = (async () => {
+    try {
+      return await work();
+    } finally {
+      if (id) inflight.delete(id);
+      target?.removeAttribute("aria-busy");
+      target?.removeAttribute("aria-disabled");
+    }
+  })();
+  if (id) inflight.set(id, run);
+  return run;
+}
+
+// Идёт ли запрос с этим ключом: перерисовка рисует кнопку неактивной, пока ответа нет.
+export const isBusy = (key) => inflight.has(key);
+
+// Обработчик клика для кнопки, шлющей запрос: busy() по нажатой кнопке (и ключу) плюс safe().
+// key — строка или функция от события.
+export function busyClick(fn, key = null) {
+  return (event) => {
+    const btn = typeof event?.currentTarget?.setAttribute === "function" ? event.currentTarget : null;
+    const id = typeof key === "function" ? key(event) : key;
+    return busy(btn, () => fn(event), id).catch(reportError);
+  };
+}
+
+// --- Опрос ---
+
+export const POLL_MAX_BACKOFF_MS = 30000;
+export const POLL_HIDDEN_MS = 60000;
+
+// Пауза до следующего опроса: fast — пока идёт работа, slow — в простое; после failures сбоев
+// подряд — вдвое дольше на каждый (не дольше 30 с); в скрытой вкладке — ×10, но не чаще hiddenMs
+// (Infinity — не опрашивать, пока вкладку не откроют).
+export function pollDelay({ fast, slow, active, hidden = false, failures = 0, hiddenMs = POLL_HIDDEN_MS }) {
+  let delay = active ? fast : slow;
+  if (failures) delay = Math.min(Math.max(delay, fast) * 2 ** failures, Math.max(POLL_MAX_BACKOFF_MS, delay));
+  if (hidden) delay = Math.max(delay * 10, hiddenMs);
+  return delay;
+}
+
+// poller({ run, fast, slow, isActive, onError }) → { start, stop, now, later }.
+// run(signal) — один опрос (промис); isActive() — идёт ли работа (быстрый интервал);
+// onError(err, failures) — сбой (интервал растёт сам). Запрос в полёте отменяется по stop().
+// В скрытой вкладке опрос редкий, при возврате — сразу. timers и doc — подмена для тестов.
+export function poller({ run, fast = 1000, slow = 5000, isActive = () => false, onError = null, hiddenMs = POLL_HIDDEN_MS, timers = globalThis, doc = globalThis.document }) {
+  let timer = null;
+  let ctrl = null;
+  let stopped = true;
+  let failures = 0;
+  let again = false;
+
+  const hidden = () => Boolean(doc?.hidden);
+  const clear = () => {
+    if (timer !== null) timers.clearTimeout(timer);
+    timer = null;
+  };
+  const schedule = (delay) => {
+    clear();
+    if (stopped || delay === Infinity) return;
+    timer = timers.setTimeout(tick, delay);
+  };
+  const next = () => pollDelay({ fast, slow, active: Boolean(isActive()), hidden: hidden(), failures, hiddenMs });
+
+  async function tick() {
+    timer = null;
+    if (stopped) return;
+    if (ctrl) {
+      again = true; // опрос уже идёт — повторить сразу после него
+      return;
+    }
+    const mine = (ctrl = new AbortController());
+    try {
+      await run(mine.signal);
+      failures = 0;
+    } catch (err) {
+      if (mine.signal.aborted || err?.kind === "abort") return;
+      failures += 1;
+      try {
+        onError?.(err, failures);
+      } catch (inner) {
+        console.warn(inner);
+      }
+    } finally {
+      if (ctrl === mine) ctrl = null;
+    }
+    if (stopped) return;
+    if (again) {
+      again = false;
+      schedule(0);
+    } else schedule(next());
+  }
+
+  const onVisibility = () => {
+    if (stopped) return;
+    if (hidden()) {
+      if (!ctrl) schedule(next());
+    } else self.now();
+  };
+
+  const self = {
+    // start() — опросить сейчас; start(мс) — первый опрос через паузу.
+    start(delay = 0) {
+      if (!stopped) return self;
+      stopped = false;
+      doc?.addEventListener?.("visibilitychange", onVisibility);
+      schedule(delay);
+      return self;
+    },
+    stop() {
+      stopped = true;
+      clear();
+      ctrl?.abort();
+      ctrl = null;
+      again = false;
+      doc?.removeEventListener?.("visibilitychange", onVisibility);
+    },
+    // Опросить сейчас (после своего действия или возврата на вкладку).
+    now() {
+      if (stopped) return;
+      if (ctrl) again = true;
+      else schedule(0);
+    },
+    // Отложить следующий опрос на обычную паузу (данные только что обновили сами).
+    later() {
+      if (!stopped && !ctrl) schedule(next());
+    },
+    get failures() {
+      return failures;
+    },
+  };
+  return self;
+}
 
 const following = new Map();
 
-// Опрос задачи до конца: onUpdate(задача) на каждом шаге, промис — итог.
+// Опрос задачи до конца поверх poller: onUpdate(задача) на каждом шаге, промис — итог.
 // Ответ 4xx (задачу удалили) — отказ с ошибкой; сбой сети — повтор с растущей паузой,
 // после maxErrors сбоев подряд — отказ. На одну задачу (url) — один опрос: повторный вызов
 // возвращает тот же промис, а onUpdate берётся последний (страница перерисовала свой блок).
 export function followTask(url, onUpdate, opts = {}) {
-  const { interval = 1000, signal, maxErrors = 20 } = typeof opts === "number" ? { interval: opts } : opts;
+  const { interval = 1000, signal, maxErrors = 20, timers, doc } = typeof opts === "number" ? { interval: opts } : opts;
   const known = following.get(url);
   if (known) {
     known.onUpdate = onUpdate;
@@ -408,31 +643,34 @@ export function followTask(url, onUpdate, opts = {}) {
   }
   const entry = { onUpdate };
   following.set(url, entry);
-  entry.promise = (async () => {
+  entry.promise = new Promise((resolve, reject) => {
     let last = null;
-    let errors = 0;
-    try {
-      while (true) {
-        if (signal?.aborted) throw new ApiError("Опрос задачи отменён.", { kind: "abort" });
-        let task;
-        try {
-          task = await api("GET", url, undefined, { signal });
-        } catch (err) {
-          if (err.kind === "abort" || (err.kind === "http" && err.status >= 400 && err.status < 500)) throw err;
-          if (++errors >= maxErrors) throw err;
-          await pause(Math.min(interval * 2 ** errors, 30000), signal);
-          continue;
-        }
-        errors = 0;
+    const finish = (settle, value) => {
+      job.stop();
+      signal?.removeEventListener("abort", onAbort);
+      if (following.get(url) === entry) following.delete(url);
+      settle(value);
+    };
+    const onAbort = () => finish(reject, new ApiError("Опрос задачи отменён.", { kind: "abort" }));
+    const job = poller({
+      fast: interval,
+      slow: interval,
+      ...(timers ? { timers } : {}),
+      ...(doc !== undefined ? { doc } : {}),
+      run: async (sig) => {
+        const task = await api("GET", url, undefined, { signal: sig });
         entry.onUpdate(task);
         if (last && task.status !== last) announce(`${task.title || "Задача"}: ${STATUS[task.status] || task.status}`);
         last = task.status;
-        if (task.status !== "queued" && task.status !== "running") return task;
-        await pause(interval, signal);
-      }
-    } finally {
-      if (following.get(url) === entry) following.delete(url);
-    }
-  })();
+        if (task.status !== "queued" && task.status !== "running") finish(resolve, task);
+      },
+      onError: (err, failures) => {
+        if ((err.kind === "http" && err.status >= 400 && err.status < 500) || failures >= maxErrors) finish(reject, err);
+      },
+    });
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    job.start();
+  });
   return entry.promise;
 }

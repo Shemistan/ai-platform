@@ -64,3 +64,4 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var
   font-size: 14px;
 }
 .platform-problems ul { margin: 4px 0 0; padding-left: 18px; }
+.platform-problems .help { display: inline-block; margin-top: 6px; color: inherit; font-weight: 600; }
