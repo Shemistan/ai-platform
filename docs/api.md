@@ -3,7 +3,9 @@
 Контракт `app/platform` для встроенного UI и внешних клиентов (CLI, агенты).
 Код: `aiplatform/core/http.py` (`HttpError`, `Request`), маршрутизация —
 `aiplatform/server.py`, ручки вкладок — `aiplatform/<вкладка>/service.py`.
-Тест контракта — `app/platform/tests/test_api_contract.py`.
+Тест контракта — `app/platform/tests/test_api_contract.py`. Список всех
+маршрутов и команд моста `narrate bridge` — [`api-routes.md`](api-routes.md)
+(собирается из кода, `./check` сверяет).
 
 ## Общее
 

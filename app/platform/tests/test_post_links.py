@@ -44,7 +44,7 @@ class AutoPublishLinksTest(StudioCase):
 
         # Человек посмотрел и нажал «Опубликовать» — уходит.
         status, _ = self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"]})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 202)  # BE-011: publish отвечает 202
         done = self.settle(pid)
         self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
         self.assertTrue(any("ссылки в посте ведут на: example.dev, phish.example" in line for line in done["log"]))
