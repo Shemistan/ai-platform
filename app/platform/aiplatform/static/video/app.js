@@ -179,7 +179,7 @@ function renderFrames() {
     if (state.frames.length) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, "→"));
     items.push(
       h("li", { class: "add" },
-        h("button", { type: "button", class: "add-btn", onclick: () => $("file-input").click() },
+        h("button", { type: "button", class: "add-tile", onclick: () => $("file-input").click() },
           h("span", { class: "plus" }, "+"),
           h("span", {}, state.frames.length ? "Следующий кадр" : "Добавить кадр"),
           h("span", { class: "muted small" }, "или перетащи фото сюда"),
@@ -339,7 +339,7 @@ function renderLiving() {
   const box = $("living-photo");
   if (!photo) {
     box.replaceChildren(
-      h("button", { type: "button", class: "add-btn", onclick: () => $("living-input").click() },
+      h("button", { type: "button", class: "add-tile", onclick: () => $("living-input").click() },
         h("span", { class: "plus" }, "+"),
         h("span", {}, "Выбрать фото"),
         h("span", { class: "muted small" }, "или перетащи его сюда"),
@@ -491,7 +491,7 @@ function renderJob() {
       player(job.video_url),
       h("div", { class: "job-foot" },
         h("span", { class: "muted small" }, `Сгенерировано за ${fmtElapsed(job.elapsed_s)}`),
-        h("a", { class: "link", href: job.video_url, download: `video-${job.id}.mp4` }, "Скачать mp4"),
+        h("a", { class: "btn btn--link", href: job.video_url, download: `video-${job.id}.mp4` }, "Скачать mp4"),
       ),
     );
   }
