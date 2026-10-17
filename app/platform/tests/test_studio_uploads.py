@@ -293,6 +293,22 @@ class UpscaleImagesTest(StudioCase):
         self.assertIn("upscale_images", body["error"])
 
 
+class ManySlidesUploadTest(StudioCase):
+    def test_upload_and_serve_slide_101(self):
+        text = "\n\n".join(f"Абзац {n}." for n in range(1, 102))
+        project = self.create(scenario="article", text=text, settings={"images_mode": "upload"})
+        pid = project["id"]
+        plan = {"slides": [{"para": n, "title": f"Слайд {n + 1}", "image_prompt": "a fox"} for n in range(101)]}
+        status, _ = self.json("POST", f"/api/studio/projects/{pid}/artifacts/plan", {"text": json.dumps(plan)})
+        self.assertEqual(status, 200)
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/upload/images/101", png_bytes())
+        self.assertEqual(status, 200, view)
+        row = view["slides"][100]
+        self.assertEqual(row["key"], "101")
+        self.assertIsNotNone(row["image"])
+        self.assertEqual(self.call("GET", row["image"])[0], 200, "картинка слайда ≥100 отдаётся")
+
+
 class OldProjectTest(StudioCase):
     def test_project_without_clips_step_loads(self):
         project = self.create(scenario="article", text="Абзац.")

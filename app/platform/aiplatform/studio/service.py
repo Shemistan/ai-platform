@@ -73,10 +73,10 @@ ARTIFACTS = {
 }
 _FILE = re.compile(
     r"^(poster\.(png|jpg|webp)|voice\.(mp3|wav|m4a)|video\.mp4|short\.mp4|short/voice\.mp3"
-    r"|images/\d{2}\.(png|jpg|webp)|clips/\d{2}\.(mp4|mov|webm)"
+    r"|images/\d{2,3}\.(png|jpg|webp)|clips/\d{2,3}\.(mp4|mov|webm)"
     r"|publish/[a-z0-9_-]+/(video\.mp4|title\.txt|description\.txt))$"
 )
-_SLIDE = re.compile(r"^\d{2}$")
+_SLIDE = re.compile(r"^\d{2,3}$")  # ключ слайда — f"{n:02d}": 01…99, дальше 100…
 RATES_TTL_S = 60
 SUMMARY_WORDS = 900  # ~7 минут озвучки
 # Копия выпуска: что не переносится (итоги сборки и публикации) и чьи статусы переносятся.

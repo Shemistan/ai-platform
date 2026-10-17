@@ -20,6 +20,12 @@ if [ -f tools/docs_gate.py ]; then
   python3 tools/docs_gate.py
 fi
 
+# --- бэклог (backlog/ главного checkout, вне git): шапки задач, связи, индекс и журнал ---
+if [ -f tools/tasks_gate.py ]; then
+  python3 tools/test_tasks_gate.py
+  python3 tools/tasks_gate.py
+fi
+
 # --- код: `make check` в каждом сервисе app/<svc>/ с Makefile ---
 # В pre-commit — только сервисы с файлами в индексе; вручную и в ./finish — все.
 # Новый Go-сервис: mkdir -p app && cp -R templates/go-service app/<svc> (см. его README).
