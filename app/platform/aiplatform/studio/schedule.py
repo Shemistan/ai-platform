@@ -1,17 +1,24 @@
 """Расписание сценариев: дайджест сам в заданное время и ежедневные работы (отклик, уборка).
 
 Поток раз в AIP_SCHEDULE_TICK_S секунд (по умолчанию 30) зовёт tick(сейчас).
-Наступило время из настроек, а сегодня дайджест ещё не запускали — создать
+Наступило время из настроек, а сегодня дайджест ещё не удался — создать
 выпуск за вчера (или за сегодня) и запустить. Если платформа была выключена
-во время запуска, он догоняется в тот же день, но не на следующий. Дата
-последнего запуска каждой работы — в `<data>/studio/schedule.json`: упавшая
-работа не повторяется каждые полминуты.
+во время запуска, он догоняется в тот же день, но не на следующий.
+
+Итог дайджеста — в `<data>/studio/schedule.json`:
+`{"digest": {"day", "result": "ok|failed", "error", "at", "attempts"}}`. День
+помечается удачным только после `create`; сбой — уведомление, трассировка в
+лог и повтор через RETRY_PAUSE, не больше MAX_ATTEMPTS раз за день. От
+двойного выпуска защищает дедупликация по `source` в `create`.
+
+Ежедневные работы помечаются датой до запуска (упавшая не повторяется каждые
+полминуты), но сбой виден: трассировка в лог и важное уведомление.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
+import logging
 import threading
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -21,6 +28,10 @@ from aiplatform.core.http import HttpError
 
 STATE = "schedule.json"
 DEFAULT_TICK_S = 30.0
+MAX_ATTEMPTS = 3  # попыток дайджеста за день
+RETRY_PAUSE = timedelta(minutes=15)
+
+log = logging.getLogger("aiplatform.schedule")
 
 
 class Scheduler:
@@ -47,8 +58,10 @@ class Scheduler:
 
     def _loop(self) -> None:
         while not self._stop.wait(self.tick_s):
-            with contextlib.suppress(Exception):  # сбой расписания не роняет платформу
+            try:
                 self.tick(datetime.now())
+            except Exception:  # сбой расписания не роняет платформу, но виден в логе
+                log.exception("тик расписания упал")
 
     # --- состояние ---
 
@@ -63,13 +76,20 @@ class Scheduler:
         """Записать отметку (например, когда последний раз обновлялся отклик)."""
         self._mark(name, value)
 
-    def _mark(self, name: str, value: str) -> None:
+    def _mark(self, name: str, value: str | dict) -> None:
         with self._lock_state:
             data = self.state() | {name: value}
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             tmp.replace(self.path)
+
+    def digest_run(self) -> dict:
+        """Последний запуск дайджеста; старая запись строкой-датой считается удачной."""
+        run = self.state().get("digest")
+        if isinstance(run, str):
+            return {"day": run, "result": "ok", "error": None, "at": None, "attempts": 1} if run else {}
+        return run if isinstance(run, dict) else {}
 
     # --- работа ---
 
@@ -79,31 +99,87 @@ class Scheduler:
         with self._lock:
             today = now.date().isoformat()
             plan = self.module.ctx.config.settings.load()["schedule"]["digest"]
-            if plan["enabled"] and now.strftime("%H:%M") >= plan["time"] and self.state().get("digest") != today:
-                self._mark("digest", today)
+            if plan["enabled"] and now.strftime("%H:%M") >= plan["time"] and self._digest_due(now):
                 done.append(self._digest(now, plan["day"]))
             for name, job in self.daily.items():
                 if self.state().get(name) == today:
                     continue
                 self._mark(name, today)
-                with contextlib.suppress(Exception):
-                    result = job()
-                    if result:
-                        done.append(result)
+                result = self._daily(name, job)
+                if result:
+                    done.append(result)
         return done
 
-    def _digest(self, now: datetime, which: str) -> str:
-        day = (now.date() - timedelta(days=1) if which == "yesterday" else now.date()).isoformat()
-        archived = [p for p in self.module.studio.list(archived=True) if self.module.source_of(p) == f"digest:{day}"]
-        if archived:  # убранный в архив выпуск за этот день — решение человека, заново не собираем
-            return f"дайджест за {day}: есть в архиве"
+    def _digest_due(self, now: datetime) -> bool:
+        run = self.digest_run()
+        if run.get("day") != now.date().isoformat():
+            return True
+        if run.get("result") != "failed" or run.get("attempts", 0) >= MAX_ATTEMPTS:
+            return False
         try:
+            last = datetime.fromisoformat(run["at"])
+        except (KeyError, TypeError, ValueError):
+            return True
+        return now - last >= RETRY_PAUSE
+
+    def _daily(self, name: str, job: Callable[[], str | None]) -> str | None:
+        try:
+            return job()
+        except Exception as exc:
+            log.exception("ежедневная работа %s упала", name)
+            self.module.notify(f"Ежедневная работа «{name}» упала", _brief(exc), important=True)
+            return f"{name}: сбой — {_brief(exc)}"
+
+    def _digest(self, now: datetime, which: str) -> str:
+        today = now.date().isoformat()
+        run = self.digest_run()
+        attempts = (run.get("attempts", 0) if run.get("day") == today else 0) + 1
+        day = (now.date() - timedelta(days=1) if which == "yesterday" else now.date()).isoformat()
+
+        def finish(error: str | None) -> None:
+            self._mark(
+                "digest",
+                {
+                    "day": today,
+                    "result": "failed" if error else "ok",
+                    "error": error,
+                    "at": now.isoformat(timespec="seconds"),
+                    "attempts": attempts,
+                },
+            )
+
+        try:
+            source = f"digest:{day}"
+            archived = [p for p in self.module.studio.list(archived=True) if self.module.source_of(p) == source]
+            if archived:  # убранный в архив выпуск за этот день — решение человека, заново не собираем
+                finish(None)
+                return f"дайджест за {day}: есть в архиве"
             project = self.module.create({"scenario": "digest", "day": day, "run": True})
         except HttpError as exc:
             existing = exc.extra.get("existing")
             if existing:
+                finish(None)
                 return f"дайджест за {day}: уже есть «{existing['title']}»"
-            self.module.notify("Дайджест по расписанию не запустился", exc.message, important=True)
-            return f"дайджест за {day}: {exc.message}"
+            return self._digest_failed(day, attempts, exc.message, finish)
+        except Exception as exc:  # диск, настройки, мост narrator — что угодно, но не молча
+            log.exception("дайджест за %s по расписанию упал", day)
+            return self._digest_failed(day, attempts, _brief(exc), finish)
+        finish(None)
         self.module.notify("Дайджест запущен по расписанию", project["title"], important=False)
         return f"дайджест за {day}: запущен {project['id']}"
+
+    def _digest_failed(self, day: str, attempts: int, error: str, finish: Callable[[str], None]) -> str:
+        finish(error)
+        if attempts < MAX_ATTEMPTS:
+            minutes = int(RETRY_PAUSE.total_seconds() // 60)
+            more = f"Попытка {attempts} из {MAX_ATTEMPTS}, следующая через {minutes} мин."
+        else:
+            more = f"Попытка {attempts} из {MAX_ATTEMPTS}, больше сегодня не пробую — запусти вручную."
+        self.module.notify("Дайджест по расписанию не запустился", f"За {day}: {error}. {more}", important=True)
+        return f"дайджест за {day}: {error}"
+
+
+def _brief(exc: BaseException) -> str:
+    """Ошибка одной строкой для уведомления: тип и текст."""
+    text = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__

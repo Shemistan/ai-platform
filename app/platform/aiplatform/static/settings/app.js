@@ -95,7 +95,9 @@ function checkRow(label, hint, checked, onchange) {
 
 function renderSchedule(data) {
   const plan = data.schedule;
-  const last = data.last_runs?.digest;
+  // schedule.json: {day, result, error, at, attempts}; старая запись — строка-дата.
+  const run = data.last_runs?.digest;
+  const last = typeof run === "string" ? run : run?.result === "failed" ? `${run.day} — не удался (${run.error}), попыток ${run.attempts}` : run?.day;
   fill(
     $("schedule"),
     h(
