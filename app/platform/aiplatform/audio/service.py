@@ -28,7 +28,7 @@ from aiplatform.audio.jobs import (
 )
 from aiplatform.core import tasks as tasks_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, handle_uploads, not_found
-from aiplatform.core.narrator import INSTALL_HINT, NarratorError
+from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.core.uploads import AUDIO
 
 PREFIX = "audio"
@@ -187,9 +187,7 @@ class AudioModule:
         try:
             return self.narrator.bridge(*args, stdin=stdin)
         except NarratorError as exc:
-            message = str(exc)
-            status = HTTPStatus.NOT_FOUND if "нет в библиотеке" in message else HTTPStatus.BAD_GATEWAY
-            raise HttpError(status, message) from exc
+            raise http_error(exc) from exc
 
     def library(self) -> dict:
         """Что можно взять в поле текста: статьи с текстом для озвучки и дайджесты."""

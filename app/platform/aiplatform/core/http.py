@@ -15,13 +15,17 @@ _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
 class HttpError(Exception):
-    """extra — дополнительные поля ответа рядом с error (например, existing у дубликата)."""
+    """extra — дополнительные поля ответа рядом с error (например, existing у дубликата);
+    headers — заголовки ответа (например, Allow у 405)."""
 
-    def __init__(self, status: HTTPStatus, message: str, extra: dict | None = None) -> None:
+    def __init__(
+        self, status: HTTPStatus, message: str, extra: dict | None = None, headers: dict[str, str] | None = None
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
         self.extra = extra or {}
+        self.headers = headers or {}
 
 
 def not_found(message: str = "Нет такого адреса.") -> HttpError:
@@ -55,6 +59,7 @@ class Request:
         self.sub = sub
         self.query = query
         self.head = head
+        self.started = False  # ответ уже начат: второй (об ошибке) слать нельзя
 
     @property
     def headers(self):
@@ -72,6 +77,9 @@ class Request:
         except ValueError as exc:
             self._h.close_connection = True
             raise HttpError(HTTPStatus.LENGTH_REQUIRED, "Нужен заголовок Content-Length.") from exc
+        if length < 0:  # rfile.read(-1) читал бы до EOF и вешал keep-alive
+            self._h.close_connection = True
+            raise bad_request("Неверный заголовок Content-Length.")
         if length > limit:
             self._h.close_connection = True  # тело не читаем — соединение дальше не годится
             raise HttpError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, too_big)
@@ -86,19 +94,25 @@ class Request:
 
     # --- вывод ---
 
-    def send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
+    def send_json(
+        self, payload: dict, status: HTTPStatus = HTTPStatus.OK, headers: dict[str, str] | None = None
+    ) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         h = self._h
+        self.started = True
         h.send_response(status)
         h.send_header("Content-Type", "application/json; charset=utf-8")
         h.send_header("Content-Length", str(len(data)))
         h.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            h.send_header(name, value)
         h.end_headers()
         if not self.head:
             h.wfile.write(data)
 
     def redirect(self, location: str) -> None:
         h = self._h
+        self.started = True
         h.send_response(HTTPStatus.FOUND)
         h.send_header("Location", location)
         h.send_header("Content-Length", "0")
@@ -117,6 +131,7 @@ class Request:
         size = path.stat().st_size
         start, end, status = 0, size - 1, HTTPStatus.OK
         header = self.headers.get("Range")
+        self.started = True
         if ranged and header:
             parsed = parse_range(header, size)
             if parsed is None:
