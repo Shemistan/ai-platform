@@ -238,7 +238,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
   (PyPI), Flux2CLI (релизы GitHub), ltx-2-mlx (теги GitHub), веса на
   Hugging Face. Версии читаются из путей установки
   (`mflux-0.22.0`, `flux2cli-v3.1.0`, …), у весов — дата установки. Сама
-  вкладка ничего не ставит: подсказывает, что поднять в setup-model.sh.
+  вкладка ничего не ставит: подсказывает, что поднять в `tools/setup-model.sh`.
   Для закрытых репозиториев весов нужен `HF_TOKEN` в окружении.
 - **Модели озвучки** — что из моделей движка лежит на диске; «Скачать
   основные» (`make models`), модели mlx для сравнения по выбору и «Перенести
@@ -262,7 +262,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 
 Переменные окружения — в `local.mk` рядом с Makefile (не в git) или в
 окружении. Пустое значение — значение по умолчанию. Готовый пример с путями,
-которые ставят setup-model.sh: `cp local.mk.example local.mk`.
+которые ставит `make models`: `cp local.mk.example local.mk`.
 
 | Переменная | По умолчанию | Что это |
 |---|---|---|
@@ -288,20 +288,57 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | `AIP_NOTIFY_CMD` | — | своя команда уведомлений (заголовок и текст — на stdin); без неё на Mac — osascript |
 | `AIP_SCHEDULE_TICK_S` | `30` | как часто расписание смотрит на часы; `0` — расписание выключено |
 
-Старые `local.mk` от `setup-model.sh` photogen и videogen подходят как есть:
+Старые `local.mk` от `setup-model.sh` прежних репозиториев photogen и videogen подходят как есть:
 платформа читает их `PHOTOGEN_*` / `VIDEOGEN_*`, если `AIP_*` не заданы.
 
 ### Установка моделей
 
-Модели ставятся скриптами исходных сервисов — веса общие:
+Фото и видео ставит `tools/setup-model.sh` из этого репозитория — соседние
+репозитории photogen и videogen не нужны. Нужны Mac на Apple Silicon, сеть,
+`uv` и ffmpeg (`brew install uv ffmpeg`), Python 3.11+ (см. «Запуск»). Из
+`app/platform`:
 
-- фото: `11_photo_generator/app/photogen/setup-model.sh <id>` (начни с `z-image-turbo`);
-  апскейлер SeedVR2 3B ставить не нужно — он идёт в окружении mflux, веса
-  (~7 ГБ) докачиваются в `AIP_MODELS_DIR/.photogen-cache` при первом увеличении;
-- видео: `10_video_generator/app/videogen/setup-model.sh <id>`;
-- озвучка и новости: в `app/narrator` — `make models`; для дайджеста нужен ещё claude CLI.
-  Данные старого narrator (статьи, база новостей, каналы, токен бота) переносит один раз
-  `sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word`.
+```sh
+make models M=--list                       # какие модели есть
+make models M="z-image-turbo ltx-2.3-q4"   # минимум: одна модель фото и одна видео, без лицензий и токенов
+make run
+```
+
+Скрипт ставит пайплайны в `~/.local/share/photogen` и `~/.local/share/videogen`
+(`PHOTOGEN_HOME`, `VIDEOGEN_HOME`), качает веса в `AIP_MODELS_DIR` (по умолчанию
+`/Volumes/External SSD/local_models`) и дописывает в `local.mk` строки
+`AIP_MODELS_DIR`, `AIP_PHOTO_*`, `AIP_VIDEO_*` — остальное в `local.mk` не
+трогает. Повторный запуск докачивает недостающее, установленное пропускает.
+Нет внешнего диска — другой каталог:
+`make models M=z-image-turbo AIP_MODELS_DIR=~/local_models`.
+
+Закрытые лицензией веса (FLUX.2, Ideogram 4, LTX-2.5): открыть страницу
+модели на Hugging Face, принять условия, создать токен типа Read и запустить
+`HF_TOKEN=hf_… make models M=<id>`; скрипт подскажет ссылку.
+
+| Модель | Вкладка | Веса на диске | Примечание |
+|---|---|---|---|
+| `z-image-turbo` | фото | ~10 ГБ | по умолчанию для постеров и слайдов, без токена |
+| `krea-2` | фото | ~15 ГБ | без токена |
+| `qwen-image-2512` | фото | ~26 ГБ | без токена |
+| `ideogram-4` | фото | не замерено (q4 mflux — обычно 10–25 ГБ) | нужен `HF_TOKEN` |
+| `flux2-klein-9b` | фото | ~18 ГБ + текстовый энкодер при первой генерации | Flux2CLI, нужен `HF_TOKEN` |
+| `flux2-dev` | фото | ~65 ГБ — оценка, не замерено (Flux2CLI хранит bf16-веса 32B) | Flux2CLI, нужен `HF_TOKEN` |
+| `ltx-2.3-q4` | видео | ~19 ГБ + 7,5 ГБ энкодер Gemma 3 12B | без токена; живое фото |
+| `ltx-2.5-q4` | видео | ~27 ГБ (энкодер внутри) | модель видео по умолчанию, нужен `HF_TOKEN` |
+| `wan-2.2-t2v-q4` | видео | ~27 ГБ | только по промпту, без звука |
+
+Размеры — `du` установленных каталогов (файлы режима `--distilled` у LTX;
+`FULL=1` качает репозиторий целиком — в разы больше). Сверху — пайплайны:
+окружение mflux ~1,1 ГБ, Flux2CLI ~0,2 ГБ, ltx-2-mlx ~0,4 ГБ, запускатель
+Wan ~0,5 ГБ. Апскейлер SeedVR2 3B ставить не нужно — он идёт в окружении
+mflux, веса (~7 ГБ) докачиваются в `AIP_MODELS_DIR/.photogen-cache` при
+первом увеличении.
+
+Озвучка и новости: в `app/narrator` — `make models`; для дайджеста нужен ещё
+claude CLI. Данные старого narrator (статьи, база новостей, каналы, токен
+бота) переносит один раз
+`sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word`.
 
 ### Каналы публикации
 

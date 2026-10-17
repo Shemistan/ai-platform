@@ -278,7 +278,7 @@ class ConfigTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = load({"AIP_DATA_DIR": tmp, "PHOTOGEN_MODELS_DIR": str(Path(tmp) / "models")})
             self.assertFalse(any(m.installed for m in cfg.models()))
-            with self.assertRaisesRegex(params.ValidationError, r"setup-model\.sh krea-2"):
+            with self.assertRaisesRegex(params.ValidationError, r"make models M=krea-2"):
                 params.build_spec({"prompt": "кот", "model": "krea-2"}, cfg.models(), lambda _: None)
 
 

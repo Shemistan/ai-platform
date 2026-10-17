@@ -1,4 +1,4 @@
-.PHONY: run demo smoke test lint check python-check
+.PHONY: run demo smoke test lint check python-check models
 
 # Нужен Python 3.11+. Не задан (make PYTHON=… или окружение) — берём первый подходящий
 # из PATH: на чистом Mac python3 — это 3.9 из Xcode CLT, а python3.12 из brew лежит рядом.
@@ -13,7 +13,7 @@ endif
 # Переменные из local.mk должны дойти до сервиса: экспортируем все.
 export
 
-# Платформа на настоящих моделях: нужны установленные пайплайны photogen/videogen и narrator (см. README).
+# Платформа на настоящих моделях: нужны модели (make models) и narrator (см. README).
 run: python-check
 	$(PYTHON) -m aiplatform.server
 
@@ -24,6 +24,12 @@ demo: python-check
 # Короткий прогон на настоящих моделях с замером времени: картинка, фраза озвучки, черновик статьи.
 smoke: python-check
 	$(PYTHON) -m aiplatform.smoke
+
+# Пайплайны и веса фото и видео (нужны сеть и Mac на Apple Silicon): make models M="z-image-turbo ltx-2.3-q4".
+# Другой каталог весов: … AIP_MODELS_DIR=~/local_models. Список моделей: make models M=--list.
+models: python-check
+	@test -n "$(M)" || { echo "укажи модели: make models M=\"z-image-turbo ltx-2.3-q4\" (список: make models M=--list)" >&2; exit 2; }
+	sh tools/setup-model.sh $(M)
 
 test: python-check
 	$(PYTHON) -W error::ResourceWarning -m unittest discover -s tests -t .

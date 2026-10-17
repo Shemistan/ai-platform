@@ -721,7 +721,7 @@ async function init() {
     relayout(); // частота кадров у моделей разная — позиции считаем заново
   };
   const showModelNote = () => {
-    const missing = cfg.models.filter((m) => !m.installed).map((m) => `./setup-model.sh ${m.id}`);
+    const missing = cfg.models.filter((m) => !m.installed).map((m) => `make models M=${m.id}`);
     const note = cfg.models.find((m) => m.id === $("model").value)?.note || "";
     $("model-note").textContent = [note, missing.length ? `Установить: ${missing.join(", ")}` : ""].filter(Boolean).join(". ");
   };
