@@ -500,6 +500,33 @@ def cmd_bot_subscribers(args) -> int:
     return 0
 
 
+def cmd_bot_audience(args) -> int:
+    """Аудитория бота агрегатами (AN-011): подписки по источнику, retention D7/D30 по когортам.
+    Ни chat_id, ни имён — только числа; сеть не нужна."""
+    import json
+
+    from narrator import telegram
+
+    report = telegram.audience(telegram.State.load(telegram.state_path()))
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    print(f"подписано сейчас: {report['active']}")
+    print("подписки по источнику (метка /start):")
+    for source, row in report["by_source"].items():
+        print(f"  {source:<32} подписалось {row['subscribed']:>4}, осталось {row['active']:>4}")
+    print("retention по недельным когортам (доля оставшихся; n — кому исполнилось 7/30 дней):")
+
+    def share(row: dict, days: int) -> str:
+        value = row[f"d{days}"]
+        return "—" if value is None else f"{value:.0%} (n={row[f'd{days}_n']})"
+
+    for row in report["cohorts"]:
+        week = f"неделя с {row['cohort']}: {row['n']:>4}"
+        print(f"  {week}  D7 {share(row, 7):<14} D30 {share(row, 30)}")
+    return 0
+
+
 def cmd_bot_channels(args) -> int:
     """Каналы из telegram_tems.md: по имени их называют в --channel."""
     from narrator import telegram
@@ -844,6 +871,12 @@ def build_parser() -> argparse.ArgumentParser:
     b = bot.add_parser("subscribers", help="кто подписан на бота")
     b.add_argument("--no-sync", action="store_true", help="не забирать новые сообщения")
     b.set_defaults(func=cmd_bot_subscribers)
+
+    b = bot.add_parser(
+        "audience", help="подписки по источнику и retention D7/D30 — агрегаты без ПДн"
+    )
+    b.add_argument("--json", action="store_true", help="отчёт в JSON")
+    b.set_defaults(func=cmd_bot_audience)
 
     b = bot.add_parser("send", help="отправить озвучку статьи в канал (или подписчикам)")
     b.add_argument("dir")

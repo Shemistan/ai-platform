@@ -93,7 +93,8 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `NARRATOR_TELEGRAM_TOKEN` | — | токен бота движка для каналов без своего `token_env`; значение не в git |
 | `NARRATOR_TELEGRAM_TOKEN_FILE` | `app/narrator/bot_token.md` | файл с токеном бота, если переменная выше пуста |
 | `NARRATOR_BOT_MAX_SUBSCRIBERS` | `1000` | бот не подписывает сверх этого числа; `0` — без ограничения |
-| `NARRATOR_BOT_INVITE` | — | инвайт-код: подписка только по `/start <код>` (ссылка `t.me/<бот>?start=<код>`) |
+| `NARRATOR_BOT_INVITE` | — | инвайт-код: подписка только по `/start <код>` (ссылка `t.me/<бот>?start=<код>`; с меткой источника — `<код>__<метка>`) |
+| `NARRATOR_BOT_USERNAME` | — | имя бота без `@`: в посте статьи ссылка «Подписаться на озвучки» `t.me/<бот>?start=<метка статьи>` — источник подписки в `./narrate bot audience` (AN-011) |
 | `NARRATOR_BOT_REPLY_INTERVAL` | `60` | секунд между ответами бота одному чату (защита от флуда) |
 | `NARRATOR_TELEGRAM_CHANNEL` | канал статей из `telegram_tems.md` | `off` — озвучка статей идёт подписчикам бота в личку, а не в канал |
 | `FAKE_NARRATOR_HOME`, `FAKE_NARRATOR_DELAY`, `FAKE_TTS_STEP_DELAY`, `FAKE_TTS_WORDS_PER_SECOND`, `FAKE_TTS_FAIL` | внутри данных платформы, `0.05`, `0.3`, `2.5`, — | только для демо и тестов: каталог фейкового движка, паузы шагов, темп фейковой речи (короче аудио — быстрее рендер в тестах), падение озвучки на середине |

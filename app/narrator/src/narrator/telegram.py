@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import fcntl
+import hashlib
 import html
 import json
 import mimetypes
@@ -42,7 +43,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from narrator import audit, library, registry
@@ -95,6 +96,13 @@ REPLY_INTERVAL_S = 60.0
 MAX_SUBSCRIBERS_ENV = "NARRATOR_BOT_MAX_SUBSCRIBERS"  # 0 — без ограничения
 MAX_SUBSCRIBERS = 1000
 INVITE_ENV = "NARRATOR_BOT_INVITE"  # пусто — /start без кода
+# Источник подписки (AN-011): ссылка t.me/<бот>?start=<метка> — метка выпуска, откуда
+# пришёл подписчик. С инвайт-кодом payload — «<код>__<метка>». Метка — только
+# [A-Za-z0-9_-] до 64 знаков (правило Telegram).
+# @-имя бота без @: задано — в посте статьи ссылка «подписаться».
+BOT_USERNAME_ENV = "NARRATOR_BOT_USERNAME"
+START_SEP = "__"
+_START_PARAM = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 class TelegramError(RuntimeError):
@@ -203,6 +211,8 @@ class Subscriber:
     active: bool = True
     note: str = ""  # почему отписан: команда /stop или ошибка отправки
     thread: int | None = None  # тема в группе, если получатель — канал-тема
+    start_param: str | None = None  # откуда подписался: метка из /start <payload> (AN-011)
+    deactivated_at: str | None = None  # дата отписки; повторный /start её очищает (AN-011)
 
     def address(self) -> dict:
         """Куда слать: chat_id и, если это тема в группе, message_thread_id."""
@@ -219,6 +229,9 @@ class State:
     subscribers: list[Subscriber] = field(default_factory=list)
     # «<дата>-<название>_<движок>» → когда разослали
     sent: dict[str, str] = field(default_factory=dict)
+    # Завершённые подписки без ПДн (AN-011): {"added", "source", "left"} — ни chat_id, ни имени.
+    # Для retention по когортам: строка остаётся, даже когда запись подписчика удалена (CMP-006).
+    departed: list[dict] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -256,10 +269,11 @@ class State:
             except BaseException:
                 tmp.unlink(missing_ok=True)
                 raise
-            self.offset, self.subscribers, self.sent = (
+            self.offset, self.subscribers, self.sent, self.departed = (
                 merged.offset,
                 merged.subscribers,
                 merged.sent,
+                merged.departed,
             )
             self._base = copy.deepcopy(merged)
 
@@ -269,22 +283,35 @@ class State:
     def active(self) -> list[Subscriber]:
         return [s for s in self.subscribers if s.active]
 
-    def upsert(self, chat_id: int, name: str) -> bool:
-        """Подписывает чат. True — если подписчик новый или вернулся после /stop."""
+    def upsert(self, chat_id: int, name: str, start_param: str | None = None) -> bool:
+        """Подписывает чат. True — если подписчик новый или вернулся после /stop.
+        Вернувшийся — новая подписка (AN-011): дата и источник — этого /start,
+        дата отписки стёрта."""
         sub = self.find(chat_id)
         if sub is None:
-            self.subscribers.append(Subscriber(chat_id=chat_id, name=name, added=library.today()))
+            self.subscribers.append(
+                Subscriber(
+                    chat_id=chat_id, name=name, added=library.today(), start_param=start_param
+                )
+            )
             return True
         sub.name = name or sub.name
         if sub.active:
             return False
-        sub.active, sub.note = True, ""
+        sub.active, sub.note, sub.deactivated_at = True, "", None
+        sub.added, sub.start_param = library.today(), start_param
         return True
 
     def deactivate(self, chat_id: int, note: str) -> None:
+        """Отписка: дата отписки у записи и строка без ПДн в departed — для retention (AN-011)."""
         sub = self.find(chat_id)
-        if sub is not None:
-            sub.active, sub.note = False, note
+        if sub is None or not sub.active:
+            if sub is not None:
+                sub.note = note
+            return
+        left = library.today()
+        sub.active, sub.note, sub.deactivated_at = False, note, left
+        self.departed.append({"added": sub.added, "source": sub.start_param, "left": left})
 
 
 @contextlib.contextmanager
@@ -313,7 +340,79 @@ def _merge(base: State, mine: State, disk: State) -> State:
         if was.get(chat_id) != sub:  # подписался, отписался или переименован здесь
             subs[chat_id] = sub
     out.subscribers = list(subs.values())
+    # departed только дописывается: чужие строки с диска плюс свои новые с момента load.
+    out.departed = list(disk.departed) + list(mine.departed[len(base.departed) :])
     return out
+
+
+def start_source(payload: str, invite: str = "") -> tuple[str, str | None]:
+    """/start <payload> → (инвайт-код, метка источника). С инвайтом payload — «<код>__<метка>»
+    (или только код), без него весь payload — метка. Метка не по правилам Telegram — None."""
+    code, source = payload.partition(START_SEP)[::2] if invite else ("", payload)
+    return code, source if _START_PARAM.fullmatch(source or "") else None
+
+
+def start_tag(text: str) -> str:
+    """Метка источника из имени выпуска: латиница, цифры, _ и - до 64 знаков; иначе — хэш."""
+    tag = re.sub(r"[^A-Za-z0-9_-]+", "-", text).strip("-")[:64]
+    return tag or hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def start_link(source: str, username: str | None = None, invite: str | None = None) -> str | None:
+    """Ссылка «подписаться» с меткой выпуска: t.me/<бот>?start=<метка>. Нет имени бота — None."""
+    username = (
+        (username if username is not None else os.environ.get(BOT_USERNAME_ENV, ""))
+        .strip()
+        .lstrip("@")
+    )
+    if not username:
+        return None
+    invite = (invite if invite is not None else os.environ.get(INVITE_ENV, "")).strip()
+    payload = f"{invite}{START_SEP}{source}" if invite else source
+    return f"https://t.me/{username}?start={payload}"
+
+
+def _days(a: str, b: str) -> int:
+    return (date.fromisoformat(b[:10]) - date.fromisoformat(a[:10])).days
+
+
+def audience(state: State, today: str | None = None) -> dict:
+    """Аудитория бота агрегатами, без chat_id и имён (AN-011): подписки по источнику и
+    retention D7/D30 по недельным когортам. Подписка — активная запись или строка departed;
+    отписанные записи без departed (до AN-011) не учитываются: даты отписки у них нет."""
+    today = today or library.today()
+    spells = [
+        {"added": s.added, "source": s.start_param, "left": None} for s in state.active() if s.added
+    ]
+    spells += [d for d in state.departed if d.get("added")]
+    by_source: dict[str, dict] = {}
+    for spell in spells:
+        row = by_source.setdefault(spell.get("source") or "—", {"subscribed": 0, "active": 0})
+        row["subscribed"] += 1
+        row["active"] += spell.get("left") is None
+    cohorts: dict[str, list[dict]] = {}
+    for spell in spells:
+        start = date.fromisoformat(spell["added"][:10])
+        week = (start - timedelta(days=start.weekday())).isoformat()
+        cohorts.setdefault(week, []).append(spell)
+    rows = []
+    for week in sorted(cohorts):
+        group = cohorts[week]
+        row = {"cohort": week, "n": len(group)}
+        for days in (7, 30):
+            # В знаменателе — только те, кому уже исполнилось days дней подписки.
+            ripe = [g for g in group if _days(g["added"], today) >= days]
+            kept = [
+                g for g in ripe if g.get("left") is None or _days(g["added"], g["left"]) >= days
+            ]
+            row[f"d{days}"] = round(len(kept) / len(ripe), 2) if ripe else None
+            row[f"d{days}_n"] = len(ripe)
+        rows.append(row)
+    return {
+        "active": len(state.active()),
+        "by_source": dict(sorted(by_source.items(), key=lambda kv: -kv[1]["subscribed"])),
+        "cohorts": rows,
+    }
 
 
 _SERVING = False  # этот процесс держит SERVE_LOCK (`bot serve`)
@@ -621,12 +720,12 @@ def pull(
             sub = state.find(chat_id)
             if sub is not None and sub.active:
                 continue  # уже подписан — молчим
-            code = words[1] if len(words) > 1 else ""
+            code, source = start_source(words[1] if len(words) > 1 else "", invite)
             if invite and not secrets.compare_digest(code.encode(), invite.encode()):
                 reply(chat_id, NEED_INVITE)
             elif max_subscribers and len(state.active()) >= max_subscribers:
                 reply(chat_id, FULL)
-            elif state.upsert(chat_id, chat_name(chat)):
+            elif state.upsert(chat_id, chat_name(chat), start_param=source):
                 fresh.append(state.find(chat_id))
                 reply(chat_id, WELCOME)
         elif command == "/stop":
@@ -663,6 +762,9 @@ def describe(path: Path, entry: Entry, engine: str) -> str:
     if entry.url:
         tail += f'\n<a href="{html.escape(entry.url)}">Оригинал статьи</a>'
     tail += f"\n{registry.ai_line(voice=True)}"  # озвучка narrator — всегда синтез (CMP-011)
+    link = start_link(start_tag(path.name))
+    if link:  # подписчик из этого поста помечен меткой статьи (AN-011)
+        tail += f'\n<a href="{html.escape(link)}">Подписаться на озвучки</a>'
     notes = registry.footnotes_html(spoken_text(path, entry), registry.load())
     head = f"<b>{html.escape(entry.title.strip())}</b>"
     # Лимит Telegram считает текст без разметки, так что запас тут с избытком.
