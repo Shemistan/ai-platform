@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import cleanup, events, runner
+from aiplatform.core import cleanup, events, log, runner
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.log import event as log_event
 from aiplatform.studio.llm import StudioError
@@ -689,8 +689,10 @@ class Studio:
                 finish("step.failed", FAILED, type(exc).__name__, error=str(exc))
                 self._log(project_id, f"✗ {step.label}: {exc}")
             else:
-                finish("step.failed", FAILED, type(exc).__name__, error=f"Внутренняя ошибка: {exc!r}")
-                self._log(project_id, f"✗ {step.label}: {exc!r}")
+                # Пользователю — что делать; repr и трасса — в журнал выпуска и лог сервиса (TXT-003).
+                log.internal_error(exc, project=project_id, step=step.id)
+                finish("step.failed", FAILED, type(exc).__name__, error=log.STEP_INTERNAL)
+                self._log(project_id, f"✗ {step.label}: {type(exc).__name__}: {exc}")
             return False
         if cancel.is_set():
             if self._shutting_down():  # как выше: шаг прерван остановкой сервиса

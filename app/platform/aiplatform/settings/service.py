@@ -188,7 +188,7 @@ class SettingsModule:
             if engine is None:
                 raise bad_request("Неизвестный движок озвучки.")
             if item not in engine.voices:
-                raise bad_request(f"У движка {engine.label} нет голоса {item!r}.")
+                raise bad_request(f"У движка {engine.label} нет голоса «{item}».")
 
             def apply(data: dict) -> None:
                 names = set(data["disabled"]["voices"].get(engine.id, []))
@@ -197,7 +197,7 @@ class SettingsModule:
 
         elif kind in CATALOGS:
             if item not in CATALOGS[kind]:
-                raise bad_request(f"Нет такого в каталоге: {KIND_LABELS[kind]} — {item!r}.")
+                raise bad_request(f"Нет такого в каталоге: {KIND_LABELS[kind]} — «{item}».")
 
             def apply(data: dict) -> None:
                 names = set(data["disabled"][kind])

@@ -18,7 +18,8 @@ export class ApiError extends Error {
   }
 }
 
-// Текст ответа-ошибки без JSON: код и первая непустая строка (HTML-теги срезаны).
+// Текст ответа-ошибки без JSON: что случилось и что сделать; код и первая непустая строка
+// (HTML-теги срезаны) — в скобках, чтобы было что искать в логе (TXT-003).
 function httpMessage(status, text) {
   if (status === 413) return "Файл больше лимита.";
   const line = String(text || "")
@@ -26,7 +27,8 @@ function httpMessage(status, text) {
     .split("\n")
     .map((s) => s.trim())
     .find(Boolean);
-  return line ? `Ошибка ${status}: ${line.slice(0, 200)}` : `Ошибка ${status}`;
+  const what = line ? `${status}: ${line.slice(0, 80)}` : status;
+  return `Сервис ответил ошибкой (${what}). Обнови страницу; если повторится — посмотри лог сервиса.`;
 }
 
 // api(метод, путь, тело, { signal, timeout }) → JSON ответа или ApiError.
@@ -269,7 +271,7 @@ export function copyButton(getText, label = "Скопировать") {
       btn.textContent = "Скопировано";
       toast("Скопировано");
     } catch {
-      btn.textContent = "Не вышло";
+      btn.textContent = "Не скопировалось";
       toast("Не удалось скопировать: браузер не дал доступ к буферу обмена", "danger");
     }
     setTimeout(() => (btn.textContent = label), 1500);

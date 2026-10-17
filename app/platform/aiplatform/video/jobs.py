@@ -13,7 +13,7 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
-from aiplatform.core import cleanup, runner
+from aiplatform.core import cleanup, log, runner
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
 from aiplatform.core.uploads import UploadStore
@@ -305,7 +305,9 @@ class JobManager:
                 self._finish(job, "failed", error=_error_text(str(exc), job["log"]))
         except Exception as exc:  # noqa: BLE001 — воркер не должен умереть из-за одной задачи
             with self._lock:
-                self._finish(job, "failed", error=f"Внутренняя ошибка сервиса: {exc!r}")
+                log.internal_error(exc, task=job["id"])
+                job["log"].append(f"✗ {type(exc).__name__}: {exc}")
+                self._finish(job, "failed", error=log.TASK_INTERNAL)
         else:
             with self._lock:
                 self._finish(job, "done")

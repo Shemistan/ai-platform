@@ -248,7 +248,9 @@ class Tasks:
                 self._finish(task, "failed", _error_text(str(exc), task["log"]))
         except Exception as exc:  # noqa: BLE001 — очередь не должна умереть из-за одной задачи
             with self._lock:
-                self._finish(task, "failed", f"Внутренняя ошибка: {exc!r}")
+                log.internal_error(exc, task=task["id"])
+                task["log"].append(f"✗ {type(exc).__name__}: {exc}")
+                self._finish(task, "failed", log.TASK_INTERNAL)
         else:
             with self._lock:
                 self._finish(task, "done")

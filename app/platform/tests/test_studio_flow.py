@@ -189,7 +189,7 @@ class LlmGarbageTest(StudioCase):
         done = self.settle(project["id"])
         plan = next(s for s in done["steps"] if s["id"] == "plan")
         self.assertEqual(plan["status"], "failed")
-        self.assertIn("не JSON", plan["error"])
+        self.assertIn("неверном формате", plan["error"])
         # Человек правит план руками — шаг готов.
         fixed = {"slides": [{"para": 0, "title": "Свой слайд"}]}
         status, view = self.json(

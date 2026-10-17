@@ -128,7 +128,12 @@ class Notifier:
         try:
             answer = self.telegram_post(f"{TELEGRAM_API}/bot{token}/sendMessage", fields)
         except Exception as exc:  # noqa: BLE001 — сеть, таймаут; str(exc) может нести URL с токеном
-            return {"via": "telegram", "ok": False, "error": f"Telegram недоступен: {type(exc).__name__}"}
+            return {
+                "via": "telegram",
+                "ok": False,
+                "error": "Нет связи с Telegram. Проверь интернет или VPN.",
+                "detail": type(exc).__name__,
+            }
         if not answer.get("ok"):
             description = str(answer.get("description") or "ответ без ok").replace(token, "***")
             return {"via": "telegram", "ok": False, "error": f"Telegram ответил «{description}»"}

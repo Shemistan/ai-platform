@@ -160,7 +160,7 @@ function fieldsOf(values, prefix) {
             // Удаление канала затрагивает все сценарии — только на вкладке «Каналы», с подтверждением.
             h("p", { class: "hint" }, "Убрать канал из списка — на вкладке ", h("a", { class: "link", href: "/channels/" }, "«Каналы»"), "."),
           )
-        : h("p", { class: "hint" }, `Каналы не настроены: ${cfg.channels_file}`),
+        : h("p", { class: "hint" }, "Каналов пока нет — добавь их на вкладке ", h("a", { class: "link", href: "/channels/" }, "«Каналы»"), "."),
     // Необратимое: выпуск уйдёт в каналы без просмотра — тумблер предупреждающего цвета, а не обычный флажок.
     auto_publish: () =>
       h(
@@ -750,7 +750,7 @@ function copyButton(text) {
           btn.textContent = "Скопировано";
           toast("Промпт скопирован");
         } catch {
-          btn.textContent = "Не вышло";
+          btn.textContent = "Не скопировалось";
           toast("Не удалось скопировать: браузер не дал доступ к буферу обмена", "danger");
         }
         setTimeout(() => (btn.textContent = "Скопировать промпт"), 1500);
@@ -1348,5 +1348,7 @@ async function init() {
 }
 
 init().catch((err) => {
-  $("project").replaceChildren(h("p", { class: "job-error" }, `Не удалось загрузить сценарии: ${err.message}`));
+  // Причина — в консоль: человеку — что сделать (TXT-003).
+  console.error(err);
+  $("project").replaceChildren(h("p", { class: "job-error" }, "Не удалось загрузить выпуски. Проверь, что сервис запущен, и обнови страницу."));
 });

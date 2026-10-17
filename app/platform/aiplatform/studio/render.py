@@ -154,7 +154,7 @@ def size_of(orientation: str) -> tuple[int, int]:
     try:
         return int(w), int(h)
     except ValueError as exc:
-        raise StudioError(f"Кадр {orientation!r}: ждём landscape, vertical или ШxВ.") from exc
+        raise StudioError(f"Кадр «{orientation}»: ждём landscape, vertical или ШxВ.") from exc
 
 
 def layout(orientation: str, scale: float = 1.0) -> Layout:

@@ -592,7 +592,7 @@ function configureBanner(cfg) {
     };
   } else if (Object.values(cfg.runners).includes(false)) {
     const lost = Object.entries(cfg.runners).filter(([, ok]) => !ok).map(([name]) => name).join(", ");
-    configBanner = { kind: "warn", text: `Пайплайн ${lost} не найден — его модели не запустятся. Как установить: ${cfg.install_hint}.` };
+    configBanner = { kind: "warn", text: `Не установлен модуль для моделей ${lost}: они не запустятся. Как установить: ${cfg.install_hint}` };
   }
   setBanner(null);
 }

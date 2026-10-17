@@ -67,7 +67,7 @@ class PhotoModule:
             out.append(f"Фото: ни одна модель не установлена в {self.config.models_dir}. {INSTALL_HINT}")
         for backend in sorted({m.model.backend for m in available}):
             if not self.config.runner_available(backend):
-                out.append(f"Фото: пайплайн {backend} не найден. {INSTALL_HINT}")
+                out.append(f"Фото: не установлен модуль для моделей {backend}. {INSTALL_HINT}")
         return out
 
     def handle(self, req: Request) -> None:
