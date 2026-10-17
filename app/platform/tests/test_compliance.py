@@ -171,5 +171,53 @@ class PostNotesFlowTest(StudioCase):
         self.assertIn(META_NOTE.encode(), audio)
 
 
+@NEEDS_FFMPEG
+class DisclaimersOffTest(StudioCase):
+    def ready_post(self, post):
+        settings = {"disclaimers": False, "branding": False}
+        project = self.create(scenario="post", post=post, settings=settings, run=True)
+        pid = project["id"]
+        self.settle(pid)
+        PostNotesFlowTest.upload(self, pid)
+        done = self.settle(pid)
+        self.assertEqual(self.statuses(done)["render"], "done", done["log"])
+        return pid
+
+    def publish(self, pid, **extra):
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"]} | extra)
+        self.assertEqual(status, 200, view)
+        done = self.settle(pid)
+        return done, next(s for s in done["steps"] if s["id"] == "publish")
+
+    def test_mention_without_notes_needs_reason(self):
+        pid = self.ready_post(META_POST)
+        done, step = self.publish(pid)
+        self.assertEqual(step["status"], "failed", done["log"])
+        self.assertIn("упоминания из реестра (Meta), пометки выключены", step["error"])
+        self.assertFalse((self.folder(pid) / "published.json").exists())
+
+        done, step = self.publish(pid, ignore_disclaimers="  новость о судебном решении,   согласовано  ")
+        self.assertEqual(step["status"], "done", done["log"])
+        (record,) = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        off = record["disclaimers_off"]
+        self.assertEqual(off["reason"], "новость о судебном решении, согласовано")
+        self.assertEqual(off["mentions"], ["Meta"])
+        self.assertGreater(off["at"], 0)
+
+    def test_no_mentions_publish_freely(self):
+        pid = self.ready_post("**Про Go**\n\nСборщик мусора стал быстрее.")
+        done, step = self.publish(pid)
+        self.assertEqual(step["status"], "done", done["log"])
+        (record,) = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        self.assertNotIn("disclaimers_off", record)
+
+    def test_reason_must_be_text(self):
+        pid = self.create(scenario="post", post=META_POST)["id"]
+        status, _ = self.json(
+            "POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"], "ignore_disclaimers": 1}
+        )
+        self.assertEqual(status, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
