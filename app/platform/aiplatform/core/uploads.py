@@ -7,6 +7,8 @@ import struct
 import uuid
 from pathlib import Path
 
+from aiplatform.core.fsutil import atomic_write
+
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_AUDIO_BYTES = 200 * 1024 * 1024
 IMAGE_MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
@@ -80,7 +82,7 @@ class UploadStore:
         if len(data) > limit:
             raise UploadError(f"Файл больше {limit // 2**20} МБ.")
         upload_id = uuid.uuid4().hex
-        (self.root / f"{upload_id}.{ext}").write_bytes(data)
+        atomic_write(self.root / f"{upload_id}.{ext}", data)
         return upload_id
 
     def path(self, upload_id: str) -> Path | None:

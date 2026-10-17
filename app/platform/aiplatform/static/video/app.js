@@ -1,6 +1,6 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
-import { $, api, chip, h, STATUS, jobProgress, statusChip, toneOf } from "/ui.js";
+import { $, api, chip, h, jobProgress, poller, STATUS, statusChip, toneOf } from "/ui.js";
 
 const state = {
   config: null,
@@ -266,7 +266,7 @@ async function submit(event) {
     state.selectedId = job.id;
     upsertJob(job);
     renderJobs();
-    schedulePoll(0);
+    schedulePoll();
   } catch (err) {
     showFormError(err.message);
   } finally {
@@ -388,7 +388,7 @@ async function submitLiving(event) {
     state.selectedId = job.id;
     upsertJob(job);
     renderJobs();
-    schedulePoll(0);
+    schedulePoll();
   } catch (err) {
     showLivingError(err.message);
   } finally {
@@ -559,31 +559,27 @@ async function cancelJob(id) {
   }
 }
 
-let pollTimer = null;
+// Опрос очереди: раз в секунду, пока есть активные задачи, раз в 5 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя связи — реже). Свои действия зовут schedulePoll().
+const jobsPoll = poller({ run: (signal) => poll(signal), fast: 1000, slow: 5000, isActive: () => state.jobs.some(isActive), onError: (err) => setBanner(err.message, "error") });
 
-function schedulePoll(delay) {
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(poll, delay);
+function schedulePoll() {
+  jobsPoll.now();
 }
 
-async function poll() {
-  try {
-    const { jobs } = await api("GET", "/api/video/jobs");
-    // Список приходит без лога; лог выбранной задачи берём отдельным запросом.
-    const selected = jobs.find((j) => j.id === state.selectedId);
-    const previous = state.jobs.find((j) => j.id === state.selectedId);
-    if (selected) {
-      const needFull = isActive(selected) || !previous?.log || previous.status !== selected.status;
-      Object.assign(selected, needFull ? await api("GET", `/api/video/jobs/${selected.id}`) : { log: previous.log });
-    }
-    state.jobs = jobs;
-    if (!state.selectedId && jobs.length) return selectJob(jobs[0].id).then(() => schedulePoll(1000));
-    renderJobs();
-    setBanner(null);
-  } catch (err) {
-    setBanner(err.message, "error");
+async function poll(signal) {
+  const { jobs } = await api("GET", "/api/video/jobs", undefined, { signal });
+  // Список приходит без лога; лог выбранной задачи берём отдельным запросом.
+  const selected = jobs.find((j) => j.id === state.selectedId);
+  const previous = state.jobs.find((j) => j.id === state.selectedId);
+  if (selected) {
+    const needFull = isActive(selected) || !previous?.log || previous.status !== selected.status;
+    Object.assign(selected, needFull ? await api("GET", `/api/video/jobs/${selected.id}`, undefined, { signal }) : { log: previous.log });
   }
-  schedulePoll(state.jobs.some(isActive) ? 1000 : 5000);
+  state.jobs = jobs;
+  if (!state.selectedId && jobs.length) return selectJob(jobs[0].id);
+  renderJobs();
+  setBanner(null);
 }
 
 // ---------- запуск страницы ----------
@@ -733,7 +729,7 @@ async function init() {
   renderLiving();
   applyModel();
   renderJobs();
-  poll();
+  jobsPoll.start();
 }
 
 init();

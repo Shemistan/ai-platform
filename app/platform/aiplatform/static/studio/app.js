@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, progressBar, safe, STATUS, statusChip, toneOf } from "/ui.js";
+import { $, announce, api, busy as busyRequest, busyClick, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reportError, safe, STATUS, statusChip, toneOf } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -221,7 +221,7 @@ function channelAdder(prefix) {
       ),
     ),
     h("p", { class: "form-error", id: id("new-error"), hidden: true }),
-    h("button", { type: "button", class: "secondary", onclick: () => addChannel(prefix) }, "Добавить"),
+    h("button", { type: "button", class: "secondary", onclick: busyClick(() => addChannel(prefix)) }, "Добавить"),
   );
 }
 
@@ -421,7 +421,7 @@ async function create(event, forceNew = false) {
             " ",
             h("button", { type: "button", class: "link", onclick: () => (existing.scenario === scenario ? open(existing.id) : (location.href = `?scenario=${existing.scenario}&project=${existing.id}`)) }, "Открыть"),
             " · ",
-            h("button", { type: "button", class: "link", onclick: () => create(null, true) }, "Создать новый"),
+            h("button", { type: "button", class: "link", onclick: busyClick(() => create(null, true)) }, "Создать новый"),
           ]
         : []),
     );
@@ -442,8 +442,8 @@ function longTextActions(project) {
   return h(
     "div",
     { class: "actions" },
-    h("button", { type: "button", class: "secondary", disabled: project.running, onclick: splitProject }, "Разбить на серию"),
-    h("button", { type: "button", class: "secondary", disabled: summary.status === "running", onclick: () => act("summary") }, summary.status === "running" ? "Выжимка пишется…" : "Сделать выжимку"),
+    h("button", { type: "button", class: "secondary", disabled: project.running, onclick: busyClick(splitProject) }, "Разбить на серию"),
+    h("button", { type: "button", class: "secondary", disabled: summary.status === "running", onclick: busyClick(() => act("summary")) }, summary.status === "running" ? "Выжимка пишется…" : "Сделать выжимку"),
     summary.status === "done" ? h("a", { class: "link", href: `?scenario=article&project=${summary.project}` }, "Открыть выжимку") : null,
     summary.status === "failed" ? h("span", { class: "job-error" }, summary.error) : null,
   );
@@ -517,7 +517,8 @@ async function addChannel(prefix) {
   const get = (name) => document.getElementById(`${prefix}-${name}`);
   const error = get("new-error");
   try {
-    const res = await api("POST", `${API}/channels`, { label: get("new-label").value, chat_id: get("new-chat").value, format: get("new-format").value });
+    // Каналы правит только вкладка «Каналы» (ChannelStore) — сценарии зовут её API.
+    const res = await api("POST", "/api/channels/channels", { label: get("new-label").value, chat_id: get("new-chat").value, format: get("new-format").value });
     state.config.channels = res.channels;
     for (const name of ["new-label", "new-chat"]) get(name).value = ""; // иначе перерисовка вернёт набранное
     if (prefix === "step-publish") publishPick(state.project).channels.add(res.added); // канал из шага — сразу в выбранные
@@ -553,14 +554,19 @@ async function publishNow() {
   pick.force = false;
 }
 
-async function act(path, body) {
-  try {
-    show(await api("POST", `${API}/projects/${state.project.id}/${path}`, body ?? {}));
-    return true;
-  } catch (err) {
-    alertBox(err.message);
-    return false;
-  }
+// Один запрос на действие: повторный клик (или клик по кнопке, которую перерисовка подменила
+// новой) до ответа ждёт первый запрос, а не шлёт второй POST.
+function act(path, body) {
+  const id = state.project.id;
+  return busyRequest(null, async () => {
+    try {
+      show(await api("POST", `${API}/projects/${id}/${path}`, body ?? {}));
+      return true;
+    } catch (err) {
+      alertBox(err.message);
+      return false;
+    }
+  }, `act:${id}:${path}`);
 }
 
 // Параметры шага прямо в его карточке: поменял → «Перезапустить шаг» пересобирает шаг уже с ними.
@@ -662,7 +668,7 @@ function editor(name, value, rows = 8, mono = false) {
     h(
       "div",
       { class: "actions" },
-      h("button", { type: "button", class: "secondary", disabled: state.project.running, onclick: () => saveArtifact(name, area.value) }, "Сохранить правку"),
+      h("button", { type: "button", class: "secondary", disabled: state.project.running, onclick: busyClick(() => saveArtifact(name, area.value)) }, "Сохранить правку"),
       h("span", { class: "hint" }, "Правка сбросит шаги, которые от неё зависят."),
     ),
   );
@@ -957,7 +963,7 @@ function stepBody(step) {
               )
             : null,
           channelAdder("step-publish"),
-          h("button", { type: "button", class: "primary", disabled: p.running, onclick: publishNow }, "Опубликовать…"),
+          h("button", { type: "button", class: "primary", disabled: p.running, onclick: busyClick(publishNow) }, "Опубликовать…"),
         ),
         p.published
           ? h(
@@ -974,8 +980,8 @@ function stepBody(step) {
                   ...(r.files || []).filter((x) => x.endsWith(".mp4")).map((x) => h("a", { class: "link", href: `${API}/projects/${p.id}/files/${x}?download=1` }, "скачать")),
                   ...(unclear && !p.running
                     ? [
-                        h("button", { type: "button", onclick: () => act("publish/resolve", { channel: r.channel, posted: true }) }, "Пост есть"),
-                        h("button", { type: "button", onclick: () => act("publish/resolve", { channel: r.channel, posted: false }) }, "Поста нет"),
+                        h("button", { type: "button", onclick: busyClick(() => act("publish/resolve", { channel: r.channel, posted: true })) }, "Пост есть"),
+                        h("button", { type: "button", onclick: busyClick(() => act("publish/resolve", { channel: r.channel, posted: false })) }, "Поста нет"),
                       ]
                     : []),
                 );
@@ -1081,8 +1087,8 @@ function renderStep(step) {
     h("button", { type: "button", class: "link", "aria-expanded": String(!folded), "aria-controls": bodyId, onclick: () => toggleStep(step.id) }, folded ? "Развернуть" : "Свернуть"),
     step.status !== "running"
       ? step.status === "pending"
-        ? h("button", { type: "button", class: "link", disabled: p.running, onclick: () => rerunStep(step.id) }, "Выполнить шаг")
-        : h("button", { type: "button", class: "secondary small", disabled: p.running, onclick: () => rerunStep(step.id) }, "Перезапустить шаг")
+        ? h("button", { type: "button", class: "link", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Выполнить шаг")
+        : h("button", { type: "button", class: "secondary small", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Перезапустить шаг")
       : null,
   );
   const attrs = { class: `step ${step.status} tone-${toneOf(step.status)}${folded ? " collapsed" : ""}`, id: `step-${step.id}`, tabindex: "-1" };
@@ -1100,7 +1106,7 @@ function renderStep(step) {
       step.status === "pending" && step.blocked_by.length
         ? h("p", { class: "hint" }, `Начнётся, когда будет готово: ${step.blocked_by.join(", ")}.`)
         : null,
-      canApprove ? h("button", { type: "button", class: "primary", onclick: () => act("approve", { step: step.id }) }, approveLabel) : null,
+      canApprove ? h("button", { type: "button", class: "primary", onclick: busyClick(() => act("approve", { step: step.id })) }, approveLabel) : null,
       stepSettings(step),
       h("div", { class: "step-body" }, ...stepBody(step)),
     ),
@@ -1152,23 +1158,23 @@ function renderHead(project) {
     { class: "panel project-head" },
     h("h2", {}, project.title),
     statusChip(overallStatus(project)),
-    running ? h("button", { type: "button", class: "secondary", onclick: () => act("cancel") }, "Остановить") : null,
-    next ? h("button", { type: "button", class: "primary", onclick: next.run }, next.label) : null,
+    running ? h("button", { type: "button", class: "secondary", onclick: busyClick(() => act("cancel")) }, "Остановить") : null,
+    next ? h("button", { type: "button", class: "primary", onclick: busyClick(next.run) }, next.label) : null,
     // «Запустить всё» — главное действие, только когда выпуску больше ничего от тебя не нужно.
-    !running && !next?.runAll ? h("button", { type: "button", class: "secondary", onclick: () => act("run", {}) }, "Запустить всё") : null,
+    !running && !next?.runAll ? h("button", { type: "button", class: "secondary", onclick: busyClick(() => act("run", {})) }, "Запустить всё") : null,
     project.settings.draft ? h("span", { class: "chip tone-warning" }, "черновик") : null,
     project.settings.draft && !running
-      ? h("button", { type: "button", class: "secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: makeFinal }, "Сделать чистовик")
+      ? h("button", { type: "button", class: "secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: busyClick(makeFinal) }, "Сделать чистовик")
       : null,
     project.archived ? h("span", { class: "chip tone-neutral" }, "в архиве") : null,
     running
       ? null
-      : h("button", { type: "button", class: "link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: cloneProject }, "Копия выпуска"),
+      : h("button", { type: "button", class: "link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: busyClick(cloneProject) }, "Копия выпуска"),
     running
       ? null
       : h(
           "button",
-          { type: "button", class: "link", onclick: async () => (await act("archive", { archived: !state.project.archived })) && reloadList() },
+          { type: "button", class: "link", onclick: busyClick(async () => (await act("archive", { archived: !state.project.archived })) && reloadList()) },
           project.archived ? "Вернуть из архива" : "В архив",
         ),
     h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
@@ -1212,7 +1218,7 @@ function renderSettings(project) {
     h(
       "div",
       { class: "actions" },
-      h("button", { type: "button", class: "secondary", disabled: project.running, onclick: () => act("settings", readSettings("edit")) }, "Сохранить настройки"),
+      h("button", { type: "button", class: "secondary", disabled: project.running, onclick: busyClick(() => act("settings", readSettings("edit"))) }, "Сохранить настройки"),
       h("span", { class: "hint" }, "Изменённые настройки сбросят только затронутые шаги."),
     ),
   );
@@ -1395,28 +1401,27 @@ function show(project) {
   schedule();
 }
 
+// Опрос открытого выпуска: раз в секунду, пока он идёт, раз в 5 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя связи — реже). show() откладывает следующий опрос.
+const projectPoll = poller({ run: (signal) => refresh(signal), fast: 1000, slow: 5000, isActive: () => state.project?.running });
+// Список выпусков слева: раз в 10 с; в скрытой вкладке не опрашивается, при возврате — сразу.
+const listPoll = poller({ run: () => loadProjects(), fast: 10000, slow: 10000, hiddenMs: Infinity, onError: (err, n) => n === 1 && reportError(err) });
+
 function schedule() {
-  clearTimeout(state.timer);
-  state.timer = setTimeout(refresh, state.project?.running ? 1000 : 5000);
+  projectPoll.later();
 }
 
 // Пока человек тащит файл, страницу не перерисовываем — иначе окно под курсором пропадёт.
 document.addEventListener("dragover", () => (state.dragging = Date.now()));
 
-async function refresh() {
-  try {
-    if (state.project && Date.now() - (state.dragging || 0) < 1500) return schedule();
-    if (state.project) {
-      const { id, running } = state.project;
-      const fresh = await api("GET", `${API}/projects/${id}`);
-      if (state.project.id !== id) return; // пока ждали ответ, открыли другой выпуск
-      // Блоки с полем в фокусе не пересобираются или возвращают фокус и курсор — см. reconcile.
-      show(fresh);
-      if (fresh.running !== running) reloadList();
-    }
-  } catch {
-    schedule();
-  }
+async function refresh(signal) {
+  if (!state.project || Date.now() - (state.dragging || 0) < 1500) return;
+  const { id, running } = state.project;
+  const fresh = await api("GET", `${API}/projects/${id}`, undefined, { signal });
+  if (state.project.id !== id) return; // пока ждали ответ, открыли другой выпуск
+  // Блоки с полем в фокусе не пересобираются или возвращают фокус и курсор — см. reconcile.
+  show(fresh);
+  if (fresh.running !== running) reloadList();
 }
 
 // Липкий степпер встаёт под шапку платформы: её высота зависит от ширины окна.
@@ -1440,7 +1445,8 @@ async function init() {
   const wanted = new URLSearchParams(location.search).get("project");
   const first = wanted || state.projects[0]?.id;
   if (first) await open(first).catch(() => {});
-  setInterval(reloadList, 10000);
+  projectPoll.start(1000);
+  listPoll.start(10000);
 }
 
 init().catch((err) => {

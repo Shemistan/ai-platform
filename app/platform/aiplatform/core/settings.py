@@ -11,10 +11,11 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 from pathlib import Path
+
+from aiplatform.core.fsutil import atomic_write
 
 FILE = "settings.json"
 KINDS = ("photo", "video", "audio")  # модели фото, модели видео, движки озвучки
@@ -38,6 +39,8 @@ CLEANUP_DAYS = (7, 14, 30, 60, 90)
 _CHAT = re.compile(r"-?\d+|@\w+")  # личный чат владельца: id или @username
 LIMIT_KINDS = ("llm", "image", "render", "video", "audio", "news")  # виды процессов в runner.LIMITS
 MAX_LIMIT_MIN = 24 * 60
+MAX_POLICY_DAYS = 3650  # trim_days / archive_days уборки
+MAX_FREE_GB = 10000  # cleanup.min_free_gb
 REGISTRY_MAX_AGE_DAYS = 14
 
 
@@ -47,7 +50,11 @@ def _empty() -> dict:
         "schedule": {"digest": {"enabled": False, "time": "07:00", "day": "yesterday"}},
         "notify": {"enabled": False, "telegram_chat": ""},
         "stats": {"auto": True},
-        "cleanup": {"auto": False, "days": 30},
+        # Уборка (core/cleanup.py): days — задачи вкладок, кэш, архив и загрузки старше; trim_days —
+        # через сколько дней после публикации у выпуска удаляются картинки и исходники клипов;
+        # archive_days — когда опубликованный выпуск уходит в архив сам (0 — никогда);
+        # min_free_gb — порог места до GPU-задач и сборки (None — 10 ГБ, в демо без проверки).
+        "cleanup": {"auto": True, "days": 30, "trim_days": 14, "archive_days": 60, "min_free_gb": None},
         # Реестр запрещённых организаций: ежедневная сверка в фоне и порог свежести, дни (CMP-013).
         "registry": {"auto_check": True, "max_age_days": REGISTRY_MAX_AGE_DAYS},
         # Лимиты времени процессов по виду (runner.LIMITS), минуты: {"llm": {"total": 10, "idle": 5}}.
@@ -70,6 +77,11 @@ def _timeouts(raw: object) -> dict:
         if limits:
             out[kind] = limits
     return out
+
+
+def _number(value: object, top: float) -> bool:
+    """Число от 0 до top включительно (bool — не число)."""
+    return isinstance(value, int | float) and not isinstance(value, bool) and 0 <= value <= top
 
 
 def _flag(value: object, default: bool) -> bool:
@@ -103,9 +115,14 @@ def normalize(raw: object) -> dict:
     out["timeouts"] = _timeouts(raw.get("timeouts") if isinstance(raw, dict) else None)
     out["stats"]["auto"] = _flag(_section(raw, "stats").get("auto"), True)
     cleanup = _section(raw, "cleanup")
-    out["cleanup"]["auto"] = _flag(cleanup.get("auto"), False)
+    out["cleanup"]["auto"] = _flag(cleanup.get("auto"), True)
     if cleanup.get("days") in CLEANUP_DAYS:
         out["cleanup"]["days"] = cleanup["days"]
+    for name in ("trim_days", "archive_days"):
+        if _number(cleanup.get(name), MAX_POLICY_DAYS) and float(cleanup[name]).is_integer():
+            out["cleanup"][name] = int(cleanup[name])
+    if _number(cleanup.get("min_free_gb"), MAX_FREE_GB):
+        out["cleanup"]["min_free_gb"] = cleanup["min_free_gb"]
     reg = _section(raw, "registry")
     out["registry"]["auto_check"] = _flag(reg.get("auto_check"), True)
     age = reg.get("max_age_days")
@@ -162,9 +179,6 @@ class Settings:
             data = self._read()
             apply(data)
             data = normalize(data)
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            os.replace(tmp, self.path)
+            atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
             self._cache = None
             return data

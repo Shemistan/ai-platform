@@ -1,6 +1,6 @@
 // Вкладка «Фото» (перенос UI photogen): режим, промпт, исходное фото с маской или полями, запуск и результат. Без сборки и зависимостей.
 
-import { $, api, chip, h, STATUS, jobProgress, statusChip, toneOf } from "/ui.js";
+import { $, api, busyClick, chip, h, jobProgress, poller, STATUS, statusChip, toneOf } from "/ui.js";
 
 const state = {
   config: null,
@@ -314,7 +314,7 @@ async function submit(event) {
     upsertJob(job);
     state.selectedId = job.id;
     renderJobs();
-    schedulePoll(300);
+    schedulePoll();
   } catch (err) {
     showFormError(err.message);
   }
@@ -383,7 +383,7 @@ function upscaleBlock(job) {
   return h("div", { class: "upscale" },
     h("span", { class: "muted small" }, "Увеличить с дорисовкой деталей (SeedVR2):"),
     ...targets.map((t) =>
-      h("button", { type: "button", onclick: () => upscaleJob(job.id, t.id) }, `до ${t.label}`),
+      h("button", { type: "button", onclick: busyClick(() => upscaleJob(job.id, t.id), `upscale:${job.id}`) }, `до ${t.label}`),
     ),
     h("span", { class: "muted small" }, "2K — ~20 с, 4K — ~1,5 мин, ~18 ГБ памяти; первый запуск докачает ~7 ГБ весов."),
   );
@@ -395,7 +395,7 @@ async function upscaleJob(id, target) {
     upsertJob(job);
     state.selectedId = job.id;
     renderJobs();
-    schedulePoll(300);
+    schedulePoll();
   } catch (err) {
     showFormError(err.message);
   }
@@ -503,31 +503,27 @@ async function cancelJob(id) {
   }
 }
 
-let pollTimer = null;
+// Опрос очереди: раз в секунду, пока есть активные задачи, раз в 5 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя связи — реже). Свои действия зовут schedulePoll().
+const jobsPoll = poller({ run: (signal) => poll(signal), fast: 1000, slow: 5000, isActive: () => state.jobs.some(isActive), onError: (err) => setBanner(err.message, "error") });
 
-function schedulePoll(delay) {
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(poll, delay);
+function schedulePoll() {
+  jobsPoll.now();
 }
 
-async function poll() {
-  try {
-    const { jobs } = await api("GET", "/api/photo/jobs");
-    // Список приходит без лога; лог выбранной задачи берём отдельным запросом.
-    const selected = jobs.find((j) => j.id === state.selectedId);
-    const previous = state.jobs.find((j) => j.id === state.selectedId);
-    if (selected) {
-      const needFull = isActive(selected) || !previous?.log || previous.status !== selected.status;
-      Object.assign(selected, needFull ? await api("GET", `/api/photo/jobs/${selected.id}`) : { log: previous.log });
-    }
-    state.jobs = jobs;
-    if (!state.selectedId && jobs.length) return selectJob(jobs[0].id).then(() => schedulePoll(1000));
-    renderJobs();
-    setBanner(null);
-  } catch (err) {
-    setBanner(err.message, "error");
+async function poll(signal) {
+  const { jobs } = await api("GET", "/api/photo/jobs", undefined, { signal });
+  // Список приходит без лога; лог выбранной задачи берём отдельным запросом.
+  const selected = jobs.find((j) => j.id === state.selectedId);
+  const previous = state.jobs.find((j) => j.id === state.selectedId);
+  if (selected) {
+    const needFull = isActive(selected) || !previous?.log || previous.status !== selected.status;
+    Object.assign(selected, needFull ? await api("GET", `/api/photo/jobs/${selected.id}`, undefined, { signal }) : { log: previous.log });
   }
-  schedulePoll(state.jobs.some(isActive) ? 1000 : 5000);
+  state.jobs = jobs;
+  if (!state.selectedId && jobs.length) return selectJob(jobs[0].id);
+  renderJobs();
+  setBanner(null);
 }
 
 // ---------- запуск страницы ----------
@@ -655,7 +651,7 @@ async function init() {
   setupDropZone();
   syncControls();
   renderJobs();
-  poll();
+  jobsPoll.start();
 }
 
 init();

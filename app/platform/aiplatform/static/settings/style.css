@@ -1,24 +1,24 @@
-.side { display: grid; gap: 20px; }
+.side { display: grid; gap: var(--sp-5); }
 .toggle-list { display: grid; }
-.toggle-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.toggle-row { display: flex; gap: var(--sp-3); align-items: flex-start; padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); }
 .toggle-row:last-child { border-bottom: 0; }
 .toggle-row input[type="checkbox"] { width: 34px; height: 20px; margin-top: 1px; accent-color: var(--accent); flex: none; cursor: pointer; }
-.toggle-body { display: grid; gap: 6px; min-width: 0; flex: 1; }
-.toggle-title { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-weight: 600; }
+.toggle-body { display: grid; gap: var(--sp-2); min-width: 0; flex: 1; }
+.toggle-title { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; font-weight: var(--fw-semibold); }
 .toggle-name { cursor: pointer; }
 .toggle-row.off .toggle-name { color: var(--muted); }
-.voices { display: flex; gap: 6px; flex-wrap: wrap; }
+.voices { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 .voices button {
-  font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: var(--fs-sm); padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); cursor: pointer;
   border: 1px solid var(--border-strong); background: transparent; color: var(--muted);
 }
 .voices button[aria-pressed="true"] { background: var(--info-bg); border-color: transparent; color: var(--accent); }
 .voices button:disabled { cursor: default; opacity: 0.5; }
 
-.settings-stack { display: grid; gap: 12px; }
-.inline-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.settings-stack { display: grid; gap: var(--sp-3); }
+.inline-fields { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 .inline-fields .field { min-width: 140px; }
-.notes { display: grid; gap: 4px; font-size: 13px; list-style: none; padding: 0; margin: 6px 0 0; }
-.usage { border-collapse: collapse; font-size: 14px; }
-.usage th { text-align: left; font-weight: 400; padding: 3px 16px 3px 0; color: var(--muted); }
-.usage td { text-align: right; font-variant-numeric: tabular-nums; padding: 3px 0; }
+.notes { display: grid; gap: var(--sp-1); font-size: var(--fs-sm); list-style: none; padding: 0; margin: var(--sp-2) 0 0; }
+.usage { border-collapse: collapse; font-size: var(--fs-sm); }
+.usage th { text-align: left; font-weight: var(--fw-regular); padding: var(--sp-1) var(--sp-4) var(--sp-1) 0; color: var(--muted); }
+.usage td { text-align: right; font-variant-numeric: tabular-nums; padding: var(--sp-1) 0; }

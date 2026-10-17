@@ -34,6 +34,8 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from aiplatform.core.fsutil import atomic_write
+
 DEFAULT_FILE = Path(__file__).with_name("registry.json")
 FILE_NAME = "registry.json"  # свой реестр платформы — в корне data: его читают сценарии
 STATUSES = {
@@ -307,10 +309,7 @@ class Registry:
         if own:  # свои шаблоны пометок иноагента переживают сверку и правку
             data["templates"] = own
         with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(self.path.name + ".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            tmp.replace(self.path)
+            atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
     def _templates(self) -> dict:
         try:

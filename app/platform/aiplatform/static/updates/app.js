@@ -1,9 +1,9 @@
 // Вкладка «Обновления»: версии моделей и пайплайнов, реестр запрещённых организаций.
-import { $, api, chip, fill, followTask, h, NARRATOR_TIMEOUT_MS, progressBar, taskCard } from "/ui.js";
+import { $, api, busy, busyClick, chip, errorState, fill, followTask, h, NARRATOR_TIMEOUT_MS, poller, progressBar, reportError, taskCard } from "/ui.js";
 
 const API = "/api/updates";
 const MODEL_STATUS = { update: "есть обновление", ok: "актуально", unknown: "не знаю", error: "ошибка" };
-const state = { data: null, timer: null, editing: false };
+const state = { data: null, editing: false };
 
 // Тон статуса модели: тот же словарь цветов, что у задач (chip в ui.js).
 const MODEL_TONE = { update: "warning", ok: "success", unknown: "neutral", error: "danger" };
@@ -34,7 +34,7 @@ function renderModels(job) {
   const results = job.results || [];
   const head = [];
   if (running) head.push(progressBar({ stage: job.progress || "Проверяю…", percent: 0 }));
-  if (job.status === "failed") head.push(h("p", { class: "job-error" }, job.error));
+  if (job.status === "failed") head.push(errorState({ title: "Проверка обновлений не удалась", error: job.error }));
   if (job.status === "done") {
     head.push(
       h("p", { class: job.updates ? "note" : "hint" }, job.updates ? `Есть обновления: ${job.updates}. Проверено ${when(job.finished)}.` : `Всё актуально. Проверено ${when(job.finished)}.`),
@@ -106,7 +106,7 @@ function renderProposal(reg) {
   const check = reg.check || {};
   const box = [];
   if (check.status === "running") box.push(progressBar({ stage: check.progress || "Проверяю…", percent: 0 }));
-  if (check.status === "failed") box.push(h("p", { class: "job-error" }, check.error));
+  if (check.status === "failed") box.push(errorState({ title: "Сверка реестра не удалась", error: check.error }));
   if (check.status === "done" && !check.proposal) {
     const changed = check.diff && (check.diff.added.length || check.diff.changed.length || check.diff.removed.length);
     box.push(h("p", { class: "hint" }, changed ? `Предложение ${check.applied ? "применено" : "отклонено"}.` : `Изменений нет — проверено ${when(check.finished)}.`, check.notes ? ` ${check.notes}` : ""));
@@ -130,8 +130,8 @@ function renderProposal(reg) {
         h(
           "div",
           { class: "actions" },
-          h("button", { type: "button", class: "primary", onclick: () => act("registry/apply") }, "Применить"),
-          h("button", { type: "button", class: "link", onclick: () => act("registry/dismiss") }, "Отклонить"),
+          h("button", { type: "button", class: "primary", onclick: busyClick(() => act("registry/apply"), "registry") }, "Применить"),
+          h("button", { type: "button", class: "link", onclick: busyClick(() => act("registry/dismiss"), "registry") }, "Отклонить"),
         ),
       ),
     );
@@ -160,36 +160,42 @@ function renderRegistry(reg) {
   renderProposal(reg);
 }
 
+// Опрос: раз в секунду, пока идёт проверка, раз в 10 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя — реже).
+const isBusy = (data) => data?.models.status === "running" || data?.registry.check?.status === "running";
+const statePoll = poller({
+  run: async (signal) => render(await api("GET", `${API}/state`, undefined, { signal })),
+  fast: 1000,
+  slow: 10000,
+  isActive: () => isBusy(state.data),
+  onError: (err) => showError(err.message),
+});
+
 function render(data) {
   state.data = data;
   renderModels(data.models);
   renderRegistry(data.registry);
-  clearTimeout(state.timer);
-  const busy = data.models.status === "running" || data.registry.check?.status === "running";
-  state.timer = setTimeout(refresh, busy ? 1000 : 10000);
+  statePoll.later();
 }
 
-async function refresh() {
-  try {
-    render(await api("GET", `${API}/state`));
-  } catch (err) {
-    showError(err.message);
-    state.timer = setTimeout(refresh, 5000);
-  }
-}
-
-$("models-check").addEventListener("click", () => act("models/check"));
-$("registry-check").addEventListener("click", () => act("registry/check"));
+// Кнопки проверок перерисовывает render() по состоянию задачи: здесь — только один запрос на нажатие,
+// кнопка гаснет сразу, а включает её следующая перерисовка.
+const startCheck = (btn, path) => () => {
+  btn.disabled = true;
+  busy(null, () => act(path), path).catch(reportError);
+};
+$("models-check").addEventListener("click", startCheck($("models-check"), "models/check"));
+$("registry-check").addEventListener("click", startCheck($("registry-check"), "registry/check"));
 $("registry-json").addEventListener("input", () => (state.editing = true));
-$("registry-save").addEventListener("click", async () => {
+$("registry-save").addEventListener("click", busyClick(async () => {
   await act("registry", { text: $("registry-json").value });
   if ($("error").hidden) state.editing = false;
-});
-$("registry-reset").addEventListener("click", async () => {
+}, "registry"));
+$("registry-reset").addEventListener("click", busyClick(async () => {
   state.editing = false;
   await act("registry/reset");
-});
-refresh();
+}, "registry"));
+statePoll.start();
 
 // --- модели озвучки движка: что на диске, скачать основные или модели для сравнения ---
 
@@ -213,13 +219,13 @@ function renderVoiceModels(data) {
       h("td", {}, m.downloaded ? chip("скачана", "success") : chip("не скачана")),
     );
   });
-  const pick = h("button", { type: "button", class: "secondary", id: "voice-mlx", onclick: () => startVoice("mlx", { engines: [...voice.picked] }) }, "Скачать выбранные");
+  const pick = h("button", { type: "button", class: "secondary", id: "voice-mlx", onclick: busyClick(() => startVoice("mlx", { engines: [...voice.picked] }), "voice") }, "Скачать выбранные");
   fill(
     $("voice-models"),
     data.root_exists ? null : h("p", { class: "job-error" }, `Папки моделей ${data.root} нет: ${data.hint}`),
     h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Основные"), h("th", {}, ""))), h("tbody", {}, ...main)),
-    h("table", { class: "data-table", style: "margin-top:16px" }, h("thead", {}, h("tr", {}, h("th", {}, "Для сравнения (mlx-audio, Apple Silicon)"), h("th", {}, ""))), h("tbody", {}, ...mlx)),
-    h("div", { class: "toolbar", style: "margin-top:10px" }, pick, h("span", { class: "hint" }, "Higgs и Fish на huggingface.co просят принять лицензию — открой страницу модели и согласись.")),
+    h("table", { class: "data-table", style: "margin-top:var(--sp-4)" }, h("thead", {}, h("tr", {}, h("th", {}, "Для сравнения (mlx-audio, Apple Silicon)"), h("th", {}, ""))), h("tbody", {}, ...mlx)),
+    h("div", { class: "toolbar", style: "margin-top:var(--sp-2)" }, pick, h("span", { class: "hint" }, "Higgs и Fish на huggingface.co просят принять лицензию — открой страницу модели и согласись.")),
   );
   renderVoiceButton();
 }
@@ -237,7 +243,7 @@ async function loadVoiceModels() {
     const active = data.tasks.find((t) => t.status === "queued" || t.status === "running");
     if (active && voice.active !== active.id) watchVoice(active);
   } catch (err) {
-    fill($("voice-models"), h("p", { class: "job-error" }, err.message));
+    fill($("voice-models"), errorState({ title: "Модели озвучки не загрузились", error: err, onRetry: loadVoiceModels }));
   }
 }
 
@@ -248,7 +254,7 @@ async function watchVoice(task) {
   try {
     await followTask(`${API}/tasks/${task.id}`, (t) => fill($("voice-task"), taskCard(t, { full: true, onCancel: cancel })));
   } catch (err) {
-    fill($("voice-task"), h("p", { class: "job-error" }, err.message));
+    fill($("voice-task"), errorState({ title: "Задача не выполнилась", error: err }));
   }
   voice.active = null;
   voice.picked.clear();
@@ -259,10 +265,10 @@ async function startVoice(action, body = {}) {
   try {
     watchVoice(await api("POST", `${API}/voice-models/${action}`, body));
   } catch (err) {
-    fill($("voice-task"), h("p", { class: "job-error" }, err.message));
+    fill($("voice-task"), errorState({ title: "Задача не выполнилась", error: err }));
   }
 }
 
-$("voice-fetch").addEventListener("click", () => startVoice("fetch"));
-$("voice-move").addEventListener("click", () => startVoice("move"));
+$("voice-fetch").addEventListener("click", busyClick(() => startVoice("fetch"), "voice"));
+$("voice-move").addEventListener("click", busyClick(() => startVoice("move"), "voice"));
 loadVoiceModels();
