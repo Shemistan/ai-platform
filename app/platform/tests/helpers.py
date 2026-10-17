@@ -24,7 +24,7 @@ from aiplatform import server as server_module
 from aiplatform.core import runner
 from aiplatform.photo import config as photo_config
 from aiplatform.photo.service import PhotoModule
-from aiplatform.studio import publish
+from aiplatform.studio import publish, steps
 from aiplatform.video import config as video_config
 from aiplatform.video.service import VideoModule
 from tests import MISSING_MODELS_DIR, TMP_ROOT
@@ -340,5 +340,5 @@ class JournalCase(StudioCase):
         return self.settle(pid)
 
     def journal(self, pid) -> dict:
-        data = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        data = steps.load_published(self.folder(pid))
         return {r["channel"]: r for r in data}

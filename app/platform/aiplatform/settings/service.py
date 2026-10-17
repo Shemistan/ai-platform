@@ -11,6 +11,7 @@ from http import HTTPStatus
 
 from aiplatform import backup
 from aiplatform.audio import voices
+from aiplatform.core import schema
 from aiplatform.core import settings as settings_module
 from aiplatform.core.cleanup import Cleaner
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
@@ -70,7 +71,8 @@ class SettingsModule:
         off = {kind: set(catalog) <= set(data[kind]) for kind, catalog in CATALOGS.items()}
         off["audio"] = not voices.enabled(self.settings)  # движок без голосов тоже выключен
         off_kinds = [kind for kind, all_off in off.items() if all_off]
-        return [f"Настройки: выключены все {KIND_LABELS[kind]} — во вкладках их не выбрать." for kind in off_kinds]
+        out = [f"Настройки: выключены все {KIND_LABELS[kind]} — во вкладках их не выбрать." for kind in off_kinds]
+        return out + ([self.settings.problem] if self.settings.problem else [])
 
     # --- данные ---
 
@@ -129,6 +131,12 @@ class SettingsModule:
     # --- маршруты ---
 
     def handle(self, req: Request) -> None:
+        try:
+            self._route(req)
+        except schema.TooNew as exc:  # settings.json от более новой версии: читаем, но не пишем (BE-008)
+            raise HttpError(HTTPStatus.CONFLICT, str(exc), code="schema_too_new") from exc
+
+    def _route(self, req: Request) -> None:
         match (req.method, req.sub):
             case ("GET", ["state"]):
                 return req.send_json(self.state())
