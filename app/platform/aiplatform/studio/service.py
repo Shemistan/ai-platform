@@ -203,6 +203,11 @@ def _read_json_list(path) -> list[dict]:
 TOO_BIG = "Файл больше 200 МБ."
 
 
+def _too_big() -> str:
+    """Текст 413 с лимитом в МБ — лимит читается при запросе (тесты его понижают)."""
+    return f"Файл больше {uploads_module.MAX_AUDIO_BYTES // 2**20} МБ."
+
+
 def place_upload(src: Path, target: Path) -> None:
     """Загрузка из временного файла — на место атомарно (та же ФС: папка проекта)."""
     os.replace(src, target)
@@ -1480,9 +1485,15 @@ class StudioModule:
         kinds = {"poster": (uploads_module.IMAGE,), "voice": (uploads_module.AUDIO,)}.get(what)
         if kinds is None:
             raise not_found("Загружать можно poster или voice.")
-        ext = uploads_module.sniff(uploads_module.head(src)) if src.stat().st_size else None
+        size = src.stat().st_size
+        if not size:
+            raise bad_request("Пустой файл.")
+        ext = uploads_module.sniff(uploads_module.head(src))
         if ext is None or uploads_module.kind_of(ext) not in kinds:
             raise bad_request(uploads_module._accepted(kinds))
+        if what == "poster" and size > uploads_module.MAX_UPLOAD_BYTES:  # тело ограничено 200 МБ — под голос
+            limit_mb = uploads_module.MAX_UPLOAD_BYTES // 2**20
+            raise HttpError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"Картинка больше {limit_mb} МБ.")
         self._guard_step(project_id, what)
         folder = self.studio.project_dir(project_id)
         stems = steps.IMAGE_EXT if what == "poster" else steps.AUDIO_EXT
@@ -1615,10 +1626,10 @@ class StudioModule:
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):
-                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, TOO_BIG)
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, _too_big())
                 return req.send_json(self.upload(pid, what, src))
             case ("POST", ["projects", pid, "upload", kind, key]):
-                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, TOO_BIG)
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, _too_big())
                 return req.send_json(self.upload_slide(pid, kind, key, src))
             case ("GET", ["projects", pid, "files", *rest]):
                 return self._send_file(req, pid, "/".join(rest))

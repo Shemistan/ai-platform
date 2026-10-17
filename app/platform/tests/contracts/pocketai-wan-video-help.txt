@@ -1,0 +1,61 @@
+# pocketai-wan-video: --help через tools/stub_mlx_help.py: mlx без GPU не импортируется; снято 2026-10-17 (make contracts)
+usage: pocketai-wan-video [-h] --model-dir MODEL_DIR --prompt PROMPT
+                          [--image IMAGE] [--negative-prompt NEGATIVE_PROMPT]
+                          [--no-negative-prompt] [--width WIDTH]
+                          [--height HEIGHT] [--num-frames NUM_FRAMES]
+                          [--steps STEPS] [--guide-scale GUIDE_SCALE]
+                          [--shift SHIFT] [--seed SEED]
+                          [--output-path OUTPUT_PATH]
+                          [--scheduler {euler,dpm++,unipc}]
+                          [--lora PATH STRENGTH] [--lora-high PATH STRENGTH]
+                          [--lora-low PATH STRENGTH]
+                          [--tiling {auto,none,default,aggressive,conservative,spatial,temporal}]
+                          [--no-compile] [--trim-first-frames N]
+                          [--debug-latents]
+
+Wan Text-to-Video Generation (MLX)
+
+options:
+  -h, --help            show this help message and exit
+  --model-dir MODEL_DIR
+                        Path to converted MLX model directory
+  --prompt PROMPT       Text prompt
+  --image IMAGE         Path to input image for I2V (omit for T2V mode)
+  --negative-prompt NEGATIVE_PROMPT
+                        Negative prompt for CFG (default: official Chinese
+                        prompt from config)
+  --no-negative-prompt  Disable negative prompt (use empty string instead of
+                        config default)
+  --width WIDTH         Video width (default: 1280)
+  --height HEIGHT       Video height (default: 704; 720p models use 704)
+  --num-frames NUM_FRAMES
+                        Number of frames (must be 4n+1)
+  --steps STEPS         Number of diffusion steps (default: from config)
+  --guide-scale GUIDE_SCALE
+                        Guidance scale: single float or low,high pair
+  --shift SHIFT         Noise schedule shift (default: from config)
+  --seed SEED           Random seed
+  --output-path OUTPUT_PATH
+                        Output video path
+  --scheduler {euler,dpm++,unipc}
+                        Diffusion solver: euler (1st order), dpm++ (2nd
+                        order), unipc (2nd order PC, default/official)
+  --lora PATH STRENGTH  Apply a LoRA to all models (repeatable). Format:
+                        --lora path.safetensors 0.8
+  --lora-high PATH STRENGTH
+                        Apply a LoRA to high-noise model only (dual-model,
+                        repeatable)
+  --lora-low PATH STRENGTH
+                        Apply a LoRA to low-noise model only (dual-model,
+                        repeatable)
+  --tiling {auto,none,default,aggressive,conservative,spatial,temporal}
+                        VAE tiling mode to reduce memory during decoding
+                        (default: auto)
+  --no-compile          Disable mx.compile on models (for debugging)
+  --trim-first-frames N
+                        Generate N extra temporal chunks (N×4 frames) and
+                        discard them from the start. Fixes first-frame
+                        color/lighting artifacts on 14B models. Try 1 first (4
+                        frames). Default: 0 (disabled)
+  --debug-latents       Print per-temporal-position latent statistics after
+                        denoising (diagnostic)

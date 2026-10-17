@@ -13,8 +13,8 @@ from unittest import mock
 
 from aiplatform.core import http, uploads
 from aiplatform.studio import stats
+from tests.fixtures import png
 from tests.helpers import PlatformCase
-from tests.test_photo_server import png
 
 
 class CountingReader(io.RawIOBase):
