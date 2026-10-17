@@ -1,6 +1,7 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
 import { $, api, chip, h, icon, iconButton, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { frameAt, frameCount, frameProblems as problemsOf, keyframeLimit, spread } from "./frames.js";
 
 const state = {
   config: null,
@@ -21,19 +22,17 @@ let dragKey = null;
 // Частота кадров, длительности, кадры и звук зависят от выбранной модели.
 const model = () => state.config.models.find((m) => m.id === $("model").value) || state.config.models[0];
 const fps = () => model().fps;
-const numFrames = () => state.duration * fps() + 1;
-const maxFrames = () =>
-  Math.min(Math.floor((numFrames() - 1) / state.config.min_keyframe_gap) + 1, model().max_keyframes ?? Infinity);
+const numFrames = () => frameCount(state.duration, fps());
+const maxFrames = () => keyframeLimit(numFrames(), state.config.min_keyframe_gap, model().max_keyframes);
 const seconds = (frameIdx) => frameIdx / fps();
 const fmtSec = (value) => `${+value.toFixed(2)} с`;
 
 // ---------- кадры ----------
 
 function distribute() {
-  const last = numFrames() - 1;
-  const count = state.frames.length;
+  const at = spread(state.frames.length, numFrames() - 1);
   state.frames.forEach((frame, i) => {
-    frame.frameIdx = count === 1 ? 0 : Math.round((i * last) / (count - 1));
+    frame.frameIdx = at[i];
   });
 }
 
@@ -44,17 +43,7 @@ function relayout({ keepManual = false } = {}) {
 }
 
 function frameProblems() {
-  const gap = state.config.min_keyframe_gap;
-  const last = numFrames() - 1;
-  return state.frames.map((frame, i) => {
-    if (frame.error) return frame.error;
-    if (i === 0) return frame.frameIdx === 0 ? null : "Первый кадр всегда в начале";
-    if (frame.frameIdx > last) return "Позже конца ролика";
-    if (frame.frameIdx - state.frames[i - 1].frameIdx < gap) {
-      return `Нужно позже кадра ${i} хотя бы на ${(gap / fps()).toFixed(2)} с`;
-    }
-    return null;
-  });
+  return problemsOf(state.frames, { gap: state.config.min_keyframe_gap, last: numFrames() - 1, fps: fps() });
 }
 
 function roleOf(index) {
@@ -112,9 +101,9 @@ function moveFrame(key, toIndex) {
 
 function setFrameTime(key, value) {
   const frame = state.frames.find((f) => f.key === key);
-  const sec = Number(String(value).replace(",", "."));
-  if (!frame || !Number.isFinite(sec)) return renderFrames();
-  frame.frameIdx = Math.max(0, Math.round(sec * fps()));
+  const at = frameAt(value, fps());
+  if (!frame || at === null) return renderFrames();
+  frame.frameIdx = at;
   state.manual = true;
   renderFrames();
 }

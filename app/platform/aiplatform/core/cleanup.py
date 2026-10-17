@@ -12,7 +12,9 @@
 - через `archive_days` — в архив сами. Такой выпуск (`archived_by:
   cleanup`) уборка потом не удаляет: в нём история публикаций.
 
-Идущие задачи и выпуски не трогаются никогда; неопубликованные неархивные — тоже.
+Идущие задачи и выпуски не трогаются никогда; неопубликованные неархивные — тоже,
+кроме брошенных: без движения дольше `draft_days` они уходят в архив (archive_stale,
+ежедневно, с уведомлением; PRD-004).
 Если архивный выпуск всё же удаляется (в архив его убрал человек), его
 project.json и published.json остаются в архиве аналитики (studio/history.py, AN-008).
 """
@@ -32,6 +34,7 @@ ACTIVE = ("queued", "running")
 TRIM_DIRS = ("images", "clips", "short")
 TRIM_GLOBS = ("voice-x*.mp3", "*.tmp")
 AUTO_ARCHIVED = "cleanup"  # project["archived_by"]: выпуск убрала в архив уборка
+STALE_ARCHIVED = "stale"  # project["archived_by"]: брошенный неопубликованный выпуск (archive_stale)
 
 
 def size_of(path: Path) -> int:
@@ -157,6 +160,37 @@ class Cleaner:
                 if not dry:
                     studio.archive(project["id"], True)
                     studio.annotate(project["id"], archived_by=AUTO_ARCHIVED)
+
+    def archive_stale(self, draft_days: int, *, now: float | None = None) -> list[dict]:
+        """Брошенные выпуски — в архив (PRD-004): не опубликованы, не идут и без движения
+        (updated_at) дольше draft_days дней. 0 — выключено. Файлы остаются, вернуть можно из архива;
+        уборка архива удалит их позже, как любой архивный выпуск. Возвращает убранные (id, title)."""
+        studio = self.studio
+        if studio is None or not draft_days:
+            return []
+        now = now or time.time()
+        cutoff = now - draft_days * DAY_S
+        done = []
+        for item in studio.studio.list(archived=False):
+            if item["running"] or item["updated_at"] >= cutoff:
+                continue
+            project = studio.studio.get(item["id"])
+            if project is None or project.get("running") or project.get("archived"):
+                continue
+            if project.get("steps", {}).get("publish", {}).get("status") == "done":
+                continue  # опубликованные уходят в архив по archive_days
+            studio.studio.archive(item["id"], True)
+            studio.studio.annotate(item["id"], archived_by=STALE_ARCHIVED)
+            done.append({"id": item["id"], "title": item["title"]})
+        if done:
+            log.event("cleanup.stale_archived", count=len(done), days=draft_days)
+            titles = ", ".join(f"«{p['title']}»" for p in done[:5]) + (" и другие" if len(done) > 5 else "")
+            studio.notify(
+                f"В архив без движения {draft_days} дн.: {len(done)}",
+                f"{titles}. Вернуть — «Выпуски» → «Архив».",
+                important=True,
+            )
+        return done
 
 
 def trim(folder: Path, *, dry: bool) -> int:

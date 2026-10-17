@@ -490,8 +490,8 @@ class WeekHttpTest(StudioCase):
     """Плашка недели на доске (AN-016): из project.json и published.json, пакет без ссылки — не публикация."""
 
     def project(self, *, ready_at=None, updated_at=None, records=None, archived=False):
-        self.made = getattr(self, "made", 0) + 1  # свой текст — иначе 409 «уже есть выпуск»
-        pid = self.create(scenario="article", text=f"{ARTICLE}\n\nВыпуск {self.made}.")["id"]
+        self.made = getattr(self, "made", 0) + 1  # свой текст и force_new — иначе 409 «уже есть выпуск»
+        pid = self.create(scenario="article", text=f"{ARTICLE}\n\nВыпуск {self.made}.", force_new=True)["id"]
         self.settle(pid)
         studio = self.app.modules["studio"].studio
         with studio._lock:
