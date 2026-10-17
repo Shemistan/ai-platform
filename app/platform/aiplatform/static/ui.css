@@ -357,6 +357,28 @@ form.field { gap: var(--sp-3); }
 .primary.danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
 .confirm-list { list-style: disc; padding-left: var(--sp-4); margin: var(--sp-1) 0 0; }
 
+/* Ошибка загрузки (errorState в ui.js): причина, что делать, «Повторить», сырой вывод под «Подробностями». */
+.error-state {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-3);
+  border: 1px solid var(--bad);
+  border-left-width: 4px;
+  border-radius: var(--r-lg);
+  background: var(--bad-bg);
+  overflow-wrap: anywhere;
+}
+.error-state .error-title { color: var(--bad); }
+.error-state .toolbar { margin-top: 2px; }
+.error-state pre.log { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Баннер проблем в шапке (nav.js): длинные пути и вывод движка переносятся, а не вылезают. */
+.platform-problems { overflow-wrap: anywhere; }
+
+/* Кнопка, чей запрос ещё идёт (busy в ui.js): второй клик не проходит. */
+button[aria-busy="true"] { pointer-events: none; opacity: 0.55; cursor: progress; }
+
 /* Ошибка обработчика без своего места на странице (reportError в ui.js). */
 .platform-toast {
   position: fixed;

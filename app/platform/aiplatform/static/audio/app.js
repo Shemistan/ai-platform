@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, narratorApi as api, chip, debounce, fill, followTask, h, logBlock, modal, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -51,8 +51,22 @@ function fillVoices(saved = {}) {
   $("steps").placeholder = e.default_steps ? `${e.default_steps} по умолчанию` : "";
   $("voices-btn").hidden = !e.voices.includes("Charon");
   const note = $("engine-note");
-  note.textContent = e.problem ? `${e.note}. Не запустится: ${e.problem}` : e.note;
-  note.classList.toggle("warn", Boolean(e.problem));
+  note.textContent = e.note;
+  // Почему движок не запустится — понятной фразой, сырой вывод под «Подробностями».
+  let slot = $("engine-problem");
+  if (!slot) {
+    slot = h("div", { id: "engine-problem" });
+    note.after(slot);
+  }
+  const listError = state.config.engines_error;
+  fill(
+    slot,
+    e.problem
+      ? errorState({ title: `${e.label}: не запустится`, error: e.problem })
+      : listError
+        ? errorState({ title: "Движок не ответил — список движков может быть неполным", error: listError, onRetry: refreshConfig })
+        : null,
+  );
 }
 
 // --- произношение ---
@@ -112,7 +126,7 @@ async function openLibrary() {
   try {
     items = (await api("GET", `${API}/library`)).items;
   } catch (err) {
-    fill(list, h("p", { class: "job-error" }, err.message));
+    fill(list, errorState({ title: "Библиотека не загрузилась", error: err, onRetry: () => (close(), openLibrary()) }));
     return;
   }
   const render = () => {
@@ -134,11 +148,11 @@ async function openLibrary() {
             {
               type: "button",
               class: "row-btn",
-              onclick: async () => {
+              onclick: busyClick(async () => {
                 const data = await api("GET", `${API}/library/${encodeURIComponent(item.id)}`);
                 close();
                 setText(data.text);
-              },
+              }),
             },
             h("span", {}, item.title),
             h("span", { class: "muted small" }, shortDate(item.added)),
@@ -203,7 +217,7 @@ function renderBatch() {
     h(
       "div",
       { class: "toolbar" },
-      h("button", { type: "button", class: "primary", disabled: over, onclick: submitBatch }, `Все в очередь (${batch.articles.length})`),
+      h("button", { type: "button", class: "primary", disabled: over, onclick: busyClick(submitBatch, "batch") }, `Все в очередь (${batch.articles.length})`),
       h("button", { type: "button", class: "small-btn", onclick: () => ((state.batch = null), renderBatch()) }, "Отмена"),
     ),
   );
@@ -236,6 +250,7 @@ async function submit(event) {
     state.jobs = [state.selected, ...state.jobs];
     renderHistory();
     remember();
+    jobsPoll.later(); // задача в очереди — опрашивать чаще
   } catch (err) {
     showError(err.message);
   } finally {
@@ -255,6 +270,7 @@ async function submitBatch() {
     renderJob(state.selected);
     renderHistory();
     remember();
+    jobsPoll.later();
   } catch (err) {
     showError(err.message);
   }
@@ -359,7 +375,7 @@ function renderJob(job) {
         job.duration_s ? h("span", { class: "muted small" }, `Длительность ${seconds(job.duration_s)}`) : null,
         job.elapsed_s ? h("span", { class: "muted small" }, `Озвучка заняла ${seconds(job.elapsed_s)}`) : null,
         job.text ? h("button", { type: "button", class: "link", onclick: () => setText(job.text) }, "Текст в редактор") : null,
-        active ? h("button", { type: "button", class: "link danger", onclick: safe(() => cancel(job.id)) }, "Отменить") : null,
+        active ? h("button", { type: "button", class: "link danger", onclick: busyClick(() => cancel(job.id), `cancel:${job.id}`) }, "Отменить") : null,
       ),
       checkBlock(job.check),
       logBlock(job.log),
@@ -402,23 +418,22 @@ async function cancel(id) {
   renderJob(state.selected);
 }
 
-async function poll() {
-  try {
-    const { jobs } = await api("GET", `${API}/jobs`);
-    state.jobs = jobs;
-    if (state.selected) {
-      const fresh = jobs.find((j) => j.id === state.selected.id);
-      if (fresh && (fresh.status !== state.selected.status || fresh.status === "running" || fresh.status === "queued")) {
-        state.selected = await api("GET", `${API}/jobs/${fresh.id}`);
-        renderJob(state.selected);
-      }
+// Опрос очереди: раз в секунду, пока есть активные задачи, раз в 5 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя связи — реже, без «Uncaught (in promise)»).
+const isRunning = (j) => j.status === "queued" || j.status === "running";
+const jobsPoll = poller({ run: poll, fast: 1000, slow: 5000, isActive: () => state.jobs.some(isRunning) });
+
+async function poll(signal) {
+  const { jobs } = await api("GET", `${API}/jobs`, undefined, { signal });
+  state.jobs = jobs;
+  if (state.selected) {
+    const fresh = jobs.find((j) => j.id === state.selected.id);
+    if (fresh && (fresh.status !== state.selected.status || isRunning(fresh))) {
+      state.selected = await api("GET", `${API}/jobs/${fresh.id}`, undefined, { signal });
+      renderJob(state.selected);
     }
-    renderHistory();
-  } catch {
-    /* сервер мог перезапуститься — следующий опрос попробует снова */
   }
-  const active = state.jobs.some((j) => j.status === "queued" || j.status === "running");
-  setTimeout(poll, active ? 1000 : 5000);
+  renderHistory();
 }
 
 // --- образцы голосов ---
@@ -436,7 +451,7 @@ async function openVoices() {
     try {
       renderVoices(await api("GET", `${API}/voices`), content, taskBox, reload);
     } catch (err) {
-      fill(content, h("p", { class: "job-error" }, err.message));
+      fill(content, errorState({ title: "Образцы не загрузились", error: err, onRetry: reload }));
     }
   };
   await reload();
@@ -476,7 +491,7 @@ function recordControls(v, data, busy, taskBox, reload) {
         { class: "field", style: "margin-top:var(--sp-2)" },
         h("p", { class: "hint" }, "Голос Charon есть в Gemini TTS: движок сам запишет образец по ключу GEMINI_API_KEY. Можно и своей записью — загрузи её ниже."),
         text,
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: () => startRecord(v.stem, { text: text.value }, taskBox, reload) }, "Записать из Gemini TTS")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: busyClick(() => startRecord(v.stem, { text: text.value }, taskBox, reload), `voice:${v.stem}`) }, "Записать из Gemini TTS")),
         fileRecord(v, low, high, busy, taskBox, reload),
       ),
     );
@@ -510,7 +525,7 @@ function fileRecord(v, low, high, busy, taskBox, reload) {
     file,
     text,
     error,
-    h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: save }, "Сохранить образец")),
+    h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: busyClick(save, `voice:${v.stem}`) }, "Сохранить образец")),
   );
 }
 
@@ -580,7 +595,6 @@ async function init() {
   Object.assign($("steps"), { min: sLow, max: sHigh });
   $("verify-field").hidden = !state.config.verify_available;
   $("verify").checked = saved.verify ?? true;
-  if (state.config.engines_error) $("engine-note").textContent += ` (движок не ответил: ${state.config.engines_error})`;
 
   $("engine").addEventListener("change", () => (fillVoices(), remember()));
   for (const id of ["voice", "steps", "verify"]) $(id).addEventListener("change", remember);
@@ -597,9 +611,9 @@ async function init() {
   $("composer").addEventListener("submit", submit);
   bindDrop();
   updateCount();
-  poll();
+  jobsPoll.start();
 }
 
 init().catch((err) => {
-  fill($("job"), h("p", { class: "job-error" }, `Не удалось загрузить настройки: ${err.message}`));
+  fill($("job"), errorState({ title: "Не удалось загрузить настройки озвучки", error: err, onRetry: () => location.reload() }));
 });

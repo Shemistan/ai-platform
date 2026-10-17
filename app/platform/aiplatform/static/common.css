@@ -35,7 +35,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
   color: var(--panel);
   font-size: var(--fs-xs);
   font-weight: var(--fw-bold);
-  line-height: 1.5;
+  line-height: var(--lh-code);
   text-align: center;
 }
 .platform-nav .badge[hidden] { display: none; }
