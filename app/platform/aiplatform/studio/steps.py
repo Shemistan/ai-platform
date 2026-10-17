@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
+import os
 import re
 import shutil
 import threading
@@ -264,10 +265,17 @@ def slide_media(folder: Path, n: int, kind: str, prompt: str) -> Path | None:
     return path
 
 
-def save_slide_media(folder: Path, n: int, ext: str, data: bytes, prompt: str, kind: str) -> Path:
-    """Файл слайда от человека: прежний вариант (любого формата) заменяется."""
+def save_slide_media(folder: Path, n: int, ext: str, data: bytes | Path, prompt: str, kind: str) -> Path:
+    """Файл слайда от человека: прежний вариант (любого формата) заменяется.
+
+    data — байты или загрузка во временном файле на той же ФС (переносится os.replace)."""
     path = folder / f"{n:02d}.{ext}"
-    atomic_write(path, data)  # сначала новый файл целиком, потом — прежний в другом формате
+    # Сначала новый файл целиком, потом — прежний в другом формате.
+    if isinstance(data, Path):
+        folder.mkdir(parents=True, exist_ok=True)
+        os.replace(data, path)
+    else:
+        atomic_write(path, data)
     for old in (folder / f"{n:02d}{e}" for e in MEDIA[kind][0]):
         if old != path:
             old.unlink(missing_ok=True)
