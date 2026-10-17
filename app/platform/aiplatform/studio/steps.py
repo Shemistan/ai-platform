@@ -25,11 +25,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
 import re
 import shutil
+import stat
 import threading
 import time
 import uuid
@@ -38,7 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiplatform.audio import voices
-from aiplatform.core import audit, disk, log, media
+from aiplatform.core import audit, disk, log, media, schema
 from aiplatform.core import settings as core_settings
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.runner import Canceled
@@ -106,8 +108,18 @@ def ensure_space(ctx: StepContext, what: str) -> None:
 
 
 def find(folder: Path, stem: str, exts: tuple[str, ...]) -> Path | None:
-    found = [folder / f"{stem}{ext}" for ext in exts if (folder / f"{stem}{ext}").is_file()]
-    return max(found, key=lambda p: p.stat().st_mtime, default=None)
+    """Самый свежий из файлов stem.<ext>. Файл, который шаг удалил между проверкой и stat
+    (перезапуск постера, пока студия читает выпуск), — как будто его нет, а не 500."""
+    found: list[tuple[float, Path]] = []
+    for ext in exts:
+        path = folder / f"{stem}{ext}"
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            found.append((info.st_mtime, path))
+    return max(found, key=lambda x: x[0], default=(0.0, None))[1]
 
 
 def require_text(ctx: StepContext) -> str:
@@ -1056,10 +1068,7 @@ def step_publish(ctx: StepContext) -> None:
     # без нового нажатия «Опубликовать» ничего не отправят (и не пропустят чужие ссылки).
     ctx.remember(force=False, approved=False)
     channels = {c.id: c for c in svc.config.channels()}
-    plan_title = ""
-    if ctx.read(PLAN):
-        plan_title = json.loads(ctx.read(PLAN)).get("title", "")
-    title = plan_title or ctx.project["title"]
+    title = post_title(ctx.project, ctx.read)
     off = disclaimers_off(ctx, title)
     stale = registry_stale(svc.config)
     ctx.remember(registry_warning=stale or None)  # видно в состоянии шага; публикацию не держит
@@ -1068,20 +1077,10 @@ def step_publish(ctx: StepContext) -> None:
     if unlicensed := series_unlicensed(ctx):
         raise StudioError(unlicensed)
     vertical = any(c.format == VERTICAL for c in channels.values() if c.id in chosen)
-    if nc := nc_voice(ctx, vertical):
-        raise StudioError(nc)
-    post = with_source(ctx, ctx.read(POST))
-    if ctx.settings.get("disclaimers", True):
-        post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
-    ai = ai_used(ctx)
-    post = publish.with_ai_line(post, ai)
-    if ctx.settings.get("ad"):  # реклама — только с токеном ЕРИР (38-ФЗ ст. 18.1, CMP-019)
-        if not ctx.settings.get("erid"):
-            raise StudioError(
-                "Выпуск помечен как реклама, а erid не указан: получи токен у оператора рекламных данных "
-                "(ОРД), впиши его в поле «erid» в настройках выпуска и нажми «Опубликовать» снова."
-            )
-        post = publish.with_ad(post, ctx.settings["erid"])
+    if noncommercial := nc_voice(ctx, vertical):
+        raise StudioError(noncommercial)
+    ai = ai_used(ctx.project)
+    post = final_post(ctx.project, ctx.read, svc.config)
     links = post_links(ctx.project["scenario"], ctx.settings, ctx.read, post)
     if links["domains"]:
         ctx.log("ссылки в посте ведут на: " + ", ".join(links["domains"]))
@@ -1291,7 +1290,8 @@ def journaled(journal: Journal, channel: publish.Channel, record: dict, part: st
         raise
     except Exception as exc:
         # Сбой уже после начала отправки: ушёл ли пост — неизвестно, повтор сам не шлём.
-        mark(UNKNOWN, message=f"Сбой при отправке: {exc!r}.")
+        log.internal_error(exc, step="publish", channel=channel.id)
+        mark(UNKNOWN, message="Сбой при отправке — неизвестно, ушёл ли пост. Проверь канал; подробности — в журнале.")
         failed(UNKNOWN, exc)
         raise Waiting(unclear_note([channel.label])) from exc
     return mark(SENT, message_id=message_id)
@@ -1400,11 +1400,44 @@ def nc_voice(ctx: StepContext, vertical: bool) -> str:
     )
 
 
-def with_source(ctx: StepContext, post: str) -> str:
-    """Пост «Видео по статье» с источником в неудаляемом хвосте; без источника — отказ (CMP-005)."""
-    if ctx.project["scenario"] != "article":
+def post_title(project: dict, read: Callable[[str], str]) -> str:
+    """Заголовок публикации: из плана выпуска, иначе — название выпуска."""
+    plan = read(PLAN)
+    return (json.loads(plan).get("title", "") if plan else "") or project["title"]
+
+
+def final_post(project: dict, read: Callable[[str], str], config: StudioConfig) -> str:
+    """Пост ровно таким, каким он уйдёт в канал: тело + «Источник» (статья) + сноски реестра +
+    строка об ИИ (CMP-011).
+
+    Одна сборка на шаг публикации и превью в боте (PRD-016): владелец одобряет тот же текст,
+    что увидят подписчики. read — чтение файла выпуска по имени ('' — файла нет)."""
+    post = with_source(project, read(POST))
+    if project["settings"].get("disclaimers", True):
+        post = registry.with_footnotes(post, f"{post_title(project, read)}\n{read(TEXT)}", banned(config))
+    post = publish.with_ai_line(post, ai_used(project))
+    return with_ad(project, post)
+
+
+def with_ad(project: dict, post: str) -> str:
+    """Реклама — только с токеном ЕРИР: «Реклама. erid: …» в хвосте подписи (38-ФЗ ст. 18.1, CMP-019)."""
+    settings = project["settings"]
+    if not settings.get("ad"):
         return post
-    url, author = ctx.settings.get("source_url") or "", ctx.settings.get("source_author") or ""
+    if not settings.get("erid"):
+        raise StudioError(
+            "Выпуск помечен как реклама, а erid не указан: получи токен у оператора рекламных данных "
+            "(ОРД), впиши его в поле «erid» в настройках выпуска и нажми «Опубликовать» снова."
+        )
+    return publish.with_ad(post, settings["erid"])
+
+
+def with_source(project: dict, post: str) -> str:
+    """Пост «Видео по статье» с источником в неудаляемом хвосте; без источника — отказ (CMP-005)."""
+    if project["scenario"] != "article":
+        return post
+    settings = project["settings"]
+    url, author = settings.get("source_url") or "", settings.get("source_author") or ""
     if not url or not author:
         raise StudioError(
             "Видео по чужой статье публикуется только с источником: укажи ссылку на оригинал и автора "
@@ -1415,12 +1448,12 @@ def with_source(ctx: StepContext, post: str) -> str:
     return f"{post.rstrip()}\n\nИсточник: {author.replace('*', '')} — [оригинал]({url})\n"
 
 
-def ai_used(ctx: StepContext) -> str:
+def ai_used(project: dict) -> str:
     """Строка об ИИ для подписи — по генераторам, которые выпуск правда использовал (CMP-011).
 
     Загруженные человеком озвучка, постер, картинки и ролики ИИ-контентом не считаются."""
-    s = ctx.settings
-    post = is_post(ctx)
+    s = project["settings"]
+    post = project["scenario"] == POST_SCENARIO
     draft = bool(s.get("draft"))
     images = s.get("poster_mode") == "local" or (
         not post and not draft and s.get("draw_images") and s.get("images_mode") == "local"
@@ -1499,17 +1532,36 @@ def read_published(ctx: StepContext) -> list[dict]:
     return load_published(ctx.dir)
 
 
-def load_published(folder: Path) -> list[dict]:
+# Схема published.json (core/schema.py, ADR 0009): 0 — голый список записей,
+# 1 — {"schema": 1, "records": [...]}.
+PUBLISHED_SCHEMA = 1
+
+
+def _read_published(folder: Path) -> object:
     try:
-        data = json.loads((folder / PUBLISHED).read_text(encoding="utf-8"))
+        return json.loads((folder / PUBLISHED).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return None
+
+
+def load_published(folder: Path) -> list[dict]:
+    """Записи журнала; файл более новой версии читается как есть (только чтение)."""
+    data = _read_published(folder)
+    try:
+        records = schema.unwrap(data, "records") if data is not None else []
+    except schema.Broken:
         return []
-    return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
+    return [r for r in records if isinstance(r, dict) and r.get("channel")]
 
 
 def save_published(folder: Path, records: list[dict]) -> None:
-    """Записать журнал целиком; read-modify-write — только под published_lock (см. update_published)."""
-    atomic_write(folder / PUBLISHED, json.dumps(records, ensure_ascii=False, indent=2) + "\n")
+    """Записать журнал целиком; read-modify-write — только под published_lock (см. update_published).
+    Журнал, записанный более новой версией, не перезаписываем: schema.TooNew."""
+    data = _read_published(folder)
+    with contextlib.suppress(schema.Broken):
+        schema.upgrade(data, PUBLISHED_SCHEMA, where=f"{folder.name}/{PUBLISHED}")
+    payload = schema.wrap(records, "records", PUBLISHED_SCHEMA)
+    atomic_write(folder / PUBLISHED, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 _PUBLISHED_GUARD = threading.Lock()

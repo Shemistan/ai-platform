@@ -79,7 +79,7 @@ test("ошибка сервера — текст error и код для лога
   await assert.rejects(run, (err) => err.kind === "http" && err.status === 400 && err.message === "Не картинка. Код для поиска в логе: r1");
   run = uploadFile("/u", file(1));
   last().respond(502, "<h1>Bad Gateway</h1>");
-  await assert.rejects(run, /Ошибка 502: Bad Gateway/);
+  await assert.rejects(run, /ответил ошибкой \(502: Bad Gateway\)/);
   run = uploadFile("/u", file(1));
   last().onerror();
   await assert.rejects(run, (err) => err.kind === "network");

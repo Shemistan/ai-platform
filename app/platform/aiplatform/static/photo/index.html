@@ -11,9 +11,11 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="top">
-    <h1>Фото</h1>
-    <span class="chip" id="model-chip">…</span>
+  <header class="page-head">
+    <div class="page-title">
+      <h1>Фото</h1>
+      <span class="chip" id="model-chip">…</span>
+    </div>
   </header>
   <div class="banner" id="banner" role="status" hidden></div>
 
@@ -33,7 +35,7 @@
           <button type="button" class="btn btn--link" id="replace-btn" hidden>Заменить фото</button>
         </div>
         <button type="button" class="drop" id="drop">
-          <span class="plus" aria-hidden="true">+</span>
+          <span class="plus"><svg class="icon-svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg></span>
           <span>Выбери фото или перетащи сюда</span>
           <span class="muted small">PNG, JPEG, WebP</span>
         </button>
@@ -89,7 +91,7 @@
         <div class="segmented segmented--radio" id="details"></div>
       </fieldset>
 
-      <details class="advanced">
+      <details class="disclosure advanced">
         <summary>Точные параметры</summary>
         <div class="settings">
           <label class="field" id="steps-field">

@@ -10,15 +10,16 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
 
 from aiplatform.audio import voices
-from aiplatform.core import events, log, media
+from aiplatform.core import events, log, media, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
-from aiplatform.core.http import HttpError, Request, bad_request, not_found
+from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
@@ -157,6 +158,52 @@ def source_id(scenario: str, *, day: str | None = None, text: str = "") -> str:
     return f"{scenario}:" + hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()[:16]
 
 
+# Транслит латиницы в кирилицу для ключа материала: «Discord» и «Дискорд» — один ключ (PRD-004).
+# Сначала сочетания, потом буквы; кирилица затем сводится (й→и, э→е, ъ/ь — прочь).
+_TRANSLIT = (
+    ("shch", "щ"), ("sch", "щ"), ("sh", "ш"), ("ch", "ч"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"),
+    ("ya", "я"), ("yu", "ю"), ("yo", "е"), ("ph", "ф"), ("ck", "к"), ("ee", "и"), ("oo", "у"),
+    ("a", "а"), ("b", "б"), ("c", "к"), ("d", "д"), ("e", "е"), ("f", "ф"), ("g", "г"), ("h", "х"),
+    ("i", "и"), ("j", "дж"), ("k", "к"), ("l", "л"), ("m", "м"), ("n", "н"), ("o", "о"), ("p", "п"),
+    ("q", "к"), ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"), ("v", "в"), ("w", "в"), ("x", "кс"),
+    ("y", "и"), ("z", "з"),
+)  # fmt: skip
+_FOLD = str.maketrans({"ё": "е", "й": "и", "э": "е", "ъ": None, "ь": None})
+_TRANSLIT_MAP = dict(_TRANSLIT)
+_LATIN = re.compile("|".join(src for src, _ in _TRANSLIT))
+_COPY = re.compile(r"\s*\((?:копия|copy)\)\s*$", re.I)
+# Заголовки по умолчанию ничего о материале не говорят — по ним дубль не ищем.
+GENERIC_TITLES = {"пост в канал", "видео по статье"}
+
+
+def norm_title(title: str) -> str:
+    """Заголовок для сравнения: регистр, ё/е, латиница → кирилица, без пунктуации и «(копия)»."""
+    text = _COPY.sub("", title or "").lower()
+    if " ".join(text.split()) in GENERIC_TITLES:
+        return ""
+    text = _LATIN.sub(lambda m: _TRANSLIT_MAP[m.group(0)], text).translate(_FOLD)
+    return " ".join(re.sub(r"[^\w]+", " ", text).split())
+
+
+def norm_url(url: str) -> str:
+    """Адрес источника без схемы, www, якоря, utm-меток и завершающего «/»."""
+    parts = urllib.parse.urlsplit((url or "").strip())
+    host = parts.netloc.lower().removeprefix("www.")
+    if not host:
+        return ""
+    query = "&".join(q for q in parts.query.split("&") if q and not q.lower().startswith("utm_"))
+    return f"{host}{parts.path.rstrip('/')}" + (f"?{query}" if query else "")
+
+
+def material_keys(scenario: str, *, day: str | None = None, title: str = "", url: str = "") -> list[str]:
+    """Ключи материала выпуска (PRD-004), первый — главный: дайджест — день; статья и пост —
+    адрес источника и нормализованный заголовок. Совпал любой — это похожий выпуск."""
+    if scenario == "digest":
+        return [f"digest:{day}"] if day else []
+    keys = [f"url:{u}"] if (u := norm_url(url)) else []
+    return keys + ([f"title:{t}"] if (t := norm_title(title)) else [])
+
+
 def board_group(item: dict, project: dict, published: list[dict] | None = None) -> str:
     """Куда выпуск на доске: идёт, ждёт человека, опубликован, выгружен для ручной заливки или черновик.
 
@@ -197,14 +244,20 @@ def video_seconds(project: dict) -> float | None:
 
 
 def _read_json_list(path) -> list[dict]:
+    """Записи published.json: голый список (схема 0) или обёртка {"schema", "records"} (BE-008)."""
     try:
-        data = json.loads(_read_text(path) or "[]")
-    except json.JSONDecodeError:
+        data = schema.unwrap(json.loads(_read_text(path) or "[]"), "records")
+    except (json.JSONDecodeError, schema.Broken):
         return []
-    return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
+    return [r for r in data if isinstance(r, dict) and r.get("channel")]
 
 
 TOO_BIG = "Файл больше 200 МБ."
+
+
+def _too_big() -> str:
+    """Текст 413 с лимитом в МБ — лимит читается при запросе (тесты его понижают)."""
+    return f"Файл больше {uploads_module.MAX_AUDIO_BYTES // 2**20} МБ."
 
 
 def place_upload(src: Path, target: Path) -> None:
@@ -325,15 +378,26 @@ class StudioModule:
                 self.notify("Пакет готов — залей руками", project["title"], important=True)
             return
         need = attention(project)
-        if need and before.get(need["step"]) != need["status"]:
+        if not need:
+            return
+        fresh = before.get(need["step"]) != need["status"]
+        previewed = False
+        if need["step"] == "publish" and need["status"] == "failed":
+            # Упало после «Да» в боте — новое превью с «Повторить», даже если падает не впервые (PRD-016).
+            previewed = self._preview(project, failure=need["text"])
+        elif need["step"] == "publish" and fresh and need["text"] in steps.REVIEW_NOTES:
+            previewed = self._preview(project)
+        if fresh:
             head = "Выпуск упал" if need["status"] == "failed" else "Выпуск ждёт тебя"
-            previewed = need["step"] == "publish" and need["text"] in steps.REVIEW_NOTES and self._preview(project)
             text = f"{project['title']} — {need['label']}: {need['text']}".strip(" :")
             self.notify(head, text, important=True, telegram=not previewed)
 
-    def _preview(self, project: dict) -> bool:
-        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление."""
+    def _preview(self, project: dict, failure: str | None = None) -> bool:
+        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление.
+        failure — публикация упала: превью с «Повторить», только если «Да» нажимали в боте."""
         try:
+            if failure is not None:
+                return self.review.retry(project, failure)
             return self.review.preview(project)
         except Exception as exc:  # noqa: BLE001 — сеть, файлы выпуска: уведомление всё равно уйдёт
             log.event(
@@ -371,11 +435,11 @@ class StudioModule:
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
         if not isinstance(force, bool) or not isinstance(ignore_verdict, bool):
-            raise bad_request("force и ignore_verdict — true или false.")
+            raise bad_request(malformed("force и ignore_verdict — true или false."))
         # Пометки выключены, а в тексте есть упоминания из реестра: публикация — с причиной (CMP-004).
         ignore_disclaimers = payload.get("ignore_disclaimers") or ""
         if not isinstance(ignore_disclaimers, str) or len(ignore_disclaimers) > 500:
-            raise bad_request("ignore_disclaimers — причина публикации без пометок, строка до 500 знаков.")
+            raise bad_request("Причина публикации без пометок — не длиннее 500 знаков.")
 
         def apply(project: dict) -> set[str]:
             project["settings"]["channels"] = list(dict.fromkeys(chosen))
@@ -394,7 +458,7 @@ class StudioModule:
             raise bad_request("Укажи канал.")
         posted = payload.get("posted")
         if not isinstance(posted, bool):
-            raise bad_request("posted — true или false.")
+            raise bad_request(malformed("posted — true или false."))
         folder = self.studio.project_dir(project_id)
 
         def apply(project: dict) -> set[str]:
@@ -436,6 +500,7 @@ class StudioModule:
         channels = {c.id: c.label for c in known.values()}
         facts = self._facts()
         items = []
+        defaults: dict[str, list[str]] = {}  # каналы по умолчанию по сценарию — один раз на доску
         for item in self.studio.list(archived=archived):
             project = self.studio.get(item["id"]) or {}
             folder = self.studio.project_dir(item["id"])
@@ -443,6 +508,9 @@ class StudioModule:
             chosen = project.get("settings", {}).get("channels") or []
             review = _read_text(folder / steps.NARRATOR_REVIEW)
             group = board_group(item, project, published)
+            if not chosen and item["scenario"] not in defaults:
+                defaults[item["scenario"]] = self.default_channels(item["scenario"])
+            fallback = [] if chosen else defaults[item["scenario"]]
             items.append(
                 item
                 | {
@@ -462,6 +530,13 @@ class StudioModule:
                     # Копия — вариант оригинала (AN-009): доля переделок и сравнение вариантов.
                     "variant_of": project.get("variant_of"),
                     "variant": project.get("variant"),
+                    # Каналы не выбраны — доска предлагает каналы по умолчанию сценария (PRD-005).
+                    "default_channels": [
+                        {"id": c, "label": channels.get(c, c), "type": known[c].type if c in known else None}
+                        for c in fallback
+                    ],
+                    # Ключ материала (PRD-004) — по нему доска группирует копии и дубли (UX-009).
+                    "material": self.material(item, project),
                 }
             )
         counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
@@ -594,7 +669,7 @@ class StudioModule:
             raise bad_request("Тело запроса — не объект JSON.")
         channel, views = payload.get("channel"), payload.get("views")
         if isinstance(views, bool) or not isinstance(views, int) or views < 0:
-            raise bad_request("views — целое число от 0.")
+            raise bad_request("Просмотры — целое число от 0.")
         if self.studio.get(project_id) is None:
             raise not_found("Проект не найден.")
         folder = self.studio.project_dir(project_id)
@@ -716,7 +791,7 @@ class StudioModule:
     def archive(self, project_id: str, payload: object) -> dict:
         archived = payload.get("archived", True) if isinstance(payload, dict) else True
         if not isinstance(archived, bool):
-            raise bad_request("archived — true или false.")
+            raise bad_request(malformed("archived — true или false."))
         self.studio.archive(project_id, archived)
         return self.view(project_id)
 
@@ -777,17 +852,14 @@ class StudioModule:
 
     def scenario_defaults(self, scenario: str) -> dict:
         """Чем настройки сценария отличаются от общих: их и показывает форма нового выпуска."""
+        out: dict = {}
         if scenario == "digest":
             # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
             # по промпту выпуска — постер загружает человек.
-            out: dict = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
-            usual = [c.id for c in self.channels() if c.id == DIGEST_CHANNEL]  # VOICE_NEWS narrator
-            if usual:
-                out["channels"] = usual
-            return out
-        if scenario == "post":
+            out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
+        elif scenario == "post":
             # Пост — из готового: свой постер и свой mp3, оформление канала, кадр по постеру.
-            return {
+            out = {
                 "branding": True,
                 "poster_mode": "upload",
                 "voice_mode": "upload",
@@ -796,7 +868,19 @@ class StudioModule:
                 "clips": False,
                 "shorts": False,
             }
-        return {}
+        chosen = self.default_channels(scenario)
+        if chosen:
+            out["channels"] = chosen
+        return out
+
+    def default_channels(self, scenario: str) -> list[str]:
+        """Каналы по умолчанию сценария (PRD-005): из настроек, только существующие; не заданы —
+        у дайджеста VOICE_NEWS движка, если такой канал есть, у остальных — пусто."""
+        known = [c.id for c in self.channels()]
+        chosen = self.ctx.config.settings.load().get("default_channels", {}).get(scenario)
+        if chosen is None:
+            chosen = [DIGEST_CHANNEL] if scenario == "digest" else []
+        return [c for c in chosen if c in known]
 
     def describe(self) -> dict:
         return {
@@ -823,6 +907,7 @@ class StudioModule:
             out.append(missing_cli(self.config.llm_cmd[0]))
         # Битый channels.json в баннер выносит вкладка «Каналы» — владелец файла (ChannelStore).
         out += [f"Дайджест: канал {c.label} — {c.problem()}." for c in self._digest_channels() if c.problem()]
+        out += self.studio.load_problems  # выпуски в карантине или записанные более новой версией (BE-008)
         return out
 
     def _digest_channels(self) -> list[publish.Channel]:
@@ -868,44 +953,44 @@ class StudioModule:
         if raw is None:
             return dict(base)
         if not isinstance(raw, dict):
-            raise bad_request("settings — объект.")
+            raise bad_request(malformed("settings — объект."))
         out = dict(base)
         for key, value in raw.items():
             if key not in SETTING_STEPS:
-                raise bad_request(f"Неизвестная настройка {key}.")
+                raise bad_request(malformed(f"Неизвестная настройка {key}."))
             out[key] = value
         if out["poster_mode"] not in POSTER_MODES:
-            raise bad_request("poster_mode — local или upload.")
+            raise bad_request(malformed("poster_mode — local или upload."))
         if out["images_mode"] not in IMAGES_MODES:
-            raise bad_request("images_mode — local или upload.")
+            raise bad_request(malformed("images_mode — local или upload."))
         if out["clips_mode"] not in CLIPS_MODES:
-            raise bad_request("clips_mode — local или upload.")
+            raise bad_request(malformed("clips_mode — local или upload."))
         if out["voice_mode"] not in VOICE_MODES:
-            raise bad_request("voice_mode — tts или upload.")
+            raise bad_request(malformed("voice_mode — tts или upload."))
         if out["frame"] not in steps.FRAMES:
-            raise bad_request("frame — landscape, square или poster.")
+            raise bad_request(malformed("frame — landscape, square или poster."))
         if out["post_format"] not in publish.POST_FORMATS:
-            raise bad_request("post_format — video или photo.")
+            raise bad_request(malformed("post_format — video или photo."))
         if out["upscale_images"] not in UPSCALE_CHOICES:
-            raise bad_request("upscale_images — none, 2k или 4k.")
+            raise bad_request(malformed("upscale_images — none, 2k или 4k."))
         bools = (
             "draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "ai_badge", "branding",
             "draft",
         )  # fmt: skip
         for key in bools:
             if not isinstance(out[key], bool):
-                raise bad_request(f"{key} — true или false.")
+                raise bad_request(malformed(f"{key} — true или false."))
         tempo = out["tempo"]
         if isinstance(tempo, bool) or not isinstance(tempo, int | float) or float(tempo) not in steps.TEMPOS:
-            raise bad_request(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}.")
+            raise bad_request(malformed(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}."))
         out["tempo"] = float(tempo)
         slide_s = out.get("slide_s", slides.TARGET_SLIDE_S)
         if isinstance(slide_s, bool) or slide_s not in slides.SLIDE_SECONDS:
-            raise bad_request(f"slide_s — одно из: {', '.join(map(str, slides.SLIDE_SECONDS))}.")
+            raise bad_request(malformed(f"slide_s — одно из: {', '.join(map(str, slides.SLIDE_SECONDS))}."))
         out["slide_s"] = int(slide_s)
         out.setdefault("reading", "normal")
         if out["reading"] not in slides.READING:
-            raise bad_request(f"reading — одно из: {', '.join(slides.READING)}.")
+            raise bad_request(malformed(f"reading — одно из: {', '.join(slides.READING)}."))
         engine = self.ctx.modules["audio"].config.engines().get(out["engine"])
         if engine is None:
             raise bad_request(voices.unknown(out["engine"]))
@@ -913,7 +998,7 @@ class StudioModule:
             raise bad_request(voices.unknown(engine.id, out["voice"]))
         speed = out["speed"]
         if speed not in (None, "") and (isinstance(speed, bool) or not isinstance(speed, int | float)):
-            raise bad_request("speed — число или null.")
+            raise bad_request(malformed("speed — число или null."))
         if speed not in (None, ""):
             low, high = voices.SPEED_RANGE
             if not low <= speed <= high:
@@ -927,10 +1012,12 @@ class StudioModule:
         video_ids = {m["id"] for m in self.video_models()}
         if out["video_model"] not in video_ids and (video_ids or out["video_model"] is not None):
             raise bad_request(video_models.unknown(out["video_model"], "Неизвестная модель видео."))
-        for key, limit in (("source_url", 500), ("source_author", 200)):
+        for key, label, limit in (("source_url", "Ссылка на источник", 500), ("source_author", "Автор источника", 200)):
             value = out.get(key) or ""
-            if not isinstance(value, str) or len(value) > limit:
-                raise bad_request(f"{key} — строка до {limit} знаков.")
+            if not isinstance(value, str):
+                raise bad_request(malformed(f"{key} — строка."))
+            if len(value) > limit:
+                raise bad_request(f"{label} — не длиннее {limit} знаков.")
             out[key] = " ".join(value.split())
         if out["source_url"] and not re.fullmatch(r"https?://\S+", out["source_url"]):
             raise bad_request("Ссылка на источник — вида https://…")
@@ -944,7 +1031,7 @@ class StudioModule:
             raise bad_request(f"source_license — одно из: {', '.join(steps.LICENSES)}.")
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
-            raise bad_request("channels — список id каналов.")
+            raise bad_request(malformed("channels — список id каналов."))
         unknown = [c for c in out["channels"] if c not in known]
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
@@ -966,7 +1053,7 @@ class StudioModule:
         extra: dict = {"auto_title": not title}
         force_new = payload.get("force_new", False)
         if not isinstance(force_new, bool):
-            raise bad_request("force_new — true или false.")
+            raise bad_request(malformed("force_new — true или false."))
         if scenario == "digest":
             try:
                 day = news.parse_day(payload.get("day"))
@@ -1010,8 +1097,9 @@ class StudioModule:
     def create_unique(self, scenario: str, title: str, settings: dict, extra: dict, *, force_new: bool) -> dict:
         """Проверка дубля по source и создание — под одним замком: двойной сабмит формы или
         расписание вместе с ручным запуском не дают два выпуска на один материал (второй — 409)."""
+        keys = material_keys(scenario, day=extra.get("day"), title=title, url=settings.get("source_url") or "")
         with self._create_lock:
-            self._no_duplicate(extra["source"], force_new)
+            self._no_duplicate(extra["source"], force_new, keys)
             return self.studio.create(scenario, title, settings, extra)
 
     def create_once(self, payload: object, key: str | None) -> dict:
@@ -1043,17 +1131,55 @@ class StudioModule:
                 while len(self._idem) > IDEMPOTENCY_KEEP:
                     self._idem.pop(next(iter(self._idem)))
 
-    def _no_duplicate(self, source: str, force_new: bool) -> None:
-        """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый)."""
+    def _no_duplicate(self, source: str, force_new: bool, keys: list[str] | None = None) -> None:
+        """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый).
+        keys — ключи материала (PRD-004): тот же заголовок с правками текста, Discord/Дискорд, тот же
+        адрес источника — «похожий выпуск уже есть» с выбором «Создать всё равно»."""
         if force_new:
             return
-        existing = next((p for p in self.studio.list() if self.source_of(p) == source), None)
-        if existing is not None:
-            raise HttpError(
-                HTTPStatus.CONFLICT,
-                f"Уже есть выпуск «{existing['title']}» по этому же материалу — открой его или создай новый.",
-                {"existing": {"id": existing["id"], "title": existing["title"], "scenario": existing["scenario"]}},
+        items = self.studio.list()
+        existing = next((p for p in items if self.source_of(p) == source), None)
+        similar = False
+        if existing is None and keys:
+            wanted = set(keys)
+            # Части серии и выжимка — нарочно из того же источника: похожими на новый выпуск не считаются.
+            existing = next(
+                (p for p in items if not self._derived(p) and wanted & set(self.material_of(p))),
+                None,
             )
+            similar = existing is not None
+        if existing is None:
+            return
+        found = {"id": existing["id"], "title": existing["title"], "scenario": existing["scenario"]}
+        found["url"] = f"/studio/?scenario={existing['scenario']}&project={existing['id']}"
+        if similar:
+            message = f"Похожий выпуск уже есть: «{existing['title']}» — открой его или создай всё равно."
+        else:
+            message = f"Уже есть выпуск «{existing['title']}» по этому же материалу — открой его или создай новый."
+        raise HttpError(HTTPStatus.CONFLICT, message, {"existing": found | {"similar": similar}})
+
+    def _derived(self, item: dict) -> bool:
+        project = self.studio.get(item["id"]) or item
+        return bool(project.get("series_of") or project.get("summary_of"))
+
+    def material(self, item: dict, project: dict | None = None) -> str | None:
+        """Главный ключ материала; у копии (AN-009) — ключ оригинала, чтобы вся цепочка была одной группой."""
+        root = (project or {}).get("variant_of")
+        if root and self.studio.get(root) is not None:
+            item = {"id": root}
+        keys = self.material_of(item)
+        return keys[0] if keys else f"project:{item['id']}"
+
+    def material_of(self, item: dict) -> list[str]:
+        """Ключи материала выпуска (material_keys) — по заголовку, дню и источнику из project.json."""
+        project = self.studio.get(item["id"]) or item
+        settings = project.get("settings") or {}
+        return material_keys(
+            project.get("scenario", ""),
+            day=project.get("day"),
+            title=project.get("title", ""),
+            url=settings.get("source_url") or "",
+        )
 
     def source_of(self, item: dict) -> str | None:
         """Источник выпуска; у выпусков из прошлых версий — по дню или по тексту на диске."""
@@ -1081,7 +1207,7 @@ class StudioModule:
             raise HttpError(HTTPStatus.CONFLICT, "Проект сейчас выполняется — дождись или останови его.")
         variant = payload.get("variant") if isinstance(payload, dict) else None
         if variant is not None and (not isinstance(variant, str) or len(variant) > 200):
-            raise bad_request("variant — что меняли в копии, строка до 200 знаков.")
+            raise bad_request("Что меняли в копии — не длиннее 200 знаков.")
         extra = {k: source[k] for k in ("day", "source", "auto_title") if k in source}
         extra["variant_of"] = source.get("variant_of") or project_id
         if variant and variant.strip():
@@ -1195,6 +1321,11 @@ class StudioModule:
 
         project["settings"] = self.defaults() | project["settings"]  # выпуски из версий без новых настроек
         project["scenario_label"] = SCENARIOS[project["scenario"]]
+        project["material"] = self.material({"id": project_id}, project)  # ключ материала (PRD-004)
+        # Каналы не выбраны (выпуск из старой версии) — студия предлагает каналы сценария (PRD-005).
+        project["default_channels"] = (
+            [] if project["settings"]["channels"] else self.default_channels(project["scenario"])
+        )
         raw = project["steps"]
         project["steps"] = [
             {
@@ -1226,6 +1357,8 @@ class StudioModule:
             "short_video": url(folder / steps.SHORT_VIDEO),
         }
         published = as_json(steps.PUBLISHED)
+        if isinstance(published, dict):  # схема 1: записи в обёртке (BE-008)
+            published = published.get("records")
         if isinstance(published, list):  # отклик в окнах 24ч/72ч/7д — рядом с записью, не поверх её полей
             facts = self._facts()
             published = [r | {"reach": stats.reach(r, facts)} if isinstance(r, dict) else r for r in published]
@@ -1486,9 +1619,15 @@ class StudioModule:
         kinds = {"poster": (uploads_module.IMAGE,), "voice": (uploads_module.AUDIO,)}.get(what)
         if kinds is None:
             raise not_found("Загружать можно poster или voice.")
-        ext = uploads_module.sniff(uploads_module.head(src)) if src.stat().st_size else None
+        size = src.stat().st_size
+        if not size:
+            raise bad_request("Пустой файл.")
+        ext = uploads_module.sniff(uploads_module.head(src))
         if ext is None or uploads_module.kind_of(ext) not in kinds:
             raise bad_request(uploads_module._accepted(kinds))
+        if what == "poster" and size > uploads_module.MAX_UPLOAD_BYTES:  # тело ограничено 200 МБ — под голос
+            limit_mb = uploads_module.MAX_UPLOAD_BYTES // 2**20
+            raise HttpError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"Картинка больше {limit_mb} МБ.")
         self._guard_step(project_id, what)
         folder = self.studio.project_dir(project_id)
         stems = steps.IMAGE_EXT if what == "poster" else steps.AUDIO_EXT
@@ -1545,7 +1684,7 @@ class StudioModule:
         settings = payload.get("settings") if isinstance(payload, dict) else None
         if settings is not None:
             if only is None:
-                raise bad_request("settings передают вместе с шагом.")
+                raise bad_request(malformed("settings передают вместе с шагом."))
             self._guard(project_id)
             self.update_settings(project_id, settings)
         self.studio.run(project_id, only)
@@ -1621,10 +1760,10 @@ class StudioModule:
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):
-                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, TOO_BIG)
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, _too_big())
                 return req.send_json(self.upload(pid, what, src))
             case ("POST", ["projects", pid, "upload", kind, key]):
-                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, TOO_BIG)
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, _too_big())
                 return req.send_json(self.upload_slide(pid, kind, key, src))
             case ("GET", ["projects", pid, "files", *rest]):
                 return self._send_file(req, pid, "/".join(rest))

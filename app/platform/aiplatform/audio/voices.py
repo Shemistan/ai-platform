@@ -102,4 +102,4 @@ def unknown(engine_id: object, voice: object = None) -> str:
         return f"Движок {engine.label} выключен — включи его во вкладке «Настройки»."
     if voice in engine.voices:
         return f"Голос {voice} у движка {engine.label} выключен — включи его во вкладке «Настройки»."
-    return f"У движка {engine.label} нет голоса {voice!r}."
+    return f"У движка {engine.label} нет голоса «{voice}»."

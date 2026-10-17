@@ -123,6 +123,23 @@ class ProcessLogTest(LogCase):
             notifier.send("a", "b", show=False)
         self.assertEqual(notifier.recent()[0]["title"], "a")
 
+    def test_internal_error_text_has_no_exception_class(self):
+        # TXT-003: человеку — что делать, без repr; класс и трасса — в лог процесса и лог задачи.
+        def boom(_view):
+            raise KeyError("plan")
+
+        tasks = tasks_module.Tasks(self.tmp / "tasks")
+        self.addCleanup(tasks.close)
+        task = tasks.start(tasks_module.Spec(kind="t", title="упадёт", argv=[PY, "-c", "print(1)"], on_done=boom))
+        done = tasks.wait(task["id"], 10)
+        self.assertEqual(done["status"], "failed")
+        self.assertEqual(done["error"], log.TASK_INTERNAL)
+        self.assertNotIn("KeyError", done["error"])
+        self.assertIn("KeyError: 'plan'", tasks.get(task["id"])["log"][-1])
+        logged = self.events("internal.error")
+        self.assertEqual(logged[0]["task"], task["id"])
+        self.assertIn("KeyError", logged[0]["error"])
+
     def test_task_events(self):
         tasks = tasks_module.Tasks(self.tmp / "tasks")
         self.addCleanup(tasks.close)

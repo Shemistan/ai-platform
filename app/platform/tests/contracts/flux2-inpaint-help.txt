@@ -1,0 +1,163 @@
+# flux2-inpaint: --help; снято 2026-10-17 (make contracts)
+OVERVIEW: RePaint-style masked inpainting: regenerate the masked region of an
+image with a text prompt
+
+USAGE: flux2 inpaint [<options>] --image <image> --mask <mask> --prompt <prompt> --output <output>
+
+OPTIONS:
+  --models-dir <models-dir>
+                          Custom models directory (for sandboxed apps or custom
+                          storage). Defaults to the framework's standard models
+                          path.
+  --flux-model <flux-model>
+                          FLUX.2 model: klein-9b (distilled, default) |
+                          klein-9b-base | klein-9b-kv | dev | klein-4b |
+                          klein-4b-base. (default: klein-9b)
+  -i, --image <image>     Input image to inpaint.
+  -m, --mask <mask>       Mask image, same dimensions as the input.
+                          Interpretation depends on --mask-convention:
+                          'grayscale' (default) reads luminance, WHITE =
+                          inpaint, BLACK = keep; 'alpha' reads the alpha
+                          channel, TRANSPARENT = inpaint, OPAQUE = keep. Soft
+                          values honoured in both modes.
+  --mask-convention <mask-convention>
+                          How --mask is read: 'grayscale' (default — white =
+                          inpaint) or 'alpha' (transparent = inpaint, RGB
+                          ignored). Use 'alpha' when you erased the region to
+                          redo in a photo editor and saved a PNG with alpha.
+                          (values: grayscale, alpha; default: grayscale)
+  -p, --prompt <prompt>   Text prompt describing the desired full image. Follow
+                          Flux 2 prompting guidelines
+                          (https://docs.bfl.ml/guides/prompting_guide_flux2):
+                          Subject + Action + Style + Context, 30–80 words,
+                          describe the WHOLE scene including the kept
+                          surroundings (the model has no other lighting /
+                          perspective cues for the inpainted region).
+  -o, --output <output>   Output PNG path.
+  --reference <reference> Optional path(s) to reference image(s) — when set,
+                          the chain runs in I2I mode so the transformer attends
+                          to these while still respecting the RePaint mask.
+                          Repeat for multiple references. Useful for
+                          scene-extension / repair where the new content must
+                          continue the kept region.
+  --use-image-as-reference
+                          Auto-feed the source image as I2I conditioning when
+                          --reference is not set. OFF by default — for 'replace
+                          object X with object Y' inpainting, the source still
+                          contains X under the mask and bleeds X into Y via
+                          attention. Enable for repair / scene-extension where
+                          the masked region is empty.
+  --upsample-prompt       Text-encoder-only prompt rewriting
+                          (Mistral/Klein-Qwen3). Does NOT look at the image.
+                          For image-aware rewriting that inherits the source's
+                          lighting/camera/materials, use
+                          --enrich-prompt-with-vlm instead.
+  --enrich-prompt-with-vlm
+                          Image-aware prompt rewriting via a VLM
+                          (--vlm-provider: bundled Qwen3.5 by default, or Gemma
+                          4 E2B). The VLM looks at --image and rewrites
+                          --prompt into a 30-80 word BFL-style Flux 2 prompt
+                          that inherits the source's photographic identity
+                          (camera angle, lighting direction, materials,
+                          palette, depth of field). Strictly optional: if no
+                          VLM is loaded, the chain falls back to --prompt
+                          verbatim with a warning. Pass
+                          --qwen35-variant/--qwen35-path (or
+                          --gemma4-variant/--gemma4-path) to have this command
+                          load one in-process. When both --upsample-prompt and
+                          --enrich-prompt-with-vlm are set, the VLM wins.
+  --intent <intent>       Drives --enrich-prompt-with-vlm (ignored otherwise).
+                          'replace' = swap object X for Y (default). 'remove' =
+                          clear object X, surface continues. 'modify' = keep
+                          object X but change colour/outfit/expression.
+                          'change-scene' = keep subject exactly as-is, change
+                          the scene around it (use this when the mask preserves
+                          the subject — e.g. 'put the cat at the pool').
+                          (values: replace, remove, modify, change-scene;
+                          default: replace)
+  --vlm-provider <vlm-provider>
+                          Which VLM serves --enrich-prompt-with-vlm: 'qwen35'
+                          (default, bundled Qwen3.5 4B) or 'gemma4' (Gemma 4
+                          E2B-it). Both answer the same system prompts; Gemma
+                          is smaller and faster, Qwen3.5 is the historical
+                          default. (values: qwen35, gemma4; default: qwen35)
+  --qwen35-variant <qwen35-variant>
+                          Qwen3.5 VLM variant to load in-process when
+                          --enrich-prompt-with-vlm is set: '8bit' (5 GB,
+                          recommended) or '4bit' (3 GB, faster but lower
+                          quality). Auto-downloads if missing. Omit (and omit
+                          --qwen35-path) to skip loading — the chain then falls
+                          back to --prompt verbatim with a warning.
+  --qwen35-path <qwen35-path>
+                          Override the local path to Qwen3.5 VLM weights
+                          (alternative to --qwen35-variant for sandboxed apps).
+  --gemma4-variant <gemma4-variant>
+                          Gemma 4 E2B-it variant when --vlm-provider gemma4:
+                          '6bit' (default, ~4.2 GB), '4bit' (~3.6 GB), '8bit'
+                          (~5.2 GB) or 'bf16' (~10 GB). Auto-downloads if
+                          missing.
+  --gemma4-path <gemma4-path>
+                          Override the local path to Gemma 4 weights (directory
+                          with config.json + safetensors + tokenizer.json).
+                          Takes precedence over --gemma4-variant.
+  --steps <steps>         Denoising steps for FLUX.2 (4 for distilled klein,
+                          25-28 for base/dev). (default: 4)
+  --guidance <guidance>   Guidance scale (1.0 for distilled, 3.5 for base, 4.0
+                          for dev). (default: 1.0)
+  --seed <seed>           Random seed (omit for non-deterministic).
+  --max-pixels <max-pixels>
+                          Maximum total pixel count for the working resolution.
+                          Defaults to 1024² (≈ 1 048 576). (default: 1048576)
+  --strength <strength>   Denoising strength in (0, 1]. 1.0 (default) = masked
+                          region starts from pure noise (replace/remove). < 1.0
+                          = start from the noised original and skip early
+                          timesteps — preserves layout/pose/palette, use
+                          ~0.5-0.75 for 'modify' edits. With 4-step distilled
+                          models only ≤ 0.75 actually skips a step. (default:
+                          1.0)
+  --mask-crop-padding <mask-crop-padding>
+                          Crop-and-stitch padding in pixels (like diffusers
+                          padding_mask_crop). When set, inpaint only a crop
+                          around the mask (full token budget on the edit) and
+                          paste the result back onto the untouched original —
+                          output keeps the original resolution. Typical: 32-64.
+                          Recommended when the mask is small relative to the
+                          photo.
+  --text-quant <text-quant>
+                          Text encoder quantization: bf16, 8bit, 6bit, 4bit
+                          (default: 4bit)
+  --transformer-quant <transformer-quant>
+                          Transformer quantization: bf16, qint8, int4, mxfp8,
+                          mxfp4, nvfp4 (default: qint8)
+  --profile               Show detailed per-phase performance profiling (model
+                          loads, text encoding, VAE encodes, per-step timings).
+  --beacon                Advertise activity to external monitors (writes a
+                          transient manifest in ~/Library/Application
+                          Support/ai-runtime-beacons/)
+  --repeat-count <repeat-count>
+                          Run the chain N times in the same process (same
+                          pipeline instance) to separate cold-start (first run:
+                          kernel compilation, cache warm-up) from steady-state.
+                          Default 1. (default: 1)
+  --cleanup-between-runs  Clear the MLX GPU buffer cache between --repeat-count
+                          runs (diagnostic for run-to-run slowdown).
+  --compile-step          Compile the denoising transformer forward with
+                          MLX.compile (experimental, benchmarking only).
+                          Measured neutral on klein-9b bf16 — the elementwise
+                          hot spots are already hand-fused; steps are
+                          GEMM-bound. Forces memoryOptimization to .disabled
+                          (higher peak memory) and pays a one-time trace on the
+                          first step. Output is numerically identical.
+  --composite-on-original Composite the generated canvas back onto the original
+                          in pixel space using the soft mask (kept pixels stay
+                          bit-identical, no VAE roundtrip). Implied by
+                          --mask-crop-padding.
+  --keep-text-encoder     Keep the text encoder loaded between generations
+                          instead of reloading it each time (memory-first
+                          default). Saves ~1s warm / several seconds cold per
+                          generation at the cost of encoder + transformer
+                          resident simultaneously (Klein-9B: ≈ +5 GB). Enable
+                          on machines with RAM headroom.
+  --version               Show the version.
+  -h, --help              Show help information.
+

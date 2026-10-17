@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import tempfile
@@ -12,7 +13,9 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from aiplatform.core.uploads import IMAGE, MAX_AUDIO_BYTES, MAX_UPLOAD_BYTES, MIME, UploadError, UploadStore
+from aiplatform.core import log
+from aiplatform.core import uploads as uploads_module
+from aiplatform.core.uploads import IMAGE, MIME, UploadError, UploadStore
 
 MAX_JSON_BYTES = 1024 * 1024
 CHUNK = 1024 * 1024  # загрузка читается и пишется на диск кусками по 1 МБ
@@ -77,6 +80,17 @@ def bad_request(message: str) -> HttpError:
     return HttpError(HTTPStatus.BAD_REQUEST, message)
 
 
+# Форма запроса не та (тип поля, значение не из списка): такое шлёт только сломанный фронт,
+# имя поля человеку не поможет — общий текст, а причина — в лог сервиса (TXT-008).
+MALFORMED = "Некорректный запрос — обнови страницу и попробуй ещё раз."
+
+
+def malformed(reason: str) -> str:
+    """Записать техническую причину в лог и вернуть общий текст для ответа."""
+    log.event("request.malformed", level=logging.WARNING, error=reason)
+    return MALFORMED
+
+
 def found(value: dict | None, message: str = "Задача не найдена.") -> dict:
     if value is None:
         raise not_found(message)
@@ -114,7 +128,15 @@ class Request:
 
     def body(self, limit: int, too_big: str = "Слишком большой запрос.") -> bytes:
         """Тело целиком в память — только для небольших запросов (JSON); файлы — body_to_file."""
-        return self._h.rfile.read(self._length(limit, too_big))
+        length = self._length(limit, too_big)
+        try:
+            data = self._h.rfile.read(length)
+        except TimeoutError:  # клиент замолчал посреди тела (Handler.timeout)
+            data = b""
+        if len(data) < length:  # обрыв: Content-Length больше, чем пришло (QA-015)
+            self._h.close_connection = True
+            raise bad_request("Запрос оборвался на середине — отправь его ещё раз.")
+        return data
 
     def body_to_file(self, folder: Path, limit: int, too_big: str = "Слишком большой файл.") -> Path:
         """Тело запроса — потоком во временный файл в folder, кусками по CHUNK (SEC-009).
@@ -140,7 +162,10 @@ class Request:
                 with os.fdopen(fd, "wb") as fh:
                     left = length
                     while left > 0:
-                        chunk = self._h.rfile.read(min(CHUNK, left))
+                        try:
+                            chunk = self._h.rfile.read(min(CHUNK, left))
+                        except TimeoutError:  # клиент замолчал посреди тела (Handler.timeout, QA-015)
+                            chunk = b""
                         if not chunk:
                             self._h.close_connection = True
                             raise bad_request("Загрузка оборвалась — пришло меньше, чем обещано.")
@@ -296,7 +321,8 @@ def handle_uploads(req: Request, store: UploadStore, url_base: str, kinds: tuple
     """`POST uploads` и `GET uploads/<id>` для модуля; False — путь не про загрузки."""
     match (req.method, req.sub):
         case ("POST", ["uploads"]):
-            limit = MAX_AUDIO_BYTES if len(kinds) > 1 or IMAGE not in kinds else MAX_UPLOAD_BYTES
+            image_only = len(kinds) == 1 and IMAGE in kinds  # лимит читается при запросе: тесты его понижают
+            limit = uploads_module.MAX_UPLOAD_BYTES if image_only else uploads_module.MAX_AUDIO_BYTES
             tmp = req.body_to_file(store.root, limit, f"Файл больше {limit // 2**20} МБ.")
             try:
                 upload_id = store.save_file(tmp, kinds)

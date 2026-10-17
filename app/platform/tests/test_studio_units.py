@@ -238,7 +238,7 @@ class NewsTest(unittest.TestCase):
         self.assertEqual(news.parse_where(lines, "2026-10-14"), Path("/Volumes/My Disk/lib/2026/10/14/digest"))
         with self.assertRaisesRegex(StudioError, "нет"):
             news.parse_where(["Дайджеста за 2026-10-14 нет"], "2026-10-14")
-        with self.assertRaisesRegex(StudioError, "не сказал"):
+        with self.assertRaisesRegex(StudioError, "текст выпуска не найден"):
             news.parse_where(["что-то другое"], "2026-10-14")
 
 

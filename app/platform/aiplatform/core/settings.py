@@ -15,9 +15,11 @@ import re
 import threading
 from pathlib import Path
 
+from aiplatform.core import schema
 from aiplatform.core.fsutil import atomic_write
 
 FILE = "settings.json"
+SCHEMA = 1  # схема settings.json (core/schema.py, ADR 0009); 1 — поле schema, формат как в схеме 0
 KINDS = ("photo", "video", "audio")  # модели фото, модели видео, движки озвучки
 _STORES: dict[Path, Settings] = {}
 _STORES_LOCK = threading.Lock()
@@ -42,6 +44,7 @@ MAX_LIMIT_MIN = 24 * 60
 MAX_POLICY_DAYS = 3650  # trim_days / archive_days уборки
 MAX_FREE_GB = 10000  # cleanup.min_free_gb
 REGISTRY_MAX_AGE_DAYS = 14
+SCENARIO_IDS = ("digest", "article", "post")  # как studio.service.SCENARIOS
 
 
 def _empty() -> dict:
@@ -53,8 +56,19 @@ def _empty() -> dict:
         # Уборка (core/cleanup.py): days — задачи вкладок, кэш, архив и загрузки старше; trim_days —
         # через сколько дней после публикации у выпуска удаляются картинки и исходники клипов;
         # archive_days — когда опубликованный выпуск уходит в архив сам (0 — никогда);
-        # min_free_gb — порог места до GPU-задач и сборки (None — 10 ГБ, в демо без проверки).
-        "cleanup": {"auto": True, "days": 30, "trim_days": 14, "archive_days": 60, "min_free_gb": None},
+        # min_free_gb — порог места до GPU-задач и сборки (None — 10 ГБ, в демо без проверки);
+        # draft_days — неопубликованный выпуск без движения дольше уходит в архив сам (0 — никогда).
+        "cleanup": {
+            "auto": True,
+            "days": 30,
+            "trim_days": 14,
+            "archive_days": 60,
+            "draft_days": 7,
+            "min_free_gb": None,
+        },
+        # Каналы по умолчанию по сценариям (PRD-005): id из channels.json; None — не заданы
+        # (у дайджеста тогда VOICE_NEWS движка, если такой канал есть).
+        "default_channels": {s: None for s in SCENARIO_IDS},
         # Реестр запрещённых организаций: ежедневная сверка в фоне и порог свежести, дни (CMP-013).
         "registry": {"auto_check": True, "max_age_days": REGISTRY_MAX_AGE_DAYS},
         # Лимиты времени процессов по виду (runner.LIMITS), минуты: {"llm": {"total": 10, "idle": 5}}.
@@ -118,11 +132,16 @@ def normalize(raw: object) -> dict:
     out["cleanup"]["auto"] = _flag(cleanup.get("auto"), True)
     if cleanup.get("days") in CLEANUP_DAYS:
         out["cleanup"]["days"] = cleanup["days"]
-    for name in ("trim_days", "archive_days"):
+    for name in ("trim_days", "archive_days", "draft_days"):
         if _number(cleanup.get(name), MAX_POLICY_DAYS) and float(cleanup[name]).is_integer():
             out["cleanup"][name] = int(cleanup[name])
     if _number(cleanup.get("min_free_gb"), MAX_FREE_GB):
         out["cleanup"]["min_free_gb"] = cleanup["min_free_gb"]
+    chosen = _section(raw, "default_channels")
+    for scenario in SCENARIO_IDS:
+        value = chosen.get(scenario)
+        if isinstance(value, list):
+            out["default_channels"][scenario] = list(dict.fromkeys(v for v in value if isinstance(v, str) and v))
     reg = _section(raw, "registry")
     out["registry"]["auto_check"] = _flag(reg.get("auto_check"), True)
     age = reg.get("max_age_days")
@@ -145,6 +164,7 @@ def normalize(raw: object) -> dict:
 class Settings:
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.problem: str | None = None  # файл записан более новой версией — читаем, не пишем (BE-008)
         self._lock = threading.Lock()
         self._cache: tuple[tuple[int, int], dict] | None = None
 
@@ -160,10 +180,15 @@ class Settings:
         mtime = (stat.st_mtime_ns, stat.st_size)
         if self._cache and self._cache[0] == mtime:
             return json.loads(json.dumps(self._cache[1]))
+        self.problem = None
         try:
-            data = normalize(json.loads(self.path.read_text(encoding="utf-8")))
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            schema.upgrade(raw if isinstance(raw, dict) else {}, SCHEMA, where=FILE)
+        except schema.TooNew as exc:  # читаем как есть, но не пишем: правки — в той, новой версии
+            self.problem = f"Настройки: {exc}."
         except (OSError, ValueError):
-            data = _empty()
+            raw = None
+        data = normalize(raw)
         self._cache = (mtime, data)
         return json.loads(json.dumps(data))
 
@@ -177,8 +202,11 @@ class Settings:
         """apply(data) правит копию настроек; результат пишется атомарно и возвращается."""
         with self._lock:
             data = self._read()
+            if self.problem:
+                raise schema.TooNew(self.problem)
             apply(data)
             data = normalize(data)
-            atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+            text = json.dumps(schema.stamp(data, SCHEMA), ensure_ascii=False, indent=2)
+            atomic_write(self.path, text + "\n")
             self._cache = None
             return data

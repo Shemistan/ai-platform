@@ -15,6 +15,7 @@ mp4 + заголовок + описание в папке.
 
 from __future__ import annotations
 
+import contextlib
 import html
 import json
 import os
@@ -30,13 +31,16 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from aiplatform.core import perms
+from aiplatform.core import log, perms, schema
 from aiplatform.studio.llm import StudioError
 
 TELEGRAM, MANUAL = "telegram", "manual"
 LANDSCAPE, VERTICAL = "landscape", "vertical"
 CAPTION_LIMIT = 1024
 BOT_VIDEO_LIMIT = 50 * 2**20  # Bot API принимает файлы до 50 МБ
+# Тексты для автора (TXT-003): что случилось и что сделать, без имён классов и «Bot API».
+TELEGRAM_DOWN = "Нет связи с Telegram. Проверь интернет или VPN и повтори публикацию."
+TOO_BIG = "Telegram не принимает файлы больше 50 МБ. Сократи текст или включи ускорение озвучки."
 TELEGRAM_API = "https://api.telegram.org"
 DEFAULT_CHANNELS = (
     {"id": "download-16x9", "label": "Файл для YouTube / VK (16:9)", "type": MANUAL, "format": LANDSCAPE},
@@ -155,6 +159,8 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"{path}: не читается как JSON ({exc})") from exc
     token_file = str(narrator_dir / NARRATOR_TOKEN_FILE) if narrator_dir else ""
+    if isinstance(raw, dict) and isinstance(raw.get("channels"), list):  # схема 1: {"schema", "channels"}
+        raw = raw["channels"]
     if not isinstance(raw, list):
         raise ValueError(f"{path}: ожидается список каналов")
     out = []
@@ -184,10 +190,22 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
     return out
 
 
+# Схема channels.json (core/schema.py, ADR 0009): 0 — голый список, 1 — {"schema": 1, "channels": [...]}.
+CHANNELS_SCHEMA = 1
+
+
 def save_channels(path: Path, channels: list[Channel]) -> None:
     """Записать список целиком: атомарно и только для владельца (0600, SEC-010).
-    Зовёт только ChannelStore — под своим замком (channels/store.py)."""
-    perms.write_private(path, json.dumps([c.stored() for c in channels], ensure_ascii=False, indent=2) + "\n")
+    Зовёт только ChannelStore — под своим замком (channels/store.py).
+    Файл, записанный более новой версией, не перезаписываем: schema.TooNew (ADR 0009)."""
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        current = None
+    with contextlib.suppress(schema.Broken):
+        schema.upgrade(current, CHANNELS_SCHEMA, where=path.name)
+    payload = schema.wrap([c.stored() for c in channels], "channels", CHANNELS_SCHEMA)
+    perms.write_private(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def new_channel(existing: list[Channel], label: str, chat_id: str, fmt: str) -> Channel:
@@ -440,7 +458,8 @@ def _http_post(url: str, body: bytes, content_type: str) -> dict:
             return {"ok": False, "error_code": exc.code, "description": f"HTTP {exc.code}"}
     except urllib.error.URLError as exc:
         # urllib заворачивает в URLError сбои соединения и отправки запроса: целиком он не дошёл.
-        raise StudioError(f"Telegram недоступен: {exc.__class__.__name__}") from exc
+        log.event("telegram.unreachable", error=exc.__class__.__name__)  # класс сбоя — в лог, не в UI (TXT-003)
+        raise StudioError(TELEGRAM_DOWN) from exc
     except OSError as exc:
         # Запрос отправлен, ответа нет (таймаут чтения, обрыв) — пост мог уйти.
         raise Unknown(f"Telegram не ответил ({exc.__class__.__name__}) — пост мог уйти") from exc
@@ -554,7 +573,7 @@ def photo_problem(channel: Channel, poster: Path, audio: Path) -> str | None:
     if poster.stat().st_size > PHOTO_LIMIT:
         return f"{channel.label}: картинка больше 10 МБ — Telegram не примет её фото."
     if audio.stat().st_size > BOT_VIDEO_LIMIT:
-        return f"{channel.label}: аудио больше 50 МБ — Bot API такое не примет."
+        return f"{channel.label}: {TOO_BIG}"
     return None
 
 
@@ -689,7 +708,7 @@ def publish(
     if problem:
         raise StudioError(f"{channel.label}: {problem}.")
     if video.stat().st_size > BOT_VIDEO_LIMIT:
-        raise StudioError(f"{channel.label}: видео больше 50 МБ — Bot API такое не примет.")
+        raise StudioError(f"{channel.label}: {TOO_BIG}")
     token = channel.token()
     fields = {
         **channel.target(),

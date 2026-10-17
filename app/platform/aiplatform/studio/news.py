@@ -46,8 +46,8 @@ def parse_where(lines: list[str], day: str) -> Path:
         if m := _WHERE.search(line):
             return Path(m[1].strip()).parent
     if any("нет" in line and "Дайджеста" in line for line in lines):
-        raise StudioError(f"Дайджеста за {day} нет: narrator не собрал выпуск (см. лог шага).")
-    raise StudioError("narrator не сказал, где лежит выпуск: нет строки «Озвучить: …/narration.md».")
+        raise StudioError(f"Дайджеста за {day} нет: выпуск не собрался. Подробности — в журнале шага.")
+    raise StudioError("Новости собраны, но текст выпуска не найден. Перезапусти шаг; подробности — в журнале.")
 
 
 def collect(

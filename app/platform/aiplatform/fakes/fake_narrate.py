@@ -807,7 +807,7 @@ def cmd_voice(args, state: dict) -> int:
     stems = {stem for voice, stem in CLONES.items() if voice != "M1"}
     stem = args.name.lower()
     if stem not in stems:
-        return fail(f"голос {args.name!r} не записывается, есть: {', '.join(sorted(stems))}")
+        return fail(f"голос «{args.name}» не записывается, есть: {', '.join(sorted(stems))}")
     if not args.source and stem != "charon":
         return fail(f"голоса {stem} в Gemini TTS нет: передай запись и её текст")
     if not args.source and not os.environ.get("GEMINI_API_KEY"):

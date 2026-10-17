@@ -2,6 +2,7 @@
 
 import { $, api, busyClick, chip, h, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 import { loadOriented } from "./exif.js";
+import { geometry as geometryOf } from "./geometry.js";
 
 const state = {
   config: null,
@@ -29,21 +30,16 @@ const usable = (model) => model.installed && model.modes.includes(state.mode);
 
 // ---------- геометрия: к какому размеру приводится фото ----------
 
+// Расчёт — чистая функция в geometry.js (тесты без DOM); здесь только сбор входов со страницы.
 function geometry() {
-  const { grid, max_side: maxSide } = state.config;
-  const snap = (v) => Math.round(v / grid) * grid;
-  const fit = (v) => Math.min(Math.max(snap(v), 256), maxSide);
-  const { width, height } = state.source;
-  const frac = Object.fromEntries(
-    Object.entries(state.pads).map(([side, pct]) => [side, state.mode === "outpaint" ? pct / 100 : 0]),
-  );
-  const longest = Math.max(width * (1 + frac.left + frac.right), height * (1 + frac.top + frac.bottom));
-  const scale = Math.min(1, Number($("work-side").value) / longest);
-  const sw = fit(width * scale);
-  const sh = fit(height * scale);
-  const px = (fraction, side) => (fraction > 0 ? Math.max(grid, snap(side * fraction)) : 0);
-  const pad = { left: px(frac.left, sw), right: px(frac.right, sw), top: px(frac.top, sh), bottom: px(frac.bottom, sh) };
-  return { sw, sh, pad, cw: sw + pad.left + pad.right, ch: sh + pad.top + pad.bottom };
+  return geometryOf({
+    source: state.source,
+    pads: state.pads,
+    outpaint: state.mode === "outpaint",
+    grid: state.config.grid,
+    maxSide: state.config.max_side,
+    workSide: Number($("work-side").value),
+  });
 }
 
 function renderStage() {
@@ -357,7 +353,7 @@ function inputsBlock(job) {
 function logBlock(job, open) {
   if (!job.log || !job.log.length) return null;
   const pre = h("pre", { class: "log" }, job.log.join("\n"));
-  const details = h("details", { class: "log-wrap", open }, h("summary", {}, "Лог процесса"), pre);
+  const details = h("details", { class: "disclosure log-wrap", open }, h("summary", {}, "Лог процесса"), pre);
   details.addEventListener("toggle", () => (pre.scrollTop = pre.scrollHeight));
   queueMicrotask(() => (pre.scrollTop = pre.scrollHeight));
   return details;
@@ -592,7 +588,7 @@ function configureBanner(cfg) {
     };
   } else if (Object.values(cfg.runners).includes(false)) {
     const lost = Object.entries(cfg.runners).filter(([, ok]) => !ok).map(([name]) => name).join(", ");
-    configBanner = { kind: "warn", text: `Пайплайн ${lost} не найден — его модели не запустятся. Как установить: ${cfg.install_hint}.` };
+    configBanner = { kind: "warn", text: `Не установлен модуль для моделей ${lost}: они не запустятся. Как установить: ${cfg.install_hint}` };
   }
   setBanner(null);
 }

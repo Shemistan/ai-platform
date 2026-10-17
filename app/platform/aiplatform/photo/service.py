@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from http import HTTPStatus
 
+from aiplatform.core import jobs as core_jobs
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import Request, bad_request, found, handle_uploads, not_found
 from aiplatform.photo import config as photo_config
@@ -67,7 +68,7 @@ class PhotoModule:
             out.append(f"Фото: ни одна модель не установлена в {self.config.models_dir}. {INSTALL_HINT}")
         for backend in sorted({m.model.backend for m in available}):
             if not self.config.runner_available(backend):
-                out.append(f"Фото: пайплайн {backend} не найден. {INSTALL_HINT}")
+                out.append(f"Фото: не установлен модуль для моделей {backend}. {INSTALL_HINT}")
         return out
 
     def handle(self, req: Request) -> None:
@@ -77,7 +78,7 @@ class PhotoModule:
             case ("GET", ["config"]):
                 return req.send_json(self.describe())
             case ("GET", ["jobs"]):
-                return req.send_json({"jobs": self.jobs.list()})
+                return req.send_json({"jobs": self.jobs.list(*core_jobs.list_args(req))})
             case ("POST", ["jobs"]):
                 payload = req.json()
                 try:

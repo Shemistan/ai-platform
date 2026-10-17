@@ -13,9 +13,11 @@ import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from aiplatform.core import cleanup, runner
+from aiplatform.core import cleanup, log, runner, schema
+from aiplatform.core import jobs as core_jobs
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
+from aiplatform.core.schema import JOB_FIELDS, JOB_SCHEMA
 from aiplatform.core.uploads import UploadStore
 from aiplatform.photo import flux2, mflux, models, params, upscale
 from aiplatform.photo.config import PhotoConfig
@@ -58,9 +60,10 @@ class JobManager:
             job = self._jobs.get(job_id)
             return self._view(job) if job else None
 
-    def list(self) -> list[dict]:
+    def list(self, limit: int | None = None, since: float | None = None) -> list[dict]:
+        """Задачи, новые сверху; limit/since — выборка для опроса (core/jobs.select, BE-007)."""
         with self._lock:
-            jobs = sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)
+            jobs = core_jobs.select(self._jobs.values(), limit, since)
             # Лог отдаётся только в карточке одной задачи: список опрашивается раз в секунду.
             return [{k: v for k, v in self._view(j).items() if k != "log"} for j in jobs]
 
@@ -237,15 +240,17 @@ class JobManager:
     def _save(self, job: dict) -> None:
         folder = self._dir(job["id"])
         folder.mkdir(parents=True, exist_ok=True)
-        atomic_write(folder / "job.json", json.dumps(job, ensure_ascii=False, indent=2))
+        atomic_write(folder / "job.json", json.dumps(schema.stamp(job, JOB_SCHEMA), ensure_ascii=False, indent=2))
 
     def _load(self) -> None:
+        # Битая задача — в карантин (job.json.bad) и в problems вкладки; остальные грузятся (BE-008).
+        self.load_problems: list[str] = []
         for path in self._config.jobs_dir.glob("*/job.json"):
             if not _ID.match(path.parent.name):
                 continue
-            try:
-                job = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            label = f"Задача {path.parent.name}"
+            job, _ = schema.load_record(path, JOB_SCHEMA, check=JOB_FIELDS, problems=self.load_problems, label=label)
+            if job is None:
                 continue
             if job.get("status") in ACTIVE:
                 self._finish(job, "failed", error="Сервис был перезапущен во время генерации.")
@@ -264,11 +269,12 @@ class JobManager:
     def _work(self) -> None:
         while (job_id := self._queue.get()) is not None:
             with self._lock:
-                job = self._jobs[job_id]
-                spec = self._specs.pop(job_id)
-                model = self._models.pop(job_id)
-                cancel = self._cancels[job_id]
-                if job["status"] != "queued":  # отменили, пока ждала в очереди
+                job = self._jobs.get(job_id)
+                spec = self._specs.pop(job_id, None)
+                model = self._models.pop(job_id, None)
+                cancel = self._cancels.get(job_id)
+                # Отменили, пока ждала в очереди, — или уже и забыли (уборка): пропустить, воркер жив (BE-007).
+                if job is None or spec is None or cancel is None or job["status"] != "queued":
                     self._cancels.pop(job_id, None)
                     continue
                 job["status"] = "running"
@@ -353,7 +359,9 @@ class JobManager:
                 self._finish(job, "failed", error=_error_text(str(exc), job["log"]))
         except Exception as exc:  # noqa: BLE001 — воркер не должен умереть из-за одной задачи
             with self._lock:
-                self._finish(job, "failed", error=f"Внутренняя ошибка сервиса: {exc!r}")
+                log.internal_error(exc, task=job["id"])
+                job["log"].append(f"✗ {type(exc).__name__}: {exc}")
+                self._finish(job, "failed", error=log.TASK_INTERNAL)
         else:
             with self._lock:
                 self._finish(job, "done")

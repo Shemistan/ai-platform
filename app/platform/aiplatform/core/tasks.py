@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from aiplatform.core import log, runner
+from aiplatform.core import log, runner, schema
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
 
@@ -28,6 +28,8 @@ ACTIVE = ("queued", "running")
 LOG_TAIL = 400
 KEEP = 60  # столько завершённых задач помнит очередь
 _ID = re.compile(r"^[0-9a-f]{12}$")
+TASK_SCHEMA = 1  # схема файла задачи (core/schema.py, ADR 0009)
+_TASK_FIELDS = schema.require("id", "status", "created_at", "finished_at", types={"id": str, "status": str})
 
 
 @dataclass
@@ -154,15 +156,18 @@ class Tasks:
     # --- внутреннее ---
 
     def _save(self, task: dict) -> None:
-        atomic_write(self._folder / f"{task['id']}.json", json.dumps(task, ensure_ascii=False))
+        data = schema.stamp(task, TASK_SCHEMA)
+        atomic_write(self._folder / f"{task['id']}.json", json.dumps(data, ensure_ascii=False))
 
     def _load(self) -> None:
+        self.load_problems: list[str] = []
         for path in self._folder.glob("*.json"):
             if not _ID.match(path.stem):
                 continue
-            try:
-                task = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            task, _ = schema.load_record(
+                path, TASK_SCHEMA, check=_TASK_FIELDS, problems=self.load_problems, label=f"Задача {path.stem}"
+            )
+            if task is None:
                 continue
             if task.get("status") in ACTIVE:
                 task.update(status="failed", error="Сервис был перезапущен во время задачи.", stage="Ошибка")
@@ -248,7 +253,9 @@ class Tasks:
                 self._finish(task, "failed", _error_text(str(exc), task["log"]))
         except Exception as exc:  # noqa: BLE001 — очередь не должна умереть из-за одной задачи
             with self._lock:
-                self._finish(task, "failed", f"Внутренняя ошибка: {exc!r}")
+                log.internal_error(exc, task=task["id"])
+                task["log"].append(f"✗ {type(exc).__name__}: {exc}")
+                self._finish(task, "failed", log.TASK_INTERNAL)
         else:
             with self._lock:
                 self._finish(task, "done")

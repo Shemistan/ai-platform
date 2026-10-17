@@ -13,6 +13,10 @@ serve печатает их строкой `update {json}`, вкладка «К�
   тем же путём, что кнопка в студии, — publish_now: approved и журнал published.json (BE-001).
 - У каждого превью свой одноразовый ключ: второе «Да» и кнопки устаревшего превью ничего не шлют.
 - Правка подписи — ответом на превью (или на просьбу бота) новым текстом: он ложится в post.md.
+- Подпись превью собирает steps.final_post — та же, что уйдёт в канал: со сносками реестра и
+  «Источником» статьи (PRD-016).
+- Публикация упала уже после «Да» — новое превью с «Повторить» и новым ключом (PRD-016): повтор
+  идёт тем же путём и досылает только то, что не ушло (журнал BE-001).
 
 В демо Telegram — DemoTelegram в памяти: сценарий проходит без сети, вызовы видно в .calls.
 """
@@ -28,7 +32,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from aiplatform.core import log
+from aiplatform.core import log, words
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError
 from aiplatform.studio import publish, steps
@@ -78,11 +82,7 @@ def http_transport(channel: publish.Channel) -> Transport:
 
 
 def plural(n: int) -> str:
-    if n % 10 == 1 and n % 100 != 11:
-        return "канал"
-    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
-        return "канала"
-    return "каналов"
+    return words.plural(n, "канал", "канала", "каналов")
 
 
 def is_owner(user: dict, owner: str) -> bool:
@@ -210,8 +210,49 @@ class Review:
         lines.append("Поправить подпись — ответь на превью новым текстом.")
         return "\n".join(lines)
 
-    def preview(self, project: dict) -> bool:
-        """Шлёт владельцу превью выпуска с кнопками. False — личный чат не задан."""
+    def _caption(self, project: dict, folder: Path, title: str) -> tuple[str, str]:
+        """Подпись превью как в канале (steps.final_post) и пометка, если собрать её не вышло."""
+
+        def read(name: str) -> str:
+            try:
+                return (folder / name).read_text(encoding="utf-8")
+            except OSError:
+                return ""
+
+        problem = ""
+        try:
+            post = steps.final_post(project, read, self.module.config)
+        except StudioError as exc:  # у статьи нет источника — показываем тело, публикация откажет
+            post, problem = read(steps.POST), f"Не опубликуется: {exc}"
+        try:
+            return publish.caption(post, title), problem
+        except StudioError as exc:
+            return f"<b>{html.escape(title)}</b>", problem or str(exc)
+
+    def _failed_text(self, title: str, labels: list[str], failure: str, note: str = "") -> str:
+        lines = [f"Публикация «{title}» не удалась: {failure}"]
+        if labels:
+            lines.append(f"Каналы: {', '.join(labels)}")
+        lines.append("«Повторить» отправит только то, что ещё не ушло.")
+        if note:
+            lines.append(note)
+        return "\n".join(lines)
+
+    def _retry_keyboard(self, project_id: str, nonce: str, count: int) -> list[list[dict]]:
+        rows = [[_button("Повторить", "ok", project_id, nonce)]] if count else []
+        return rows + self._keyboard(project_id, nonce, 0)
+
+    def retry(self, project: dict, failure: str) -> bool:
+        """Публикация упала после «Да» в боте (ключ превью погашен) — новое превью с «Повторить».
+        False — «Да» в боте не нажимали (запускали из студии) или личный чат не задан."""
+        rec = self.record(project["id"])
+        if not rec or not rec.get("used"):
+            return False
+        return self.preview(project, failure=failure or "ошибка без описания")
+
+    def preview(self, project: dict, *, failure: str = "") -> bool:
+        """Шлёт владельцу превью выпуска с кнопками. False — личный чат не задан.
+        failure — публикация после «Да» упала: в превью причина и «Повторить» (PRD-016)."""
         owner = self.owner()
         if not owner:
             return False
@@ -219,14 +260,7 @@ class Review:
         folder = self.module.studio.project_dir(project_id)
         chosen = list(project.get("settings", {}).get("channels") or [])
         title = project.get("title") or project_id
-        try:
-            post = (folder / steps.POST).read_text(encoding="utf-8")
-        except OSError:
-            post = ""
-        try:
-            caption = publish.caption(post, title)
-        except StudioError:
-            caption = f"<b>{html.escape(title)}</b>"
+        caption, problem = self._caption(project, folder, title)
         found = self._media(project, folder)
         with self._lock:
             if found:
@@ -239,11 +273,16 @@ class Review:
                 note = "Видео и постера нет — ниже только подпись."
                 shown = self._call("sendMessage", {"chat_id": owner, "text": caption, "parse_mode": "HTML"})
             nonce = secrets.token_hex(4)
-            text = self._panel_text(title, self._labels(chosen), note)
+            note = "\n".join(n for n in (problem, note) if n)
+            if failure:
+                text = self._failed_text(title, self._labels(chosen), failure, note)
+                keyboard = self._retry_keyboard(project_id, nonce, len(chosen))
+            else:
+                text = self._panel_text(title, self._labels(chosen), note)
+                keyboard = self._keyboard(project_id, nonce, len(chosen))
+            text = text[:MESSAGE_LIMIT]
             fields = {"chat_id": owner, "text": text}
-            fields["reply_markup"] = json.dumps(
-                {"inline_keyboard": self._keyboard(project_id, nonce, len(chosen))}, ensure_ascii=False
-            )
+            fields["reply_markup"] = json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
             if shown.get("message_id"):
                 fields["reply_to_message_id"] = shown["message_id"]
             panel = self._call("sendMessage", fields)
@@ -261,7 +300,7 @@ class Review:
                 "at": time.time(),
             }
             self._put(project_id, rec)
-        log.event("review.preview", project=project_id, channels=len(chosen))
+        log.event("review.preview", project=project_id, channels=len(chosen), retry=bool(failure))
         self._ensure_serve()
         return True
 
@@ -418,11 +457,10 @@ class Review:
                 self._quiet("sendMessage", reply_to | {"text": f"Подпись не сохранена: {reason}"})
                 return
             log.event("review.caption", project=project_id)
-            if rec.get("caption") and rec.get("media_id"):
-                try:
-                    caption = publish.caption(text, rec["title"])
-                except StudioError:
-                    caption = ""
+            project = self.module.studio.get(project_id)
+            if rec.get("caption") and rec.get("media_id") and project is not None:
+                folder = self.module.studio.project_dir(project_id)
+                caption, _ = self._caption(project, folder, rec["title"])  # со сносками и источником
                 if caption:
                     fields = {"chat_id": rec["chat_id"], "message_id": rec["media_id"]}
                     self._quiet("editMessageCaption", fields | {"caption": caption, "parse_mode": "HTML"})

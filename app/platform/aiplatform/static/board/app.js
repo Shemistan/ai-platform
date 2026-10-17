@@ -1,5 +1,5 @@
 // «Выпуски»: все выпуски всех сценариев по группам. У ждущего — что нужно и кнопка действия.
-import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, h, poller, reconcile, restoreFocus, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, fmtNum, h, plural, poller, reconcile, restoreFocus, STATUS, statusChip, toneOf } from "/ui.js";
 
 const API = "/api/studio";
 const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
@@ -31,44 +31,47 @@ async function act(project, path, body) {
 }
 
 // Публикация с доски необратима: только после подтверждения с каналами, подписью и вердиктом.
+// Каналы выпуска не выбраны — публикация в каналы по умолчанию его сценария (PRD-005).
+const targets = (p) => (p.channels.length ? p.channels : p.default_channels || []);
+
 async function publish(p) {
-  const ok = await confirmPublish({ channels: p.channels, caption: p.caption || "", verdict: p.verdict });
-  if (ok) act(p, "publish", { channels: p.channels.map((c) => c.id) });
+  const channels = targets(p);
+  const ok = await confirmPublish({ channels, caption: p.caption || "", verdict: p.verdict });
+  if (ok) act(p, "publish", { channels: channels.map((c) => c.id) });
 }
 
 // Что можно сделать с выпуском прямо с доски.
 function actions(p) {
   const busy = state.busy.has(p.id) || p.running;
-  const out = [h("a", { class: "link", href: href(p) }, "Открыть")];
+  const out = [h("a", { class: "btn--link", href: href(p) }, "Открыть")];
   const need = p.attention;
-  if (need?.step === "publish" && p.channels.length && p.verdict !== "не готово") {
-    const names = p.channels.map((c) => c.label).join(", ");
-    out.unshift(
-      h(
-        "button",
-        { type: "button", class: "btn btn--secondary btn--sm", disabled: busy, title: names, onclick: () => publish(p) },
-        p.channels.length === 1 ? `Опубликовать: ${names}…` : `Опубликовать в ${p.channels.length} канала…`,
-      ),
-    );
+  const to = targets(p);
+  if (need?.step === "publish" && to.length && p.verdict !== "не готово") {
+    const names = to.map((c) => c.label).join(", ");
+    const label = !p.channels.length ? `Опубликовать в ${names}…` : to.length === 1 ? `Опубликовать: ${names}…` : `Опубликовать в ${to.length} ${plural(to.length, "канал", "канала", "каналов")}…`;
+    out.unshift(h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: busy, title: names, onclick: () => publish(p) }, label));
+  } else if (need?.step === "publish" && !to.length) {
+    out.push(h("a", { class: "btn--link", href: "/settings/#defaults-panel", title: "Каналы по умолчанию — и кнопка публикации появится здесь" }, "Задать каналы по умолчанию"));
   } else if (p.group === "drafts" || need?.status === "failed") {
     out.unshift(h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: busy, onclick: () => act(p, "run", {}) }, "Запустить всё"));
   }
-  if (p.running) out.push(h("button", { type: "button", class: "link", disabled: state.busy.has(p.id), onclick: () => act(p, "cancel") }, "Остановить"));
+  if (p.running) out.push(h("button", { type: "button", class: "btn btn--link", disabled: state.busy.has(p.id), onclick: () => act(p, "cancel") }, "Остановить"));
   else
     out.push(
       h(
         "button",
-        { type: "button", class: "link", disabled: busy, onclick: () => act(p, "archive", { archived: !p.archived }) },
+        { type: "button", class: "btn btn--link", disabled: busy, onclick: () => act(p, "archive", { archived: !p.archived }) },
         p.archived ? "Вернуть из архива" : "В архив",
       ),
     );
   return h("div", { class: "actions" }, ...out);
 }
 
-const number = (n) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}K` : String(n));
+// Полностью и с разрядами: «12 400», а не «12.4K» (TXT-002).
+const number = (n) => fmtNum(Math.round(n));
 
 const known = (v) => v !== null && v !== undefined;
-const signed = (n) => `${n >= 0 ? "+" : ""}${n}`;
+const signed = (n) => `${n >= 0 ? "+" : ""}${number(n)}`;
 
 // Куда ушёл выпуск и что там с ним: просмотры (всего и за 24ч/72ч/7д), прирост подписчиков за сутки
 // после поста; руками — у пакетов и приватных каналов.
@@ -85,11 +88,11 @@ async function submitField(p, path, id, body) {
 
 function reachRow(p, r) {
   const facts = [];
-  if (known(r.views)) facts.push(`${number(r.views)} просм.`);
+  if (known(r.views)) facts.push(`${number(r.views)} ${plural(r.views, "просмотр", "просмотра", "просмотров")}`);
   const spans = [["24ч", r.views_24h], ["72ч", r.views_72h], ["7д", r.views_7d]].filter(([, v]) => known(v));
   if (spans.length) facts.push(spans.map(([k, v]) => `${k}: ${number(v)}`).join(", "));
   else if (known(r.views) && known(r.age_h)) facts.push("окно 24ч не закрыто");
-  if (known(r.growth_24h_attr)) facts.push(`${signed(r.growth_24h_attr)} подп. за сутки${r.growth_trend ? "" : " (без тренда)"}`);
+  if (known(r.growth_24h_attr)) facts.push(`${signed(r.growth_24h_attr)} ${plural(r.growth_24h_attr, "подписчик", "подписчика", "подписчиков")} за сутки${r.growth_trend ? "" : " (без тренда)"}`);
   // Пакет для ручной загрузки опубликован, только когда автор залил его и дал ссылку на ролик.
   if (r.state === "packaged") {
     const id = fieldId("link", p, r);
@@ -114,7 +117,7 @@ function reachRow(p, r) {
     {},
     h("span", {}, `✓ ${r.label}`),
     r.republish ? h("span", { class: "muted" }, " · опубликовано повторно") : null,
-    r.external_url ? h("a", { class: "link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
+    r.external_url ? h("a", { class: "btn--link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
     facts.length ? h("span", { class: "muted" }, ` · ${facts.join(" · ")}`) : null,
     manual
       ? h(
@@ -172,6 +175,14 @@ function responsePanel(data) {
   );
 }
 
+// Тон карточки — из общего словаря статусов (toneOf): ждёт тебя — warning, шаг упал — danger,
+// идёт — info, опубликован — success, остальные группы — neutral.
+const GROUP_STATUS = { running: "running", published: "done" };
+function cardTone(p) {
+  if (p.group === "attention") return toneOf(p.attention?.status === "failed" ? "failed" : "waiting");
+  return toneOf(GROUP_STATUS[p.group]);
+}
+
 function card(p) {
   const need = p.attention;
   const meta = [
@@ -183,7 +194,7 @@ function card(p) {
   ];
   return h(
     "article",
-    { class: `board-card ${p.group}${need?.status === "failed" ? " failed" : ""}` },
+    { class: `board-card tone-${cardTone(p)}` },
     p.poster ? h("img", { class: "thumb", src: p.poster, alt: "" }) : h("div", { class: "thumb" }),
     h(
       "div",

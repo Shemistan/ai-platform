@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import logging
 import threading
@@ -31,6 +32,8 @@ from aiplatform.studio import publish, stats
 PREFIX = "channels"
 TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"  # как narrator.telegram.TOKEN_FILE_ENV
 TOKEN_FILE = "bot_token.md"  # как narrator.telegram.TOKEN_FILE
+LIBRARY_ENV = "NARRATOR_LIBRARY"  # как narrator.library.library_root
+SERVE_LOCK = "telegram.serve.lock"  # как narrator.telegram.SERVE_LOCK
 LOG_TAIL = 200
 UPDATE = "update "  # строка `bot serve --updates`: нажатие кнопки или ответ боту, дальше — JSON
 
@@ -52,14 +55,31 @@ def channel_errors() -> Iterator[None]:
         raise bad_request(str(exc)) from exc
 
 
+def lock_held(path: Path | None) -> bool:
+    """Держит ли кто-то flock на замке `bot serve` (как narrator.telegram.serve_running)."""
+    if path is None or not path.is_file():
+        return False
+    try:
+        with open(path) as fh:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(fh, fcntl.LOCK_UN)
+    except OSError:
+        return False
+    return False
+
+
 class BotServe:
     """`narrate bot serve` в фоне: принимает /start и /stop, пока не остановят.
 
     Нажатия кнопок и ответы боту serve печатает строкой `update {json}` — их получает
     on_update (ревью выпуска в личке владельца, PRD-001), в лог вкладки они не идут."""
 
-    def __init__(self, narrator) -> None:
+    def __init__(self, narrator, lock: Path | None = None) -> None:
         self._narrator = narrator
+        self.lock = lock  # SERVE_LOCK движка: его держит любой `bot serve`, наш или из терминала
         self.on_update: Callable[[dict], None] | None = None
         self._lock = threading.Lock()
         self._cancel: threading.Event | None = None
@@ -68,7 +88,10 @@ class BotServe:
 
     def view(self) -> dict:
         with self._lock:
-            return {**self._state, "log": list(self._state["log"][-40:])}
+            view = {**self._state, "log": list(self._state["log"][-40:])}
+        # Не наш serve держит замок — бот слушает чужой процесс: нажатия в ревью сюда не дойдут (PRD-016).
+        view["external"] = not view["running"] and lock_held(self.lock)
+        return view
 
     def start(self) -> dict:
         with self._lock:
@@ -131,10 +154,15 @@ class ChannelsModule:
         self.config = studio_config.load(ctx.config)
         self.narrator = narrator_module.load(ctx.config)
         self.env = ctx.config.env
-        self.serve = BotServe(self.narrator)
+        self.serve = BotServe(self.narrator, None if self.narrator.fake else self.serve_lock())
         self.store = self.config.channel_store()
         # Подписчики по id канала — даёт вкладка сценариев (bind): предупреждение о пороге РКН (CMP-019).
         self.audience: Callable[[], dict[str, float]] | None = None
+
+    def serve_lock(self) -> Path:
+        """Замок `bot serve` в библиотеке движка (narrator.telegram.SERVE_LOCK)."""
+        library = pick(self.env, LIBRARY_ENV) or str(self.narrator.home / "library")
+        return Path(library).expanduser() / SERVE_LOCK
 
     def describe(self) -> dict:
         return {"channels_file": str(self.config.channels_file)}
