@@ -29,6 +29,7 @@ import dataclasses
 import json
 import re
 import shutil
+import stat
 import threading
 import time
 import uuid
@@ -103,8 +104,18 @@ def ensure_space(ctx: StepContext, what: str) -> None:
 
 
 def find(folder: Path, stem: str, exts: tuple[str, ...]) -> Path | None:
-    found = [folder / f"{stem}{ext}" for ext in exts if (folder / f"{stem}{ext}").is_file()]
-    return max(found, key=lambda p: p.stat().st_mtime, default=None)
+    """Самый свежий из файлов stem.<ext>. Файл, который шаг удалил между проверкой и stat
+    (перезапуск постера, пока студия читает выпуск), — как будто его нет, а не 500."""
+    found: list[tuple[float, Path]] = []
+    for ext in exts:
+        path = folder / f"{stem}{ext}"
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            found.append((info.st_mtime, path))
+    return max(found, key=lambda x: x[0], default=(0.0, None))[1]
 
 
 def require_text(ctx: StepContext) -> str:
@@ -1005,14 +1016,9 @@ def step_publish(ctx: StepContext) -> None:
     # без нового нажатия «Опубликовать» ничего не отправят (и не пропустят чужие ссылки).
     ctx.remember(force=False, approved=False)
     channels = {c.id: c for c in svc.config.channels()}
-    plan_title = ""
-    if ctx.read(PLAN):
-        plan_title = json.loads(ctx.read(PLAN)).get("title", "")
-    title = plan_title or ctx.project["title"]
+    title = post_title(ctx.project, ctx.read)
     off = disclaimers_off(ctx, title)
-    post = with_source(ctx, ctx.read(POST))
-    if ctx.settings.get("disclaimers", True):
-        post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
+    post = final_post(ctx.project, ctx.read, svc.config)
     links = post_links(ctx.project["scenario"], ctx.settings, ctx.read, post)
     if links["domains"]:
         ctx.log("ссылки в посте ведут на: " + ", ".join(links["domains"]))
@@ -1212,11 +1218,29 @@ def post_links(scenario: str, settings: dict, read, post: str) -> dict:
     return {"domains": publish.link_domains(post), "foreign": foreign}
 
 
-def with_source(ctx: StepContext, post: str) -> str:
+def post_title(project: dict, read: Callable[[str], str]) -> str:
+    """Заголовок публикации: из плана выпуска, иначе — название выпуска."""
+    plan = read(PLAN)
+    return (json.loads(plan).get("title", "") if plan else "") or project["title"]
+
+
+def final_post(project: dict, read: Callable[[str], str], config: StudioConfig) -> str:
+    """Пост ровно таким, каким он уйдёт в канал: тело + «Источник» (статья) + сноски реестра.
+
+    Одна сборка на шаг публикации и превью в боте (PRD-016): владелец одобряет тот же текст,
+    что увидят подписчики. read — чтение файла выпуска по имени ('' — файла нет)."""
+    post = with_source(project, read(POST))
+    if project["settings"].get("disclaimers", True):
+        post = registry.with_footnotes(post, f"{post_title(project, read)}\n{read(TEXT)}", banned(config))
+    return post
+
+
+def with_source(project: dict, post: str) -> str:
     """Пост «Видео по статье» с источником в неудаляемом хвосте; без источника — отказ (CMP-005)."""
-    if ctx.project["scenario"] != "article":
+    if project["scenario"] != "article":
         return post
-    url, author = ctx.settings.get("source_url") or "", ctx.settings.get("source_author") or ""
+    settings = project["settings"]
+    url, author = settings.get("source_url") or "", settings.get("source_author") or ""
     if not url or not author:
         raise StudioError(
             "Видео по чужой статье публикуется только с источником: укажи ссылку на оригинал и автора "
