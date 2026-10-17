@@ -38,6 +38,7 @@ STATE = "schedule.json"
 DEFAULT_TICK_S = 30.0
 MAX_ATTEMPTS = 3  # попыток дайджеста за день
 RETRY_PAUSE = timedelta(minutes=15)
+ORIGIN = "schedule"  # project["origin"] у выпуска, который создало расписание
 
 log = logging.getLogger("aiplatform.schedule")
 
@@ -206,6 +207,8 @@ class Scheduler:
             log.exception("дайджест за %s по расписанию упал", day)
             return self._digest_failed(day, attempts, _brief(exc), finish)
         finish(None)
+        # Создан расписанием, не руками: доска не считает его поводом предложить расписание (PRD-003).
+        self.module.studio.annotate(project["id"], origin=ORIGIN)
         self.module.notify("Дайджест запущен по расписанию", project["title"], important=False)
         return f"дайджест за {day}: запущен {project['id']}"
 

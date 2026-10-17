@@ -72,6 +72,8 @@ def _empty() -> dict:
         # Дайджест по умолчанию: до скольких (ЧЧ:ММ) ждать свою обложку, потом рисовать локально;
         # пусто — ждать без срока (PRD-002).
         "digest_defaults": {"poster_deadline": ""},
+        # Предложения на доске: false — человек нажал «Не предлагать» (PRD-003).
+        "offers": {"digest_autopilot": True},
         # Реестр запрещённых организаций: ежедневная сверка в фоне и порог свежести, дни (CMP-013).
         "registry": {"auto_check": True, "max_age_days": REGISTRY_MAX_AGE_DAYS},
         # Лимиты времени процессов по виду (runner.LIMITS), минуты: {"llm": {"total": 10, "idle": 5}}.
@@ -140,6 +142,7 @@ def normalize(raw: object) -> dict:
             out["cleanup"][name] = int(cleanup[name])
     if _number(cleanup.get("min_free_gb"), MAX_FREE_GB):
         out["cleanup"]["min_free_gb"] = cleanup["min_free_gb"]
+    out["offers"]["digest_autopilot"] = _flag(_section(raw, "offers").get("digest_autopilot"), True)
     deadline = _section(raw, "digest_defaults").get("poster_deadline")
     if isinstance(deadline, str) and _TIME.match(deadline):
         out["digest_defaults"]["poster_deadline"] = deadline

@@ -34,6 +34,7 @@ SECTIONS = {
     "cleanup": ("cleanup",),
     "default_channels": ("default_channels",),  # каналы по умолчанию по сценариям (PRD-005)
     "digest_defaults": ("digest_defaults",),  # срок своей обложки дайджеста (PRD-002)
+    "offers": ("offers",),  # предложения на доске: «Не предлагать» (PRD-003)
 }
 
 

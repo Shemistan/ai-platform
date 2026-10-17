@@ -46,6 +46,7 @@ PREFIX = "studio"
 URL_BASE = f"/api/{PREFIX}"
 SCENARIOS = {"digest": "Дайджест новостей", "article": "Видео по статье", "post": "Пост в канал"}
 DIGEST_CHANNEL = "tg-voice-news"  # канал дайджеста у narrator (NEWS_CHANNEL = VOICE_NEWS)
+OFFER_DAYS, OFFER_MANUAL = 3, 2  # ≥2 дайджеста руками за 3 дня — предложить расписание (PRD-003)
 MAX_TEXT = 100_000
 MAX_BODY = 4 * MAX_TEXT + 64 * 1024
 POSTER_MODES = ("local", "upload")
@@ -334,6 +335,23 @@ class StudioModule:
                 important=True,
             )
 
+    def autopilot_offer(self, now: float | None = None) -> bool:
+        """Предложить на доске расписание дайджеста и уведомления (PRD-003): расписание выключено,
+        «Не предлагать» не нажимали, а за последние OFFER_DAYS дня руками собрано ≥ OFFER_MANUAL
+        дайджестов (выпуски расписания — origin=schedule — не в счёт, архивные — в счёт)."""
+        settings = self.ctx.config.settings.load()
+        if settings["schedule"]["digest"]["enabled"] or not settings["offers"]["digest_autopilot"]:
+            return False
+        since = (now or time.time()) - OFFER_DAYS * 86400
+        manual = 0
+        for item in self.studio.list(archived=False) + self.studio.list(archived=True):
+            if item["scenario"] != "digest" or item["created_at"] < since:
+                continue
+            project = self.studio.get(item["id"]) or {}
+            if project.get("origin") != schedule.ORIGIN:
+                manual += 1
+        return manual >= OFFER_MANUAL
+
     def poster_deadlines(self, now: datetime) -> list[str]:
         """Шаг «Постер» ждёт свою обложку (upload), а срок poster_deadline прошёл — переключить шаг
         на локальную модель и продолжить выпуск (PRD-002). Срок — время дня: ожидание, начатое уже
@@ -581,6 +599,8 @@ class StudioModule:
             # «Что работает» — по всем выпускам: и с другой вкладки доски, и удалённым уборкой (AN-008).
             "response": stats.summary(items + self._response_items(not archived, known, facts)),
             "stats": {"running": self._stats_thread is not None, "at": self.scheduler.state().get("stats_at")},
+            # Баннер «включить расписание дайджеста и уведомления» (PRD-003).
+            "offers": {"digest_autopilot": self.autopilot_offer()},
         }
 
     def _board_published(self, published: list[dict], known: dict, facts: stats.Facts) -> list[dict]:
