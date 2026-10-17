@@ -8,6 +8,7 @@ Mac делят одну память. Воркер берёт замок вок�
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -22,10 +23,18 @@ class Gate:
         self._cond = threading.Condition()
         self._queue: deque[object] = deque()
         self._holder: str | None = None
+        self._since: float | None = None  # time.time() взятия замка — видно, если модель зависла
 
     def holder(self) -> str | None:
         with self._cond:
             return self._holder
+
+    def held(self) -> dict | None:
+        """Кто держит замок, с какого момента и сколько секунд; None — свободен."""
+        with self._cond:
+            if self._holder is None or self._since is None:
+                return None
+            return {"owner": self._holder, "since": self._since, "held_s": round(time.time() - self._since, 1)}
 
     def waiting(self) -> int:
         with self._cond:
@@ -56,9 +65,11 @@ class Gate:
                 self._cond.wait(_POLL_S)
             self._queue.popleft()
             self._holder = owner
+            self._since = time.time()
         try:
             yield
         finally:
             with self._cond:
                 self._holder = None
+                self._since = None
                 self._cond.notify_all()
