@@ -10,8 +10,8 @@ from pathlib import Path
 from aiplatform.studio import slides, steps
 from aiplatform.studio.render import Layout, note_text, slide_filter
 from aiplatform.updates import checks, registry
-from tests.helpers import PlatformCase
-from tests.test_studio_flow import NEEDS_FFMPEG, StudioCase
+from tests.fixtures import NEEDS_FFMPEG
+from tests.helpers import PlatformCase, StudioCase
 
 DEFAULT = registry.Registry(registry.DEFAULT_FILE).entries()
 META_NOTE = (

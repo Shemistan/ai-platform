@@ -230,7 +230,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/studio/projects/{pid}/publish/resolve` | JSON | JSON | «Пост есть» / «Поста нет» по каналу, где ответа Telegram не было; затем публикация |
 | POST | `/api/studio/projects/{pid}/uploaded` | JSON | JSON | «Залил»: автор сам залил пакет на площадку и дал ссылку на ролик — теперь выпуск опубликован |
 | POST | `/api/studio/projects/{pid}/artifacts/{name}` | JSON | JSON | — |
-| POST | `/api/studio/projects/{pid}/upload/{what}` | файл | JSON | — |
+| POST | `/api/studio/projects/{pid}/upload/{what}` | файл | JSON | Постер или озвучка от человека; src — загрузка во временном файле (body_to_file) |
 | POST | `/api/studio/projects/{pid}/upload/{kind}/{key}` | файл | JSON | Картинка или видео слайда от человека. Все на месте — шаг готов, сборка заново |
 | GET | `/api/studio/projects/{pid}/files/{rest…}` | — | файл | — |
 
