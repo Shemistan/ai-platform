@@ -9,7 +9,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from aiplatform.core.uploads import IMAGE, MAX_AUDIO_BYTES, MAX_UPLOAD_BYTES, MIME, UploadError, UploadStore
+from aiplatform.core import uploads as uploads_module
+from aiplatform.core.uploads import IMAGE, MIME, UploadError, UploadStore
 
 MAX_JSON_BYTES = 1024 * 1024
 _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -118,7 +119,14 @@ class Request:
         if length > limit:
             self._h.close_connection = True  # тело не читаем — соединение дальше не годится
             raise HttpError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, too_big)
-        return self._h.rfile.read(length)
+        try:
+            data = self._h.rfile.read(length)
+        except TimeoutError:  # клиент замолчал посреди тела: сокет с таймаутом (Handler.timeout)
+            data = b""
+        if len(data) < length:  # обрыв: Content-Length больше, чем пришло
+            self._h.close_connection = True
+            raise bad_request("Запрос оборвался на середине — отправь файл ещё раз.")
+        return data
 
     def json(self, limit: int = MAX_JSON_BYTES) -> object:
         raw = self.body(limit)
@@ -249,7 +257,8 @@ def handle_uploads(req: Request, store: UploadStore, url_base: str, kinds: tuple
     """`POST uploads` и `GET uploads/<id>` для модуля; False — путь не про загрузки."""
     match (req.method, req.sub):
         case ("POST", ["uploads"]):
-            limit = MAX_AUDIO_BYTES if len(kinds) > 1 or IMAGE not in kinds else MAX_UPLOAD_BYTES
+            image_only = len(kinds) == 1 and IMAGE in kinds
+            limit = uploads_module.MAX_UPLOAD_BYTES if image_only else uploads_module.MAX_AUDIO_BYTES
             data = req.body(limit, f"Файл больше {limit // 2**20} МБ.")
             try:
                 upload_id = store.save(data, kinds)

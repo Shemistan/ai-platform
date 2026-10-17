@@ -169,6 +169,11 @@ def board_group(item: dict, project: dict, published: list[dict] | None = None) 
     return "drafts"
 
 
+def _too_big(limit: int) -> str:
+    """Текст 413 с лимитом в МБ — лимит читается при запросе (тесты его понижают)."""
+    return f"Файл больше {limit // 2**20} МБ."
+
+
 def _read_text(path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -1343,9 +1348,14 @@ class StudioModule:
         kinds = {"poster": (uploads_module.IMAGE,), "voice": (uploads_module.AUDIO,)}.get(what)
         if kinds is None:
             raise not_found("Загружать можно poster или voice.")
-        ext = uploads_module.sniff(data) if data else None
+        if not data:
+            raise bad_request("Пустой файл.")
+        ext = uploads_module.sniff(data)
         if ext is None or uploads_module.kind_of(ext) not in kinds:
             raise bad_request(uploads_module._accepted(kinds))
+        if what == "poster" and len(data) > uploads_module.MAX_UPLOAD_BYTES:  # тело ограничено 200 МБ — под голос
+            limit_mb = uploads_module.MAX_UPLOAD_BYTES // 2**20
+            raise HttpError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"Картинка больше {limit_mb} МБ.")
         self._guard_step(project_id, what)
         folder = self.studio.project_dir(project_id)
         stems = steps.IMAGE_EXT if what == "poster" else steps.AUDIO_EXT
@@ -1478,10 +1488,10 @@ class StudioModule:
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):
-                data = req.body(uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
+                data = req.body(uploads_module.MAX_AUDIO_BYTES, _too_big(uploads_module.MAX_AUDIO_BYTES))
                 return req.send_json(self.upload(pid, what, data))
             case ("POST", ["projects", pid, "upload", kind, key]):
-                data = req.body(uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
+                data = req.body(uploads_module.MAX_AUDIO_BYTES, _too_big(uploads_module.MAX_AUDIO_BYTES))
                 return req.send_json(self.upload_slide(pid, kind, key, data))
             case ("GET", ["projects", pid, "files", *rest]):
                 return self._send_file(req, pid, "/".join(rest))

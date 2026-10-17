@@ -297,6 +297,9 @@ class App:
 class Handler(BaseHTTPRequestHandler):
     server_version = "aiplatform"
     protocol_version = "HTTP/1.1"
+    # Тишина на сокете дольше — соединение закрывается: оборванная загрузка (Content-Length
+    # больше, чем пришло) не держит поток сервера вечно (QA-015).
+    timeout = 60
     app: App  # задаётся в make_server
     hosts: frozenset[str] = frozenset()  # задаётся в make_server, когда известен порт
 
