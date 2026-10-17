@@ -356,18 +356,32 @@ PHOTO_LIMIT = 10 * 2**20  # sendPhoto принимает картинки до 1
 POST_FORMATS = ("video", "photo")  # видео одним постом или картинка с подписью, затем аудио
 
 
+class Unknown(StudioError):  # noqa: N818 — не отказ, а «неизвестно, ушёл ли пост»
+    """Запрос ушёл, а ответа нет (таймаут, обрыв): Telegram мог опубликовать пост.
+    Повторять сам нельзя — решает человек, проверив канал."""
+
+
 def _http_post(url: str, body: bytes, content_type: str) -> dict:
     req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": content_type})
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
-            return json.loads(resp.read() or b"{}")
+            raw = resp.read()
     except urllib.error.HTTPError as exc:
         try:
             return json.loads(exc.read() or b"{}")
         except json.JSONDecodeError:
             return {"ok": False, "description": f"HTTP {exc.code}"}
-    except (urllib.error.URLError, OSError) as exc:
+    except urllib.error.URLError as exc:
+        # urllib заворачивает в URLError сбои соединения и отправки запроса: целиком он не дошёл.
         raise StudioError(f"Telegram недоступен: {exc.__class__.__name__}") from exc
+    except OSError as exc:
+        # Запрос отправлен, ответа нет (таймаут чтения, обрыв) — пост мог уйти.
+        raise Unknown(f"Telegram не ответил ({exc.__class__.__name__}) — пост мог уйти") from exc
+    try:
+        return json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        # Ответ 200 принят, но не разобран: пост ушёл, id сообщения неизвестен.
+        return {"ok": True, "result": {}}
 
 
 def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, str]:
@@ -416,6 +430,53 @@ def members(channel: Channel, http_post: HttpPost | None = None) -> int | None:
     return found if isinstance(found, int) else None
 
 
+PHOTO_PARTS = ("photo", "audio")  # пост «картинка и аудио» — два сообщения, отправляются по очереди
+
+
+def photo_problem(channel: Channel, poster: Path, audio: Path) -> str | None:
+    """Почему пост «картинка и аудио» не уйдёт — до отправки первой части."""
+    problem = channel.problem()
+    if problem:
+        return f"{channel.label}: {problem}."
+    if poster.stat().st_size > PHOTO_LIMIT:
+        return f"{channel.label}: картинка больше 10 МБ — Telegram не примет её фото."
+    if audio.stat().st_size > BOT_VIDEO_LIMIT:
+        return f"{channel.label}: аудио больше 50 МБ — Bot API такое не примет."
+    return None
+
+
+def send_photo_part(
+    channel: Channel,
+    part: str,
+    *,
+    poster: Path,
+    audio: Path,
+    title: str,
+    post: str,
+    seconds: float = 0.0,
+    http_post: HttpPost | None = None,
+) -> int | None:
+    """Одна часть поста «картинка и аудио»; возвращает id сообщения."""
+    if part == "photo":
+        fields = {"caption": caption(post, title), "parse_mode": "HTML"}
+        return _send(channel, "sendPhoto", fields, {"photo": poster}, http_post).get("message_id")
+    # Аудио могут переслать отдельно от картинки — сноски реестра и источник идут и в его подписи.
+    fields = {"title": title[:64], "caption": audio_caption(post, title), "parse_mode": "HTML"}
+    if seconds:
+        fields["duration"] = str(int(round(seconds)))
+    return _send(channel, "sendAudio", fields, {"audio": audio}, http_post).get("message_id")
+
+
+def photo_result(channel: Channel, ids: dict[str, int | None]) -> dict:
+    return {
+        "channel": channel.id,
+        "ok": True,
+        "message": f"Отправлено двумя постами: картинка и аудио, сообщения {ids.get('photo')} и {ids.get('audio')}.",
+        "message_id": ids.get("photo"),
+        "chat_id": channel.target()["chat_id"],
+    }
+
+
 def publish_photo(
     channel: Channel,
     *,
@@ -427,29 +488,16 @@ def publish_photo(
     http_post: HttpPost | None = None,
 ) -> dict:
     """Двумя постами, как NEWS_POST=photo у narrator: картинка с подписью, затем аудио."""
-    problem = channel.problem()
+    problem = photo_problem(channel, poster, audio)
     if problem:
-        raise StudioError(f"{channel.label}: {problem}.")
-    if poster.stat().st_size > PHOTO_LIMIT:
-        raise StudioError(f"{channel.label}: картинка больше 10 МБ — Telegram не примет её фото.")
-    if audio.stat().st_size > BOT_VIDEO_LIMIT:
-        raise StudioError(f"{channel.label}: аудио больше 50 МБ — Bot API такое не примет.")
-    photo = _send(
-        channel, "sendPhoto", {"caption": caption(post, title), "parse_mode": "HTML"}, {"photo": poster}, http_post
-    )
-    # Аудио могут переслать отдельно от картинки — сноски реестра и источник идут и в его подписи.
-    fields = {"title": title[:64], "caption": audio_caption(post, title), "parse_mode": "HTML"}
-    if seconds:
-        fields["duration"] = str(int(round(seconds)))
-    sound = _send(channel, "sendAudio", fields, {"audio": audio}, http_post)
-    ids = f"{photo.get('message_id')} и {sound.get('message_id')}"
-    return {
-        "channel": channel.id,
-        "ok": True,
-        "message": f"Отправлено двумя постами: картинка и аудио, сообщения {ids}.",
-        "message_id": photo.get("message_id"),
-        "chat_id": channel.target()["chat_id"],
+        raise StudioError(problem)
+    ids = {
+        part: send_photo_part(
+            channel, part, poster=poster, audio=audio, title=title, post=post, seconds=seconds, http_post=http_post
+        )
+        for part in PHOTO_PARTS
     }
+    return photo_result(channel, ids)
 
 
 def publish(
