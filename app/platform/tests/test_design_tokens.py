@@ -97,11 +97,15 @@ class ToastTest(unittest.TestCase):
     """DS-009: подтверждение фоновых действий — общий toast() из ui.js."""
 
     def test_toast_used_in_settings_studio_channels(self):
+        # Студия разбита на модули (FE-010): toast берёт хотя бы один модуль вкладки.
+        def uses_toast(js):
+            imported = re.search(r"import \{[^}]*\btoast\b[^}]*\} from \"/ui.js\"", js)
+            return bool(imported) and "toast(" in js.split('from "/ui.js"', 1)[1]
+
         for tab in ("settings", "studio", "channels"):
-            js = (STATIC / tab / "app.js").read_text(encoding="utf-8")
+            modules = [p.read_text(encoding="utf-8") for p in sorted((STATIC / tab).glob("*.js"))]
             with self.subTest(tab=tab):
-                self.assertRegex(js, r"import \{[^}]*\btoast\b[^}]*\} from \"/ui.js\"")
-                self.assertIn("toast(", js.split('from "/ui.js"', 1)[1])
+                self.assertTrue(any(uses_toast(js) for js in modules))
 
     def test_toast_layer_from_tokens(self):
         ui = (STATIC / "ui.css").read_text(encoding="utf-8")
