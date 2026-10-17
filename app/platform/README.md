@@ -37,7 +37,9 @@ make demo   # без моделей и сети: фейковые генерат
 make run    # на настоящих моделях
 ```
 
-Открыть: http://127.0.0.1:8780. Нужны Python 3.11+ и ffmpeg (`brew install ffmpeg`).
+Открыть: http://127.0.0.1:8780. Браузеры: поддерживаются последние версии Chrome, Safari и
+Firefox (страницы — ES-модули без сборки; фото с EXIF-поворотом открываются и в Safari до 17).
+Нужны Python 3.11+ и ffmpeg (`brew install ffmpeg`).
 Системный `python3` на Mac — 3.9 из Xcode CLT: Makefile сам возьмёт `python3.13`,
 `python3.12` или `python3.11` из PATH, а если их нет — остановится с подсказкой
 (`brew install python@3.12` или `uv python install 3.12`, затем `make PYTHON=python3.12 …`).

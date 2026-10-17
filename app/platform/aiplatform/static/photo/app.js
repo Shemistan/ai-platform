@@ -1,12 +1,13 @@
 // Вкладка «Фото» (перенос UI photogen): режим, промпт, исходное фото с маской или полями, запуск и результат. Без сборки и зависимостей.
 
 import { $, api, busyClick, chip, h, jobProgress, poller, STATUS, statusChip, toneOf } from "/ui.js";
+import { loadOriented } from "./exif.js";
 
 const state = {
   config: null,
   mode: "txt2img",
   detail: "standard",
-  source: null, // {bitmap, width, height} — фото как его выбрал пользователь, с учётом EXIF-поворота
+  source: null, // {image, width, height, close} — фото как его выбрал пользователь, с учётом EXIF-поворота (exif.js)
   pads: { left: 25, top: 0, right: 25, bottom: 0 }, // поля outpaint, % от стороны фото
   tool: "brush",
   strengthTouched: false,
@@ -65,7 +66,7 @@ function renderStage() {
   if (photo.width !== g.sw || photo.height !== g.sh) {
     photo.width = g.sw;
     photo.height = g.sh;
-    photo.getContext("2d").drawImage(state.source.bitmap, 0, 0, g.sw, g.sh);
+    photo.getContext("2d").drawImage(state.source.image, 0, 0, g.sw, g.sh);
     // Маска живёт в координатах рабочего размера: при его смене переносим нарисованное.
     const old = h("canvas", { width: mask.width || 1, height: mask.height || 1 });
     if (mask.width) old.getContext("2d").drawImage(mask, 0, 0);
@@ -90,14 +91,14 @@ function renderStage() {
 
 async function setSource(file) {
   if (!file || !file.type.startsWith("image/")) return;
-  let bitmap;
+  let source;
   try {
-    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    source = await loadOriented(file);
   } catch {
     return showFormError("Не получилось открыть картинку. Поддерживаются PNG, JPEG и WebP.");
   }
-  state.source?.bitmap.close();
-  state.source = { bitmap, width: bitmap.width, height: bitmap.height };
+  state.source?.close();
+  state.source = source;
   $("photo-canvas").width = 0; // заставит renderStage перерисовать фото
   clearMask();
   showFormError(null);
