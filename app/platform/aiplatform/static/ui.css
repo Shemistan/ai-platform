@@ -60,39 +60,99 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 .check input { margin-top: var(--sp-1); flex: none; }
 .check .hint { display: block; }
 
-.primary, .secondary {
-  padding: var(--sp-2) var(--sp-4);
+/* --- Кнопка: один компонент .btn — вариант (--primary/--secondary/--ghost/--danger/--link)
+   и размер (--sm/--md/--lg, по умолчанию md). Высота — от --control-h-*, а не от паддингов,
+   поэтому кнопки одного размера одной высоты на всех вкладках.
+   .primary/.secondary/.link — старые имена тех же вариантов: ими ещё пользуются Студия и Выпуски. */
+.btn, .primary, .secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--control-h-md);
+  padding: 0 var(--sp-4);
+  border: 1px solid transparent;
   border-radius: var(--r-md);
-  font-weight: var(--fw-semibold);
-  cursor: pointer;
-  border: 1px solid var(--accent);
-}
-.primary { background: var(--accent); color: var(--accent-text); font-size: var(--fs-md); }
-.secondary { background: var(--panel); color: var(--accent); font-size: var(--fs-md); }
-.primary:disabled, .secondary:disabled { opacity: 0.5; cursor: default; }
-.link {
   background: none;
-  border: 0;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.btn--sm, .primary.small, .secondary.small { min-height: var(--control-h-sm); padding: 0 var(--sp-3); font-size: var(--fs-sm); }
+.btn--lg { min-height: var(--control-h-lg); padding: 0 var(--sp-5); }
+.btn--primary, .primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn--primary:hover:not(:disabled), .primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 85%, var(--text));
+}
+.btn--secondary, .secondary { background: var(--panel); border-color: var(--accent); color: var(--accent); }
+.btn--secondary:hover:not(:disabled), .secondary:hover:not(:disabled) { background: var(--info-bg); }
+.btn--ghost { background: var(--panel); border-color: var(--border-strong); color: var(--text); font-weight: var(--fw-regular); }
+.btn--ghost:hover:not(:disabled) { background: var(--sunken); }
+.btn--danger { background: var(--panel); border-color: var(--danger); color: var(--danger); }
+.btn--danger:hover:not(:disabled) { background: var(--danger-bg); }
+/* Главная кнопка необратимого действия (подтверждение): сплошная красная. */
+:is(.btn--primary, .primary):is(.btn--danger, .danger) { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
+:is(.btn--primary, .primary):is(.btn--danger, .danger):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 85%, var(--text));
+}
+.btn--link, .link {
+  min-height: 0;
   padding: 0;
+  border: 0;
+  background: none;
   color: var(--accent);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
-  font-size: var(--fs-sm);
 }
-.link.danger { color: var(--bad); }
-.tempo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
-.tempo button {
-  padding: var(--sp-1) var(--sp-2);
-  border-radius: var(--r-pill);
+.btn--link:hover:not(:disabled), .link:hover:not(:disabled) { text-decoration-thickness: 2px; }
+:is(.btn--link, .link):is(.btn--danger, .danger) { color: var(--danger); }
+:is(.btn, .primary, .secondary, .link):disabled { opacity: 0.5; cursor: default; }
+:is(.btn, .primary, .secondary, .link):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* --- Переключатель-группа: один .segmented на aria-pressed (кнопки), aria-selected (вкладки)
+   или радиокнопках (.segmented--radio). «Нажато» — один вид: заливка акцентом. */
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-self: start;
+  gap: 2px;
+  padding: 2px;
   border: 1px solid var(--border-strong);
-  background: var(--panel);
-  color: inherit;
+  border-radius: var(--r-pill);
+}
+.segmented button, .segmented--radio .seg span {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-h-sm);
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--text);
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   cursor: pointer;
 }
-.tempo button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-text); }
+.segmented button:hover:not(:disabled):not([aria-pressed="true"], [aria-selected="true"]),
+.segmented--radio .seg input:hover:not(:checked) + span { background: var(--sunken); }
+.segmented button:is([aria-pressed="true"], [aria-selected="true"]),
+.segmented--radio .seg input:checked + span { background: var(--accent); color: var(--on-accent); }
+.segmented button:disabled { opacity: 0.5; cursor: default; }
+.segmented--radio .seg { position: relative; display: flex; }
+.segmented--radio .seg input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.segmented--radio .seg input:focus-visible { outline: none; }
+.segmented--radio .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 .form-error, .job-error {
   color: var(--bad);
   background: var(--bad-bg);
@@ -169,20 +229,6 @@ audio { background: transparent; }
 /* --- Общие компоненты вкладок движка: Аудио, Статьи, Новости, Каналы --- */
 .field-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; }
 .toolbar { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
-.small-btn {
-  padding: var(--sp-1) var(--sp-3);
-  border-radius: var(--r-md);
-  border: 1px solid var(--border-strong);
-  background: var(--panel);
-  color: var(--text);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.small-btn:hover { background: var(--sunken); }
-.small-btn.accent { border-color: var(--accent); color: var(--accent); }
-.small-btn.danger { color: var(--bad); }
-.small-btn:disabled { opacity: 0.5; cursor: default; }
 /* Метка состояния: chip(текст, тон) и statusChip(статус) из ui.js; цвет — от .tone-*. */
 .chip {
   flex: none;
@@ -239,7 +285,8 @@ dialog.modal::backdrop { background: var(--overlay); }
 .icon-btn:hover { color: var(--text); }
 
 .list { display: grid; gap: var(--sp-2); }
-.row-btn {
+/* Строка списка-кнопка (выбор пакета в Аудио): не кнопка-компонент, а пункт списка. */
+.list-row {
   width: 100%;
   display: flex;
   justify-content: space-between;
@@ -253,7 +300,7 @@ dialog.modal::backdrop { background: var(--overlay); }
   text-align: left;
   cursor: pointer;
 }
-.row-btn:hover { background: var(--sunken); }
+.list-row:hover { background: var(--sunken); }
 .group-title { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-top: var(--sp-1); }
 .card { display: grid; gap: var(--sp-2); padding: var(--pad-card); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
@@ -307,25 +354,6 @@ blockquote.quote { margin: 0; padding: var(--sp-2) var(--sp-3); border-left: 3px
 .row-link:hover { text-decoration: underline; text-underline-offset: 2px; }
 .row-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
 .row-link[aria-current="true"] { font-weight: var(--fw-semibold); }
-.segmented { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border-strong); border-radius: var(--r-pill); padding: 2px; gap: 2px; }
-.segmented button {
-  border: 0;
-  background: none;
-  color: var(--text);
-  padding: var(--sp-1) var(--sp-3);
-  border-radius: var(--r-pill);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-.segmented button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
-/* Тот же переключатель на радиокнопках (Фото, Видео): <label class="seg"><input type="radio"><span>…</span></label>. */
-.segmented--radio { justify-self: start; }
-.segmented--radio .seg { position: relative; display: flex; }
-.segmented--radio .seg input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.segmented--radio .seg span { padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); font-size: var(--fs-sm); white-space: nowrap; }
-.segmented--radio .seg input:checked + span { background: var(--accent); color: var(--accent-text); }
-.segmented--radio .seg input:focus-visible { outline: none; }
-.segmented--radio .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tasks { display: grid; gap: var(--sp-2); }
 .task { display: grid; gap: var(--sp-2); padding: var(--pad-card); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .task-head { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
@@ -353,8 +381,6 @@ form.field { gap: var(--sp-3); }
   white-space: nowrap;
   border: 0;
 }
-/* Главная кнопка необратимого действия в подтверждении. */
-.primary.danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
 .confirm-list { list-style: disc; padding-left: var(--sp-4); margin: var(--sp-1) 0 0; }
 
 /* Ошибка загрузки (errorState в ui.js): причина, что делать, «Повторить», сырой вывод под «Подробностями». */

@@ -63,7 +63,7 @@ function row(item, kind, note, extra = null) {
 function voiceButtons(engine) {
   return h(
     "div",
-    { class: "voices", role: "group", "aria-label": `Голоса ${engine.label}` },
+    { class: "segmented voices", role: "group", "aria-label": `Голоса ${engine.label}` },
     ...engine.voices.map((v) =>
       h(
         "button",
@@ -136,9 +136,9 @@ function renderSchedule(data) {
         h("span", { class: "hint" }, "Мой чат в Telegram (id или @username) — бот каналов пишет туда; сначала напиши боту /start"),
         h("input", { type: "text", value: data.notify.telegram_chat || "", placeholder: "123456789", onchange: (e) => section("notify", { telegram_chat: e.target.value.trim() }) }),
       ),
-      h("div", { class: "actions" }, h("button", { type: "button", class: "small-btn", onclick: () => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)) }, "Проверить уведомление")),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)) }, "Проверить уведомление")),
       data.notifications.length
-        ? h("details", {}, h("summary", { class: "link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
+        ? h("details", {}, h("summary", { class: "btn btn--link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
         : null,
     ),
   );
@@ -208,8 +208,8 @@ function renderUpkeep(data) {
       h(
         "div",
         { class: "actions" },
-        h("button", { type: "button", class: cleanupState.confirm ? "small-btn danger" : "small-btn", disabled: cleanupState.busy || !what.length, onclick: runCleanup }, cleanupState.busy ? "Убираю…" : cleanupState.confirm ? `Да, удалить ${found ? mb(found.bytes) : ""}` : "Убрать сейчас"),
-        cleanupState.confirm ? h("button", { type: "button", class: "link", onclick: () => ((cleanupState.confirm = false), renderUpkeep(state.data)) }, "Отмена") : null,
+        h("button", { type: "button", class: cleanupState.confirm ? "btn btn--danger btn--sm" : "btn btn--ghost btn--sm", disabled: cleanupState.busy || !what.length, onclick: runCleanup }, cleanupState.busy ? "Убираю…" : cleanupState.confirm ? `Да, удалить ${found ? mb(found.bytes) : ""}` : "Убрать сейчас"),
+        cleanupState.confirm ? h("button", { type: "button", class: "btn btn--link", onclick: () => ((cleanupState.confirm = false), renderUpkeep(state.data)) }, "Отмена") : null,
         done ? h("span", { class: "hint" }, `Освобождено ${mb(done.bytes)}.`) : null,
       ),
     ),

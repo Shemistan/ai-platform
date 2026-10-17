@@ -39,6 +39,23 @@ class TokensTest(unittest.TestCase):
         decl = r"(?<![\w-])(?:padding|margin|gap|row-gap|column-gap)(?:-[a-z-]+)?\s*:[^;}]*"
         self.assertEqual(offenders(decl + r"(?<![\w.-])(?:[3-9]|\d{2,})px"), [])
 
+    def test_one_button_component(self):
+        # Кнопки — .btn с вариантами, переключатели — .segmented (DS-007); старых видов нет.
+        self.assertEqual(offenders(r"\.(small-btn|tool|add-btn|row-btn|mode-tab|voices|tempo)\b"), [])
+        ui = (STATIC / "ui.css").read_text(encoding="utf-8")
+        for variant in ("primary", "secondary", "ghost", "danger", "link", "sm", "lg"):
+            self.assertIn(f".btn--{variant}", ui)
+        for state in (":hover", ":disabled", ":focus-visible"):
+            self.assertIn(state, ui)
+        used = "\n".join(p.read_text(encoding="utf-8") for p in STATIC.rglob("*.js"))
+        used += "\n".join(p.read_text(encoding="utf-8") for p in STATIC.rglob("*.html"))
+        self.assertNotIn("small-btn", used)
+
+    def test_channel_remove_is_danger(self):
+        js = (STATIC / "channels" / "app.js").read_text(encoding="utf-8")
+        line = next(ln for ln in js.splitlines() if "removeChannel(c)" in ln and "Убрать" in ln)
+        self.assertIn("btn--danger", line)
+
     def test_type_scale_in_rem(self):
         tokens = (STATIC / "tokens.css").read_text(encoding="utf-8")
         sizes = re.findall(r"--fs-[\w-]+: *([^;]+);", tokens)

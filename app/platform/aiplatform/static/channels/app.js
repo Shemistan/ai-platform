@@ -34,7 +34,7 @@ function renderChannels() {
       h(
         "td",
         { class: "num" },
-        h("span", { class: "toolbar", style: "justify-content:flex-end" }, h("button", { type: "button", class: "small-btn", onclick: () => editChannel(c) }, "Изменить"), h("button", { type: "button", class: "small-btn danger", onclick: () => removeChannel(c) }, "Убрать")),
+        h("span", { class: "toolbar", style: "justify-content:flex-end" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => editChannel(c) }, "Изменить"), h("button", { type: "button", class: "btn btn--danger btn--sm", onclick: () => removeChannel(c) }, "Убрать")),
       ),
     ),
   );
@@ -47,7 +47,7 @@ function renderChannels() {
   const tools = $("channel-tools");
   fill(tools, 
     data.importable.length
-      ? h("button", { type: "button", class: "small-btn accent", title: data.importable.map((c) => c.label).join(", "), onclick: busyClick(importNarrator, "import") }, `Взять каналы движка (${data.importable.length})`)
+      ? h("button", { type: "button", class: "btn btn--secondary btn--sm", title: data.importable.map((c) => c.label).join(", "), onclick: busyClick(importNarrator, "import") }, `Взять каналы движка (${data.importable.length})`)
       : null,
   );
 }
@@ -75,7 +75,7 @@ function editChannel(channel) {
     h("div", { class: "field" }, h("span", { class: "field-label" }, "Что уходит"), formats),
     channel.type === "telegram" ? h("label", { class: "field" }, h("span", { class: "field-label" }, "Переменная с токеном бота"), token, h("span", { class: "hint" }, "Свой бот у канала — имя переменной окружения с его токеном. Сам токен в файлы не пишется.")) : null,
     error,
-    h("div", { class: "toolbar" }, h("button", { type: "button", class: "primary", onclick: busyClick(save) }, "Сохранить")),
+    h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--primary", onclick: busyClick(save) }, "Сохранить")),
   );
 }
 
@@ -90,7 +90,7 @@ async function removeChannel(channel) {
         "button",
         {
           type: "button",
-          class: "primary",
+          class: "btn btn--primary",
           onclick: busyClick(async () => {
             state.data = { ...state.data, ...(await api("POST", `${API}/channels/${channel.id}/delete`)) };
             renderChannels();
@@ -99,7 +99,7 @@ async function removeChannel(channel) {
         },
         "Убрать",
       ),
-      h("button", { type: "button", class: "small-btn", onclick: () => close() }, "Отмена"),
+      h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => close() }, "Отмена"),
     ),
   );
 }
@@ -207,7 +207,7 @@ function renderUnsent() {
   const n = state.data.unsent;
   $("unsent-box").hidden = !n;
   if (!n) return;
-  fill($("unsent"), h("p", {}, `Озвучек статей, что ещё не ушли в канал: ${n}.`), h("a", { class: "link", href: "/library/?filter=unsent" }, "Открыть в «Статьях» →"));
+  fill($("unsent"), h("p", {}, `Озвучек статей, что ещё не ушли в канал: ${n}.`), h("a", { class: "btn btn--link", href: "/library/?filter=unsent" }, "Открыть в «Статьях» →"));
 }
 
 async function loadSubscribers(sync = false) {
