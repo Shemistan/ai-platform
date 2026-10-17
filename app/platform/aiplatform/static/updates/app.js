@@ -1,5 +1,5 @@
 // Вкладка «Обновления»: версии моделей и пайплайнов, реестр запрещённых организаций.
-import { $, api, fill, followTask, h, progressBar, taskCard } from "/ui.js";
+import { $, api, fill, followTask, h, NARRATOR_TIMEOUT_MS, progressBar, taskCard } from "/ui.js";
 
 const API = "/api/updates";
 const MODEL_STATUS = { update: "есть обновление", ok: "актуально", unknown: "не знаю", error: "ошибка" };
@@ -219,7 +219,7 @@ function renderVoiceButton() {
 
 async function loadVoiceModels() {
   try {
-    const data = await api("GET", `${API}/voice-models`);
+    const data = await api("GET", `${API}/voice-models`, undefined, { timeout: NARRATOR_TIMEOUT_MS });
     renderVoiceModels(data);
     const active = data.tasks.find((t) => t.status === "queued" || t.status === "running");
     if (active && voice.active !== active.id) watchVoice(active);
@@ -232,7 +232,11 @@ async function watchVoice(task) {
   voice.active = task.id;
   renderVoiceButton();
   const cancel = (t) => api("POST", `${API}/tasks/${t.id}/cancel`);
-  await followTask(`${API}/tasks/${task.id}`, (t) => fill($("voice-task"), taskCard(t, { full: true, onCancel: cancel })));
+  try {
+    await followTask(`${API}/tasks/${task.id}`, (t) => fill($("voice-task"), taskCard(t, { full: true, onCancel: cancel })));
+  } catch (err) {
+    fill($("voice-task"), h("p", { class: "job-error" }, err.message));
+  }
   voice.active = null;
   voice.picked.clear();
   loadVoiceModels();
