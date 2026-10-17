@@ -6,7 +6,8 @@ cd "$(dirname "$0")" || exit 1
 
 # --- секреты: токены ботов в отслеживаемых файлах (SEC-001) ---
 if [ -f tools/secret_scan.py ]; then
-  python3 tools/test_secret_scan.py 2>&1 | tail -1
+  # Тихо при успехе; упал — весь вывод и красный ./check (`| tail -1` глотал код выхода).
+  out=$(python3 tools/test_secret_scan.py 2>&1) || { echo "$out"; exit 1; }
   python3 tools/secret_scan.py
 fi
 
