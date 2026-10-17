@@ -46,11 +46,9 @@ if [ -n "$REMOTE" ]; then
 fi
 
 # 2. staging → HEAD, только fast-forward (история staging не переписывается).
-git merge-base --is-ancestor staging HEAD || \
-  fail "staging не предок HEAD — влей её (git merge staging) и повтори"
-git branch -f staging HEAD >/dev/null || \
-  fail "staging занята другим checkout — освободи её (git checkout $DEFAULT там)"
-echo "✓ staging → $(git rev-parse --short HEAD)"
+# Проверка предка и запись — одной командой с compare-and-swap (docs/грабли.md, запись 3).
+sh tools/advance-staging.sh HEAD || \
+  fail "staging не сдвинута — влей её (git merge staging) и повтори"
 
 [ -n "$REMOTE" ] || { warn "origin нет — push и PR пропущены"; exit 0; }
 git push -q origin staging:staging
