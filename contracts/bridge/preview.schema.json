@@ -1,0 +1,47 @@
+{
+  "$comment": "ответ `narrate bridge preview`",
+  "type": "object",
+  "required": [
+    "changed",
+    "issues",
+    "script"
+  ],
+  "properties": {
+    "script": {
+      "type": "string"
+    },
+    "changed": {
+      "type": "number"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "col",
+          "level",
+          "line",
+          "message"
+        ],
+        "properties": {
+          "line": {
+            "type": "number"
+          },
+          "col": {
+            "type": "number"
+          },
+          "level": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

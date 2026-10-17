@@ -18,6 +18,7 @@ from aiplatform.studio import publish, steps
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.render import VERTICAL, Renderer
 from aiplatform.updates import registry
+from tests.fake_telegram import FakeTelegram
 from tests.fixtures import ARTICLE, NEEDS_FFMPEG, SOURCE, png_bytes
 from tests.helpers import StudioCase
 
@@ -157,21 +158,14 @@ class PostNotesFlowTest(StudioCase):
         project = self.create(scenario="post", post=META_POST, settings=settings)
         pid = project["id"]
         self.upload(pid)
-        calls = []
-
-        def fake_post(url, body, ctype):
-            calls.append((url.rsplit("/", 1)[-1], body))
-            return {"ok": True, "result": {"message_id": len(calls)}}
-
-        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
+        with FakeTelegram() as tg, mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN, **tg.env()}):
             self.json("POST", f"/api/studio/projects/{pid}/run", {})
             self.settle(pid)
             self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["tg"]})
             done = self.settle(pid)
         self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
-        audio = next(body for method, body in calls if method == "sendAudio")
-        self.assertIn(b'name="caption"', audio)
-        self.assertIn(META_NOTE.encode(), audio)
+        (audio,) = tg.sent("sendAudio")
+        self.assertIn(META_NOTE, audio.fields["caption"])
 
 
 @NEEDS_FFMPEG

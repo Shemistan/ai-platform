@@ -11,6 +11,9 @@
 лог и повтор через RETRY_PAUSE, не больше MAX_ATTEMPTS раз за день. От
 двойного выпуска защищает дедупликация по `source` в `create`.
 
+Каждый тик — ещё и срок своей обложки дайджеста (poster_deadline, PRD-002): шаг
+«Постер» ждёт загрузку дольше срока — рисуется локально, выпуск идёт дальше.
+
 Ежедневные работы помечаются датой до запуска (упавшая не повторяется каждые
 полминуты), но сбой виден: трассировка в лог и важное уведомление.
 """
@@ -35,6 +38,7 @@ STATE = "schedule.json"
 DEFAULT_TICK_S = 30.0
 MAX_ATTEMPTS = 3  # попыток дайджеста за день
 RETRY_PAUSE = timedelta(minutes=15)
+ORIGIN = "schedule"  # project["origin"] у выпуска, который создало расписание
 
 log = logging.getLogger("aiplatform.schedule")
 
@@ -135,6 +139,10 @@ class Scheduler:
             plan = self.module.ctx.config.settings.load()["schedule"]["digest"]
             if plan["enabled"] and now.strftime("%H:%M") >= plan["time"] and self._digest_due(now):
                 done.append(self._digest(now, plan["day"]))
+            # Своя обложка не пришла к сроку — постер рисуется локально (PRD-002).
+            deadlines = getattr(self.module, "poster_deadlines", None)
+            if deadlines is not None:
+                done.extend(deadlines(now))
             for name, job in self.daily.items():
                 if self.state().get(name) == today:
                     continue
@@ -199,6 +207,8 @@ class Scheduler:
             log.exception("дайджест за %s по расписанию упал", day)
             return self._digest_failed(day, attempts, _brief(exc), finish)
         finish(None)
+        # Создан расписанием, не руками: доска не считает его поводом предложить расписание (PRD-003).
+        self.module.studio.annotate(project["id"], origin=ORIGIN)
         self.module.notify("Дайджест запущен по расписанию", project["title"], important=False)
         return f"дайджест за {day}: запущен {project['id']}"
 

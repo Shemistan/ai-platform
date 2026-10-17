@@ -1,0 +1,29 @@
+{
+  "$comment": "ответ `narrate bridge review`",
+  "type": "object",
+  "required": [
+    "files",
+    "folder",
+    "id",
+    "kind",
+    "title"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "folder": {
+      "type": "string"
+    },
+    "files": {
+      "$comment": "имя файла обзора → путь; ключи — данные",
+      "type": "object"
+    }
+  }
+}

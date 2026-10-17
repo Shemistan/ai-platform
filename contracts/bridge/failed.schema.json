@@ -1,0 +1,47 @@
+{
+  "$comment": "ответ `narrate bridge failed`",
+  "type": "object",
+  "required": [
+    "failed"
+  ],
+  "properties": {
+    "failed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "at",
+          "error",
+          "feed",
+          "kind",
+          "name",
+          "source",
+          "url"
+        ],
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "feed": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

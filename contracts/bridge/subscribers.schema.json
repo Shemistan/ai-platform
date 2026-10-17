@@ -1,0 +1,56 @@
+{
+  "$comment": "ответ `narrate bridge subscribers`",
+  "type": "object",
+  "required": [
+    "active",
+    "error",
+    "file",
+    "new",
+    "subscribers"
+  ],
+  "properties": {
+    "subscribers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "active",
+          "added",
+          "chat_id",
+          "name",
+          "note",
+          "thread"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "thread": {},
+          "note": {
+            "type": "string"
+          },
+          "chat_id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "added": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "active": {
+      "type": "number"
+    },
+    "new": {
+      "type": "array",
+      "items": {}
+    },
+    "error": {},
+    "file": {
+      "type": "string"
+    }
+  }
+}

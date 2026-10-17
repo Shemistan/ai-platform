@@ -73,7 +73,7 @@ def http_transport(channel: publish.Channel) -> Transport:
         if not token:
             raise StudioError(channel.problem() or "нет токена бота")
         body, ctype = publish.multipart({k: str(v) for k, v in fields.items()}, files)
-        answer = publish.call_api(f"{publish.TELEGRAM_API}/bot{token}/{method}", body, ctype, None, safe=False)
+        answer = publish.call_api(f"{publish.telegram_api()}/bot{token}/{method}", body, ctype, None, safe=False)
         if not answer.get("ok"):
             answer = answer | {"description": str(answer.get("description", "")).replace(token, "***")}
         return answer

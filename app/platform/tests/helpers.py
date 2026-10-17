@@ -24,10 +24,11 @@ from aiplatform import server as server_module
 from aiplatform.core import runner
 from aiplatform.photo import config as photo_config
 from aiplatform.photo.service import PhotoModule
-from aiplatform.studio import publish, steps
+from aiplatform.studio import steps
 from aiplatform.video import config as video_config
 from aiplatform.video.service import VideoModule
 from tests import MISSING_MODELS_DIR, TMP_ROOT
+from tests.fake_telegram import CHAT_METHODS, FakeTelegram, Rule
 from tests.fixtures import ARTICLE, FAST, PNG_STUB, RENDER_SCALE, SOURCE, TOKEN, png
 
 # Множитель всех ожиданий: под нагрузкой (параллельный прогон, рендер в фоне) — AIP_TEST_TIMEOUT_SCALE=3.
@@ -268,32 +269,42 @@ def chat_of(body: bytes) -> str:
     return "?"
 
 
-class FakeTelegram:
-    """Подмена publish._http_post: пишет вызовы, по флагам отвечает отказом или «рвёт» ответ."""
+def chat_of_id(chat_id: str) -> str:
+    """Канал CHATS по chat_id запроса; чужой — «?»."""
+    return next((cid for cid, chat in CHATS.items() if chat == chat_id), "?")
+
+
+class JournalTelegram(FakeTelegram):
+    """Фейковый Bot API на HTTP (tests/fake_telegram.py) с прежним интерфейсом журнала BE-001.
+
+    refuse — (канал, метод), на которые Telegram отвечает отказом ok=false; drop — обрыв без
+    ответа после отправки. calls — (канал, метод, принят ли пост) без методов о канале.
+    """
 
     def __init__(self):
-        self.calls: list[tuple[str, str, bool]] = []  # (канал, метод, принят ли пост)
-        self.refuse: set[tuple[str, str]] = set()  # Telegram ответил ok=false
-        self.drop: set[tuple[str, str]] = set()  # ответа нет: обрыв после отправки
+        super().__init__()
+        self.refuse: set[tuple[str, str]] = set()
+        self.drop: set[tuple[str, str]] = set()
 
-    def __call__(self, url, body, ctype):
-        method = url.rsplit("/", 1)[-1]
-        if method in ("getChatMemberCount", "getChat"):
-            return {"ok": True, "result": 10}
-        key = (chat_of(body), method)
+    def _rule(self, call):
+        key = (chat_of_id(call.chat), call.method)
         if key in self.drop:
-            self.calls.append((*key, False))
-            raise ConnectionResetError("обрыв посреди ответа")
+            return Rule(call.method, "drop", 0)
         if key in self.refuse:
-            self.calls.append((*key, False))
-            return {"ok": False, "description": "Too Many Requests: retry after 5"}
-        self.calls.append((*key, True))
-        return {"ok": True, "result": {"message_id": len(self.calls)}}
+            return Rule(call.method, "refuse", 0, description="Bad Request: not enough rights to send")
+        return super()._rule(call)
+
+    @property
+    def calls(self) -> list[tuple[str, str, bool]]:
+        return [(chat_of_id(c.chat), c.method, c.accepted) for c in self.sent() if c.method not in CHAT_METHODS]
 
     def count(self, channel, method, *, accepted=None):
         return sum(
             1 for c, m, ok in self.calls if c == channel and m == method and (accepted is None or ok == accepted)
         )
+
+
+FakeTelegram = JournalTelegram  # noqa: F811 — прежнее имя: на него ссылаются ветки
 
 
 class JournalCase(StudioCase):
@@ -314,13 +325,12 @@ class JournalCase(StudioCase):
         )
         self.extra_env = StudioCase.extra_env | {"AIP_CHANNELS": str(self.channels_file)}
         super().setUp()
-        self.tg = FakeTelegram()
-        for patcher in (
-            mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}),
-            mock.patch.object(publish, "_http_post", self.tg),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        # Настоящий HTTP: multipart, коды ответов и обрывы идут через publish._http_post (QA-007).
+        self.tg = JournalTelegram().start()
+        self.addCleanup(self.tg.stop)
+        patcher = mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN, **self.tg.env()})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def video_project(self) -> str:
         pid = self.create(scenario="article", text=ARTICLE)["id"]

@@ -242,6 +242,7 @@ git), `<data>/settings.json` (вкладка «Настройки» и ручн�
 | `AIP_CHECK_AT`, `AIP_CHECK_URL`, `AIP_CHECK_GRACE_MIN`, `AIP_ALERT_TG_TOKEN`, `AIP_ALERT_TG_CHAT` | внешний чекер | время дайджеста + 30 мин, `http://127.0.0.1:8780`, `30`, Keychain | токен и чат — в Keychain |
 | `AIP_AGENTS_DIR`, `AIP_LOG_DIR`, `AIP_AGENT_LABEL`, `AIP_CHECK_LABEL`, `AIP_BACKUP_LABEL`, `AIP_BACKUP_AT` | `tools/agent.sh` | `~/Library/LaunchAgents`, `~/Library/Logs/aiplatform`, метки `com.aiplatform.*`, `03:30` | нет |
 | `AIP_TEST_GUARD` | тесты | — | никогда |
+| `AIP_TELEGRAM_API` | публикация, уведомления; тесты | `https://api.telegram.org` | нет: в бою не задавать |
 | `AIP_TELEGRAM_TOKEN`, `AIP_TG_<ИМЯ>` (имя — из `token_env` канала) | публикация | — | в `local.mk`, не в git |
 
 Переменные narrator: `NARRATOR_TELEGRAM_TOKEN`, `NARRATOR_TELEGRAM_TOKEN_FILE`

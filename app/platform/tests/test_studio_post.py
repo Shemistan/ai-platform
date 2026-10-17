@@ -10,7 +10,7 @@ from unittest import mock
 
 from aiplatform.core import media
 from aiplatform.fakes import fake_narrate
-from aiplatform.studio import publish
+from tests.fake_telegram import FakeTelegram
 from tests.fixtures import NEEDS_FFMPEG, png_bytes
 from tests.helpers import StudioCase
 
@@ -72,22 +72,19 @@ class PostFlowTest(StudioCase):
         pid = project["id"]
         self.call("POST", f"/api/studio/projects/{pid}/upload/poster", png_bytes())
         self.call("POST", f"/api/studio/projects/{pid}/upload/voice", self.mp3(2.0))
-        calls = []
-
-        def fake_post(url, body, ctype):
-            calls.append((url.rsplit("/", 1)[-1], body))
-            return {"ok": True, "result": {"message_id": len(calls)}}
-
-        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
+        with FakeTelegram() as tg, mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN, **tg.env()}):
             self.json("POST", f"/api/studio/projects/{pid}/run", {})
             self.settle(pid)
             self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["tg"]})
             done = self.settle(pid)
         self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
         # Последним — число подписчиков: от него считается прирост в «Что работает».
-        self.assertEqual([c[0] for c in calls], ["sendPhoto", "sendAudio", "getChatMemberCount"])
-        self.assertIn(b"<b>", calls[0][1])
-        self.assertIn(b'name="duration"', calls[1][1])
+        self.assertEqual(tg.methods(), ["sendPhoto", "sendAudio", "getChatMemberCount"])
+        photo, audio = tg.requests[:2]
+        self.assertIn("<b>", photo.fields["caption"])
+        self.assertEqual((photo.fields["parse_mode"], photo.files["photo"][1]), ("HTML", "image/png"))
+        self.assertTrue(audio.fields["duration"].isdigit())
+        self.assertEqual((audio.files["audio"][1], audio.token), ("audio/mpeg", TOKEN))
         self.assertIn("двумя постами", done["published"][0]["message"])
 
     def test_validation(self):
