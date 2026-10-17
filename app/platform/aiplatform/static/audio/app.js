@@ -484,7 +484,7 @@ function recordControls(v, data, busy, taskBox, reload) {
     const text = h("textarea", { rows: 2, placeholder: `Свой текст образца — по желанию; иначе: «${data.default_text}»` });
     return h(
       "details",
-      { class: "inline" },
+      { class: "disclosure" },
       h("summary", {}, "Перезаписать образец"),
       h(
         "div",
@@ -496,7 +496,7 @@ function recordControls(v, data, busy, taskBox, reload) {
       ),
     );
   }
-  return h("details", { class: "inline" }, h("summary", {}, "Записать свой образец"), fileRecord(v, low, high, busy, taskBox, reload));
+  return h("details", { class: "disclosure" }, h("summary", {}, "Записать свой образец"), fileRecord(v, low, high, busy, taskBox, reload));
 }
 
 function fileRecord(v, low, high, busy, taskBox, reload) {

@@ -55,6 +55,7 @@ const registry = new Map();
 globalThis.Node = FakeNode;
 globalThis.document = {
   createElement: (tag) => new FakeNode(tag),
+  createElementNS: (_ns, tag) => new FakeNode(tag),
   createTextNode: (t) => new FakeText(t),
   getElementById: (id) => {
     const n = registry.get(id);
@@ -63,7 +64,7 @@ globalThis.document = {
   body: new FakeNode("body"),
 };
 
-const { toast, TOAST_MS } = await loadStatic("ui.js");
+const { toast, TOAST_MS, icon, iconButton } = await loadStatic("ui.js");
 const stack = () => document.getElementById("toasts");
 
 test("тост — в стеке, с тоном и в области объявлений", async (t) => {
@@ -97,4 +98,24 @@ test("несколько тостов — стопкой в одном конт�
 
 test("пустой текст — ничего", () => {
   assert.equal(toast(""), null);
+});
+
+test("крестик тоста — кнопка-иконка с именем, SVG скрыт от скринридера (DS-014)", () => {
+  const item = toast("Ещё", "info");
+  const close = item.children.find((c) => c.tag === "button");
+  assert.equal(close.getAttribute("class"), "btn-icon");
+  assert.equal(close.getAttribute("aria-label"), "Скрыть");
+  assert.equal(close.textContent, "");
+  const svg = close.children[0];
+  assert.equal(svg.tag, "svg");
+  assert.equal(svg.getAttribute("aria-hidden"), "true");
+});
+
+test("icon и iconButton: размер, свой класс и подсказка", () => {
+  assert.equal(icon("star", { size: 20 }).getAttribute("width"), "20");
+  const b = iconButton("prev", "Кадр 2 раньше", { class: "btn-icon--outline", title: "Раньше", disabled: true });
+  assert.equal(b.getAttribute("class"), "btn-icon btn-icon--outline");
+  assert.equal(b.getAttribute("aria-label"), "Кадр 2 раньше");
+  assert.equal(b.getAttribute("title"), "Раньше");
+  assert.equal(b.getAttribute("size"), null);
 });

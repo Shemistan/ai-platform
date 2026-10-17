@@ -15,4 +15,3 @@
 .row-removed td { background: var(--bad-bg); text-decoration: line-through; }
 .proposal { display: grid; gap: var(--sp-2); border: 1px solid var(--warn); border-radius: var(--r-lg); padding: var(--sp-3); }
 .editor { display: grid; gap: var(--sp-2); }
-.editor[open] summary { margin-bottom: var(--sp-2); }

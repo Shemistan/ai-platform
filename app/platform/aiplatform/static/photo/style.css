@@ -22,7 +22,6 @@
   cursor: pointer;
 }
 .drop:hover, .drop.over { border-color: var(--accent); background: var(--info-bg); }
-.plus { font-size: var(--fs-2xl); line-height: 1; }
 
 .stage-wrap {
   display: grid;
@@ -54,8 +53,7 @@
 
 /* --- параметры --- */
 
-.advanced summary { cursor: pointer; font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
-.advanced .settings { margin-top: var(--sp-3); align-items: start; }
+.advanced .settings { align-items: start; }
 .span-all { grid-column: 1 / -1; }
 
 /* --- результат --- */

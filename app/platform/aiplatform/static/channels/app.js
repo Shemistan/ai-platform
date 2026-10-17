@@ -151,7 +151,7 @@ function renderBot(extra = {}) {
 
 function renderServe() {
   const s = state.data.serve;
-  const toggle = h("input", { type: "checkbox", checked: s.running });
+  const toggle = h("input", { type: "checkbox", role: "switch", checked: s.running });
   toggle.addEventListener(
     "change",
     safe(async () => {
