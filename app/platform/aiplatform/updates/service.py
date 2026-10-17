@@ -21,6 +21,7 @@ from pathlib import Path
 from aiplatform.config import Config, pick
 from aiplatform.core import narrator as narrator_module
 from aiplatform.core import tasks as tasks_module
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import config as photo_config
 from aiplatform.studio import config as studio_config
@@ -109,10 +110,7 @@ class Job:
     def update(self, **values) -> None:
         with self.lock:
             self.state |= values
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(self.path.name + ".tmp")
-            tmp.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(self.path)
+            atomic_write(self.path, json.dumps(self.state, ensure_ascii=False, indent=2))
 
     def start(self, work: Callable[[], None], **initial) -> None:
         with self.lock:

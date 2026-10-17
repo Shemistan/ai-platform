@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiplatform.core import disk, log, media
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.runner import Canceled
 from aiplatform.studio import cache, news, prompts, publish, render, slides
 from aiplatform.studio.config import StudioConfig
@@ -263,13 +264,13 @@ def slide_media(folder: Path, n: int, kind: str, prompt: str) -> Path | None:
 
 def save_slide_media(folder: Path, n: int, ext: str, data: bytes, prompt: str, kind: str) -> Path:
     """Файл слайда от человека: прежний вариант (любого формата) заменяется."""
-    folder.mkdir(parents=True, exist_ok=True)
-    for old in (folder / f"{n:02d}{e}" for e in MEDIA[kind][0]):
-        old.unlink(missing_ok=True)
     path = folder / f"{n:02d}.{ext}"
-    path.write_bytes(data)
+    atomic_write(path, data)  # сначала новый файл целиком, потом — прежний в другом формате
+    for old in (folder / f"{n:02d}{e}" for e in MEDIA[kind][0]):
+        if old != path:
+            old.unlink(missing_ok=True)
     meta = json.dumps({"prompt": prompt, "uploaded": True}, ensure_ascii=False)
-    (folder / f"{n:02d}.json").write_text(meta, encoding="utf-8")
+    atomic_write(folder / f"{n:02d}.json", meta)
     return path
 
 

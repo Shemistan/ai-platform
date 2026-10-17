@@ -11,10 +11,11 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 from pathlib import Path
+
+from aiplatform.core.fsutil import atomic_write
 
 FILE = "settings.json"
 KINDS = ("photo", "video", "audio")  # модели фото, модели видео, движки озвучки
@@ -170,9 +171,6 @@ class Settings:
             data = self._read()
             apply(data)
             data = normalize(data)
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            os.replace(tmp, self.path)
+            atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
             self._cache = None
             return data
