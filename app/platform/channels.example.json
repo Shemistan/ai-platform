@@ -5,7 +5,7 @@
     "type": "telegram",
     "format": "landscape",
     "chat_id": "@my_news_channel",
-    "token_env": "AIP_TELEGRAM_TOKEN"
+    "token_env": "AIP_TG_NEWS"
   },
   {
     "id": "tg-shorts",
@@ -13,7 +13,7 @@
     "type": "telegram",
     "format": "vertical",
     "chat_id": "@my_news_channel",
-    "token_env": "AIP_TELEGRAM_TOKEN"
+    "token_env": "AIP_TG_NEWS"
   },
   {
     "id": "youtube",

@@ -65,7 +65,7 @@ class JournalCase(StudioCase):
         self.channels_file.write_text(
             json.dumps(
                 [
-                    {"id": cid, "label": cid.upper(), "type": "telegram", "chat_id": chat, "token_env": "AIP_TEST_TG"}
+                    {"id": cid, "label": cid.upper(), "type": "telegram", "chat_id": chat, "token_env": "AIP_TG_TEST"}
                     for cid, chat in CHATS.items()
                 ]
             ),
@@ -75,7 +75,7 @@ class JournalCase(StudioCase):
         super().setUp()
         self.tg = FakeTelegram()
         for patcher in (
-            mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}),
+            mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}),
             mock.patch.object(publish, "_http_post", self.tg),
         ):
             patcher.start()
