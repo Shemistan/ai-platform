@@ -315,6 +315,7 @@ def article_view(article_id: str, a: dict) -> dict:
         "summary": a["summary"],
         "url": a.get("url"),
         "source_quality": a.get("source_quality", "verbatim"),
+        "license": a.get("license", "none"),
         "engine": voiced,
         "voice": "Charon" if voiced else None,
         "duration_sec": round(seconds_for(a["script"]), 1) if voiced else None,
@@ -498,6 +499,10 @@ def bridge(args, state: dict) -> dict:
                 a["title"] = str(data["title"]).strip()
             if "summary" in data:
                 a["summary"] = str(data["summary"] or "").strip()
+            if "license" in data:
+                if data["license"] not in ("own", "cc-by", "permission", "none"):
+                    raise ValueError("license — одно из: own, cc-by, permission, none.")
+                a["license"] = data["license"]
             if "script" in data:
                 a["script"] = str(data["script"] or "").strip() + "\n"
                 a["stale"] = True

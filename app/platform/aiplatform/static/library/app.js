@@ -191,12 +191,23 @@ function renderCard() {
 
   const title = h("input", { type: "text", value: c.title, "aria-label": "Название", style: "font-size:17px;font-weight:600" });
   const summary = h("input", { type: "text", value: c.summary || "", placeholder: "1–3 предложения: о чём статья и главный вывод" });
+  // Право на переработку: без него полный пересказ в канал не уходит — только аннотация со ссылкой.
+  const license = h(
+    "select",
+    { "aria-label": "Право на переработку" },
+    ...[
+      ["none", "Нет права — в канал только аннотация"],
+      ["own", "Моя статья"],
+      ["cc-by", "Свободная лицензия (CC BY)"],
+      ["permission", "Есть разрешение автора"],
+    ].map(([v, label]) => h("option", { value: v, selected: (c.license || "none") === v }, label)),
+  );
   const script = h("textarea", { rows: 12, class: "mono", placeholder: "Текст, который прочитает модель. Его можно взять из исходного или поручить агенту." });
   script.value = c.script || "";
   const save = async () => {
     error.hidden = true;
     try {
-      state.card = await api("POST", `${API}/articles/${encodeURIComponent(c.id)}`, { title: title.value, summary: summary.value, script: script.value });
+      state.card = await api("POST", `${API}/articles/${encodeURIComponent(c.id)}`, { title: title.value, summary: summary.value, script: script.value, license: license.value });
       await refresh();
     } catch (err) {
       fail(err);
@@ -236,6 +247,7 @@ function renderCard() {
         1,
         "Текст для озвучки",
         h("label", { class: "field" }, h("span", { class: "field-label" }, "Описание — в реестре и в посте канала"), summary),
+        h("label", { class: "field" }, h("span", { class: "field-label" }, "Право на переработку — без него полный пересказ в канал не уйдёт"), license),
         script,
         h(
           "div",

@@ -64,17 +64,40 @@ function actions(p) {
 
 const number = (n) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}K` : String(n));
 
-// Куда ушёл выпуск и что там с ним: просмотры, прирост подписчиков; руками — у пакетов и приватных каналов.
+const known = (v) => v !== null && v !== undefined;
+const signed = (n) => `${n >= 0 ? "+" : ""}${n}`;
+
+// Куда ушёл выпуск и что там с ним: просмотры (всего и за 24ч/72ч/7д), прирост подписчиков за сутки
+// после поста; руками — у пакетов и приватных каналов.
 function reachRow(p, r) {
   const facts = [];
-  if (r.views !== null && r.views !== undefined) facts.push(`${number(r.views)} просм.`);
-  if (r.growth !== null && r.growth !== undefined) facts.push(`${r.growth >= 0 ? "+" : ""}${r.growth} подп.`);
+  if (known(r.views)) facts.push(`${number(r.views)} просм.`);
+  const spans = [["24ч", r.views_24h], ["72ч", r.views_72h], ["7д", r.views_7d]].filter(([, v]) => known(v));
+  if (spans.length) facts.push(spans.map(([k, v]) => `${k}: ${number(v)}`).join(", "));
+  else if (known(r.views) && known(r.age_h)) facts.push("окно 24ч не закрыто");
+  if (known(r.growth_24h_attr)) facts.push(`${signed(r.growth_24h_attr)} подп. за сутки${r.growth_trend ? "" : " (без тренда)"}`);
+  // Пакет для ручной загрузки опубликован, только когда автор залил его и дал ссылку на ролик.
+  if (r.state === "packaged") {
+    const link = h("input", { type: "url", class: "views-input", placeholder: "ссылка на ролик", "aria-label": `Ссылка на ролик: ${r.label}` });
+    return h(
+      "li",
+      {},
+      h("span", {}, `⇪ ${r.label}: пакет готов — залей и вставь ссылку`),
+      h(
+        "span",
+        { class: "manual-views" },
+        link,
+        h("button", { type: "button", class: "small-btn", onclick: () => link.value.trim() && act(p, "uploaded", { channel: r.channel, url: link.value.trim() }) }, "Залил"),
+      ),
+    );
+  }
   const manual = r.type === "manual" || (r.type === "telegram" && r.public === false);
   const input = h("input", { type: "number", min: "0", class: "views-input", placeholder: "просмотры", "aria-label": `Просмотры: ${r.label}` });
   return h(
     "li",
     {},
     h("span", {}, `✓ ${r.label}`),
+    r.external_url ? h("a", { class: "link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
     facts.length ? h("span", { class: "muted" }, ` · ${facts.join(" · ")}`) : null,
     manual
       ? h(
@@ -87,7 +110,8 @@ function reachRow(p, r) {
   );
 }
 
-// «Что работает»: средние просмотры по сценарию, длине и формату — по опубликованному с известными просмотрами.
+// «Что работает»: средние просмотры за 24ч и прирост за сутки по сценарию, длине и формату —
+// только посты с закрытым окном 24ч.
 function responsePanel(data) {
   const s = data.stats || {};
   const refresh = h(
@@ -113,11 +137,11 @@ function responsePanel(data) {
       "table",
       { class: "reach-table" },
       h("caption", {}, d.dimension),
-      h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "постов"), h("th", {}, "просмотров в среднем"), h("th", {}, "подписчиков в среднем"))),
+      h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "постов"), h("th", {}, "просмотров за 24ч"), h("th", {}, "подписчиков за сутки"))),
       h(
         "tbody",
         {},
-        ...d.rows.map((r) => h("tr", {}, h("th", {}, r.label), h("td", {}, String(r.posts)), h("td", {}, number(r.avg_views)), h("td", {}, r.avg_growth === null ? "—" : `${r.avg_growth >= 0 ? "+" : ""}${r.avg_growth}`))),
+        ...d.rows.map((r) => h("tr", {}, h("th", {}, r.label), h("td", {}, String(r.posts)), h("td", {}, number(r.avg_views)), h("td", {}, r.avg_growth === null ? "—" : signed(r.avg_growth)))),
       ),
     ),
   );
@@ -127,7 +151,7 @@ function responsePanel(data) {
     h("div", { class: "response-head" }, h("h2", {}, "Что работает"), refresh, h("span", { class: "muted small" }, s.at ? `обновлено ${s.at}` : "ещё не обновлялось")),
     tables.length
       ? h("div", { class: "reach-tables" }, ...tables)
-      : h("p", { class: "hint" }, "Просмотров пока нет. Публичные каналы Telegram подтягиваются сами (раз в сутки или кнопкой), у пакетов для YouTube и TikTok и у приватных каналов просмотры вносятся руками в карточке выпуска."),
+      : h("p", { class: "hint" }, "Постов с закрытым окном 24ч пока нет. Публичные каналы Telegram подтягиваются сами (раз в сутки или кнопкой), у пакетов для YouTube и TikTok и у приватных каналов просмотры вносятся руками в карточке выпуска."),
   );
 }
 
