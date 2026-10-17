@@ -275,8 +275,8 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | `AIP_NARRATOR_DIR` | `app/narrator` | движок озвучки и новостей |
 | `AIP_NARRATE_CMD` | `$AIP_NARRATOR_DIR/narrate` | команда озвучки (`narrate say`) |
 | `AIP_AUDIO_ENGINE` | первый с весами: `higgs` → `espeech` → `silero` | движок озвучки по умолчанию; не задан — первый, чьи веса стоят (после одного `make models` — `espeech`, higgs ставит `make models-mlx E=higgs`). Нет весов у движка по умолчанию — баннер «Проблемы» с командой установки |
-| `AIP_LLM_CMD` | `claude -p` | LLM для промптов и слайдов: промпт на stdin, ответ в stdout |
-| `AIP_UPDATES_LLM_CMD` | `claude -p --allowedTools WebSearch,WebFetch` | LLM со свежим вебом для сверки списка запрещённых организаций |
+| `AIP_LLM_CMD` | `claude -p --tools "" --setting-sources project --strict-mcp-config` | LLM для промптов и слайдов: промпт на stdin, ответ в stdout. Без инструментов, MCP и пользовательских настроек: модель читает чужой текст, prompt injection не должен дотянуться до файлов и сети |
+| `AIP_UPDATES_LLM_CMD` | `claude -p --tools WebSearch,WebFetch --setting-sources project --strict-mcp-config --settings '{"permissions": …}'` | LLM со свежим вебом для сверки списка запрещённых организаций: только поиск и чтение веба |
 | `AIP_NEWS_CMD` | `make -C {narrator} news-collect news-agent news-judge DAY={day}` | сбор дайджеста |
 | `AIP_NEWS_WHERE` | `{narrator}/narrate news where --date {day}` | где лежит выпуск |
 | `AIP_STUDIO_IMAGE_MODEL` | `z-image-turbo` | модель постера и картинок по умолчанию |

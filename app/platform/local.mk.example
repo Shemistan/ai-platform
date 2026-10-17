@@ -19,8 +19,9 @@ AIP_VIDEO_WAN_CMD=uv run --project $(HOME)/.local/share/videogen/wan-video-mlx-8
 # higgs (make models-mlx E=higgs) → espeech → silero (make models в app/narrator).
 # AIP_AUDIO_ENGINE=higgs
 
-# LLM для промптов постера, слайдов и шортса.
-AIP_LLM_CMD=claude -p
+# LLM для промптов постера, слайдов и шортса. Модель читает чужие статьи и новости,
+# поэтому без инструментов (--tools ""), MCP и пользовательских настроек ~/.claude.
+AIP_LLM_CMD=claude -p --tools "" --setting-sources project --strict-mcp-config
 
 # Модель постера и картинок слайдов по умолчанию.
 AIP_STUDIO_IMAGE_MODEL=z-image-turbo
