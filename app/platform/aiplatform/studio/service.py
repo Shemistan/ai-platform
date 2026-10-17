@@ -11,7 +11,7 @@ import time
 from http import HTTPStatus
 
 from aiplatform.audio import voices
-from aiplatform.core import media
+from aiplatform.core import events, media
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
@@ -155,7 +155,8 @@ class StudioModule:
     def __init__(self, ctx) -> None:
         self.ctx = ctx
         self.config = studio_config.load(ctx.config)
-        self.studio = Studio(self.config.projects_dir, steps.STEPS)
+        self.events = events.EventLog(ctx.config.data_dir / events.FILE)  # журнал событий (AN-002)
+        self.studio = Studio(self.config.projects_dir, steps.STEPS, journal=self.events)
         self.studio.on_stop = self._on_stop
         self.scheduler = schedule.Scheduler(self, self.config.data_dir, self.config.schedule_tick_s)
         self._rates: tuple[float, estimate_module.Rates] | None = None
@@ -280,6 +281,18 @@ class StudioModule:
                 raise bad_request("По этому каналу нечего решать: статус отправки известен.")
             fixed = steps.resolve_record(found, posted)
             steps.save_published(folder, [fixed if r is found else r for r in records])
+            if fixed.get("state") == steps.SENT:  # «Пост есть» — публикация состоялась, отметил человек
+                self.events.emit(
+                    "publication.sent",
+                    actor=events.actor(),
+                    project_id=project["id"],
+                    scenario=project.get("scenario"),
+                    step="publish",
+                    channel_id=fixed["channel"],
+                    publication_id=fixed.get("attempt_id"),
+                    source=publish.TELEGRAM,
+                    props={"resolved": True},
+                )
             return set()
 
         project = self.studio.update(project_id, apply)
@@ -371,6 +384,9 @@ class StudioModule:
             if fresh != records:
                 _write_json(path, fresh)
                 updated += 1
+                for old, new in zip(records, fresh, strict=True):
+                    if len(new.get("stats") or []) > len(old.get("stats") or []):
+                        self._snapshot_event(item, new, events.actor(events.SYSTEM))
         self.scheduler.note("stats_at", time.strftime("%Y-%m-%d %H:%M"))
         return f"отклик: обновлено выпусков {updated}"
 
@@ -392,7 +408,30 @@ class StudioModule:
             for r in records
         ]
         _write_json(path, records)
+        project = self.studio.get(project_id) or {}
+        record = next(r for r in records if r["channel"] == channel)
+        self._snapshot_event(project, record, events.actor())
         return self.view(project_id)
+
+    def _snapshot_event(self, project: dict, record: dict, actor: str) -> None:
+        """Последний снимок отклика записи — в журнал событий, по событию на метрику."""
+        snapshot = (record.get("stats") or [{}])[-1]
+        for metric in ("views", "members"):
+            if snapshot.get(metric) is None:
+                continue
+            self.events.emit(
+                "stats.snapshot",
+                actor=actor,
+                ts=snapshot.get("at"),
+                project_id=project.get("id"),
+                scenario=project.get("scenario"),
+                channel_id=record["channel"],
+                publication_id=record.get("attempt_id"),
+                metric=metric,
+                value=snapshot[metric],
+                age_h=snapshot.get("age_h"),
+                source="manual" if snapshot.get("manual") else "telegram",
+            )
 
     def _poster_url(self, project_id: str, folder) -> str | None:
         path = steps.find(folder, "poster", steps.IMAGE_EXT)

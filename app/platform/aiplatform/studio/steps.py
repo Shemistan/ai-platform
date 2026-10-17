@@ -979,6 +979,23 @@ def step_publish(ctx: StepContext) -> None:
             result = publish.publish(channel, video=video, title=title, post=post, out_dir=ctx.path("publish"))
             record = journal.put(result | {"label": channel.label})
         ctx.log(f"{channel.label}: {record['message']}")
+        again = channel.type == publish.TELEGRAM and force and prev is not None and send_state(prev) == SENT
+        published_event(ctx, channel, record, again=again)
+
+
+def published_event(ctx: StepContext, channel: publish.Channel, record: dict, *, again: bool) -> None:
+    """Публикация в журнал событий: ушло в Telegram (или повторно) либо готов пакет для ручной загрузки."""
+    if channel.type == publish.MANUAL:
+        event = "publication.packaged"
+    else:
+        event = "publication.republished" if again else "publication.sent"
+    ctx.emit(
+        event,
+        channel_id=channel.id,
+        publication_id=record.get("attempt_id"),
+        source=channel.type,
+        props={"format": channel.format, "message_id": record.get("message_id")},
+    )
 
 
 def unclear_note(labels: list[str]) -> str:
@@ -1006,18 +1023,31 @@ def journaled(journal: Journal, channel: publish.Channel, record: dict, part: st
             record = record | {"parts": dict(record.get("parts") or {}) | {part: entry}}
         return journal.put(record)
 
+    def failed(state: str, exc: Exception) -> None:
+        journal.ctx.emit(
+            "publication.failed",
+            channel_id=channel.id,
+            publication_id=record.get("attempt_id"),
+            source=channel.type,
+            error_class=type(exc).__name__,
+            props={"state": state, "part": part},
+        )
+
     mark(SENDING)
     try:
         message_id = send()
     except publish.Unknown as exc:
         mark(UNKNOWN, message=f"{exc}.")
+        failed(UNKNOWN, exc)
         raise Waiting(unclear_note([channel.label])) from exc
     except StudioError as exc:
         mark(SEND_FAILED, message=str(exc))
+        failed(SEND_FAILED, exc)
         raise
     except Exception as exc:
         # Сбой уже после начала отправки: ушёл ли пост — неизвестно, повтор сам не шлём.
         mark(UNKNOWN, message=f"Сбой при отправке: {exc!r}.")
+        failed(UNKNOWN, exc)
         raise Waiting(unclear_note([channel.label])) from exc
     return mark(SENT, message_id=message_id)
 
