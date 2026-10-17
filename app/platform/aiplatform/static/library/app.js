@@ -189,7 +189,7 @@ function renderCard() {
     }
   };
 
-  const title = h("input", { type: "text", value: c.title, "aria-label": "Название", style: "font-size:17px;font-weight:600" });
+  const title = h("input", { type: "text", value: c.title, "aria-label": "Название", class: "title-input" });
   const summary = h("input", { type: "text", value: c.summary || "", placeholder: "1–3 предложения: о чём статья и главный вывод" });
   const script = h("textarea", { rows: 12, class: "mono", placeholder: "Текст, который прочитает модель. Его можно взять из исходного или поручить агенту." });
   script.value = c.script || "";

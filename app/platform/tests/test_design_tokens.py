@@ -29,3 +29,22 @@ def offenders(pattern):
 class TokensTest(unittest.TestCase):
     def test_radius_only_from_tokens(self):
         self.assertEqual(offenders(r"border-radius: *[0-9]"), [])
+
+    def test_font_size_only_from_tokens(self):
+        # И отдельное свойство, и шорткат font: 13px/1.5 …
+        self.assertEqual(offenders(r"font(-size)?: *[0-9]"), [])
+
+    def test_type_scale_in_rem(self):
+        tokens = (STATIC / "tokens.css").read_text(encoding="utf-8")
+        sizes = re.findall(r"--fs-[\w-]+: *([^;]+);", tokens)
+        self.assertEqual(len(sizes), 6)
+        self.assertTrue(all(s.endswith("rem") for s in sizes), sizes)
+
+    def test_no_inline_font_size_in_js(self):
+        found = [
+            f"{p.relative_to(STATIC)}:{n}"
+            for p in sorted(STATIC.rglob("*.js"))
+            for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+            if "font-size:" in line
+        ]
+        self.assertEqual(found, [])

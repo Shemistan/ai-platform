@@ -1,5 +1,5 @@
 /* Основа страницы и шапка-вкладки платформы. Токены — в /tokens.css (подключается перед этим файлом). */
-body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--font); }
+body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/var(--lh-body) var(--font); }
 
 .platform-nav {
   position: sticky;
@@ -13,7 +13,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-.platform-nav .brand { font-weight: 700; letter-spacing: .02em; margin-right: 8px; }
+.platform-nav .brand { font-weight: var(--fw-bold); letter-spacing: .02em; margin-right: 8px; }
 .platform-nav .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
 .platform-nav .tabs a {
   display: block;
@@ -33,16 +33,16 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var
   border-radius: var(--r-pill);
   background: var(--warn);
   color: var(--panel);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 18px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  line-height: 1.5;
   text-align: center;
 }
 .platform-nav .badge[hidden] { display: none; }
 .platform-nav .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
-.platform-nav .gpu { margin-left: auto; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.platform-nav .gpu { margin-left: auto; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
 .platform-nav .gpu.busy { color: var(--warn); }
-.platform-nav .version { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.platform-nav .version { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
 /* Узкий экран: шапка в одну строку и не липнет — 13 вкладок прокручиваются вбок,
    активная вкладка прокручена в видимую область (nav.js). */
 @media (max-width: 640px) {
@@ -52,7 +52,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var
   .platform-nav .tabs::-webkit-scrollbar { display: none; }
   .platform-nav .tabs > li { flex: none; }
   .platform-nav .tabs a { padding: 6px 10px; }
-  .platform-nav .gpu { flex: none; max-width: 32vw; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+  .platform-nav .gpu { flex: none; max-width: 32vw; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); }
   .platform-nav .version { display: none; }
 }
 .platform-problems {
@@ -61,6 +61,6 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var
   border-radius: var(--r-md);
   background: var(--warn-bg);
   color: var(--warn);
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 .platform-problems ul { margin: 4px 0 0; padding-left: 18px; }

@@ -6,10 +6,10 @@
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 
 /* Таблицы вкладки — общие .data-table из ui.css; здесь только своё. */
-.data-table td.version { font: 13px var(--mono); white-space: nowrap; }
-.data-table tr.group td { background: var(--sunken); font-weight: 600; font-size: 13px; }
-.aliases { color: var(--muted); font-size: 12px; }
-.disclaimer { font-size: 13px; }
+.data-table td.version { font: var(--fs-sm) var(--mono); white-space: nowrap; }
+.data-table tr.group td { background: var(--sunken); font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
+.aliases { color: var(--muted); font-size: var(--fs-xs); }
+.disclaimer { font-size: var(--fs-sm); }
 .row-added td { background: var(--ok-bg); }
 .row-changed td { background: var(--warn-bg); }
 .row-removed td { background: var(--bad-bg); text-decoration: line-through; }
