@@ -34,6 +34,7 @@ import os
 import re
 import secrets
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -73,6 +74,15 @@ WELCOME = (
 )
 GOODBYE = "Отписал. Чтобы снова получать озвучки, пришли /start."
 HINT = "Я только рассылаю озвучки статей. Команды: /start — подписаться, /stop — отписаться."
+NEED_INVITE = "Подписка по приглашению: пришли /start <код> или открой ссылку-приглашение."
+FULL = "Мест в рассылке пока нет."
+# Защита от флуда (SEC-012): одному чату — не больше ответа раз в REPLY_INTERVAL_S,
+# число подписчиков ограничено, подписку можно закрыть инвайт-кодом.
+REPLY_INTERVAL_ENV = "NARRATOR_BOT_REPLY_INTERVAL"
+REPLY_INTERVAL_S = 60.0
+MAX_SUBSCRIBERS_ENV = "NARRATOR_BOT_MAX_SUBSCRIBERS"  # 0 — без ограничения
+MAX_SUBSCRIBERS = 1000
+INVITE_ENV = "NARRATOR_BOT_INVITE"  # пусто — /start без кода
 
 
 class TelegramError(RuntimeError):
@@ -349,13 +359,65 @@ def chat_name(chat: dict) -> str:
     return name or str(chat.get("id", "?"))
 
 
-def pull(bot: Bot, state: State, timeout: int = 0) -> list[Subscriber]:
+def _env_number(name: str, default: float) -> float:
+    try:
+        return max(float(os.environ.get(name, "") or default), 0.0)
+    except ValueError:
+        return default
+
+
+class ReplyLimiter:
+    """Не чаще одного ответа чату в interval секунд; память — только о недавних чатах."""
+
+    def __init__(self, interval: float | None = None, clock: Callable[[], float] | None = None):
+        if interval is None:
+            interval = _env_number(REPLY_INTERVAL_ENV, REPLY_INTERVAL_S)
+        self.interval = interval
+        self._clock = clock or time.monotonic
+        self._last: dict[int, float] = {}
+
+    def allow(self, chat_id: int) -> bool:
+        now = self._clock()
+        if len(self._last) > 10_000:  # флуд с тысяч чатов не раздувает память
+            self._last = {k: t for k, t in self._last.items() if now - t < self.interval}
+        last = self._last.get(chat_id)
+        if last is not None and now - last < self.interval:
+            return False
+        self._last[chat_id] = now
+        return True
+
+
+_LIMITER = ReplyLimiter()  # общий на процесс: bot serve зовёт pull в цикле
+
+
+def pull(
+    bot: Bot,
+    state: State,
+    timeout: int = 0,
+    limiter: ReplyLimiter | None = None,
+    max_subscribers: int | None = None,
+    invite: str | None = None,
+) -> list[Subscriber]:
     """Забирает накопившиеся сообщения и ведёт по ним список подписчиков.
 
     /start — подписка, /stop — отписка, остальное — подсказка. Возвращает тех,
     кто подписался в этот заход. Курсор getUpdates хранится в state.offset,
     поэтому одно и то же сообщение не обрабатывается дважды.
+
+    Флуд (SEC-012): ответ чату — не чаще раза в interval лимитера; повторный
+    /start уже подписанного — без ответа; сверх max_subscribers и без
+    инвайт-кода (`/start <код>`, если он задан) — не подписываем.
     """
+    limiter = limiter or _LIMITER
+    if max_subscribers is None:
+        max_subscribers = int(_env_number(MAX_SUBSCRIBERS_ENV, MAX_SUBSCRIBERS))
+    if invite is None:
+        invite = os.environ.get(INVITE_ENV, "").strip()
+
+    def reply(chat_id: int, text: str) -> None:
+        if limiter.allow(chat_id):
+            bot.request("sendMessage", {"chat_id": chat_id, "text": text})
+
     params = {"offset": state.offset, "allowed_updates": ["message"]}
     if timeout:
         params["timeout"] = timeout
@@ -368,17 +430,27 @@ def pull(bot: Bot, state: State, timeout: int = 0) -> list[Subscriber]:
         chat_id = chat.get("id")
         if chat_id is None:
             continue
-        text = (msg.get("text") or "").strip().lower()
-        command = text.split("@")[0].split()[0] if text else ""
+        words = (msg.get("text") or "").strip().split()
+        command = words[0].split("@")[0].lower() if words else ""
         if command == "/start":
-            if state.upsert(chat_id, chat_name(chat)):
+            sub = state.find(chat_id)
+            if sub is not None and sub.active:
+                continue  # уже подписан — молчим
+            code = words[1] if len(words) > 1 else ""
+            if invite and not secrets.compare_digest(code.encode(), invite.encode()):
+                reply(chat_id, NEED_INVITE)
+            elif max_subscribers and len(state.active()) >= max_subscribers:
+                reply(chat_id, FULL)
+            elif state.upsert(chat_id, chat_name(chat)):
                 fresh.append(state.find(chat_id))
-            bot.request("sendMessage", {"chat_id": chat_id, "text": WELCOME})
+                reply(chat_id, WELCOME)
         elif command == "/stop":
-            state.deactivate(chat_id, "отписался командой /stop")
-            bot.request("sendMessage", {"chat_id": chat_id, "text": GOODBYE})
+            sub = state.find(chat_id)
+            if sub is not None and sub.active:
+                state.deactivate(chat_id, "отписался командой /stop")
+                reply(chat_id, GOODBYE)
         else:
-            bot.request("sendMessage", {"chat_id": chat_id, "text": HINT})
+            reply(chat_id, HINT)
     return fresh
 
 

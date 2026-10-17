@@ -161,6 +161,64 @@ def test_pull_ignores_repeated_start():
     assert telegram.pull(Bot("t", transport), state) == []
 
 
+@pytest.fixture(autouse=True)
+def fresh_limiter(monkeypatch):
+    """Общий лимитер ответов процесса — свой на каждый тест."""
+    monkeypatch.setattr(telegram, "_LIMITER", telegram.ReplyLimiter(interval=60))
+    for name in (telegram.INVITE_ENV, telegram.MAX_SUBSCRIBERS_ENV, telegram.REPLY_INTERVAL_ENV):
+        monkeypatch.delenv(name, raising=False)
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_pull_flood_gets_one_hint():
+    # SEC-012: 10 сообщений подряд от одного чата — не больше одного ответа.
+    updates = [message(i, 42, f"спам {i}") for i in range(1, 11)]
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": updates}]})
+    clock = FakeClock()
+    limiter = telegram.ReplyLimiter(interval=60, clock=clock)
+    telegram.pull(Bot("t", transport), State(), limiter=limiter)
+    assert transport.sent_to("sendMessage") == [42]
+    clock.now += 61  # через минуту снова можно ответить
+    transport.replies["getUpdates"] = [{"ok": True, "result": [message(11, 42, "ещё")]}]
+    telegram.pull(Bot("t", transport), State(offset=11), limiter=limiter)
+    assert transport.sent_to("sendMessage") == [42, 42]
+
+
+def test_pull_repeated_start_is_silent():
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": [message(1, 42, "/start")]}]})
+    state = State()
+    state.upsert(42, "Аня")
+    telegram.pull(Bot("t", transport), state)
+    assert transport.sent_to("sendMessage") == []
+
+
+def test_pull_respects_subscriber_cap_and_invite():
+    updates = [message(1, 1, "/start"), message(2, 2, "/start"), message(3, 3, "/start")]
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": updates}]})
+    state = State()
+    telegram.pull(Bot("t", transport), state, max_subscribers=2)
+    assert [s.chat_id for s in state.active()] == [1, 2]
+
+    updates = [
+        message(4, 7, "/start"),
+        message(5, 8, "/start неверный"),
+        message(6, 9, "/start Код-1"),
+    ]
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": updates}]})
+    state = State()
+    new = telegram.pull(Bot("t", transport), state, invite="Код-1")
+    assert [s.chat_id for s in new] == [9]
+    to_7 = [p["text"] for _, p, _ in transport.calls if p.get("chat_id") == 7]
+    assert to_7 == [telegram.NEED_INVITE]
+
+
 def test_call_raises_on_api_error():
     error = {"ok": False, "error_code": 401, "description": "Unauthorized"}
     transport = FakeTransport({"getMe": error})
