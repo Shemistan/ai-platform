@@ -540,6 +540,7 @@ function setBanner(text, kind) {
   banner.hidden = !shown;
   if (!shown) return;
   banner.className = `banner ${shown.kind}`;
+  banner.setAttribute("role", shown.kind === "error" ? "alert" : "status"); // ошибку зачитать сразу
   banner.replaceChildren(...[].concat(shown.text));
 }
 
