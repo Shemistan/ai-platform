@@ -293,7 +293,7 @@ class JobManager:
                 with self._lock:
                     job["progress"]["stage"] = "Запуск"
                     job["started_at"] = time.time()  # время генерации — без ожидания GPU
-                runner.run(argv, on_line, cancel, missing_hint=INSTALL_HINT)
+                runner.run(argv, on_line, cancel, missing_hint=INSTALL_HINT, kind="video")
             if not output.is_file() or output.stat().st_size == 0:
                 raise runner.RunFailed("Генерация завершилась без ошибки, но файл видео не появился.")
         except runner.Canceled:

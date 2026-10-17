@@ -9,6 +9,8 @@
 человек может загружать файлы и подтверждать шаги, которые сейчас не
 выполняются; как только шаг готов, запуск подхватывает его зависящие сам.
 Правка результата шага сбрасывает зависящие от него шаги в «не начат».
+Каждая смена состояния шага и действие человека пишутся в журнал событий
+(core/events.py): состояние в project.json перезаписывается, журнал — нет.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import json
+import logging
 import re
 import threading
 import time
@@ -24,12 +27,15 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import cleanup, runner
+from aiplatform.core import cleanup, events, runner
+from aiplatform.core.log import event as log_event
 from aiplatform.studio.llm import StudioError
 
 PENDING, RUNNING, DONE, FAILED, WAITING, SKIPPED = "pending", "running", "done", "failed", "waiting", "skipped"
 FINISHED = (DONE, SKIPPED)
 LOG_TAIL = 300
+INTERRUPTED = "Сервис был перезапущен во время шага."
+NO_AUTO_RESUME = ("publish",)  # повтор публикации — только руками (см. BE-001)
 _ID = re.compile(r"^[0-9a-f]{12}$")
 
 
@@ -117,6 +123,10 @@ class StepContext:
     def progress(self, stage: str, percent: float | None = None) -> None:
         self.studio._progress(self.project["id"], self.step, stage, percent)
 
+    def emit(self, event: str, **fields) -> None:
+        """Событие в журнал от имени шага (публикация и т.п.)."""
+        self.studio._emit(self.project, event, step=self.step, **fields)
+
     def remember(self, **values) -> None:
         """Сохранить в состоянии шага (id задачи вкладки и т.п.)."""
         self.studio._remember(self.project["id"], self.step, values)
@@ -146,10 +156,13 @@ StepFn = Callable[[StepContext], None]
 
 
 class Studio:
-    def __init__(self, root: Path, steps: dict[str, StepFn], services: object = None) -> None:
+    def __init__(
+        self, root: Path, steps: dict[str, StepFn], services: object = None, journal: events.EventLog | None = None
+    ) -> None:
         self.root = root
         self.steps = steps
         self.services = services  # то, чем шаги пользуются: вкладки, LLM, рендер — см. steps.Services
+        self.events = journal or events.EventLog(None)  # журнал событий; без него — не пишется
         # Запуск закончился: (проект, статусы шагов на старте) — для уведомлений; зовётся вне замка.
         self.on_stop: Callable[[dict, dict[str, str]], None] | None = None
         self._before: dict[str, dict[str, str]] = {}
@@ -157,6 +170,9 @@ class Studio:
         self._projects: dict[str, dict] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._cancels: dict[str, threading.Event] = {}
+        # Шаги, которые выполнялись, когда сервис остановился: (проект, шаг) — см. resume_interrupted.
+        self.interrupted: list[tuple[str, str]] = []
+        self._closing = False  # close(): отмена от остановки сервиса, а не от человека
         root.mkdir(parents=True, exist_ok=True)
         self._load()
 
@@ -187,9 +203,10 @@ class Studio:
                     # В старом выпуске настройка нового шага выключена: шаг сразу пропущен.
                     project["steps"][step.id] = _fresh_state() | {"status": SKIPPED, "note": "Не было в этой версии."}
                     changed = True
-            for state in project["steps"].values():
+            for step_id, state in project["steps"].items():
                 if state["status"] == RUNNING:
-                    state.update(status=FAILED, error="Сервис был перезапущен во время шага.", progress=None)
+                    state.update(status=FAILED, error=INTERRUPTED, progress=None)
+                    self.interrupted.append((project["id"], step_id))
                     changed = True
             if project.get("running"):
                 project["running"] = False
@@ -238,6 +255,7 @@ class Studio:
             if project["running"] or not project.get("archived"):
                 return 0
             del self._projects[project_id]
+        self._emit(project, "project.deleted", actor=events.actor())
         return cleanup.remove_tree(self.project_dir(project_id))
 
     def archive(self, project_id: str, archived: bool) -> dict:
@@ -247,6 +265,7 @@ class Studio:
             project["archived"] = archived
             if archived:
                 project["auto"] = False  # архивный выпуск сам не продолжается
+            self._emit(project, "project.archived", actor=events.actor(), props={"archived": archived})
             return set()
 
         return self.update(project_id, apply)
@@ -271,6 +290,7 @@ class Studio:
         with self._lock:
             self._projects[project_id] = project
             self._save(project)
+            self._emit(project, "project.created", actor=events.actor())
             return copy.deepcopy(project)
 
     def update(self, project_id: str, mutate: Callable[[dict], set[str]]) -> dict:
@@ -296,8 +316,19 @@ class Studio:
             self._check_idle(project, step_id)
             self._reset(project, step_id, include_self=False)
             state = project["steps"][step_id]
+            status_from, waited = state["status"], _end_wait(state)
             state.update(status=DONE, error=None, note=note, progress=None, updated_at=time.time())
             self._save(project)
+            self._emit(
+                project,
+                "step.human_input",
+                actor=events.actor(),
+                step=step_id,
+                status_from=status_from,
+                status_to=DONE,
+                duration_s=waited,
+                props={"note": note} if note else None,
+            )
             if resume:
                 self._resume(project)
             return copy.deepcopy(project)
@@ -337,7 +368,11 @@ class Studio:
             state["approved"] = True
             state["poke"] = True
             project["auto"] = True
+            waited = _end_wait(state)
             self._save(project)
+            self._emit(
+                project, "step.approved", actor=events.actor(), step=step_id, status_from=WAITING, duration_s=waited
+            )
             self._resume(project)
             return copy.deepcopy(project)
 
@@ -349,17 +384,57 @@ class Studio:
             if project["running"]:
                 raise Conflict("Проект уже выполняется.")
             if only is not None:
+                prev = project["steps"][only]
+                status_from, waited, attempt = prev["status"], _end_wait(prev), prev.get("attempt", 0)
                 self._reset(project, only, include_self=True)
                 # Шаг перезапустили руками — нужен новый вариант, а не готовый из кэша.
                 project["steps"][only].update({"fresh": True} | (state or {}))
+                if attempt:
+                    self._emit(
+                        project,
+                        "step.rerun",
+                        actor=events.actor(),
+                        step=only,
+                        status_from=status_from,
+                        attempt=attempt + 1,
+                        duration_s=waited,
+                    )
             else:
                 project["auto"] = True
                 # «Запустить всё» ещё раз пробует шаги, которые ждали человека или упали.
-                for state in project["steps"].values():
-                    if state["status"] in (WAITING, FAILED):
-                        state["poke"] = True
+                for step_id, step_state in project["steps"].items():
+                    if step_state["status"] in (WAITING, FAILED):
+                        step_state["poke"] = True
+                        waited = _end_wait(step_state)
+                        if waited is not None:
+                            self._emit(
+                                project,
+                                "step.human_input",
+                                actor=events.actor(),
+                                step=step_id,
+                                status_from=WAITING,
+                                duration_s=waited,
+                                props={"action": "run_all"},
+                            )
             self._start(project, only)
             return copy.deepcopy(project)
+
+    def resume_interrupted(self, project_id: str, step_id: str) -> bool:
+        """После рестарта: один раз продолжить шаг, прерванный остановкой сервиса.
+
+        Только у выпуска, который шёл сам (auto), не в архиве и не шаг публикации; флаг
+        resumed в состоянии шага не даёт зациклиться, если сервис падает на этом шаге снова.
+        True — выпуск запущен."""
+        with self._lock:
+            project = self._projects.get(project_id)
+            if project is None or project["running"] or project.get("archived") or not project.get("auto"):
+                return False
+            state = project["steps"][step_id]
+            if step_id in NO_AUTO_RESUME or state.get("resumed") or state["status"] != FAILED:
+                return False
+            state.update(poke=True, resumed=True)
+            self._start(project, None)
+            return True
 
     def cancel(self, project_id: str) -> dict:
         with self._lock:
@@ -378,6 +453,7 @@ class Studio:
 
     def close(self) -> None:
         with self._lock:
+            self._closing = True
             events = list(self._cancels.values())
             threads = list(self._threads.values())
         for event in events:
@@ -434,13 +510,15 @@ class Studio:
         targets = ([step_id] if include_self else []) + dependents(step_id)
         for target in targets:
             state = project["steps"][target]
-            keep = {k: state[k] for k in ("job", "keep") if k in state}
+            # Номер попытки и начало ожидания переживают сброс: по ним журнал считает перезапуски
+            # и время, которое шаг ждал человека.
+            keep = {k: state[k] for k in ("job", "keep", "attempt", "waiting_since") if k in state}
             project["steps"][target] = _fresh_state() | keep
 
     def _log(self, project_id: str, message: str) -> None:
         with self._lock:
             project = self._projects[project_id]
-            stamp = time.strftime("%H:%M:%S")
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
             project["log"].append(f"{stamp} {message}")
             del project["log"][:-LOG_TAIL]
 
@@ -475,6 +553,10 @@ class Studio:
             project["title"] = title
             self._save(project)
 
+    def _emit(self, project: dict, event: str, *, actor: str = events.SYSTEM, **fields) -> None:
+        """Событие выпуска в журнал; сбой записи журнал глотает сам."""
+        self.events.emit(event, actor=actor, project_id=project["id"], scenario=project.get("scenario"), **fields)
+
     def _set(self, project_id: str, step_id: str, **values) -> dict:
         with self._lock:
             project = self._projects[project_id]
@@ -487,7 +569,7 @@ class Studio:
     def _run(self, project_id: str, only: str | None, cancel: threading.Event) -> None:
         step: Step | None = STEP_BY_ID[only] if only is not None else None
         try:
-            while not cancel.is_set():
+            while not cancel.is_set() and not self._shutting_down():
                 if only is None:
                     # Выбор шага и решение «больше нечего» — под замком: загрузка человека,
                     # пришедшая в этот момент, либо попадёт в выбор, либо поднимет новый запуск.
@@ -519,44 +601,115 @@ class Studio:
         self._save(project)
 
     def _run_step(self, project_id: str, step: Step, cancel: threading.Event) -> bool:
+        """Шаг с записью в лог процесса: старт и итог с длительностью."""
+        started = time.monotonic()
+        log_event("step.start", project=project_id, step=step.id)
+        try:
+            return self._run_step_body(project_id, step, cancel)
+        finally:
+            with self._lock:
+                current = self._projects[project_id]["steps"][step.id]
+                if current["status"] == DONE:  # шаг дошёл до конца — следующий рестарт снова можно продолжить
+                    current.pop("resumed", None)
+                state = dict(current)
+            log_event(
+                f"step.{state['status']}",
+                level=logging.WARNING if state["status"] == FAILED else logging.INFO,
+                project=project_id,
+                step=step.id,
+                duration_s=round(time.monotonic() - started, 1),
+                error=state.get("error") if state["status"] == FAILED else None,
+            )
+
+    def _shutting_down(self) -> bool:
+        return self._closing or runner.stopping()
+
+    def _run_step_body(self, project_id: str, step: Step, cancel: threading.Event) -> bool:
         """True — можно идти дальше."""
+        with self._lock:
+            state = self._projects[project_id]["steps"][step.id]
+            status_from, waited = state["status"], _end_wait(state)
+            attempt = state.get("attempt", 0) + 1
+        started = time.time()
         project = self._set(
-            project_id, step.id, status=RUNNING, error=None, note=None, progress=None, started_at=time.time()
+            project_id,
+            step.id,
+            status=RUNNING,
+            error=None,
+            note=None,
+            progress=None,
+            started_at=started,
+            attempt=attempt,
+        )
+        self._emit(
+            project,
+            "step.started",
+            step=step.id,
+            status_from=status_from,
+            status_to=RUNNING,
+            attempt=attempt,
+            props={"waited_s": round(waited, 3)} if waited is not None else None,
         )
         ctx = StepContext(self, project, step.id, cancel)
         self._log(project_id, f"▶ {step.label}")
+
+        def finish(event: str, status: str, error_class: str | None = None, **values) -> None:
+            done = self._set(project_id, step.id, status=status, progress=None, **values)
+            self._emit(
+                done,
+                event,
+                step=step.id,
+                status_from=RUNNING,
+                status_to=status,
+                attempt=attempt,
+                duration_s=time.time() - started,
+                error_class=error_class,
+            )
+
         try:
             self.steps[step.id](ctx)
         except Waiting as exc:
-            self._set(project_id, step.id, status=WAITING, note=str(exc), progress=None)
+            finish("step.waiting", WAITING, note=str(exc), waiting_since=time.time())
             self._log(project_id, f"⏸ {step.label}: {exc}")
             return False
         except Skip as exc:
-            self._set(project_id, step.id, status=SKIPPED, note=str(exc), progress=None)
+            finish("step.skipped", SKIPPED, note=str(exc))
             self._log(project_id, f"↷ {step.label}: {exc}")
             return True
-        except runner.Canceled:
-            self._set(project_id, step.id, status=PENDING, note="Остановлено.", progress=None)
-            self._log(project_id, f"■ {step.label}: остановлено")
-            return False
-        except StudioError as exc:
-            self._set(project_id, step.id, status=FAILED, error=str(exc), progress=None)
-            self._log(project_id, f"✗ {step.label}: {exc}")
-            return False
         except Exception as exc:  # noqa: BLE001 — сбой шага не должен уронить поток проекта
-            self._set(project_id, step.id, status=FAILED, error=f"Внутренняя ошибка: {exc!r}", progress=None)
-            self._log(project_id, f"✗ {step.label}: {exc!r}")
+            if self._shutting_down():
+                # Остановка сервиса (SIGTERM): шаг остаётся «выполняется» — после рестарта
+                # он будет прерванным (уведомление и, для auto, продолжение), а не сломанным.
+                self._log(project_id, f"■ {step.label}: сервис останавливается")
+                return False
+            if isinstance(exc, runner.Canceled):
+                finish("step.canceled", PENDING, note="Остановлено.")
+                self._log(project_id, f"■ {step.label}: остановлено")
+            elif isinstance(exc, StudioError):
+                finish("step.failed", FAILED, type(exc).__name__, error=str(exc))
+                self._log(project_id, f"✗ {step.label}: {exc}")
+            else:
+                finish("step.failed", FAILED, type(exc).__name__, error=f"Внутренняя ошибка: {exc!r}")
+                self._log(project_id, f"✗ {step.label}: {exc!r}")
             return False
         if cancel.is_set():
-            self._set(project_id, step.id, status=PENDING, note="Остановлено.", progress=None)
+            if self._shutting_down():  # как выше: шаг прерван остановкой сервиса
+                return False
+            finish("step.canceled", PENDING, note="Остановлено.")
             return False
-        self._set(project_id, step.id, status=DONE, progress=None)
+        finish("step.finished", DONE)
         self._log(project_id, f"✓ {step.label}")
         return True
 
 
 def _fresh_state() -> dict:
     return {"status": PENDING, "error": None, "note": None, "progress": None, "updated_at": None}
+
+
+def _end_wait(state: dict) -> float | None:
+    """Закрыть ожидание человека: убрать waiting_since из состояния, вернуть, сколько секунд ждали."""
+    since = state.pop("waiting_since", None)
+    return max(0.0, time.time() - since) if isinstance(since, (int, float)) else None
 
 
 def attention(project: dict) -> dict | None:

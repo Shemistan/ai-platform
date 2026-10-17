@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, progressBar, safe, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, progressBar, safe, STATUS, statusChip, toneOf } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -153,7 +153,7 @@ function fieldsOf(values, prefix) {
                 h("input", { type: "checkbox", name: id("channels"), value: c.id, checked: values.channels.includes(c.id) }),
                 c.label,
                 h("span", { class: "muted" }, c.format === "vertical" ? "9:16" : "16:9"),
-                c.problem ? h("span", { class: "status failed" }, c.problem) : null,
+                c.problem ? h("span", { class: "chip tone-danger" }, c.problem) : null,
               ),
             ),
             // Удаление канала затрагивает все сценарии — только на вкладке «Каналы», с подтверждением.
@@ -178,6 +178,11 @@ function fieldsOf(values, prefix) {
           ["photo", "Картинка, затем аудио", values.post_format === "photo"],
         ]),
       ),
+    // «Видео по статье»: без источника выпуск не опубликуется — строка в конце поста и на последнем слайде.
+    source_url: () =>
+      h("label", { class: "field" }, h("span", { class: "hint" }, "Ссылка на оригинал статьи"), h("input", { type: "url", id: id("source_url"), value: values.source_url || "", placeholder: "https://…" })),
+    source_author: () =>
+      h("label", { class: "field" }, h("span", { class: "hint" }, "Автор оригинала"), h("input", { type: "text", id: id("source_author"), value: values.source_author || "", placeholder: "Имя автора или издание" })),
     review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
     draft: () =>
       check(
@@ -239,6 +244,7 @@ function settingsForm(values, prefix) {
     group("Слайды", f.slide_s(), f.reading()),
     group("Оформление", f.frame(), f.branding(), f.disclaimers()),
     group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish()),
+    scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author()) : null,
     f.review_text(),
   );
 }
@@ -255,7 +261,10 @@ const POST_SETTINGS = [
 ]; // prettier-ignore
 
 // Читает поля формы с этим префиксом; names — какие именно (engine читается вместе с голосом).
-function readSettings(prefix, names = scenario === "post" ? POST_SETTINGS : SETTING_NAMES) {
+// У статьи ещё источник: ссылка и автор оригинала.
+const ARTICLE_SETTINGS = [...SETTING_NAMES, "source_url", "source_author"];
+
+function readSettings(prefix, names = { post: POST_SETTINGS, article: ARTICLE_SETTINGS }[scenario] || SETTING_NAMES) {
   const get = (name) => document.getElementById(`${prefix}-${name}`);
   const radio = (name) => document.querySelector(`input[name="${prefix}-${name}"]:checked`)?.value;
   const special = {
@@ -786,7 +795,7 @@ function jobLink(step) {
   return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${tab}»`);
 }
 
-const VERDICT_TONE = { готово: "done", "готово с оговорками": "waiting", "не готово": "failed" };
+const VERDICT_TONE = { готово: "success", "готово с оговорками": "warning", "не готово": "danger" };
 
 // Вердикт судьи дайджеста: отдельный запуск claude проверил выпуск по первоисточникам.
 function verdictBox(review) {
@@ -795,7 +804,7 @@ function verdictBox(review) {
   return h(
     "div",
     { class: "note verdict" },
-    h("span", { class: `status ${VERDICT_TONE[review.verdict] || "pending"}` }, label),
+    h("span", { class: `chip tone-${VERDICT_TONE[review.verdict] || "neutral"}` }, label),
     review.verdict === "не готово" ? h("span", { class: "hint" }, " Публикация ждёт: поправь выпуск или разреши её в шаге «Публикация».") : null,
     h("details", {}, h("summary", { class: "link" }, "Отчёт судьи"), h("pre", { class: "log" }, review.text)),
   );
@@ -913,8 +922,8 @@ function stepBody(step) {
                 h("input", { type: "checkbox", checked: pick.channels.has(c.id), onchange: (e) => (e.target.checked ? pick.channels.add(c.id) : pick.channels.delete(c.id)) }),
                 c.label,
                 h("span", { class: "muted" }, c.format === "vertical" ? "9:16" : "16:9"),
-                sentTo.has(c.id) ? h("span", { class: "status done" }, "уже опубликовано") : null,
-                c.problem ? h("span", { class: "status failed" }, c.problem) : null,
+                sentTo.has(c.id) ? h("span", { class: "chip tone-success" }, "уже опубликовано") : null,
+                c.problem ? h("span", { class: "chip tone-danger" }, c.problem) : null,
               ),
             ),
           ),
@@ -1070,7 +1079,7 @@ function renderStep(step) {
         : h("button", { type: "button", class: "secondary small", disabled: p.running, onclick: () => rerunStep(step.id) }, "Перезапустить шаг")
       : null,
   );
-  const attrs = { class: `step ${step.status}${folded ? " collapsed" : ""}`, id: `step-${step.id}`, tabindex: "-1" };
+  const attrs = { class: `step ${step.status} tone-${toneOf(step.status)}${folded ? " collapsed" : ""}`, id: `step-${step.id}`, tabindex: "-1" };
   if (folded) return h("article", attrs, head);
   return h(
     "article",
@@ -1141,11 +1150,11 @@ function renderHead(project) {
     next ? h("button", { type: "button", class: "primary", onclick: next.run }, next.label) : null,
     // «Запустить всё» — главное действие, только когда выпуску больше ничего от тебя не нужно.
     !running && !next?.runAll ? h("button", { type: "button", class: "secondary", onclick: () => act("run", {}) }, "Запустить всё") : null,
-    project.settings.draft ? h("span", { class: "status waiting" }, "черновик") : null,
+    project.settings.draft ? h("span", { class: "chip tone-warning" }, "черновик") : null,
     project.settings.draft && !running
       ? h("button", { type: "button", class: "secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: makeFinal }, "Сделать чистовик")
       : null,
-    project.archived ? h("span", { class: "status skipped" }, "в архиве") : null,
+    project.archived ? h("span", { class: "chip tone-neutral" }, "в архиве") : null,
     running
       ? null
       : h("button", { type: "button", class: "link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: cloneProject }, "Копия выпуска"),
@@ -1177,7 +1186,7 @@ function renderStepper(project) {
           {},
           h(
             "button",
-            { type: "button", class: `stepper-item ${s.status}`, title: STATUS[s.status] || s.status, onclick: () => goToStep(s.id) },
+            { type: "button", class: `stepper-item ${s.status} tone-${toneOf(s.status)}`, title: STATUS[s.status] || s.status, onclick: () => goToStep(s.id) },
             h("span", { class: "mark", "aria-hidden": "true" }, MARKS[s.status] || "○"),
             h("span", {}, `${i + 1}. ${s.label}`),
             h("span", { class: "sr-only" }, `: ${STATUS[s.status] || s.status}`),

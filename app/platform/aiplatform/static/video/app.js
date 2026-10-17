@@ -1,6 +1,6 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
-import { $, api, h, STATUS, jobProgress } from "/ui.js";
+import { $, api, chip, h, STATUS, jobProgress, statusChip, toneOf } from "/ui.js";
 
 const state = {
   config: null,
@@ -478,8 +478,8 @@ function renderJob() {
 
   const parts = [
     h("div", { class: "job-head" },
-      h("span", { class: `status ${job.status}` }, STATUS[job.status]),
-      job.backend === "fake" ? h("span", { class: "status demo" }, "Демо — не модель") : null,
+      statusChip(job.status),
+      job.backend === "fake" ? chip("Демо — не модель", "warning") : null,
       h("span", { class: "muted small" }, `${job.model_label ? `${job.model_label} · ` : ""}${job.width}×${job.height} · ${job.duration_s} с · seed ${job.seed}${job.audio ? "" : " · без звука"}`),
     ),
     h("p", { class: "job-text" }, isLiving(job) ? "Живое фото: снимок стоит посередине ролика, до и после него — по половине." : job.prompt),
@@ -529,7 +529,7 @@ function renderHistory() {
             h("span", { class: "muted small" },
               `${new Date(job.created_at * 1000).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · ${isLiving(job) ? `${job.duration_s} с` : job.frames.length ? `кадров: ${job.frames.length}` : "без кадров"}`),
           ),
-          h("span", { class: `status ${job.status}` }, job.status === "running" ? `${Math.round(job.progress.percent)}%` : STATUS[job.status]),
+          chip(job.status === "running" ? `${Math.round(job.progress.percent)}%` : STATUS[job.status], toneOf(job.status)),
         ),
       ),
     ),
@@ -590,12 +590,14 @@ async function poll() {
 
 let configBanner = null;
 
+const BANNER_TONE = { warn: "warning", error: "danger" };
+
 function setBanner(text, kind) {
   const banner = $("banner");
   const shown = text ? { text, kind } : configBanner;
   banner.hidden = !shown;
   if (!shown) return;
-  banner.className = `banner ${shown.kind}`;
+  banner.className = `banner${BANNER_TONE[shown.kind] ? ` tone-${BANNER_TONE[shown.kind]}` : ""}`;
   banner.setAttribute("role", shown.kind === "error" ? "alert" : "status"); // ошибку зачитать сразу
   banner.replaceChildren(...[].concat(shown.text));
 }

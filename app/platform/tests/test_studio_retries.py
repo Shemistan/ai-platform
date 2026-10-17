@@ -34,10 +34,10 @@ class RetriesTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir)
         self.video = self.dir / "video.mp4"
         self.video.write_bytes(b"x")
-        self.channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@my_chan", token_env="AIP_TEST_TG")
+        self.channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@my_chan", token_env="AIP_TG_TEST")
         self.sleeps: list[float] = []
         for patch in (
-            mock.patch.dict("os.environ", {"AIP_TEST_TG": TOKEN}),
+            mock.patch.dict("os.environ", {"AIP_TG_TEST": TOKEN}),
             mock.patch.object(publish, "_sleep", self.sleeps.append),
         ):
             patch.start()

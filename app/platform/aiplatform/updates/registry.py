@@ -19,6 +19,7 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from aiplatform.core.fsutil import atomic_write
 
@@ -68,6 +69,12 @@ def _text(item: dict, key: str, limit: int, *, required: bool = True) -> str:
     return value[:limit]
 
 
+def _web(url: str) -> str:
+    """Источник — только http(s)-ссылка: вкладка «Обновления» ставит его в href."""
+    parts = urlsplit(url)
+    return url if parts.scheme.lower() in ("http", "https") and parts.netloc else ""
+
+
 def parse(obj: object) -> list[Entry]:
     """Записи из JSON ({entries: [...]} или список). Ошибка в записи — ValueError с её именем."""
     raw = obj.get("entries") if isinstance(obj, dict) else obj
@@ -101,7 +108,7 @@ def parse(obj: object) -> list[Entry]:
                 aliases=names[:30],
                 disclaimer=_text(item, "disclaimer", 400).rstrip("."),
                 basis=_text(item, "basis", 400, required=False),
-                source=_text(item, "source", 400, required=False),
+                source=_web(_text(item, "source", 400, required=False)),
             )
         )
     return out

@@ -538,7 +538,10 @@ def send_article(bot, state, args, d: Path, meta: Entry, engine: str) -> int:
     if not args.force and not telegram.is_fresh(state, d, engine, tag):
         print(f"телеграм: {library.article_id(d)} ({engine}) уже отправлена, повтор — --force")
         return 0
-    report_delivery(telegram.broadcast(bot, state, d, meta, engine, targets, args.channel))
+    annotation = getattr(args, "annotation", False)
+    report_delivery(
+        telegram.broadcast(bot, state, d, meta, engine, targets, args.channel, annotation)
+    )
     return 0
 
 
@@ -548,7 +551,7 @@ def send_folder(args, d: Path) -> int:
     Как дайджест новостей: mp3 и картинка склеиваются в видео, пост — подпись
     под ним. --as photo — картинка с постом, затем аудио.
     """
-    from narrator import telegram
+    from narrator import registry, telegram
     from narrator.news.cli import audio_seconds
     from narrator.news.video import VideoError, make_frames, make_video
 
@@ -570,7 +573,8 @@ def send_folder(args, d: Path) -> int:
     video = covers = None
     if args.as_ != "photo" and parcel.audio and parcel.image:
         try:
-            poster, thumb, frame = make_frames(parcel.image)
+            notes = registry.notes(parcel.text(), registry.load())  # пометки — в кадре
+            poster, thumb, frame = make_frames(parcel.image, notes)
             video = make_video(poster, frame, parcel.audio, d / f"{d.name}.mp4", seconds)
         except VideoError as e:
             return fail(str(e), 5)
@@ -638,6 +642,9 @@ def cmd_bot_unsent(args) -> int:
             if not telegram.recipients(state, meta):
                 print(f"телеграм: {library.article_id(d)} — рассылать некому")
                 continue
+            if meta.kind == "article" and meta.license not in library.PUBLISHABLE:
+                print(f"телеграм: {library.article_id(d)} — license={meta.license}, пропущена")
+                continue  # без права на переработку — только локально или аннотацией вручную
             print(f"{k}/{len(todo)} {library.article_id(d)}", flush=True)
             done = telegram.broadcast(bot, state, d, meta, engine)
             report_delivery(done)
@@ -819,6 +826,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = bot.add_parser("send", help="отправить озвучку статьи в канал (или подписчикам)")
     b.add_argument("dir")
+    b.add_argument(
+        "--annotation",
+        action="store_true",
+        help="вместо озвучки — аннотация со ссылкой (статья без права на переработку)",
+    )
     b.add_argument("--engine", help="какую версию слать; по умолчанию последняя озвученная")
     where = b.add_mutually_exclusive_group()
     where.add_argument(

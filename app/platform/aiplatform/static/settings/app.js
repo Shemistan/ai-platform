@@ -19,7 +19,7 @@ async function toggle(body) {
   } catch (err) {
     showError(err.message);
     load();
-loadCleanup();
+    loadCleanup();
   }
 }
 
@@ -88,7 +88,7 @@ async function section(name, body) {
   } catch (err) {
     showError(err.message);
     load();
-loadCleanup();
+    loadCleanup();
   }
 }
 
@@ -129,7 +129,13 @@ function renderSchedule(data) {
         ),
       ),
       last ? h("p", { class: "hint" }, `Последний запуск по расписанию: ${last}. Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день.`) : h("p", { class: "hint" }, "Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день."),
-      checkRow("Уведомлять меня", "Когда выпуск ждёт тебя, упал или опубликован. На Mac — системное уведомление; своя команда — AIP_NOTIFY_CMD.", data.notify.enabled, (v) => section("notify", { enabled: v })),
+      checkRow("Уведомлять меня", "Когда выпуск ждёт тебя, упал или опубликован. В Telegram — если указан чат ниже; на Mac — системное уведомление; своя команда — AIP_NOTIFY_CMD.", data.notify.enabled, (v) => section("notify", { enabled: v })),
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "hint" }, "Мой чат в Telegram (id или @username) — бот каналов пишет туда; сначала напиши боту /start"),
+        h("input", { type: "text", value: data.notify.telegram_chat || "", placeholder: "123456789", onchange: (e) => section("notify", { telegram_chat: e.target.value.trim() }) }),
+      ),
       h("div", { class: "actions" }, h("button", { type: "button", class: "small-btn", onclick: () => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)) }, "Проверить уведомление")),
       data.notifications.length
         ? h("details", {}, h("summary", { class: "link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))

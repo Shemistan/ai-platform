@@ -16,7 +16,7 @@ from aiplatform.studio import publish
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.render import VERTICAL, Renderer
 from aiplatform.updates import registry
-from tests.test_studio_flow import NEEDS_FFMPEG, StudioCase, png_bytes
+from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, SOURCE, StudioCase, png_bytes
 
 DEFAULT = registry.Registry(registry.DEFAULT_FILE).entries()
 META_NOTE = (
@@ -128,7 +128,7 @@ class PostNotesFlowTest(StudioCase):
     def setUp(self):
         folder = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, folder)
-        channels = [{"id": "tg", "label": "TG", "type": "telegram", "chat_id": "-1001", "token_env": "AIP_TEST_TG"}]
+        channels = [{"id": "tg", "label": "TG", "type": "telegram", "chat_id": "-1001", "token_env": "AIP_TG_TEST"}]
         (folder / "channels.json").write_text(json.dumps(channels), encoding="utf-8")
         self.extra_env = StudioCase.extra_env | {"AIP_CHANNELS": str(folder / "channels.json")}
         super().setUp()
@@ -160,7 +160,7 @@ class PostNotesFlowTest(StudioCase):
             calls.append((url.rsplit("/", 1)[-1], body))
             return {"ok": True, "result": {"message_id": len(calls)}}
 
-        with mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
+        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
             self.json("POST", f"/api/studio/projects/{pid}/run", {})
             self.settle(pid)
             self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["tg"]})
@@ -216,6 +216,40 @@ class DisclaimersOffTest(StudioCase):
         status, _ = self.json(
             "POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"], "ignore_disclaimers": 1}
         )
+        self.assertEqual(status, 400)
+
+
+@NEEDS_FFMPEG
+class ArticleSourceTest(StudioCase):
+    SETTINGS = {"channels": ["download-16x9"], "auto_publish": True}
+
+    def test_article_without_source_is_not_published(self):
+        payload = {"scenario": "article", "text": ARTICLE, "settings": self.SETTINGS, "run": True}
+        status, project = self.json("POST", "/api/studio/projects", payload)
+        self.assertEqual(status, 201, project)
+        done = self.settle(project["id"])
+        step = next(s for s in done["steps"] if s["id"] == "publish")
+        self.assertEqual(step["status"], "failed", done["log"])
+        self.assertIn("только с источником", step["error"])
+        self.assertFalse((self.folder(project["id"]) / "publish").exists())
+
+    def test_source_in_caption_and_last_slide(self):
+        project = self.create(scenario="article", text=ARTICLE, settings=self.SETTINGS, run=True)
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+        folder = self.folder(project["id"])
+        description = (folder / "publish" / "download-16x9" / "description.txt").read_text(encoding="utf-8")
+        self.assertIn(f"Источник: {SOURCE['source_author']} — оригинал ({SOURCE['source_url']})", description)
+        notes = sorted((folder / ".video-clips").glob("*/note.txt"))
+        self.assertTrue(notes, "у последнего слайда есть полоса с источником")
+        self.assertIn(SOURCE["source_url"], notes[-1].read_text(encoding="utf-8").replace("\n", ""))
+        caption = publish.caption((folder / "post.md").read_text(encoding="utf-8") + "\n\nИсточник: x", "T")
+        self.assertTrue(caption.endswith("Источник: x"))
+
+    def test_bad_source_url(self):
+        settings = self.SETTINGS | {"source_url": "javascript:alert(1)"}
+        payload = {"scenario": "article", "text": ARTICLE, "settings": settings}
+        status, _ = self.json("POST", "/api/studio/projects", payload)
         self.assertEqual(status, 400)
 
 

@@ -42,7 +42,10 @@ Send = Callable[[str, str, str], None]  # токен, чат, текст
 
 
 def fetch_json(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=TIMEOUT_S) as resp:  # noqa: S310 — свой localhost
+    req = urllib.request.Request(url)
+    if os.environ.get("AIP_AUTH_TOKEN"):  # платформа с токеном доступа (SEC-007)
+        req.add_header("Authorization", f"Bearer {os.environ['AIP_AUTH_TOKEN']}")
+    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:  # noqa: S310 — свой localhost
         data = json.loads(resp.read().decode("utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"{url}: ждали JSON-объект")

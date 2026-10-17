@@ -43,6 +43,16 @@ def test_load_rejects_unknown_fields_and_quality(tmp_path):
         Entry.load(tmp_path / "meta.json")
 
 
+def test_load_drops_non_http_url(tmp_path):
+    # meta.json пишет агент по чужой статье: javascript: не должен стать ссылкой (SEC-003).
+    (tmp_path / "meta.json").write_text(
+        json.dumps({"title": "t", "added": "d", "url": "javascript:alert(1)"})
+    )
+    assert Entry.load(tmp_path / "meta.json").url is None
+    assert Entry(title="t", added="d", url=" data:text/html,x").url is None
+    assert Entry(title="t", added="d", url="http://x.test/a").url == "http://x.test/a"
+
+
 def test_format_duration():
     assert format_duration(None) == "—"
     assert format_duration(65.4) == "1:05"

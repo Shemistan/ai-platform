@@ -29,6 +29,12 @@ SUMMARY_LIMIT = 600
 SANDBOX_BLOCK = "Tunnel connection failed: 403"
 
 
+def is_web(url: str) -> bool:
+    """Ссылка http(s) с хостом: иначе (javascript:, data:, file:) в базу её не пускаем."""
+    parts = urlsplit(url.strip())
+    return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
+
+
 class FetchError(RuntimeError):
     """Источник не отдал материалы: сеть, HTTP или непонятный формат."""
 
@@ -142,7 +148,10 @@ def parse_feed(text: str, base: str = "") -> list[Item]:
         title = clean(_text(el, "title"), 300)
         if not url or not title:
             continue
-        items.append(Item(urljoin(base, url.strip()), title, to_iso(date), clean(summary)))
+        url = urljoin(base, url.strip())
+        if not is_web(url):  # javascript:… из чужой ленты не должен стать ссылкой на странице
+            continue
+        items.append(Item(url, title, to_iso(date), clean(summary)))
     if not items and _local(root.tag) not in ("rss", "feed", "RDF"):
         raise FetchError(f"это не лента: корневой тег <{_local(root.tag)}>")
     return items
@@ -183,6 +192,8 @@ def page_links(html: str, base: str, match: str) -> list[Item]:
         if not href:
             continue
         url = urljoin(base, href).split("#")[0]
+        if not is_web(url):
+            continue
         parts = urlsplit(url)
         path = parts.path
         if parts.netloc != host or not path.startswith(match):

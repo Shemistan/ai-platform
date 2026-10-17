@@ -63,6 +63,7 @@ def article(tmp_path: Path) -> tuple[Path, Entry]:
         engine="silero",
         duration_sec=125.0,
         versions={"silero": 125.0},
+        license="permission",  # право на переработку есть — полный пересказ уходит
     )
     entry.save(path / "meta.json")
     (path / "2026-09-18-triple-debt_silero.mp3").write_bytes(b"\0" * 2048)

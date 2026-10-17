@@ -35,6 +35,15 @@ function el(tag, attrs = {}, text = "") {
   return node;
 }
 
+function revealActive(list) {
+  const active = list.querySelector('[aria-current="page"]');
+  if (!active || list.scrollWidth <= list.clientWidth) return;
+  const a = active.getBoundingClientRect();
+  const box = list.getBoundingClientRect();
+  if (a.left >= box.left && a.right <= box.right) return;
+  list.scrollLeft += a.left - box.left - (box.width - a.width) / 2;
+}
+
 function render() {
   const nav = el("nav", { class: "platform-nav", "aria-label": "Разделы платформы" });
   nav.append(el("span", { class: "brand" }, "AI Platform"));
@@ -56,6 +65,10 @@ function render() {
   const gpu = el("span", { class: "gpu", id: "platform-gpu", title: "Тяжёлые модели идут по одной" }, "GPU: …");
   nav.append(gpu);
   document.body.prepend(nav);
+  // На узком экране вкладки прокручиваются вбок: активную ставим в видимую область.
+  // Ширина ленты меняется и после отрисовки (текст GPU, поворот экрана) — следим за ней.
+  revealActive(list);
+  if (window.ResizeObserver) new ResizeObserver(() => revealActive(list)).observe(list);
   // Одна область объявлений на страницу: announce() из ui.js пишет сюда только переходы («готово», «ошибка»).
   if (!document.getElementById("sr-status")) {
     document.body.append(el("div", { id: "sr-status", class: "sr-only", role: "status", "aria-live": "polite" }));
@@ -90,6 +103,10 @@ async function showProblems(nav) {
   try {
     const res = await fetch("/api/config");
     const data = await res.json();
+    if (data.version) {
+      // Что сейчас запущено — справа в шапке, после GPU (docs/README.md «Версии»).
+      nav.append(el("span", { class: "version", title: "Версия платформы" }, `v${data.version}`));
+    }
     if (!data.problems || !data.problems.length) return;
     const box = el("div", { class: "platform-problems", role: "status" });
     box.append(el("strong", {}, data.backend === "fake" ? "Демо-режим. " : "Не всё настроено:"));

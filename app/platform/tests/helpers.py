@@ -68,7 +68,9 @@ class PlatformCase(unittest.TestCase):
 
     def call(self, method, path, body=None, headers=None):
         data = body if isinstance(body, bytes | None) else json.dumps(body).encode()
-        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers or {})
+        # Как ui.js api(): служебный X-AIP; None в headers — заголовок не слать.
+        headers = {k: v for k, v in {"X-AIP": "1", **(headers or {})}.items() if v is not None}
+        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=20) as resp:
                 return resp.status, resp.headers, resp.read()

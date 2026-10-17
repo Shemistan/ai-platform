@@ -11,14 +11,15 @@
   padding: 12px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-left: 4px solid var(--line);
+  border-left: 4px solid var(--tone-line, var(--line));
   border-radius: 12px;
   min-width: 0;
 }
-.board-card.attention { border-left-color: var(--warn); }
-.board-card.attention.failed { border-left-color: var(--bad); }
-.board-card.running { border-left-color: var(--accent); }
-.board-card.published { border-left-color: var(--ok); }
+/* Группа доски → тон полосы (те же переменные, что у .tone-* в ui.css). */
+.board-card.attention { --tone-line: var(--warning); }
+.board-card.attention.failed { --tone-line: var(--danger); }
+.board-card.running { --tone-line: var(--info); }
+.board-card.published { --tone-line: var(--success); }
 .board-card .thumb { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; background: var(--sunken); }
 .board-card .body { display: grid; gap: 6px; min-width: 0; }
 .board-card .title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }

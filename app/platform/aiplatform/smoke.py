@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -39,7 +40,10 @@ class Smoke:
 
     def call(self, method: str, path: str, body: object = None) -> tuple[int, dict]:
         data = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(self.base + path, data=data, method=method)
+        headers = {"X-AIP": "1"}  # без него и без Origin сервер POST отклонит
+        if os.environ.get("AIP_AUTH_TOKEN"):
+            headers["Authorization"] = f"Bearer {os.environ['AIP_AUTH_TOKEN']}"
+        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 return resp.status, json.loads(resp.read() or b"{}")

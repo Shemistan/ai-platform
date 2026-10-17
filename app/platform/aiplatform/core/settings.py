@@ -2,8 +2,9 @@
 
 В них: что выключено (модели фото и видео, движки озвучки и отдельные
 голоса — выключенное пропадает из выбора во всех вкладках и сценариях и не
-принимается в запросах), расписание дайджеста, уведомления, обновление
-отклика каналов и уборка старых данных. Файл читается при каждом обращении
+принимается в запросах), расписание дайджеста, уведомления (и чат владельца
+в Telegram), обновление отклика каналов, уборка старых данных и лимиты
+времени процессов (`timeouts`, только руками в файле). Файл читается при каждом обращении
 (с кэшем по mtime), поэтому ручная правка подхватывается без перезапуска.
 """
 
@@ -35,16 +36,38 @@ def at(data_dir: Path) -> Settings:
 DIGEST_DAYS = ("yesterday", "today")  # дайджест по расписанию — за вчера или за сегодня
 _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 CLEANUP_DAYS = (7, 14, 30, 60, 90)
+_CHAT = re.compile(r"-?\d+|@\w+")  # личный чат владельца: id или @username
+LIMIT_KINDS = ("llm", "image", "render", "video", "audio", "news")  # виды процессов в runner.LIMITS
+MAX_LIMIT_MIN = 24 * 60
 
 
 def _empty() -> dict:
     return {
         "disabled": {**{kind: [] for kind in KINDS}, "voices": {}},
         "schedule": {"digest": {"enabled": False, "time": "07:00", "day": "yesterday"}},
-        "notify": {"enabled": False},
+        "notify": {"enabled": False, "telegram_chat": ""},
         "stats": {"auto": True},
         "cleanup": {"auto": False, "days": 30},
+        # Лимиты времени процессов по виду (runner.LIMITS), минуты: {"llm": {"total": 10, "idle": 5}}.
+        "timeouts": {},
     }
+
+
+def _timeouts(raw: object) -> dict:
+    out: dict = {}
+    for kind, value in raw.items() if isinstance(raw, dict) else ():
+        if kind not in LIMIT_KINDS or not isinstance(value, dict):
+            continue
+        limits = {
+            name: value[name]
+            for name in ("total", "idle")
+            if isinstance(value.get(name), int | float)
+            and not isinstance(value.get(name), bool)
+            and 0 < value[name] <= MAX_LIMIT_MIN
+        }
+        if limits:
+            out[kind] = limits
+    return out
 
 
 def _flag(value: object, default: bool) -> bool:
@@ -70,7 +93,12 @@ def normalize(raw: object) -> dict:
         plan["time"] = digest["time"]
     if digest.get("day") in DIGEST_DAYS:
         plan["day"] = digest["day"]
-    out["notify"]["enabled"] = _flag(_section(raw, "notify").get("enabled"), False)
+    notify = _section(raw, "notify")
+    chat = notify.get("telegram_chat")
+    out["notify"]["telegram_chat"] = chat.strip() if isinstance(chat, str) and _CHAT.fullmatch(chat.strip()) else ""
+    # Чат владельца задан — уведомления включены, пока человек явно не выключил.
+    out["notify"]["enabled"] = _flag(notify.get("enabled"), bool(out["notify"]["telegram_chat"]))
+    out["timeouts"] = _timeouts(raw.get("timeouts") if isinstance(raw, dict) else None)
     out["stats"]["auto"] = _flag(_section(raw, "stats").get("auto"), True)
     cleanup = _section(raw, "cleanup")
     out["cleanup"]["auto"] = _flag(cleanup.get("auto"), False)
