@@ -1,0 +1,31 @@
+{
+  "$comment": "ответ `narrate bridge unsent`",
+  "type": "object",
+  "required": [
+    "unsent"
+  ],
+  "properties": {
+    "unsent": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "engine",
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "engine": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

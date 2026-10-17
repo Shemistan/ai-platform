@@ -32,6 +32,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from aiplatform.core import log, perms, schema
+from aiplatform.core.notify import TELEGRAM_API, telegram_api  # noqa: F401 — TELEGRAM_API для старых импортов
 from aiplatform.studio.llm import StudioError
 
 TELEGRAM, MANUAL = "telegram", "manual"
@@ -41,7 +42,6 @@ BOT_VIDEO_LIMIT = 50 * 2**20  # Bot API принимает файлы до 50 М
 # Тексты для автора (TXT-003): что случилось и что сделать, без имён классов и «Bot API».
 TELEGRAM_DOWN = "Нет связи с Telegram. Проверь интернет или VPN и повтори публикацию."
 TOO_BIG = "Telegram не принимает файлы больше 50 МБ. Сократи текст или включи ускорение озвучки."
-TELEGRAM_API = "https://api.telegram.org"
 DEFAULT_CHANNELS = (
     {"id": "download-16x9", "label": "Файл для YouTube / VK (16:9)", "type": MANUAL, "format": LANDSCAPE},
     {"id": "download-9x16", "label": "Файл для Shorts / TikTok / Reels (9:16)", "type": MANUAL, "format": VERTICAL},
@@ -537,7 +537,7 @@ def _send(channel: Channel, method: str, fields: dict, files: dict[str, Path], h
     if not token:  # без годного токена — ни одного запроса в сеть
         raise StudioError(f"{channel.label}: {channel.problem() or 'нет токена бота'}.")
     body, ctype = multipart({**channel.target(), **fields}, files)
-    answer = call_api(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype, http_post, safe=False)
+    answer = call_api(f"{telegram_api()}/bot{token}/{method}", body, ctype, http_post, safe=False)
     if not answer.get("ok"):
         description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
         raise StudioError(f"{channel.label}: Telegram ответил «{description}».")
@@ -551,7 +551,7 @@ def chat_call(channel: Channel, method: str, http_post: HttpPost | None = None) 
         return None
     body, ctype = multipart({"chat_id": channel.target()["chat_id"]}, {})
     try:
-        answer = call_api(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype, http_post, safe=True)
+        answer = call_api(f"{telegram_api()}/bot{token}/{method}", body, ctype, http_post, safe=True)
     except StudioError:
         return None
     return answer.get("result") if answer.get("ok") else None
@@ -727,7 +727,7 @@ def publish(
     if thumb is not None:
         files["thumbnail"] = thumb
     body, ctype = multipart(fields, files)
-    answer = call_api(f"{TELEGRAM_API}/bot{token}/sendVideo", body, ctype, http_post, safe=False)
+    answer = call_api(f"{telegram_api()}/bot{token}/sendVideo", body, ctype, http_post, safe=False)
     if not answer.get("ok"):
         description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
         raise StudioError(f"{channel.label}: Telegram ответил «{description}».")

@@ -1,0 +1,12 @@
+{
+  "$comment": "ответ `narrate bridge version`",
+  "type": "object",
+  "required": [
+    "bridge_api"
+  ],
+  "properties": {
+    "bridge_api": {
+      "type": "number"
+    }
+  }
+}

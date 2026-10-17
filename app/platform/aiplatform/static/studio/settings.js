@@ -170,6 +170,9 @@ export function fieldsOf(values, prefix) {
           ["photo", "Картинка, затем аудио", values.post_format === "photo"],
         ]),
       ),
+    // Дайджест: до скольких ждать свою обложку, потом нарисовать локально (PRD-002).
+    poster_deadline: () =>
+      h("label", { class: "field" }, h("span", { class: "hint" }, "Своя обложка не пришла к этому времени — нарисовать локально (пусто — ждать)"), h("input", { type: "time", id: id("poster_deadline"), value: values.poster_deadline || "" })),
     // «Видео по статье»: без источника выпуск не опубликуется — строка в конце поста и на последнем слайде.
     source_url: () =>
       h("label", { class: "field" }, h("span", { class: "hint" }, "Ссылка на оригинал статьи"), h("input", { type: "url", id: id("source_url"), value: values.source_url || "", placeholder: "https://…" })),
@@ -239,7 +242,7 @@ export function settingsForm(values, prefix) {
     "div",
     { class: "settings-form" },
     f.draft(),
-    group("Постер — первый кадр", f.poster_mode()),
+    group("Постер — первый кадр", f.poster_mode(), scenario === "digest" ? f.poster_deadline() : null),
     group("Картинки слайдов", f.draw_images(), f.images_mode(), f.image_model(), f.upscale_images()),
     group("Ролики", f.clips(), f.clips_mode(), f.video_model()),
     group("Озвучка", f.voice_mode(), f.engine()),
@@ -269,8 +272,9 @@ const POST_SETTINGS = [
 export const SOURCE_SETTINGS = ["source_url", "source_author", "source_license"];
 export const AD_SETTINGS = ["ad", "erid"];
 const ARTICLE_SETTINGS = [...SETTING_NAMES, ...SOURCE_SETTINGS];
+const DIGEST_SETTINGS = [...SETTING_NAMES, "poster_deadline"]; // срок своей обложки (PRD-002)
 
-export function readSettings(prefix, names = { post: POST_SETTINGS, article: ARTICLE_SETTINGS }[scenario] || SETTING_NAMES) {
+export function readSettings(prefix, names = { post: POST_SETTINGS, article: ARTICLE_SETTINGS, digest: DIGEST_SETTINGS }[scenario] || SETTING_NAMES) {
   const get = (name) => document.getElementById(`${prefix}-${name}`);
   const radio = (name) => document.querySelector(`input[name="${prefix}-${name}"]:checked`)?.value;
   const special = {

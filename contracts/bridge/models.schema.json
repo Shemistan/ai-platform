@@ -1,0 +1,80 @@
+{
+  "$comment": "ответ `narrate bridge models`",
+  "type": "object",
+  "required": [
+    "hint",
+    "main",
+    "mlx",
+    "root",
+    "root_exists"
+  ],
+  "properties": {
+    "root": {
+      "type": "string"
+    },
+    "root_exists": {
+      "type": "boolean"
+    },
+    "hint": {
+      "type": "string"
+    },
+    "main": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "exists",
+          "id",
+          "label",
+          "path"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "exists": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "mlx": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "downloaded",
+          "id",
+          "label",
+          "note",
+          "problem",
+          "size_gb"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "downloaded": {
+            "type": "boolean"
+          },
+          "problem": {},
+          "note": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "size_gb": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

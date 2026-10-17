@@ -1,0 +1,84 @@
+{
+  "$comment": "ответ `narrate bridge engines`",
+  "type": "object",
+  "required": [
+    "engines",
+    "models_dir",
+    "models_dir_exists",
+    "models_hint",
+    "speed_range",
+    "steps_range",
+    "verify_available"
+  ],
+  "properties": {
+    "engines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "default_speed",
+          "default_steps",
+          "default_voice",
+          "id",
+          "label",
+          "note",
+          "problem",
+          "tunable",
+          "voices"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "problem": {},
+          "note": {
+            "type": "string"
+          },
+          "default_voice": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "tunable": {
+            "type": "boolean"
+          },
+          "voices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default_steps": {},
+          "default_speed": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "verify_available": {
+      "type": "boolean"
+    },
+    "models_dir": {
+      "type": "string"
+    },
+    "models_dir_exists": {
+      "type": "boolean"
+    },
+    "models_hint": {
+      "type": "string"
+    },
+    "steps_range": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "speed_range": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    }
+  }
+}
