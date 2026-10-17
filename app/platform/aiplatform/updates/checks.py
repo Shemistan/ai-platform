@@ -1,6 +1,6 @@
 """Проверка обновлений моделей и пайплайнов: что стоит у нас и что вышло в источнике.
 
-Источники — те же, откуда ставят setup-model.sh photogen/videogen:
+Источники — те же, откуда ставит app/platform/tools/setup-model.sh:
 PyPI (mflux), релизы и теги GitHub (Flux2CLI, ltx-2-mlx), репозитории весов
 на Hugging Face. Установленная версия читается из
 путей установки (`mflux-0.22.0`, `flux2cli-v3.1.0`, `ltx-2-mlx-v0.16.2`,
@@ -27,8 +27,8 @@ PYPI, RELEASE, TAG, HF = "pypi", "release", "tag", "hf"
 UPDATE, OK, UNKNOWN, ERROR = "update", "ok", "unknown", "error"
 TIMEOUT_S = 20
 FRESH_DAYS = 1  # веса на HF новее установки меньше чем на день — это та же загрузка
-PHOTOGEN_SETUP = "11_photo_generator/app/photogen/setup-model.sh"
-VIDEOGEN_SETUP = "10_video_generator/app/videogen/setup-model.sh"
+# Скрипт установки фото и видео — в этом репозитории (путь от корня).
+PHOTOGEN_SETUP = VIDEOGEN_SETUP = "app/platform/tools/setup-model.sh"
 
 Fetch = Callable[[str], object]  # url → разобранный JSON; ошибка сети — исключение
 

@@ -124,7 +124,7 @@ def _choose_model(payload: dict, mode: str, available: list[Available]) -> Avail
     if mode not in chosen.model.modes:
         raise ValidationError(f"{chosen.label} не умеет режим «{MODE_LABELS[mode]}». Выбери другую модель.")
     if not chosen.installed:
-        raise ValidationError(f"Модель {chosen.label} не установлена: запусти ./setup-model.sh {chosen.id}.")
+        raise ValidationError(f"Модель {chosen.label} не установлена: запусти make models M={chosen.id}.")
     return chosen
 
 
