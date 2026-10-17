@@ -22,7 +22,7 @@ from aiplatform.photo.params import MAX_SEED, GenerationSpec, ValidationError
 from aiplatform.photo.upscale import UpscaleSpec
 
 ACTIVE = ("queued", "running")
-INSTALL_HINT = "Поставь модели фото: ./setup-model.sh в 11_photo_generator/app/photogen (см. README платформы)."
+INSTALL_HINT = "Поставь модели фото: make models M=z-image-turbo в app/platform (README, «Установка моделей»)."
 LOG_TAIL = 200
 OUTPUT = "output.png"
 _ID = re.compile(r"^[0-9a-f]{12}$")
