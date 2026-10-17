@@ -135,9 +135,10 @@ def cmd_setup(args) -> int:
     if args.verify:
         from faster_whisper import download_model as download_whisper
 
-        from narrator.verify import WHISPER_MODEL, whisper_dir
+        from narrator.verify import WHISPER_MODEL, WHISPER_REVISION, whisper_dir
 
-        print(f"модель распознавания: {download_whisper(WHISPER_MODEL, str(whisper_dir()))}")
+        path = download_whisper(WHISPER_MODEL, str(whisper_dir()), revision=WHISPER_REVISION)
+        print(f"модель распознавания: {path}")
     return 0
 
 

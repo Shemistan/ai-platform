@@ -186,9 +186,11 @@ news-top: ## главные события дня DAY
 ##@ Служебное
 
 models: ## один раз: скачать модели (~3,7 ГБ) в папку моделей, только в обычном терминале
+	uv sync --locked --all-extras
 	sh tools/fetch-models.sh
 
 models-mlx: ## скачать модели для сравнения (E="qwen3 chatterbox", без E — все пять, ~45 ГБ)
+	uv sync --locked --all-extras
 	./narrate setup --mlx $(or $(E),all)
 
 voice-charon: ## записать образец голоса Charon из Gemini TTS (ключ GEMINI_API_KEY или F=готовый файл)
