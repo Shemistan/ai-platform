@@ -55,7 +55,7 @@ function renderModels(job) {
       h(
         "tr",
         {},
-        h("td", {}, r.url ? h("a", { class: "link", href: r.url, target: "_blank", rel: "noopener" }, r.label) : r.label),
+        h("td", {}, r.url ? h("a", { class: "btn btn--link", href: r.url, target: "_blank", rel: "noopener" }, r.label) : r.label),
         h("td", { class: "version" }, r.installed || "—"),
         h("td", { class: "version" }, r.latest || "—"),
         h("td", {}, chip(MODEL_STATUS[r.status] || r.status, MODEL_TONE[r.status])),
@@ -87,8 +87,8 @@ function entryRow(e, statuses, mark = "") {
       { class: "hint" },
       e.basis,
       e.ref ? ` (№ ${e.ref} в перечне)` : null,
-      e.source ? [" ", h("a", { class: "link", href: e.source, target: "_blank", rel: "noopener" }, "источник")] : null,
-      e.archive_url ? [" ", h("a", { class: "link", href: e.archive_url, target: "_blank", rel: "noopener" }, "снимок")] : null,
+      e.source ? [" ", h("a", { class: "btn btn--link", href: e.source, target: "_blank", rel: "noopener" }, "источник")] : null,
+      e.archive_url ? [" ", h("a", { class: "btn btn--link", href: e.archive_url, target: "_blank", rel: "noopener" }, "снимок")] : null,
       e.confirmed === false ? h("div", { class: "unconfirmed" }, "не подтверждено: нет номера в перечне или снимка источника") : null,
     ),
   );
@@ -130,8 +130,8 @@ function renderProposal(reg) {
         h(
           "div",
           { class: "actions" },
-          h("button", { type: "button", class: "primary", onclick: busyClick(() => act("registry/apply"), "registry") }, "Применить"),
-          h("button", { type: "button", class: "link", onclick: busyClick(() => act("registry/dismiss"), "registry") }, "Отклонить"),
+          h("button", { type: "button", class: "btn btn--primary", onclick: busyClick(() => act("registry/apply"), "registry") }, "Применить"),
+          h("button", { type: "button", class: "btn btn--link", onclick: busyClick(() => act("registry/dismiss"), "registry") }, "Отклонить"),
         ),
       ),
     );
@@ -219,7 +219,7 @@ function renderVoiceModels(data) {
       h("td", {}, m.downloaded ? chip("скачана", "success") : chip("не скачана")),
     );
   });
-  const pick = h("button", { type: "button", class: "secondary", id: "voice-mlx", onclick: busyClick(() => startVoice("mlx", { engines: [...voice.picked] }), "voice") }, "Скачать выбранные");
+  const pick = h("button", { type: "button", class: "btn btn--secondary", id: "voice-mlx", onclick: busyClick(() => startVoice("mlx", { engines: [...voice.picked] }), "voice") }, "Скачать выбранные");
   fill(
     $("voice-models"),
     data.root_exists ? null : h("p", { class: "job-error" }, `Папки моделей ${data.root} нет: ${data.hint}`),

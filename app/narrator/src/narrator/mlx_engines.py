@@ -92,6 +92,20 @@ MLX_ENGINES: dict[str, MlxEngine] = {
 }
 
 
+# Коммит каждого репозитория на huggingface.co: веса — исполняемый код (pickle,
+# custom code), без revision подмена файла в репозитории модели = исполнение
+# кода (SEC-011). Обновить модель — поменять коммит здесь осознанно.
+REVISIONS: dict[str, str] = {
+    "bosonai/higgs-audio-v3-tts-4b": "239f63fb7b02b1aa085f98d9efae5e35cc5523e8",
+    "mlx-community/fish-audio-s2-pro-bf16": "eccd57bf5c1ebc13cb2f993df867f4e49931a36a",
+    "OpenMOSS-Team/MOSS-TTS-v1.5": "cdd3b911b1585e3f2dbc7775ef10f9926f58850a",
+    "OpenMOSS-Team/MOSS-Audio-Tokenizer": "3cd226ba2947efa357ef453bcad111b6eafba782",
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16": "a6eb4f68e4b056f1215157bb696209bc82a6db48",
+    "mlx-community/chatterbox-multilingual-v3": "03565773edd72e949572557597af8063bb49a18a",
+    "mlx-community/S3TokenizerV2": "e0c9886f0e1c35ae85b1f27277416fb19fc72bec",
+}
+
+
 def cache_dir() -> Path:
     """Кэш HuggingFace этих моделей: <папка моделей>/mlx-audio."""
     return models.locate(CACHE_DIR, env="NARRATOR_MLX_CACHE")
@@ -226,5 +240,5 @@ def download(engine: MlxEngine) -> Path:
     from huggingface_hub import snapshot_download
 
     for repo in (engine.repo, *engine.extra_repos):
-        snapshot_download(repo, cache_dir=str(cache_dir()))
+        snapshot_download(repo, revision=REVISIONS[repo], cache_dir=str(cache_dir()))
     return repo_dir(engine.repo)

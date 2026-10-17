@@ -1,8 +1,10 @@
 """Вызов движка narrator: мост `narrate bridge` и команды на фейковом движке."""
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from aiplatform import config as platform_config
 from aiplatform.core import narrator
@@ -153,6 +155,59 @@ class ErrorKindTest(unittest.TestCase):
         for kind, status in ((narrator.UNAVAILABLE, 503), (narrator.NOT_FOUND, 404), (narrator.INVALID, 400)):
             err = narrator.http_error(narrator.NarratorError("текст", kind))
             self.assertEqual((err.status, err.message, err.extra), (status, "текст", {"kind": kind}))
+
+
+class BridgeRetryTest(unittest.TestCase):
+    """Чтение моста, упавшее на запуске, повторяется один раз; таймаут и запись — нет (BE-013)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.calls = self.dir / "calls"
+        self.sleeps: list[float] = []
+        patch = mock.patch.object(narrator, "_sleep", self.sleeps.append)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def engine(self, body: str) -> narrator.Narrator:
+        return narrator.Narrator((str(_script(self.dir, f'echo x >> "{self.calls}"\n' + body)),), self.dir)
+
+    def count(self) -> int:
+        return self.calls.read_text().count("x") if self.calls.exists() else 0
+
+    def test_read_crash_then_ok(self):
+        # Первый запуск падает, второй отвечает: файл-метка отличает заходы.
+        mark = self.dir / "mark"
+        engine = self.engine(
+            f'if [ ! -f "{mark}" ]; then touch "{mark}"; echo boom >&2; exit 1; fi\necho \'{{"items": []}}\'\n'
+        )
+        self.assertEqual(engine.bridge("library"), {"items": []})
+        self.assertEqual(self.count(), 2)
+        self.assertEqual(self.sleeps, [narrator.RETRY_PAUSE_S])
+
+    def test_read_crash_twice_raises_unavailable(self):
+        with self.assertRaises(narrator.NarratorError) as ctx:
+            self.engine("echo boom >&2\nexit 1\n").bridge("library")
+        self.assertEqual(ctx.exception.kind, narrator.UNAVAILABLE)
+        self.assertEqual(self.count(), 2)
+
+    def test_timeout_is_not_retried(self):
+        engine = self.engine("sleep 8\n")
+        started = time.monotonic()
+        with self.assertRaises(narrator.NarratorError):
+            engine.bridge("library", timeout=1.5)
+        self.assertLess(time.monotonic() - started, 3.5)
+        self.assertEqual(self.count(), 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_write_and_refusal_are_not_retried(self):
+        with self.assertRaises(narrator.NarratorError):
+            self.engine("echo boom >&2\nexit 1\n").bridge("article-save", "a1", stdin="{}")
+        self.assertEqual(self.count(), 1)
+        with self.assertRaises(narrator.NarratorError):
+            self.engine('echo \'{"error": "нет", "kind": "not_found"}\'\nexit 1\n').bridge("article", "x")
+        self.assertEqual(self.count(), 2)
 
 
 class UnavailableEngineHttpTest(PlatformCase):

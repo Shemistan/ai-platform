@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Обновления — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/common.css">
   <link rel="stylesheet" href="/ui.css">
@@ -19,7 +20,7 @@
     <section class="panel">
       <div class="section-head">
         <h2>Модели и пайплайны</h2>
-        <button type="button" class="secondary" id="models-check">Проверить обновления</button>
+        <button type="button" class="btn btn--secondary" id="models-check">Проверить обновления</button>
       </div>
       <p class="hint">Сверяет установленное с PyPI, GitHub и Hugging Face. Сам ничего не ставит — подсказывает, как обновить.</p>
       <div id="models"></div>
@@ -29,8 +30,8 @@
       <div class="section-head">
         <h2>Модели озвучки</h2>
         <div class="toolbar">
-          <button type="button" class="secondary" id="voice-fetch">Скачать основные (~3,7 ГБ)</button>
-          <button type="button" class="small-btn" id="voice-move">Перенести из ~/.cache</button>
+          <button type="button" class="btn btn--secondary" id="voice-fetch">Скачать основные (~3,7 ГБ)</button>
+          <button type="button" class="btn btn--ghost btn--sm" id="voice-move">Перенести из ~/.cache</button>
         </div>
       </div>
       <p class="hint" id="voice-hint">Модели движка app/narrator лежат в общей папке моделей. Скачивание идёт с huggingface.co: нужна сеть, повторный запуск докачивает только недостающее.</p>
@@ -41,18 +42,18 @@
     <section class="panel">
       <div class="section-head">
         <h2>Запрещённые в РФ организации</h2>
-        <button type="button" class="secondary" id="registry-check">Проверить обновления списка</button>
+        <button type="button" class="btn btn--secondary" id="registry-check">Проверить обновления списка</button>
       </div>
       <p class="hint" id="registry-hint"></p>
       <div id="registry-warnings"></div>
       <div id="proposal"></div>
       <div id="registry"></div>
       <details class="editor">
-        <summary class="link">Править список (JSON)</summary>
+        <summary class="btn btn--link">Править список (JSON)</summary>
         <textarea id="registry-json" class="mono" rows="18" spellcheck="false"></textarea>
         <div class="actions">
-          <button type="button" class="secondary" id="registry-save">Сохранить</button>
-          <button type="button" class="link danger" id="registry-reset">Вернуть список по умолчанию</button>
+          <button type="button" class="btn btn--secondary" id="registry-save">Сохранить</button>
+          <button type="button" class="btn btn--link btn--danger" id="registry-reset">Вернуть список по умолчанию</button>
         </div>
       </details>
       <p class="form-error" id="error" role="alert" hidden></p>

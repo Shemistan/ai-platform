@@ -100,7 +100,7 @@ async function showSources() {
       h("td", { class: "num" }, s.authority.toFixed(2)),
       h("td", {}, ...lastRun(s)),
       h("td", {}, usefulness(s)),
-      h("td", { class: "num" }, s.enabled ? h("button", { type: "button", class: "small-btn", onclick: busyClick(() => runTask(`${API}/sources/collect`, { only: s.id }, taskBox), "sources/collect") }, "Собрать") : null),
+      h("td", { class: "num" }, s.enabled ? h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: busyClick(() => runTask(`${API}/sources/collect`, { only: s.id }, taskBox), "sources/collect") }, "Собрать") : null),
     ),
   );
   fill(
@@ -109,7 +109,7 @@ async function showSources() {
       "div",
       { class: "card-head" },
       segmentedButtons(filters, state.sourceFilter, (v) => ((state.sourceFilter = v), showSources())),
-      h("button", { type: "button", class: "secondary", onclick: busyClick(() => runTask(`${API}/sources/collect`, {}, taskBox), "sources/collect") }, "Собрать все"),
+      h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => runTask(`${API}/sources/collect`, {}, taskBox), "sources/collect") }, "Собрать все"),
     ),
     h("p", { class: "hint", style: "margin:var(--sp-2) 0" }, `Вес — авторитет источника в оценке важности. «Мало пользы» — разобрано от ${data.useless_after} материалов, а в выпуски не попало ничего: понизить вес или выключить в config/news-sources.toml движка.`),
     taskBox,
@@ -142,7 +142,7 @@ async function showTop() {
         { class: "toolbar" },
         issue.exists ? chip("выпуск собран", "ok") : chip("выпуска нет"),
         issue.verdict ? chip(`судья: ${issue.verdict}`, verdictTone[issue.verdict]) : null,
-        h("a", { class: "link", href: "/studio/?scenario=digest" }, "Дайджест новостей →"),
+        h("a", { class: "btn btn--link", href: "/studio/?scenario=digest" }, "Дайджест новостей →"),
       ),
     ),
     h("p", { class: "hint", style: "margin:var(--sp-2) 0" }, "События, опубликованные в этот день, по важности 1–10: в выпуск идёт от 7, обязательные — от 9 и уязвимости. Видно, что не вошло."),
@@ -186,7 +186,7 @@ async function showFailed() {
             "table",
             { class: "data-table" },
             h("thead", {}, h("tr", {}, h("th", {}, "Источник"), h("th", {}, "Когда"), h("th", {}, "Ошибка"))),
-            h("tbody", {}, ...data.failed.map((f) => h("tr", {}, h("td", {}, h("a", { class: "link", href: f.url, target: "_blank", rel: "noopener" }, f.name), h("span", { class: "sub" }, `${f.source} · ${f.kind}`)), h("td", {}, when(f.at)), h("td", {}, f.error)))),
+            h("tbody", {}, ...data.failed.map((f) => h("tr", {}, h("td", {}, h("a", { class: "btn btn--link", href: f.url, target: "_blank", rel: "noopener" }, f.name), h("span", { class: "sub" }, `${f.source} · ${f.kind}`)), h("td", {}, when(f.at)), h("td", {}, f.error)))),
           ),
         )
       : h("p", { class: "empty" }, "Упавших источников нет — добирать нечего."),
@@ -195,7 +195,7 @@ async function showFailed() {
       { class: "toolbar", style: "margin-top:var(--sp-3)" },
       h("span", { class: "field-label" }, "Материалы за"),
       day,
-      h("button", { type: "button", class: "secondary", disabled: !data.failed.length, onclick: busyClick(() => runTask(`${API}/failed/rescue`, { day: day.value }, taskBox), "failed/rescue") }, "Добрать агентом"),
+      h("button", { type: "button", class: "btn btn--secondary", disabled: !data.failed.length, onclick: busyClick(() => runTask(`${API}/failed/rescue`, { day: day.value }, taskBox), "failed/rescue") }, "Добрать агентом"),
     ),
     taskBox,
   );
@@ -217,7 +217,7 @@ function openReview(id) {
       text.textContent = r.files[current];
       fill(tabs, ...names.map((n) => h("button", { type: "button", "aria-pressed": String(n === current), onclick: () => ((current = n), render()) }, FILES[n] || n)));
       const blob = URL.createObjectURL(new Blob([r.files[current]], { type: "text/markdown" }));
-      fill(tools, copyButton(() => r.files[current]), h("a", { class: "small-btn", href: blob, download: `${id}-${current}` }, "Скачать"));
+      fill(tools, copyButton(() => r.files[current]), h("a", { class: "btn btn--ghost btn--sm", href: blob, download: `${id}-${current}` }, "Скачать"));
     };
     render();
     fill(body, h("h3", {}, r.title), h("div", { class: "card-head" }, tabs, tools), text);
@@ -235,10 +235,10 @@ async function showReviews() {
     h(
       "div",
       { class: "toolbar", style: "margin:var(--sp-3) 0" },
-      h("button", { type: "button", class: "secondary", onclick: busyClick(() => runTask(`${API}/reviews/weekly`, {}, taskBox), "reviews/weekly") }, "Обзор недели"),
+      h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => runTask(`${API}/reviews/weekly`, {}, taskBox), "reviews/weekly") }, "Обзор недели"),
       h("span", { class: "muted" }, "или"),
       month,
-      h("button", { type: "button", class: "secondary", onclick: busyClick(() => runTask(`${API}/reviews/monthly`, { month: month.value }, taskBox), "reviews/monthly") }, "Обзор месяца"),
+      h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => runTask(`${API}/reviews/monthly`, { month: month.value }, taskBox), "reviews/monthly") }, "Обзор месяца"),
     ),
     taskBox,
     data.reviews.length

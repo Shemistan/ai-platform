@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Видео — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/common.css">
   <link rel="stylesheet" href="/ui.css">
@@ -18,7 +19,7 @@
 
   <main class="layout">
    <div class="main-col">
-    <div class="mode-tabs" role="tablist" aria-label="Режим">
+    <div class="segmented mode-tabs" role="tablist" aria-label="Режим">
       <button type="button" class="mode-tab" role="tab" id="tab-video" aria-controls="composer" aria-selected="true">Видео по промпту</button>
       <button type="button" class="mode-tab" role="tab" id="tab-living" aria-controls="living" aria-selected="false">Живое фото</button>
     </div>
@@ -34,7 +35,7 @@
       <section class="field" aria-labelledby="frames-title">
         <div class="field-head">
           <span class="field-label" id="frames-title">Кадры <span class="muted">— необязательно</span></span>
-          <button type="button" class="link" id="even-btn" hidden>Расставить равномерно</button>
+          <button type="button" class="btn btn--link" id="even-btn" hidden>Расставить равномерно</button>
         </div>
         <p class="hint" id="frames-hint"></p>
         <ol class="strip" id="strip"></ol>
@@ -70,7 +71,7 @@
       </div>
 
       <p class="form-error" id="form-error" role="alert" hidden></p>
-      <button type="submit" class="primary" id="submit">Сгенерировать</button>
+      <button type="submit" class="btn btn--primary" id="submit">Сгенерировать</button>
     </form>
 
     <form class="panel" id="living" role="tabpanel" aria-labelledby="tab-living" novalidate hidden>
@@ -103,7 +104,7 @@
       </div>
 
       <p class="form-error" id="living-error" role="alert" hidden></p>
-      <button type="submit" class="primary" id="living-submit">Оживить фото</button>
+      <button type="submit" class="btn btn--primary" id="living-submit">Оживить фото</button>
     </form>
    </div>
 

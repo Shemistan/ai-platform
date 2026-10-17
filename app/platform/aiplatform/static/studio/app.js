@@ -1,11 +1,12 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, busy as busyRequest, busyClick, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reportError, safe, STATUS, statusChip, toneOf } from "/ui.js";
+import { $, announce, api, busy as busyRequest, busyClick, captureFocus, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reconcile, reportError, restoreFocus, safe, STATUS, statusChip, toast, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const API = "/api/studio";
-const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
+// Сценарий из адреса; неизвестный — «article». Названия сценариев — из /api/studio/config (FE-007).
+const KNOWN_SCENARIOS = new Set(["digest", "article", "post"]);
 const wantedScenario = new URLSearchParams(location.search).get("scenario");
-const scenario = SCENARIO_TITLES[wantedScenario] ? wantedScenario : "article";
+const scenario = KNOWN_SCENARIOS.has(wantedScenario) ? wantedScenario : "article";
 // У поста нет слайдов: эти шаги всегда пропущены — их не показываем.
 const HIDDEN_STEPS = { post: new Set(["plan", "images", "clips", "short"]) };
 const CAPTION_LIMIT = 1024;
@@ -623,7 +624,10 @@ async function rerunStep(stepId) {
   }
   const names = STEP_FIELDS[step.id];
   const settings = names && document.getElementById(`step-${step.id}-settings`) ? readSettings(`step-${step.id}`, names) : undefined;
-  if (await act("run", { step: step.id, settings })) delete state.stepDrafts[step.id];
+  if (await act("run", { step: step.id, settings })) {
+    delete state.stepDrafts[step.id];
+    toast(`Шаг «${step.label}» запущен`, "info");
+  }
   state.gen += 1; // параметры шага — из сохранённых настроек, а не из набросков
   show(state.project);
 }
@@ -640,6 +644,7 @@ async function saveArtifact(name, text) {
   try {
     const fresh = await api("POST", `${API}/projects/${state.project.id}/artifacts/${name}`, { text });
     delete state.drafts[name];
+    toast("Сохранено");
     state.gen += 1;
     show(fresh);
   } catch (err) {
@@ -647,11 +652,13 @@ async function saveArtifact(name, text) {
   }
 }
 
+// Свой постер или озвучка: прогресс и «Отменить» — в лотке загрузок (uploadFile, FE-003).
+// Сервер принимает здесь до лимита медиа (озвучка); отмена возвращает шаг как был.
 async function upload(what, file) {
   try {
-    show(await api("POST", `${API}/projects/${state.project.id}/upload/${what}`, file));
+    show(await uploadFile(`${API}/projects/${state.project.id}/upload/${what}`, file, { limit: (state.config?.upload_limits || UPLOAD_LIMITS).media }));
   } catch (err) {
-    alertBox(err.message);
+    if (err.kind !== "abort") alertBox(err.message);
   }
 }
 
@@ -684,10 +691,11 @@ function uploader(what, accept, label) {
 }
 
 async function uploadSlide(kind, key, file) {
+  const limits = (state.config?.upload_limits || UPLOAD_LIMITS);
   try {
-    show(await api("POST", `${API}/projects/${state.project.id}/upload/${kind}/${key}`, file));
+    show(await uploadFile(`${API}/projects/${state.project.id}/upload/${kind}/${key}`, file, { limit: kind === "clips" ? limits.media : limits.image }));
   } catch (err) {
-    alertBox(err.message);
+    if (err.kind !== "abort") alertBox(err.message);
   }
 }
 
@@ -747,10 +755,11 @@ function copyButton(text) {
         try {
           await navigator.clipboard.writeText(text);
           btn.textContent = "Скопировано";
+          toast("Промпт скопирован");
         } catch {
           btn.textContent = "Не вышло";
+          toast("Не удалось скопировать: браузер не дал доступ к буферу обмена", "danger");
         }
-        announce(btn.textContent);
         setTimeout(() => (btn.textContent = "Скопировать промпт"), 1500);
       },
     },
@@ -923,6 +932,15 @@ function stepBody(step) {
         h(
           "div",
           { class: "publish-box" },
+          // Домены ссылок поста; не из исходника — красным: автопубликация их не пропустит (SEC-013).
+          p.links?.domains?.length
+            ? h(
+                "p",
+                { class: "post-links" },
+                "Ссылки ведут на: ",
+                ...p.links.domains.map((d) => h("span", { class: `chip ${p.links.foreign.includes(d) ? "tone-danger" : ""}`, title: p.links.foreign.includes(d) ? "Этого домена нет в исходном материале" : "" }, d)),
+              )
+            : null,
           h("strong", {}, "Куда опубликовать"),
           h(
             "div",
@@ -1243,114 +1261,6 @@ const STEP_DATA = {
   },
 };
 
-const blockSig = new WeakMap();
-const TEXT_INPUTS = new Set(["text", "search", "url", "email", "number", "tel", "password", "date", "time", "datetime-local", "month", "week"]);
-const isEditable = (el) => Boolean(el) && (el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable || (el.tagName === "INPUT" && TEXT_INPUTS.has(el.type)));
-
-// В блоке фокус в поле, которое не вернуть после перерисовки (открытый список, поле без id) — блок подождёт.
-function holdsInput(node) {
-  const el = document.activeElement;
-  return node.contains(el) && isEditable(el) && (el.tagName === "SELECT" || el.isContentEditable || !el.id);
-}
-
-const fieldKey = (el) => (el.type === "radio" ? (el.name ? `${el.name}=${el.value}` : null) : el.id || null);
-
-// Несохранённые правки полей блока: чекбоксы, переключатели, списки и однострочные поля (тексты — в state.drafts).
-function editsOf(node) {
-  const out = new Map();
-  for (const el of node.querySelectorAll("input, select")) {
-    const key = fieldKey(el);
-    if (!key || el.type === "file") continue;
-    if (el.type === "checkbox" || el.type === "radio") {
-      if (el.checked !== el.defaultChecked) out.set(key, el.checked);
-    } else if (el.tagName === "SELECT") {
-      if ([...el.options].some((o) => o.selected !== o.defaultSelected)) out.set(key, el.value);
-    } else if (el.value !== el.defaultValue) out.set(key, el.value);
-  }
-  return out;
-}
-
-function applyEdits(node, edits) {
-  if (!edits.size) return;
-  for (const el of node.querySelectorAll("input, select")) {
-    const key = fieldKey(el);
-    if (!key || !edits.has(key)) continue;
-    if (el.type === "checkbox" || el.type === "radio") el.checked = edits.get(key);
-    else el.value = edits.get(key);
-  }
-}
-
-const detailsKey = (d) => d.id || (d.querySelector(":scope > summary")?.textContent || "").replace(/\d+/g, "#");
-
-// Перенести из старого узла блока в новый то, что человек уже сделал: правки полей, раскрытые <details>,
-// и сами медиа-элементы с тем же адресом — ролик в превью не начнётся сначала, плеер не собьётся.
-function carryOver(prev, node) {
-  applyEdits(node, editsOf(prev));
-  const opened = new Map([...prev.querySelectorAll("details")].map((d) => [detailsKey(d), d.open]));
-  for (const d of node.querySelectorAll("details")) if (opened.has(detailsKey(d))) d.open = opened.get(detailsKey(d));
-  const media = new Map();
-  for (const m of prev.querySelectorAll("video[src], audio[src], img[src]")) {
-    const key = `${m.tagName}:${m.getAttribute("src")}`;
-    if (!media.has(key)) media.set(key, m);
-  }
-  for (const m of node.querySelectorAll("video[src], audio[src], img[src]")) {
-    const key = `${m.tagName}:${m.getAttribute("src")}`;
-    const twin = media.get(key);
-    if (!twin) continue;
-    media.delete(key);
-    twin.className = m.className;
-    m.replaceWith(twin); // перенос в том же такте: браузер не ставит видео на паузу и не грузит заново
-  }
-}
-
-// items: [{ key, sig, build }] — узел с той же подписью остаётся как есть, изменившийся пересобирается.
-function reconcile(parent, items, projectId) {
-  const old = new Map();
-  for (const n of parent.children) if (n.dataset.key) old.set(n.dataset.key, n);
-  const nodes = items.map(({ key, sig, build }) => {
-    const prev = old.get(key);
-    if (prev && (blockSig.get(prev) === sig || holdsInput(prev))) return prev;
-    const node = build();
-    node.dataset.key = key;
-    node.dataset.project = projectId;
-    blockSig.set(node, sig);
-    if (prev && prev.dataset.project === projectId) carryOver(prev, node);
-    return node;
-  });
-  for (const n of [...parent.children]) if (!nodes.includes(n)) n.remove();
-  nodes.forEach((n, i) => {
-    if (parent.children[i] !== n) parent.insertBefore(n, parent.children[i] || null);
-  });
-}
-
-// Фокус и курсор в поле переживают перерисовку его блока.
-function captureFocus() {
-  const el = document.activeElement;
-  if (!el?.id || !$("project").contains(el)) return null;
-  let start = null;
-  let end = null;
-  try {
-    start = el.selectionStart;
-    end = el.selectionEnd;
-  } catch {
-    /* у чекбоксов и списков выделения нет */
-  }
-  return { el, id: el.id, start, end, scroll: el.scrollTop };
-}
-
-function restoreFocus(saved) {
-  if (!saved || saved.el.isConnected) return;
-  const twin = document.getElementById(saved.id);
-  if (!twin) return;
-  twin.focus({ preventScroll: true });
-  try {
-    if (saved.start !== null) twin.setSelectionRange(saved.start, saved.end);
-  } catch {
-    /* поле без выделения */
-  }
-  twin.scrollTop = saved.scroll;
-}
-
 // Скринридеру — только переходы шагов («готово», «ошибка», «ждёт вас»), не каждую перерисовку.
 function announceChanges(project) {
   const now = Object.fromEntries(project.steps.map((s) => [s.id, s.status]));
@@ -1364,7 +1274,7 @@ function announceChanges(project) {
 function show(project) {
   state.project = project;
   announceChanges(project);
-  const saved = captureFocus();
+  const saved = captureFocus($("project"));
   const base = [state.gen, project.id];
   const sig = (...parts) => JSON.stringify([base, ...parts]);
   const statuses = project.steps.map((s) => s.status);
@@ -1433,10 +1343,10 @@ window.addEventListener("resize", debounce(trackNavHeight, 150));
 
 async function init() {
   trackNavHeight();
-  $("scenario-title").textContent = SCENARIO_TITLES[scenario];
   $("scenario-hint").textContent = HINTS[scenario];
-  document.title = `${$("scenario-title").textContent} — AI Platform`;
   state.config = await api("GET", `${API}/config`);
+  $("scenario-title").textContent = state.config.scenarios.find((s) => s.id === scenario)?.label || scenario;
+  document.title = `${$("scenario-title").textContent} — AI Platform`;
   renderCreate();
   $("create").addEventListener("submit", create);
   $("create").addEventListener("input", refreshCreateCheck);

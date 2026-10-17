@@ -28,6 +28,7 @@ from aiplatform.audio.jobs import (
 )
 from aiplatform.core import audit
 from aiplatform.core import tasks as tasks_module
+from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, handle_uploads, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.core.uploads import AUDIO
@@ -98,6 +99,7 @@ class AudioModule:
             "engines_error": info.get("error"),
             "models_hint": info.get("models_hint"),
             "install_hint": INSTALL_HINT,
+            "upload_limits": uploads_module.limits(),
         }
 
     def _installed(self) -> set[str] | None:
@@ -151,7 +153,7 @@ class AudioModule:
                     job = self.jobs.create(payload)
                 except ValidationError as exc:
                     raise bad_request(str(exc)) from exc
-                return req.send_json(job, HTTPStatus.CREATED)
+                return req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/audio/jobs/{job['id']}"})
             case ("POST", ["jobs", "batch"]):
                 return req.send_json(self.batch(req.json(MAX_FILE_BODY)), HTTPStatus.CREATED)
             case ("GET", ["jobs", job_id]):

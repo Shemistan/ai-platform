@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Статьи — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/common.css">
   <link rel="stylesheet" href="/ui.css">
@@ -34,7 +35,7 @@
           <form id="add-url" class="field" novalidate style="margin-top:var(--sp-3)">
             <div class="toolbar" style="flex-wrap:nowrap">
               <input type="text" id="url" placeholder="https://…" aria-label="Ссылка на статью" style="flex:1">
-              <button type="submit" class="secondary" id="url-btn">Скачать</button>
+              <button type="submit" class="btn btn--secondary" id="url-btn">Скачать</button>
             </div>
             <p class="hint">Движок скачает текст страницы. Текст для озвучки потом подготовит агент или возьмёшь исходный как есть.</p>
           </form>
@@ -43,7 +44,7 @@
             <label class="field"><span class="field-label">Текст</span><textarea id="new-text" rows="6" placeholder="Текст статьи — его и озвучим"></textarea></label>
             <label class="field"><span class="field-label">Описание <span class="muted">— увидят в канале перед прослушиванием</span></span><input type="text" id="new-summary"></label>
             <label class="field"><span class="field-label">Ссылка на оригинал <span class="muted">— по желанию</span></span><input type="text" id="new-url" placeholder="https://…"></label>
-            <div class="toolbar"><button type="submit" class="secondary">Добавить</button></div>
+            <div class="toolbar"><button type="submit" class="btn btn--secondary">Добавить</button></div>
           </form>
           <p class="form-error" id="add-error" role="alert" hidden></p>
         </section>

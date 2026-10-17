@@ -88,7 +88,7 @@ class JournalCase(StudioCase):
 
     def press(self, pid, **body):
         status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", body)
-        self.assertEqual(status, 200, view)
+        self.assertEqual(status, 202, view)
         return self.settle(pid)
 
     def resolve(self, pid, channel, posted):
@@ -202,7 +202,7 @@ class UnknownStateTest(JournalCase):
         self.assertEqual(self.statuses(failed)["publish"], "failed")
         self.tg.refuse.clear()
 
-        self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/run", {})[0], 200)
+        self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/run", {})[0], 202)
         after = self.settle(pid)
         self.assertEqual(self.statuses(after)["publish"], "waiting", after["log"])
         self.assertEqual(self.tg.count("tg-a", "sendVideo"), 1, "«Запустить всё» не публикует без подтверждения")

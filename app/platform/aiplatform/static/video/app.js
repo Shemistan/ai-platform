@@ -1,6 +1,6 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
-import { $, api, chip, h, jobProgress, poller, STATUS, statusChip, toneOf } from "/ui.js";
+import { $, api, chip, h, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const state = {
   config: null,
@@ -82,8 +82,9 @@ async function addFiles(files) {
   await Promise.all(
     added.map(async (frame) => {
       try {
-        frame.uploadId = (await api("POST", "/api/video/uploads", frame.file)).id;
+        frame.uploadId = (await uploadFile("/api/video/uploads", frame.file, { limit: (state.config?.upload_limits || UPLOAD_LIMITS).image })).id;
       } catch (err) {
+        if (err.kind === "abort") return removeFrame(frame.key); // отменили — кадра как не было
         frame.error = err.message;
       }
       frame.uploading = false;
@@ -179,7 +180,7 @@ function renderFrames() {
     if (state.frames.length) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, "→"));
     items.push(
       h("li", { class: "add" },
-        h("button", { type: "button", class: "add-btn", onclick: () => $("file-input").click() },
+        h("button", { type: "button", class: "add-tile", onclick: () => $("file-input").click() },
           h("span", { class: "plus" }, "+"),
           h("span", {}, state.frames.length ? "Следующий кадр" : "Добавить кадр"),
           h("span", { class: "muted small" }, "или перетащи фото сюда"),
@@ -315,8 +316,9 @@ async function setLivingFile(file) {
   showLivingError("");
   renderLiving();
   try {
-    photo.uploadId = (await api("POST", "/api/video/uploads", file)).id;
+    photo.uploadId = (await uploadFile("/api/video/uploads", file, { limit: (state.config?.upload_limits || UPLOAD_LIMITS).image })).id;
   } catch (err) {
+    if (err.kind === "abort") return state.living === photo && clearLiving(); // отменили — как до выбора
     photo.error = err.message;
   }
   photo.uploading = false;
@@ -339,7 +341,7 @@ function renderLiving() {
   const box = $("living-photo");
   if (!photo) {
     box.replaceChildren(
-      h("button", { type: "button", class: "add-btn", onclick: () => $("living-input").click() },
+      h("button", { type: "button", class: "add-tile", onclick: () => $("living-input").click() },
         h("span", { class: "plus" }, "+"),
         h("span", {}, "Выбрать фото"),
         h("span", { class: "muted small" }, "или перетащи его сюда"),
@@ -491,7 +493,7 @@ function renderJob() {
       player(job.video_url),
       h("div", { class: "job-foot" },
         h("span", { class: "muted small" }, `Сгенерировано за ${fmtElapsed(job.elapsed_s)}`),
-        h("a", { class: "link", href: job.video_url, download: `video-${job.id}.mp4` }, "Скачать mp4"),
+        h("a", { class: "btn btn--link", href: job.video_url, download: `video-${job.id}.mp4` }, "Скачать mp4"),
       ),
     );
   }

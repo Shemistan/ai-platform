@@ -281,6 +281,10 @@ class UpdatesModule:
             diff=change,
         )
 
+    def reset_registry(self) -> None:
+        self.registry.reset()
+        self.audit_registry("reset", self.registry.entries(), None)
+
     def dismiss_proposal(self) -> None:
         self.registry_job.update(proposal=None)
 
@@ -367,8 +371,7 @@ class UpdatesModule:
             case ("POST", ["registry", "dismiss"]):
                 self.dismiss_proposal()
             case ("POST", ["registry", "reset"]):
-                self.registry.reset()
-                self.audit_registry("reset", self.registry.entries(), None)
+                self.reset_registry()
             case ("POST", ["registry"]):
                 self.save_registry(req.json(MAX_BODY))
             case _:

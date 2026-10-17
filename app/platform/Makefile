@@ -1,5 +1,5 @@
-.PHONY: run demo smoke test cov lint check release-prep release-tag python-check models install-agent uninstall-agent agent-status digest-check \
-	backup restore migrate-data tm-exclude deploy deployed
+.PHONY: run demo smoke test test-serial cov lint check release-prep release-tag python-check models move-models install-agent \
+	uninstall-agent agent-status digest-check backup restore migrate-data tm-exclude deploy deployed
 
 # Нужен Python 3.11+. Не задан (make PYTHON=… или окружение) — берём первый подходящий
 # из PATH: на чистом Mac python3 — это 3.9 из Xcode CLT, а python3.12 из brew лежит рядом.
@@ -77,7 +77,18 @@ models: python-check
 	@test -n "$(M)" || { echo "укажи модели: make models M=\"z-image-turbo ltx-2.3-q4\" (список: make models M=--list)" >&2; exit 2; }
 	sh tools/setup-model.sh $(M)
 
+# Перенос всех весов на другой диск с правкой AIP_MODELS_DIR в local.mk: make move-models TO=~/local_models.
+move-models: python-check
+	@test -n "$(TO)" || { echo "куда переносить: make move-models TO=~/local_models" >&2; exit 2; }
+	sh tools/setup-model.sh --move-to "$(TO)"
+
+# Параллельно (pytest-xdist по процессам, QA-016): pytest берётся свой или через uv, без них —
+# последовательно. Аргументы pytest — через T: make test T="-k studio -n 4".
 test: python-check
+	PYTHON=$(PYTHON) sh tools/test.sh $(T)
+
+# Последовательно и без pytest — для отладки: порядок и вывод как раньше.
+test-serial: python-check
 	$(PYTHON) -W error::ResourceWarning -m unittest discover -s tests -t .
 
 # Покрытие тестами без порога: отчёт по модулям и html в tmp/cov/html (coverage — свой или через uv).
