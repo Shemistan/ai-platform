@@ -2,57 +2,19 @@
 
 import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
 from aiplatform import config as platform_config
 from aiplatform import server as server_module
-from aiplatform.video import config as config_module
 from aiplatform.video import timeline
-from aiplatform.video.service import VideoModule
-from tests.helpers import PlatformCase, isolated_config
+from tests.helpers import VideoServerCase, live_processes, poll, scaled, video_load, video_only
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 
 
-def video_only(ctx):
-    return [VideoModule(ctx)]
-
-
-def load(env):
-    return config_module.load(platform_config.load(isolated_config(env)))
-
-
-class ServerCase(PlatformCase):
-    step_delay = "0.01"
-    fail_flag = ""
-    modules = staticmethod(video_only)
-    extra_env = {"AIP_MODELS_DIR": "/nonexistent-models"}  # не зависеть от весов на этой машине
-
-    def setUp(self):
-        self.process_env = {
-            "FAKE_LTX_STEP_DELAY": self.step_delay,
-            "FAKE_LTX_NO_FFMPEG": "1",
-            "FAKE_LTX_FAIL": self.fail_flag,
-        }
-        super().setUp()
-
-    def upload(self):
-        status, body = self.json("POST", "/api/video/uploads", PNG)
-        self.assertEqual(status, 201, body)
-        return body["id"]
-
-    def wait(self, job_id, statuses=("done", "failed", "canceled"), timeout=20):
-        deadline = time.time() + timeout
-        seen = []
-        while time.time() < deadline:
-            _, job = self.json("GET", f"/api/video/jobs/{job_id}")
-            seen.append(job)
-            if job["status"] in statuses:
-                return job, seen
-            time.sleep(0.02)
-        self.fail(f"задача не дошла до {statuses}: {seen[-1]}")
+ServerCase = VideoServerCase  # прежнее имя: на него ссылаются ветки
+load = video_load
 
 
 class HappyPathTest(ServerCase):
@@ -184,11 +146,13 @@ class CancelTest(ServerCase):
 
         _, view = self.json("POST", f"/api/video/jobs/{queued['id']}/cancel")
         self.assertEqual(view["status"], "canceled")
-        started = time.time()
+        procs = poll(live_processes, bool, what="процесс модели")
         self.json("POST", f"/api/video/jobs/{running['id']}/cancel")
-        canceled, _ = self.wait(running["id"])
+        canceled, _ = self.wait(running["id"], timeout=10)
         self.assertEqual(canceled["status"], "canceled")
-        self.assertLess(time.time() - started, 5, "отмена должна убивать процесс, а не ждать его")
+        # Убит сигналом, а не доработал до конца: код возврата отрицательный (−SIGTERM/−SIGKILL).
+        codes = [p.wait(scaled(5)) for p in procs]
+        self.assertTrue(all(code < 0 for code in codes), f"отмена должна убивать процесс, а не ждать его: {codes}")
         self.assertFalse((Path(self.tmp.name) / "video" / "jobs" / running["id"] / "output.mp4").exists())
 
 

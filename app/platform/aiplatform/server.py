@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from aiplatform import __version__
 from aiplatform import config as config_module
 from aiplatform.config import Config
-from aiplatform.core import disk, log, media, runner
+from aiplatform.core import disk, log, media, perms, runner
 from aiplatform.core.gate import Gate
 from aiplatform.core.http import HttpError, Request, not_found
 from aiplatform.core.notify import Notifier
@@ -177,6 +177,8 @@ class App:
         self.started = time.monotonic()
         self.stopping = False  # пришёл SIGTERM: новые задачи не принимаются (503)
         self.closed = False
+        # Каталог данных — только владельцу: подписчики, логи, задачи (SEC-010).
+        config.data_dir.mkdir(mode=perms.PRIVATE_DIR, parents=True, exist_ok=True)
         # Процессы моделей прошлого запуска, пережившие его (SIGKILL, сбой), держат память — гасим.
         self.run_dir = config.data_dir / "run"
         self.orphans = runner.reap_orphans(self.run_dir)
@@ -214,6 +216,8 @@ class App:
                 f"Каталог моделей {models} не найден — внешний диск не примонтирован? "
                 "Подключи его или задай AIP_MODELS_DIR."
             )
+        if not self.config.fake and (loose := perms.warning(self.config.data_dir, "Каталог данных")):
+            out.append(loose)
         for module in self.modules.values():
             out.extend(module.problems())
         return list(dict.fromkeys(out))  # общий движок (narrator) жалуется из нескольких вкладок

@@ -12,7 +12,8 @@ from aiplatform.core import media
 from aiplatform.fakes import fake_news
 from aiplatform.studio import publish, render
 from aiplatform.studio.config import ASSETS
-from tests.test_studio_flow import FAST, NEEDS_FFMPEG, StudioCase, png_bytes
+from tests.fixtures import FAST, NEEDS_FFMPEG, png_bytes
+from tests.helpers import StudioCase
 
 BRANDING = render.Branding(sticker=ASSETS / "subscribe.png", play=ASSETS / "play.png")
 

@@ -6,7 +6,8 @@ from pathlib import Path
 
 from aiplatform.core import events
 from aiplatform.studio import pipeline, publish, service
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG
+from tests.helpers import StudioCase
 
 
 def project_with(statuses: dict, running=False) -> dict:
