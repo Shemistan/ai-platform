@@ -320,7 +320,16 @@ async function addArticle(payload) {
 // --- данные ---
 
 async function refresh() {
-  state.data = await api("GET", `${API}/state`);
+  try {
+    state.data = await api("GET", `${API}/state`);
+    state.failures = 0;
+  } catch (err) {
+    state.failures = (state.failures || 0) + 1;
+    if (state.data) fill($("tasks"), h("p", { class: "job-error" }, `Нет связи с сервисом (${err.message}) — обновлю, когда он вернётся.`));
+    throw err;
+  } finally {
+    schedule();
+  }
   renderStats();
   renderList();
   if (state.selected) {
@@ -334,17 +343,20 @@ async function refresh() {
       /* статья могла пропасть */
     }
   }
-  schedule();
 }
 
+// Пока идёт задача — опрос раз в 1,5 с; после сбоя связи — с растущей паузой до 30 с, пока не ответит.
 function schedule() {
-  const active = state.data.tasks.some(isActive);
-  if (active && !state.polling) {
+  const active = state.data?.tasks.some(isActive);
+  if ((active || state.failures) && !state.polling) {
     state.polling = true;
-    setTimeout(async () => {
-      state.polling = false;
-      await refresh();
-    }, 1500);
+    setTimeout(
+      () => {
+        state.polling = false;
+        refresh().catch(() => {});
+      },
+      state.failures ? Math.min(1500 * 2 ** state.failures, 30000) : 1500,
+    );
   }
 }
 

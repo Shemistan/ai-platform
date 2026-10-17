@@ -275,30 +275,94 @@ export function taskCard(task, { onCancel, full = false } = {}) {
       statusChip(task.status),
       h("span", { class: "task-title" }, task.title),
       h("span", { class: "muted small" }, meta),
-      active && onCancel ? h("button", { type: "button", class: "link danger", onclick: () => onCancel(task) }, "Отменить") : null,
+      active && onCancel ? h("button", { type: "button", class: "link danger", onclick: safe(() => onCancel(task)) }, "Отменить") : null,
     ),
     task.error ? h("p", { class: "job-error" }, task.error) : null,
     full ? logBlock(task.log) : task.last && active ? h("div", { class: "task-last" }, task.last) : null,
   );
 }
 
-const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// --- Ошибки обработчиков ---
+
+let toastTimer = null;
+
+// Ошибка без своего места на странице (обработчик клика, фоновое обновление) — плашка внизу экрана.
+export function reportError(err) {
+  if (err?.kind === "abort") return;
+  const message = err?.message || String(err);
+  console.warn(err);
+  let box = document.getElementById("platform-toast");
+  if (!box) {
+    box = h("div", { id: "platform-toast", class: "platform-toast", role: "alert" });
+    document.body.append(box);
+  }
+  const close = h("button", { type: "button", class: "icon-btn", "aria-label": "Скрыть" }, "×");
+  close.addEventListener("click", () => (box.hidden = true));
+  fill(box, h("span", {}, message), close);
+  box.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (box.hidden = true), 8000);
+}
+
+// safe(fn) — обёртка обработчика события: ошибка (и отклонённый промис) уходит в reportError,
+// а не в «Uncaught (in promise)».
+export function safe(fn) {
+  return (...args) => {
+    try {
+      return Promise.resolve(fn(...args)).catch(reportError);
+    } catch (err) {
+      reportError(err);
+      return Promise.resolve();
+    }
+  };
+}
+
+const pause = (ms, signal) =>
+  new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
+  });
+
+const following = new Map();
 
 // Опрос задачи до конца: onUpdate(задача) на каждом шаге, промис — итог.
-export async function followTask(url, onUpdate, interval = 1000) {
-  let last = null;
-  while (true) {
-    let task = null;
-    try {
-      task = await api("GET", url);
-    } catch {
-      await pause(interval * 2);
-      continue;
-    }
-    onUpdate(task);
-    if (last && task.status !== last) announce(`${task.title || "Задача"}: ${STATUS[task.status] || task.status}`);
-    last = task.status;
-    if (task.status !== "queued" && task.status !== "running") return task;
-    await pause(interval);
+// Ответ 4xx (задачу удалили) — отказ с ошибкой; сбой сети — повтор с растущей паузой,
+// после maxErrors сбоев подряд — отказ. На одну задачу (url) — один опрос: повторный вызов
+// возвращает тот же промис, а onUpdate берётся последний (страница перерисовала свой блок).
+export function followTask(url, onUpdate, opts = {}) {
+  const { interval = 1000, signal, maxErrors = 20 } = typeof opts === "number" ? { interval: opts } : opts;
+  const known = following.get(url);
+  if (known) {
+    known.onUpdate = onUpdate;
+    return known.promise;
   }
+  const entry = { onUpdate };
+  following.set(url, entry);
+  entry.promise = (async () => {
+    let last = null;
+    let errors = 0;
+    try {
+      while (true) {
+        if (signal?.aborted) throw new ApiError("Опрос задачи отменён.", { kind: "abort" });
+        let task;
+        try {
+          task = await api("GET", url, undefined, { signal });
+        } catch (err) {
+          if (err.kind === "abort" || (err.kind === "http" && err.status >= 400 && err.status < 500)) throw err;
+          if (++errors >= maxErrors) throw err;
+          await pause(Math.min(interval * 2 ** errors, 30000), signal);
+          continue;
+        }
+        errors = 0;
+        entry.onUpdate(task);
+        if (last && task.status !== last) announce(`${task.title || "Задача"}: ${STATUS[task.status] || task.status}`);
+        last = task.status;
+        if (task.status !== "queued" && task.status !== "running") return task;
+        await pause(interval, signal);
+      }
+    } finally {
+      if (following.get(url) === entry) following.delete(url);
+    }
+  })();
+  return entry.promise;
 }

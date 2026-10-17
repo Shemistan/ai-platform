@@ -325,3 +325,24 @@ form.field { gap: 12px; }
 /* Главная кнопка необратимого действия в подтверждении. */
 .primary.danger { background: var(--bad); border-color: var(--bad); color: var(--panel); }
 .confirm-list { list-style: disc; padding-left: 18px; margin: 4px 0 0; }
+
+/* Ошибка обработчика без своего места на странице (reportError в ui.js). */
+.platform-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 10px 8px 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--bad);
+  background: var(--bad-bg);
+  color: var(--bad);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.15);
+  overflow-wrap: anywhere;
+}
+.platform-toast .icon-btn { color: inherit; font-size: 18px; }

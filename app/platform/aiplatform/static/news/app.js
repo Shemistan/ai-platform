@@ -50,7 +50,11 @@ async function cancel(task) {
 
 function recentTask(tasks, box) {
   const active = (tasks || []).find((t) => t.status === "queued" || t.status === "running");
-  if (active) followTask(`${API}/tasks/${active.id}`, (t) => fill(box, taskCard(t, { full: true, onCancel: cancel }))).then(() => show(state.tab));
+  // Перерисовка раздела зовёт это снова: followTask не заводит второй опрос той же задачи, а пишет в новый box.
+  if (active)
+    followTask(`${API}/tasks/${active.id}`, (t) => fill(box, taskCard(t, { full: true, onCancel: cancel })))
+      .then(() => show(state.tab))
+      .catch((err) => fill(box, h("p", { class: "job-error" }, err.message)));
 }
 
 // --- источники ---
