@@ -183,7 +183,7 @@ class PublishButtonTest(StudioCase):
 
             forced = press(channels=["tg"], force=True)
             self.assertEqual(len(calls), 2)
-            self.assertNotIn("skipped", forced["published"][0])
+            self.assertNotIn("skipped", forced["published"][-1])
 
         for body in ({"channels": []}, {"channels": ["nope"]}, {"channels": ["tg"], "force": "да"}):
             self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/publish", body)[0], 400, body)

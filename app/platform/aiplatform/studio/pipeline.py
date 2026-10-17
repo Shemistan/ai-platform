@@ -181,6 +181,8 @@ class Studio:
         self.events = journal or events.EventLog(None)  # журнал событий; без него — не пишется
         # Запуск закончился: (проект, статусы шагов на старте) — для уведомлений; зовётся вне замка.
         self.on_stop: Callable[[dict, dict[str, str]], None] | None = None
+        # Перед удалением выпуска уборкой (проект, каталог): сохранить то, что нужно аналитике.
+        self.before_delete: Callable[[dict, Path], None] | None = None
         self._before: dict[str, dict[str, str]] = {}
         self._lock = threading.Lock()
         self._projects: dict[str, dict] = {}
@@ -276,6 +278,8 @@ class Studio:
             project = self._require(project_id)
             if project["running"] or not project.get("archived"):
                 return 0
+            if self.before_delete is not None:  # сбой здесь — выпуск не удаляется: история дороже места
+                self.before_delete(copy.deepcopy(project), self.project_dir(project_id))
             del self._projects[project_id]
         self._emit(project, "project.deleted", actor=events.actor())
         return cleanup.remove_tree(self.project_dir(project_id))
