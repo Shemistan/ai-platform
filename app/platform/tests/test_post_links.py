@@ -3,7 +3,8 @@
 import unittest
 
 from aiplatform.studio import publish
-from tests.test_studio_flow import ARTICLE, SOURCE, StudioCase
+from tests.fixtures import ARTICLE, SOURCE
+from tests.helpers import StudioCase
 
 
 class DomainsTest(unittest.TestCase):

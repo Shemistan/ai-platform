@@ -179,6 +179,7 @@ FLUX.2 сам докладывает `mlx.metallib` к Flux2CLI и ставит 
 ```sh
 make check   # ruff (если стоит), node --check, тесты — всё на фейках
 make test    # только тесты: параллельно, pytest-xdist (~1 мин); make test-serial — через unittest
+AIP_TEST_TIMEOUT_SCALE=3 make test  # занятая машина: все ожидания в тестах ×3
 make cov     # покрытие по модулям (худшие сверху) и html в tmp/cov/html, без порога
 make smoke   # на настоящих моделях: картинка, фраза озвучки, черновик статьи — с временем шагов
 ```

@@ -3,7 +3,8 @@
 import unittest
 
 from aiplatform.studio import estimate
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG
+from tests.helpers import StudioCase
 
 PENDING = {s: "pending" for s in ("text", "poster_prompt", "poster", "plan", "images", "clips", "voice", "render")}
 SETTINGS = {

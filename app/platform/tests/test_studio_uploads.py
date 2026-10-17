@@ -8,7 +8,8 @@ from pathlib import Path
 
 from aiplatform.core import media, uploads
 from aiplatform.studio import slides, steps
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase, png_bytes
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG, png_bytes
+from tests.helpers import StudioCase
 
 
 def clip_bytes(seconds: float = 1.0) -> bytes:
