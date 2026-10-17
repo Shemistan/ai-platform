@@ -74,6 +74,34 @@ class LibraryTest(PlatformCase):
         self.assertTrue(self.article(article_id)["sent"])
         self.assertEqual(self.json("POST", f"/api/library/articles/{article_id}/send", {"channel": "a b"})[0], 400)
 
+    def test_send_without_force_does_not_repeat(self):
+        payload = {"title": "Повтор", "text": "Абзац.\n\nЕщё абзац.", "summary": "О повторе."}
+        _, card = self.json("POST", "/api/library/articles", payload)
+        article_id = card["id"]
+        _, task = self.json("POST", f"/api/library/articles/{article_id}/synth", {"engine": "silero"})
+        self.assertEqual(self.task(task)["status"], "done")
+        module = self.app.modules["library"]
+        started = []
+        real = module._start
+        module._start = lambda kind, title, argv, **kw: started.append(argv) or real(kind, title, argv, **kw)
+
+        _, task = self.json("POST", f"/api/library/articles/{article_id}/send", {})
+        self.assertEqual(self.task(task)["status"], "done")
+        self.assertNotIn("--force", started[-1])
+        self.assertTrue(self.article(article_id)["sent"])
+
+        status, body = self.json("POST", f"/api/library/articles/{article_id}/send", {})
+        self.assertEqual(status, 409, body)
+        self.assertIn("Отправить ещё раз", body["error"])
+        self.assertEqual(len(started), 1, "повторный клик не запускает отправку")
+        self.assertEqual(self.json("POST", f"/api/library/articles/{article_id}/send", {"force": "да"})[0], 400)
+
+        _, task = self.json("POST", f"/api/library/articles/{article_id}/send", {"force": True})
+        done = self.task(task)
+        self.assertEqual(done["status"], "done")
+        self.assertIn("--force", started[-1])
+        self.assertTrue(done["title"].startswith("Повторная отправка"))
+
     def test_fetch_and_agent_prepare(self):
         status, card = self.json("POST", "/api/library/articles", {"url": "https://example.dev/hello-world"})
         self.assertEqual(status, 201, card)

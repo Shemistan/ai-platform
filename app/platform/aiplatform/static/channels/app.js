@@ -42,7 +42,7 @@ function renderChannels() {
     data.channels.length
       ? h("div", { class: "table-wrap" }, h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Канал"), h("th", {}, "Что уходит"), h("th", {}, "Состояние"), h("th", {}, ""))), h("tbody", {}, ...rows)))
       : h("p", { class: "empty" }, "Каналов нет — добавь первый ниже."),
-    h("p", { class: "hint", style: "margin-top:10px" }, data.custom ? `Список — ${data.file}.` : `Пока своего списка нет: показаны каналы движка (telegram_tems.md) и пакеты для ручной загрузки. Первая правка сохранит список в ${data.file}.`),
+    h("p", { class: "hint", style: "margin-top:var(--sp-2)" }, data.custom ? `Список — ${data.file}.` : `Пока своего списка нет: показаны каналы движка (telegram_tems.md) и пакеты для ручной загрузки. Первая правка сохранит список в ${data.file}.`),
   );
   const tools = $("channel-tools");
   fill(tools, 
@@ -165,7 +165,7 @@ function renderServe() {
   fill($("serve"), 
     h(
       "div",
-      { class: "card", style: "margin-bottom:12px" },
+      { class: "card", style: "margin-bottom:var(--sp-3)" },
       h("label", { class: "switch" }, toggle, "Принимать подписки", s.running ? chip(`идёт ${since}`, "ok") : chip("выключено")),
       h("p", { class: "hint" }, "Пока включено, бот отвечает на /start и /stop. Подписчикам озвучки статей идут в личку, когда канал статей выключен (NARRATOR_TELEGRAM_CHANNEL=off)."),
       s.error ? errorState({ title: "Приём подписок остановился", error: s.error }) : null,
@@ -184,7 +184,7 @@ function renderSubscribers() {
     total
       ? h(
           "div",
-          { class: "table-wrap", style: "margin-top:12px" },
+          { class: "table-wrap", style: "margin-top:var(--sp-3)" },
           h(
             "table",
             { class: "data-table" },
