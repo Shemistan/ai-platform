@@ -411,6 +411,9 @@ class StudioModule:
                     "video_s": video_seconds(project),
                     "verdict": steps.verdict(review) if review else None,
                     "poster": self._poster_url(item["id"], folder),
+                    # Копия — вариант оригинала (AN-009): доля переделок и сравнение вариантов.
+                    "variant_of": project.get("variant_of"),
+                    "variant": project.get("variant"),
                 }
             )
         counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
@@ -922,14 +925,23 @@ class StudioModule:
             return source_id("post", text=f"{_read_text(folder / steps.POST)}\n")
         return None
 
-    def clone(self, project_id: str) -> dict:
-        """Копия выпуска: те же настройки и готовые результаты до сборки; сборка и публикация — заново."""
+    def clone(self, project_id: str, payload: object = None) -> dict:
+        """Копия выпуска: те же настройки и готовые результаты до сборки; сборка и публикация — заново.
+
+        Копия помнит оригинал (AN-009): variant_of — корень цепочки (у копии копии — тот же),
+        variant — что меняли (обложка, заголовок, длина), если сказали."""
         source = self.studio.get(project_id)
         if source is None:
             raise not_found("Проект не найден.")
         if source["running"]:
             raise HttpError(HTTPStatus.CONFLICT, "Проект сейчас выполняется — дождись или останови его.")
+        variant = payload.get("variant") if isinstance(payload, dict) else None
+        if variant is not None and (not isinstance(variant, str) or len(variant) > 200):
+            raise bad_request("variant — что меняли в копии, строка до 200 знаков.")
         extra = {k: source[k] for k in ("day", "source", "auto_title") if k in source}
+        extra["variant_of"] = source.get("variant_of") or project_id
+        if variant and variant.strip():
+            extra["variant"] = " ".join(variant.split())
         copy = self.studio.create(source["scenario"], f"{source['title']} (копия)", source["settings"], extra)
         src, dst = self.studio.project_dir(project_id), self.studio.project_dir(copy["id"])
         for path in src.rglob("*"):
@@ -1392,7 +1404,7 @@ class StudioModule:
             case ("POST", ["projects", pid, "summary"]):
                 return req.send_json(self.summarize(pid), HTTPStatus.ACCEPTED)
             case ("POST", ["projects", pid, "clone"]):
-                return req.send_json(self.clone(pid), HTTPStatus.CREATED)
+                return req.send_json(self.clone(pid, req.json()), HTTPStatus.CREATED)
             case ("POST", ["projects", pid, "archive"]):
                 return req.send_json(self.archive(pid, req.json() or {}))
             case ("POST", ["projects"]):

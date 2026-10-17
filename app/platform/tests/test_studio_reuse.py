@@ -87,5 +87,26 @@ class ReuseTest(StudioCase):
         self.assertEqual((self.jobs("photo"), self.jobs("audio")), (photos, audios))
 
 
+class VariantOfTest(StudioCase):
+    """Копия помнит оригинал (AN-009): variant_of — корень цепочки, variant — что меняли."""
+
+    def test_copy_of_copy_has_same_root(self):
+        source = self.create(scenario="article", text=ARTICLE)
+        status, copy = self.json("POST", f"/api/studio/projects/{source['id']}/clone", {"variant": " другая  обложка "})
+        self.assertEqual(status, 201, copy)
+        self.assertEqual((copy["variant_of"], copy["variant"]), (source["id"], "другая обложка"))
+        status, copy2 = self.json("POST", f"/api/studio/projects/{copy['id']}/clone")
+        self.assertEqual(status, 201, copy2)
+        self.assertEqual(copy2["variant_of"], source["id"], "копия копии — тот же корень")
+        self.assertNotIn("variant", copy2)
+
+        board = {p["id"]: p for p in self.json("GET", "/api/studio/board")[1]["projects"]}
+        self.assertIsNone(board[source["id"]]["variant_of"])
+        self.assertEqual(board[copy["id"]]["variant_of"], source["id"])
+        self.assertEqual(board[copy2["id"]]["variant_of"], source["id"])
+        bad = self.json("POST", f"/api/studio/projects/{source['id']}/clone", {"variant": 5})
+        self.assertEqual(bad[0], 400)
+
+
 if __name__ == "__main__":
     unittest.main()
