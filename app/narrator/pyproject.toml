@@ -13,6 +13,9 @@ dependencies = [
     # произношение английских слов (CMUdict; пакет-обёртка под GPL-3).
     "num2words>=0.5.14",
     "cmudict>=1.1",
+    # Обложка и видео дайджеста (narrator.news.cover, narrator.news.video). Раньше
+    # приезжал транзитивно с экстрами — без них (CI) падал импорт (QA-028).
+    "pillow>=10",
 ]
 
 [project.optional-dependencies]
