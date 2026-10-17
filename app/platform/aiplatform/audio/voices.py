@@ -17,6 +17,7 @@ class Engine:
     voices: tuple[str, ...]
     default_voice: str
     tunable: bool = False  # слушает --speed
+    license_nc: bool = False  # некоммерческая лицензия весов: только черновики, не публикация (CMP-018)
 
     def public(self) -> dict:
         return {
@@ -26,6 +27,7 @@ class Engine:
             "voices": list(self.voices),
             "default_voice": self.default_voice,
             "speed": self.tunable,
+            "license_nc": self.license_nc,
         }
 
 
@@ -41,6 +43,7 @@ ENGINES: dict[str, Engine] = {
             "очень быстро на CPU; лицензия CC BY-NC — для черновиков",
             ("eugene", "aidar", "baya", "kseniya", "xenia"),
             "eugene",
+            license_nc=True,
         ),
         Engine(
             "supertonic",

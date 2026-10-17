@@ -37,6 +37,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from aiplatform.audio import voices
 from aiplatform.core import audit, disk, log, media
 from aiplatform.core import settings as core_settings
 from aiplatform.core.fsutil import atomic_write
@@ -226,6 +227,7 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
     if settings.get("speed"):
         payload["speed"] = settings["speed"]
     entry = cache.entry_id("voice", **payload)
+    ctx.remember(engine=settings["engine"])  # чей голос в выпуске — публикация сверяет лицензию (CMP-018)
     if from_cache(ctx, entry, target, what):
         return target
     try:
@@ -641,6 +643,7 @@ def step_voice(ctx: StepContext) -> None:
         if existing is None:
             raise Waiting("Загрузи озвучку (mp3, wav или m4a) — например, из Gemini TTS.")
         ctx.log(f"озвучка загружена: {existing.name}")
+        ctx.remember(engine=None)  # своя озвучка — лицензия движков ни при чём
         return
     text = require_text(ctx)
     for old in (ctx.dir / f"voice{ext}" for ext in AUDIO_EXT):
@@ -1064,6 +1067,9 @@ def step_publish(ctx: StepContext) -> None:
         ctx.log(stale)
     if unlicensed := series_unlicensed(ctx):
         raise StudioError(unlicensed)
+    vertical = any(c.format == VERTICAL for c in channels.values() if c.id in chosen)
+    if nc := nc_voice(ctx, vertical):
+        raise StudioError(nc)
     post = with_source(ctx, ctx.read(POST))
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
@@ -1359,6 +1365,31 @@ def series_unlicensed(ctx: StepContext) -> str:
         "Серия частями — это полный пересказ чужой статьи, а права на переработку нет. "
         "Если оно есть (своя статья, CC BY или разрешение автора), выбери его в поле «Право на переработку» "
         "в шаге «Публикация» и нажми «Опубликовать» снова; иначе опубликуй одно видео-аннотацию по статье."
+    )
+
+
+def nc_voice(ctx: StepContext, vertical: bool) -> str:
+    """Озвучка движком с некоммерческой лицензией (Silero, CC BY-NC) в канал не уходит (CMP-018).
+
+    Движок — из состояния шага озвучки; выпуски до CMP-018 его не помнят — тогда из настроек."""
+    used = []
+    for step_id in ("voice", "short") if vertical else ("voice",):
+        state = ctx.project["steps"].get(step_id) or {}
+        if state.get("status") != "done":
+            continue
+        if "engine" in state:
+            engine_id = state["engine"]
+        else:
+            engine_id = ctx.settings.get("engine") if ctx.settings.get("voice_mode") != "upload" else None
+        engine = voices.ENGINES.get(engine_id) if engine_id else None
+        if engine is not None and engine.license_nc and engine.label not in used:
+            used.append(engine.label)
+    if not used:
+        return ""
+    return (
+        f"Озвучка сделана движком {', '.join(used)} — его лицензия некоммерческая (CC BY-NC), "
+        "такой голос годится только для черновиков. Выбери другой движок в настройках выпуска "
+        "(раздел «Озвучка») и переозвучь выпуск или загрузи свою озвучку, затем нажми «Опубликовать» снова."
     )
 
 

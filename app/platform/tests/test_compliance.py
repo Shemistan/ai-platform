@@ -385,5 +385,39 @@ class SeriesLicenseTest(StudioCase):
         self.assertIn('readSettings("step-source", SOURCE_SETTINGS)', js)
 
 
+@NEEDS_FFMPEG
+class NcVoicePublishTest(StudioCase):
+    """CMP-018: озвучку движком с некоммерческой лицензией (Silero) опубликовать нельзя."""
+
+    SETTINGS = {"channels": ["download-16x9"], "auto_publish": True, "draft": True}
+
+    def test_silero_voice_is_not_published(self):
+        project = self.create(scenario="article", text=ARTICLE, settings=self.SETTINGS | {"engine": "silero"}, run=True)
+        done = self.settle(project["id"])
+        step = next(s for s in done["steps"] if s["id"] == "publish")
+        self.assertEqual(step["status"], "failed", done["log"])
+        self.assertIn("Silero — его лицензия некоммерческая", step["error"])
+        self.assertIn("Выбери другой движок", step["error"])
+        self.assertFalse((self.folder(project["id"]) / "publish").exists())
+        self.assertEqual(next(s for s in done["steps"] if s["id"] == "voice")["engine"], "silero")
+
+        status, _ = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"engine": "higgs"})
+        self.assertEqual(status, 200)
+        self.json("POST", f"/api/studio/projects/{project['id']}/run", {})
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+
+    def test_other_engine_is_published(self):
+        project = self.create(scenario="article", text=ARTICLE, settings=self.SETTINGS | {"engine": "higgs"}, run=True)
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+
+    def test_engine_flag(self):
+        from aiplatform.audio import voices
+
+        self.assertEqual([e.id for e in voices.ENGINES.values() if e.license_nc], ["silero"])
+        self.assertTrue(voices.ENGINES["silero"].public()["license_nc"])
+
+
 if __name__ == "__main__":
     unittest.main()
