@@ -210,7 +210,7 @@ class DigestVerdictTest(StudioCase):
         self.assertTrue(any("судья: не готово" in line for line in done["log"]))
 
         status, _ = self.json("POST", f"/api/studio/projects/{project['id']}/publish", {"channels": ["download-16x9"]})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 202)
         self.assertEqual(self.statuses(self.settle(project["id"]))["publish"], "waiting")
         body = {"channels": ["download-16x9"], "ignore_verdict": True}
         self.json("POST", f"/api/studio/projects/{project['id']}/publish", body)

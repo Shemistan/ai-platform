@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import time
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -70,6 +71,62 @@ T0 = 1_800_000_000.0  # время поста в фикстурах окон
 
 def snap(at, views=None, members=None, **extra):
     return {"at": at, "views": views, "members": members, **extra}
+
+
+class HttpGetRetryTest(unittest.TestCase):
+    """http_get повторяет чтение на 5xx, 429 и сбой сети, как publish.call_api (BE-013)."""
+
+    def setUp(self):
+        self.sleeps: list[float] = []
+        patch = mock.patch.object(publish, "_sleep", self.sleeps.append)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    @staticmethod
+    def opener(*queue):
+        calls = []
+
+        def fetch(url):
+            calls.append(url)
+            reply = queue[len(calls) - 1] if len(calls) <= len(queue) else EMBED
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        return fetch, calls
+
+    @staticmethod
+    def http_error(code, headers=None):
+        return urllib.error.HTTPError("https://t.me/x", code, "err", headers or {}, None)
+
+    def test_5xx_then_200_snapshot_written(self):
+        fetch, calls = self.opener(self.http_error(502))
+        channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="-100123", token_env="AIP_TG_TEST")
+        record = {"channel": "tg", "ok": True, "message_id": 42}
+        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}):
+            fresh = stats.Refresher(
+                {"tg": channel}, http_post=fake_post, get=lambda url: stats.http_get(url, fetch)
+            ).record(record)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(stats.latest(fresh)["views"], 1200)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_429_waits_retry_after(self):
+        fetch, calls = self.opener(self.http_error(429, {"Retry-After": "7"}))
+        self.assertEqual(stats.http_get("u", fetch), EMBED)
+        self.assertEqual(self.sleeps, [7.0])
+
+    def test_network_errors_give_up_after_attempts(self):
+        fetch, calls = self.opener(*[urllib.error.URLError("down")] * 5)
+        self.assertEqual(stats.http_get("u", fetch), "")
+        self.assertEqual(len(calls), publish.ATTEMPTS)
+
+    def test_404_and_long_retry_after_not_retried(self):
+        fetch, calls = self.opener(self.http_error(404))
+        self.assertEqual(stats.http_get("u", fetch), "")
+        fetch2, calls2 = self.opener(self.http_error(429, {"Retry-After": "9999"}))
+        self.assertEqual(stats.http_get("u", fetch2), "")
+        self.assertEqual((len(calls), len(calls2), self.sleeps), (1, 1, []))
 
 
 class WindowsTest(unittest.TestCase):

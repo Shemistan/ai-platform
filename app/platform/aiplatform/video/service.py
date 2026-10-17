@@ -84,7 +84,7 @@ class VideoModule:
             job = create(payload)
         except timeline.ValidationError as exc:
             raise bad_request(str(exc)) from exc
-        req.send_json(job, HTTPStatus.CREATED)
+        req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/video/jobs/{job['id']}"})
 
     def close(self) -> None:
         self.jobs.close()

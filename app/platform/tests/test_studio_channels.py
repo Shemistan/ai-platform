@@ -163,7 +163,7 @@ class PublishButtonTest(StudioCase):
 
         def press(**body):
             status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", body)
-            self.assertEqual(status, 200, view)
+            self.assertEqual(status, 202, view)
             return self.settle(pid)
 
         with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
