@@ -1,6 +1,7 @@
 """Оформление выпуска как у narrator: обложка дайджеста из его промпта, плей и плашка «подпишись»."""
 
 import os
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -51,9 +52,20 @@ class StickerTest(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "Кадр"):
             render.layout("квадрат")
 
+    def test_outro_starts_before_end(self):
+        self.assertEqual(render.outro_start(10.0), 10.0 - render.OUTRO_S)
+        self.assertEqual(render.outro_start(1.0), 0.0, "короткий последний слайд — плашка едет сразу")
+
     def test_ease_is_smoothstep_in_time(self):
         p = "min(1,max(0,(t-0.800)/1.000))"
         self.assertEqual(render._ease(0.8, 1.0), f"({p})*({p})*(3-2*({p}))")
+
+
+def frame(video: Path, at: float) -> bytes:
+    """Кадр видео на секунде at в оттенках серого, сырыми байтами."""
+    argv = ["ffmpeg", "-v", "error", "-ss", f"{at}", "-i", str(video), "-frames:v", "1"]
+    argv += ["-f", "rawvideo", "-pix_fmt", "gray", "-"]
+    return subprocess.run(argv, capture_output=True, check=True).stdout
 
 
 @NEEDS_FFMPEG
@@ -73,6 +85,14 @@ class RenderBrandingTest(unittest.TestCase):
                 orientation=render.VERTICAL, cancel=cancel, branding=BRANDING,
             )  # fmt: skip
             self.assertEqual(media.video_size(slide), (270, 480))
+            # Последний слайд: в конце притемнение и крупная плашка внизу — последний кадр другой.
+            kwargs = {"title": "Т", "bullets": [], "image": None, "seconds": 3.0, "orientation": render.LANDSCAPE}
+            kwargs |= {"cancel": cancel, "branding": BRANDING}
+            plain = renderer.slide_clip(out=folder / "plain.mp4", **kwargs)
+            outro = renderer.slide_clip(out=folder / "outro.mp4", outro=True, **kwargs)
+            self.assertAlmostEqual(media.duration(outro), 3.0, delta=0.1)
+            self.assertEqual(frame(outro, 0.2), frame(plain, 0.2), "до концовки слайд как обычно")
+            self.assertNotEqual(frame(outro, 2.9), frame(plain, 2.9))
             renderer.cover_frames(poster, folder / "c.jpg", folder / "t.jpg", cancel)
             self.assertLessEqual(max(media.video_size(folder / "t.jpg")), 320)
 
@@ -137,6 +157,19 @@ class DigestBrandingTest(StudioCase):
         bad = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"tempo": 3})
         self.assertEqual(bad[0], 400)
         self.assertIn("tempo", bad[1]["error"])
+
+        # Слайды дайджеста — подлиннее; время на чтение пересобирает видео, длина слайда — план.
+        self.assertEqual((done["settings"]["slide_s"], done["settings"]["reading"]), (8, "normal"))
+        status, changed = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"reading": "slow"})
+        self.assertEqual(status, 200, changed)
+        self.assertEqual((self.statuses(changed)["plan"], self.statuses(changed)["render"]), ("done", "pending"))
+        status, changed = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"slide_s": 12})
+        self.assertEqual(status, 200, changed)
+        self.assertEqual(self.statuses(changed)["plan"], "pending")
+        for bad_value in ({"slide_s": 7}, {"slide_s": True}, {"reading": "fast"}):
+            bad = self.json("POST", f"/api/studio/projects/{project['id']}/settings", bad_value)
+            self.assertEqual(bad[0], 400, bad_value)
+            self.assertIn(next(iter(bad_value)), bad[1]["error"])
 
     def test_article_has_no_branding_by_default(self):
         project = self.create(scenario="article", text="Заголовок\n\nПервый абзац. Второе предложение.", run=True)

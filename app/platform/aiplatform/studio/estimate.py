@@ -144,7 +144,9 @@ def estimate(
             if plan:
                 images = sum(1 for s in plan if s.image_prompt)
             else:
-                images = round(slides.target_slides(slides.paragraphs(text) or [" ".join(["x"] * words)]) * IMAGE_SHARE)
+                paras = slides.paragraphs(text) or [" ".join(["x"] * words)]
+                count = slides.target_slides(paras, float(settings.get("slide_s") or slides.TARGET_SLIDE_S))
+                images = round(count * IMAGE_SHARE)
             images = max(images - have_images, 0)
             add("images", "Картинки слайдов", images * per_image, images)
         if settings.get("clips") and settings.get("clips_mode") == "local" and not settings.get("draft"):

@@ -496,7 +496,9 @@ def step_plan(ctx: StepContext) -> None:
     text = require_text(ctx)
     paras = slides.paragraphs(text)
     aspect = "16:9" if ctx.settings.get("frame", "landscape") == "landscape" else "1:1"
-    answer = llm(ctx, prompts.plan(paras, ctx.project["title"], slides.target_slides(paras), aspect))
+    seconds = float(ctx.settings.get("slide_s") or slides.TARGET_SLIDE_S)
+    target = slides.target_slides(paras, seconds)
+    answer = llm(ctx, prompts.plan(paras, ctx.project["title"], target, aspect, seconds))
     data = extract_json(answer)
     plan = slides.parse_plan(data, paras)
     title = str(data.get("title") or "").strip() if isinstance(data, dict) else ""
@@ -675,7 +677,13 @@ def render_video(
     brand = branding(svc.config) if settings.get("branding") else None
     intro = intro_seconds(brand) if poster is not None and audio_s > intro_seconds(brand) + 1 else 0.0
     paras = slides.paragraphs(text)
-    durations = slides.durations(paras, plan, audio_s, intro)
+    # Время на чтение: слайд не сменится, пока не прочитан, — следующие догоняют озвучку позже.
+    per_s = slides.READING.get(settings.get("reading", "normal"), 0.0)
+    minimums = [slides.reading_s(slide, per_s) for slide in plan] if per_s else None
+    durations = slides.durations(paras, plan, audio_s, intro, minimums)
+    behind = slides.lag(paras, plan, durations, audio_s, intro)
+    if behind >= 2:
+        ctx.log(f"время на чтение: слайды отстают от озвучки до {behind:g} с — помогут слайды подлиннее в плане")
     notes = slide_notes(paras, plan, banned(svc.config)) if settings.get("disclaimers", True) else None
     marked = [n for n, found in enumerate(notes or [], start=1) if found]
     if marked:
