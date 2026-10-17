@@ -1,5 +1,7 @@
 """Оболочка: редиректы, конфиг, статус GPU, защита от чужого Origin."""
 
+import http.client
+import json
 import unittest
 
 from aiplatform.core import narrator
@@ -25,6 +27,8 @@ class EchoModule:
                 return req.send_json({"got": req.json()}, 201)
             case ("GET", ["missing"]):
                 found(None)
+            case ("GET", ["boom"]):
+                return {}["нет ключа"]  # баг в модуле
         raise not_found()
 
     def describe(self):
@@ -106,6 +110,37 @@ class ShellTest(PlatformCase):
         self.assertEqual(status, 403)
         status, _ = self.json("POST", "/api/echo/hello", {"a": 1}, {"Origin": self.base})
         self.assertEqual(status, 201)
+
+    def test_unhandled_error_is_json_500(self):
+        with self.assertLogs("aiplatform", "ERROR") as logs:
+            status, body = self.json("GET", "/api/echo/boom")
+        self.assertEqual(status, 500)
+        self.assertEqual(body["code"], "internal")
+        self.assertEqual(body["error"], "Внутренняя ошибка")
+        self.assertTrue(body["request_id"])
+        self.assertEqual(body["request_id"], logs.records[0].request_id)
+        self.assertIn("KeyError", logs.output[0])
+
+    def test_other_methods_get_json_405(self):
+        for method in ("DELETE", "PUT", "PATCH"):
+            for path in ("/api/echo/hello", "/api/config", "/nav.js"):
+                status, headers, raw = self.call(method, path)
+                self.assertEqual(status, 405, (method, path))
+                self.assertIn("application/json", headers["Content-Type"])
+                self.assertEqual(headers["Allow"], "GET, HEAD, POST")
+                self.assertIn("error", json.loads(raw))
+        status, headers, _ = self.call("POST", "/nav.js", b"")
+        self.assertEqual((status, headers["Allow"]), (405, "GET, HEAD"))
+
+    def test_negative_content_length_is_400(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        self.addCleanup(conn.close)
+        conn.putrequest("POST", "/api/echo/hello")
+        conn.putheader("Content-Length", "-1")
+        conn.endheaders()
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 400)
+        self.assertIn("Content-Length", json.loads(resp.read())["error"])
 
     def test_close_closes_modules(self):
         module = self.app.modules["echo"]

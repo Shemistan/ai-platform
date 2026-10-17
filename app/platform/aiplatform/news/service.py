@@ -19,7 +19,7 @@ from http import HTTPStatus
 from aiplatform.core import narrator as narrator_module
 from aiplatform.core import tasks as tasks_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
-from aiplatform.core.narrator import INSTALL_HINT, NarratorError
+from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 
 PREFIX = "news"
 _SOURCE = re.compile(r"^[a-z0-9_]{1,64}$")
@@ -69,9 +69,7 @@ class NewsModule:
         try:
             return self.narrator.bridge(*args)
         except NarratorError as exc:
-            message = str(exc)
-            status = HTTPStatus.NOT_FOUND if "нет в библиотеке" in message else HTTPStatus.BAD_GATEWAY
-            raise HttpError(status, message) from exc
+            raise http_error(exc) from exc
 
     def handle(self, req: Request) -> None:
         match (req.method, req.sub):

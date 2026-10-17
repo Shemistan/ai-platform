@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, progressBar, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, progressBar, safe, STATUS, statusChip } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -476,11 +476,14 @@ async function loadProjects() {
   );
 }
 
+// Фоновое обновление списка: сбой — в общую плашку ошибок, без «Uncaught (in promise)».
+const reloadList = safe(() => loadProjects());
+
 async function open(id) {
   state.drafts = {};
   state.stepDrafts = {};
   show(await api("GET", `${API}/projects/${id}`));
-  loadProjects();
+  reloadList();
   history.replaceState(null, "", `?scenario=${scenario}&project=${id}`);
 }
 
@@ -511,7 +514,7 @@ async function addChannel(prefix) {
 
 // Выбор каналов и «повторно» у кнопки «Опубликовать» живут между перерисовками страницы.
 function publishPick(project) {
-  if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(project.settings.channels), force: false, ignoreVerdict: false };
+  if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(project.settings.channels), force: false, ignoreVerdict: false, noDisclaimers: "" };
   return state.publish[project.id];
 }
 
@@ -530,7 +533,7 @@ async function publishNow() {
     note: unsaved ? "Правка подписи не сохранена — уйдёт сохранённая подпись." : null,
   });
   if (!ok) return;
-  await act("publish", { channels: [...pick.channels], force: pick.force, ignore_verdict: pick.ignoreVerdict });
+  await act("publish", { channels: [...pick.channels], force: pick.force, ignore_verdict: pick.ignoreVerdict, ignore_disclaimers: pick.noDisclaimers });
   pick.force = false;
 }
 
@@ -928,6 +931,15 @@ function stepBody(step) {
                 h("span", {}, "Опубликовать несмотря на вердикт", h("span", { class: "hint" }, "Судья сказал «не готово» — как --force у make news-publish.")),
               )
             : null,
+          // Пометки выключены, а в тексте есть упоминания из реестра — публикация только с причиной.
+          p.settings.disclaimers === false && p.disclaimers?.length
+            ? h(
+                "label",
+                { class: "check" },
+                h("span", {}, `Без пометок о: ${p.disclaimers.map((d) => d.name).join(", ")}`, h("span", { class: "hint" }, "Пометки выключены. Причина обязательна — она сохранится в записи публикации.")),
+                h("input", { type: "text", value: pick.noDisclaimers, placeholder: "Причина публикации без пометок", oninput: (e) => (pick.noDisclaimers = e.target.value) }),
+              )
+            : null,
           channelAdder("step-publish"),
           h("button", { type: "button", class: "primary", disabled: p.running, onclick: publishNow }, "Опубликовать…"),
         ),
@@ -1140,7 +1152,7 @@ function renderHead(project) {
       ? null
       : h(
           "button",
-          { type: "button", class: "link", onclick: async () => (await act("archive", { archived: !state.project.archived })) && loadProjects() },
+          { type: "button", class: "link", onclick: async () => (await act("archive", { archived: !state.project.archived })) && reloadList() },
           project.archived ? "Вернуть из архива" : "В архив",
         ),
     h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
@@ -1384,7 +1396,7 @@ async function refresh() {
       if (state.project.id !== id) return; // пока ждали ответ, открыли другой выпуск
       // Блоки с полем в фокусе не пересобираются или возвращают фокус и курсор — см. reconcile.
       show(fresh);
-      if (fresh.running !== running) loadProjects();
+      if (fresh.running !== running) reloadList();
     }
   } catch {
     schedule();
@@ -1412,7 +1424,7 @@ async function init() {
   const wanted = new URLSearchParams(location.search).get("project");
   const first = wanted || state.projects[0]?.id;
   if (first) await open(first).catch(() => {});
-  setInterval(loadProjects, 10000);
+  setInterval(reloadList, 10000);
 }
 
 init().catch((err) => {

@@ -72,6 +72,10 @@ class Conflict(Exception):
     """Действие сейчас невозможно: проект уже запущен."""
 
 
+class ProjectNotFound(LookupError):  # noqa: N818
+    """Нет выпуска с таким id. Свой тип: KeyError из бага в коде не должен становиться 404."""
+
+
 def dependents(step_id: str) -> list[str]:
     """Все шаги, которые прямо или через другие зависят от step_id."""
     out: list[str] = []
@@ -399,7 +403,7 @@ class Studio:
     def _require(self, project_id: str) -> dict:
         project = self._projects.get(project_id)
         if project is None:
-            raise KeyError(project_id)
+            raise ProjectNotFound(project_id)
         return project
 
     def _check_idle(self, project: dict, step_id: str) -> None:

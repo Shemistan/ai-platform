@@ -1,6 +1,7 @@
 """Движок narrator (app/narrator): его CLI для долгих задач и мост `narrate bridge` для данных.
 
-Мост печатает один JSON-объект; ошибку для человека — полем error с кодом 1.
+Мост печатает один JSON-объект; ошибку для человека — полем error с кодом 1,
+её тип — полем kind (unavailable / not_found / invalid): по нему выбирается HTTP-код.
 В демо и тестах вместо движка — fakes/fake_narrate.py: те же команды и ответы,
 данные — в каталоге FAKE_NARRATOR_HOME внутри данных платформы.
 """
@@ -17,9 +18,11 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from pathlib import Path
 
 from aiplatform.config import Config, pick
+from aiplatform.core.http import HttpError
 
 DEFAULT_DIR = Path(__file__).resolve().parents[3] / "narrator"  # app/narrator рядом с app/platform
 FAKE = Path(__file__).resolve().parent.parent / "fakes" / "fake_narrate.py"
@@ -40,8 +43,27 @@ def reset_checks() -> None:
         _checks.clear()
 
 
+UNAVAILABLE = "unavailable"  # нет команды, таймаут, падение процесса — вина зависимости
+NOT_FOUND = "not_found"  # нет статьи / обзора
+INVALID = "invalid"  # движок отверг запрос
+KIND_STATUS = {
+    UNAVAILABLE: HTTPStatus.SERVICE_UNAVAILABLE,
+    NOT_FOUND: HTTPStatus.NOT_FOUND,
+    INVALID: HTTPStatus.BAD_REQUEST,
+}
+
+
 class NarratorError(RuntimeError):
-    """Движок ответил ошибкой или не запустился; текст — для человека."""
+    """Движок ответил ошибкой или не запустился; текст — для человека, kind — для HTTP-кода."""
+
+    def __init__(self, message: str, kind: str = UNAVAILABLE) -> None:
+        super().__init__(message)
+        self.kind = kind if kind in KIND_STATUS else INVALID
+
+
+def http_error(exc: NarratorError) -> HttpError:
+    """Единый маппинг ошибки движка в ответ ручки: unavailable → 503, not_found → 404, invalid → 400."""
+    return HttpError(KIND_STATUS[exc.kind], str(exc), {"kind": exc.kind})
 
 
 @dataclass(frozen=True)
@@ -91,7 +113,8 @@ class Narrator:
         except (json.JSONDecodeError, IndexError):
             payload = None
         if isinstance(payload, dict) and payload.get("error"):
-            raise NarratorError(str(payload["error"]))
+            # Движок до kind в ответе: ошибка с текстом — отказ в запросе, не авария.
+            raise NarratorError(str(payload["error"]), str(payload.get("kind") or INVALID))
         if done.returncode != 0 or not isinstance(payload, dict):
             tail = (done.stderr or done.stdout).strip().splitlines()[-3:]
             raise NarratorError("Движок упал: " + (" ".join(tail) or f"код {done.returncode}"))

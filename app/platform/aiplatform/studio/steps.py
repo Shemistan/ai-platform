@@ -935,6 +935,7 @@ def step_publish(ctx: StepContext) -> None:
     if ctx.read(PLAN):
         plan_title = json.loads(ctx.read(PLAN)).get("title", "")
     title = plan_title or ctx.project["title"]
+    off = disclaimers_off(ctx, title)
     post = ctx.read(POST)
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
@@ -978,6 +979,8 @@ def step_publish(ctx: StepContext) -> None:
             video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
             result = publish.publish(channel, video=video, title=title, post=post, out_dir=ctx.path("publish"))
             record = journal.put(result | {"label": channel.label})
+        if off:  # осознанно без пометок: когда, почему и о ком — в записи публикации
+            record = journal.put(record | {"disclaimers_off": off})
         ctx.log(f"{channel.label}: {record['message']}")
         log.event(
             "publication",
@@ -1064,6 +1067,24 @@ def publish_video(ctx: StepContext, journal: Journal, channel: publish.Channel, 
     }
     record = journaled(journal, channel, record, None, send)  # уже sent в журнале — дальше ничего не теряем
     return journal.put(record | result | {"ok": True, "state": SENT, "sent": time.time()} | audience(channel))
+
+
+def disclaimers_off(ctx: StepContext, title: str) -> dict | None:
+    """Пометки выключены, а в выпуске есть упоминания из реестра: публикация — только с причиной."""
+    if ctx.settings.get("disclaimers", True):
+        return None
+    said = "\n".join([title, ctx.project["title"], ctx.read(TEXT), ctx.read(POST)])
+    names = [e.name for e in registry.mentioned(said, banned(services(ctx).config))]
+    if not names:
+        return None
+    reason = " ".join(str(ctx.state.get("ignore_disclaimers") or "").split())
+    if not reason:
+        raise StudioError(
+            f"В тексте есть упоминания из реестра ({', '.join(names)}), пометки выключены. Включи "
+            "«Помечать запрещённые организации» и пересобери видео или подтверди публикацию без пометок с причиной."
+        )
+    ctx.log(f"публикация без пометок о {', '.join(names)} — причина: {reason}")
+    return {"reason": reason, "at": time.time(), "mentions": names}
 
 
 def audience(channel: publish.Channel) -> dict:

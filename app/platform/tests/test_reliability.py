@@ -166,7 +166,7 @@ class AccessLogTest(PlatformCase):
         with mock.patch.object(self.app, "status", side_effect=RuntimeError("сломалось")):
             status, body = self.json("GET", "/api/status")
         self.assertEqual(status, 500)
-        self.assertIn("error", body)
+        self.assertEqual(body["code"], "internal")
         error = self.events("http.error")[0]
         self.assertIn("RuntimeError: сломалось", error["error"])
 
