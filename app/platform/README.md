@@ -38,6 +38,9 @@ make run    # на настоящих моделях
 ```
 
 Открыть: http://127.0.0.1:8780. Нужны Python 3.11+ и ffmpeg (`brew install ffmpeg`).
+Системный `python3` на Mac — 3.9 из Xcode CLT: Makefile сам возьмёт `python3.13`,
+`python3.12` или `python3.11` из PATH, а если их нет — остановится с подсказкой
+(`brew install python@3.12` или `uv python install 3.12`, затем `make PYTHON=python3.12 …`).
 Python-зависимостей у сервиса нет; у движка `app/narrator` они свои (uv), первый
 `make check` в нём их ставит.
 
