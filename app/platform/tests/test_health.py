@@ -26,6 +26,12 @@ class HealthTest(PlatformCase):
         self.assertEqual(body["schedule"]["enabled"], False)
         self.assertEqual(body["schedule"]["last"], {})
 
+    def test_config_has_version(self):
+        """Версия видна и в /api/config: её показывает шапка (nav.js)."""
+        status, body = self.json("GET", "/api/config")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["version"], __version__)
+
 
 class HeartbeatTest(unittest.TestCase):
     def scheduler(self, env):

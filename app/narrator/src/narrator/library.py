@@ -31,11 +31,17 @@ import subprocess
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 INDEX_NAME = "index.md"
 META_NAME = "meta.json"
 SOURCE_QUALITIES = ("verbatim", "pasted", "webfetch")
 KINDS = ("article", "digest", "weekly", "monthly")
+# Право на переработку чужой статьи (ГК РФ ст. 1270, 1274): own — своя, cc-by — свободная
+# лицензия с указанием автора, permission — разрешение автора, none — права нет. С none
+# полный пересказ слушают локально, в канал уходит только аннотация со ссылкой.
+LICENSES = ("own", "cc-by", "permission", "none")
+PUBLISHABLE = ("own", "cc-by", "permission")
 # Обзоры недели и месяца для YouTube: library/youtube_news/week_…/ и month_…/.
 YOUTUBE_DIR = "youtube_news"
 
@@ -46,6 +52,12 @@ _TRANSLIT = dict(
         strict=True,
     )
 )
+
+
+def is_web(url: str) -> bool:
+    """Ссылка http(s) с хостом: только такую страница платформы покажет кликабельной."""
+    parts = urlsplit(str(url).strip())
+    return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
 
 
 @dataclass
@@ -69,6 +81,12 @@ class Entry:
     # weekly, monthly — обзоры недели и месяца: текст для суфлёра, видео снимает человек.
     kind: str = "article"
     image_prompt: str = ""  # устарело: промпт обложки теперь в image_prompt.md
+    license: str = "none"  # право на переработку статьи: одно из LICENSES
+
+    def __post_init__(self) -> None:
+        # meta.json пишет агент по чужой статье: ссылка не http(s) (javascript:…) — не ссылка.
+        if self.url is not None and not is_web(self.url):
+            self.url = None
 
     @classmethod
     def load(cls, path: Path) -> Entry:
@@ -84,6 +102,8 @@ class Entry:
             )
         if entry.kind not in KINDS:
             raise ValueError(f"{path}: kind={entry.kind!r}, ждём {KINDS}")
+        if entry.license not in LICENSES:
+            raise ValueError(f"{path}: license={entry.license!r}, ждём {LICENSES}")
         return entry
 
     def save(self, path: Path) -> None:

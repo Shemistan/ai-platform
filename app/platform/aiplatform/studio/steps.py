@@ -679,8 +679,17 @@ def scenes(
 
 
 def render_video(
-    ctx: StepContext, *, text: str, plan: list[slides.Slide], audio: Path, out: Path, orientation: str, cycle: bool
+    ctx: StepContext,
+    *,
+    text: str,
+    plan: list[slides.Slide],
+    audio: Path,
+    out: Path,
+    orientation: str,
+    cycle: bool,
+    source: str = "",
 ) -> None:
+    """source — строка «Источник: …» для последнего слайда (видео по чужой статье)."""
     svc = services(ctx)
     ensure_space(ctx, "Сборка видео")
     audio = paced(ctx, audio)
@@ -703,6 +712,11 @@ def render_video(
     marked = [n for n, found in enumerate(notes or [], start=1) if found]
     if marked:
         ctx.log(f"пометки о запрещённых организациях: слайды {', '.join(map(str, marked))}")
+    shown = [n for n, d in enumerate(durations) if d > 0]
+    if source and shown:  # источник — полосой внизу последнего слайда, как пометки
+        notes = notes or [[] for _ in plan]
+        notes[shown[-1]] = [*notes[shown[-1]], source]
+        ctx.log(f"источник на последнем слайде: {source}")
     draft = bool(settings.get("draft"))
     scene_list = scenes(
         ctx.dir,
@@ -825,7 +839,17 @@ def step_render(ctx: StepContext) -> None:
     if audio is None:
         raise StudioError("Нет озвучки — выполни шаг «Озвучка».")
     orientation = video_frame(ctx, find(ctx.dir, "poster", IMAGE_EXT))
-    render_video(ctx, text=text, plan=plan, audio=audio, out=ctx.path(VIDEO), orientation=orientation, cycle=False)
+    source = source_line(ctx) if ctx.project["scenario"] == "article" else ""
+    render_video(
+        ctx,
+        text=text,
+        plan=plan,
+        audio=audio,
+        out=ctx.path(VIDEO),
+        orientation=orientation,
+        cycle=False,
+        source=source,
+    )
 
 
 def parse_short(obj: object) -> list[dict]:
@@ -872,9 +896,28 @@ UNCLEAR = (SENDING, UNKNOWN)  # ушёл ли пост — неизвестно:
 UNCLEAR_NOTE = "Статус неизвестен — проверь канал"
 
 
+# Пакет для ручной загрузки (YouTube, TikTok…): packaged — файлы готовы, uploaded — автор залил и
+# дал ссылку на ролик. Опубликован только uploaded: пакет мог так и не дойти до площадки (AN-003).
+PACKAGED, UPLOADED = "packaged", "uploaded"
+
+
 def send_state(record: dict) -> str:
     """Состояние записи; записи до журнала — sent, если в них есть время отправки."""
     return record.get("state") or (SENT if record.get("sent") else SEND_FAILED)
+
+
+def publication_state(record: dict) -> str:
+    """Состояние записи с учётом пакетов: пакет без состояния (до AN-003) — packaged."""
+    if record.get("state") in (PACKAGED, UPLOADED):
+        return record["state"]
+    if record.get("files") and not record.get("message_id") and not record.get("state"):
+        return PACKAGED
+    return send_state(record)
+
+
+def is_live(record: dict) -> bool:
+    """Пост действительно вышел: ушёл в Telegram или залит руками со ссылкой."""
+    return publication_state(record) in (SENT, UPLOADED)
 
 
 def is_unclear(record: dict | None) -> bool:
@@ -951,7 +994,7 @@ def step_publish(ctx: StepContext) -> None:
         plan_title = json.loads(ctx.read(PLAN)).get("title", "")
     title = plan_title or ctx.project["title"]
     off = disclaimers_off(ctx, title)
-    post = ctx.read(POST)
+    post = with_source(ctx, ctx.read(POST))
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
     # Сначала все каналы: что не уйдёт — видно сразу, и ни один канал не получит выпуск наполовину.
@@ -993,7 +1036,12 @@ def step_publish(ctx: StepContext) -> None:
         else:
             video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
             result = publish.publish(channel, video=video, title=title, post=post, out_dir=ctx.path("publish"))
-            record = journal.put(result | {"label": channel.label})
+            if prev and publication_state(prev) == UPLOADED:
+                # Уже залит: пакет пересобран, но ссылка и время публикации остаются.
+                record = journal.put(prev | {"files": result.get("files"), "label": channel.label})
+            else:
+                fresh = {"state": PACKAGED, "at": time.time(), "attempt_id": uuid.uuid4().hex[:12]}
+                record = journal.put(result | {"label": channel.label} | fresh)
         if off:  # осознанно без пометок: когда, почему и о ком — в записи публикации
             record = journal.put(record | {"disclaimers_off": off})
         ctx.log(f"{channel.label}: {record['message']}")
@@ -1005,6 +1053,23 @@ def step_publish(ctx: StepContext) -> None:
             message_id=record.get("message_id"),
             state=record.get("state"),
         )
+        again = channel.type == publish.TELEGRAM and force and prev is not None and send_state(prev) == SENT
+        published_event(ctx, channel, record, again=again)
+
+
+def published_event(ctx: StepContext, channel: publish.Channel, record: dict, *, again: bool) -> None:
+    """Публикация в журнал событий: ушло в Telegram (или повторно) либо готов пакет для ручной загрузки."""
+    if channel.type == publish.MANUAL:
+        event = "publication.packaged"
+    else:
+        event = "publication.republished" if again else "publication.sent"
+    ctx.emit(
+        event,
+        channel_id=channel.id,
+        publication_id=record.get("attempt_id"),
+        source=channel.type,
+        props={"format": channel.format, "message_id": record.get("message_id")},
+    )
 
 
 def unclear_note(labels: list[str]) -> str:
@@ -1032,18 +1097,31 @@ def journaled(journal: Journal, channel: publish.Channel, record: dict, part: st
             record = record | {"parts": dict(record.get("parts") or {}) | {part: entry}}
         return journal.put(record)
 
+    def failed(state: str, exc: Exception) -> None:
+        journal.ctx.emit(
+            "publication.failed",
+            channel_id=channel.id,
+            publication_id=record.get("attempt_id"),
+            source=channel.type,
+            error_class=type(exc).__name__,
+            props={"state": state, "part": part},
+        )
+
     mark(SENDING)
     try:
         message_id = send()
     except publish.Unknown as exc:
         mark(UNKNOWN, message=f"{exc}.")
+        failed(UNKNOWN, exc)
         raise Waiting(unclear_note([channel.label])) from exc
     except StudioError as exc:
         mark(SEND_FAILED, message=str(exc))
+        failed(SEND_FAILED, exc)
         raise
     except Exception as exc:
         # Сбой уже после начала отправки: ушёл ли пост — неизвестно, повтор сам не шлём.
         mark(UNKNOWN, message=f"Сбой при отправке: {exc!r}.")
+        failed(UNKNOWN, exc)
         raise Waiting(unclear_note([channel.label])) from exc
     return mark(SENT, message_id=message_id)
 
@@ -1082,6 +1160,27 @@ def publish_video(ctx: StepContext, journal: Journal, channel: publish.Channel, 
     }
     record = journaled(journal, channel, record, None, send)  # уже sent в журнале — дальше ничего не теряем
     return journal.put(record | result | {"ok": True, "state": SENT, "sent": time.time()} | audience(channel))
+
+
+def source_line(ctx: StepContext) -> str:
+    """«Источник: автор — ссылка» для «Видео по статье»; пусто, пока источник не указан."""
+    url, author = ctx.settings.get("source_url") or "", ctx.settings.get("source_author") or ""
+    return f"Источник: {author} — {url}" if url and author else ""
+
+
+def with_source(ctx: StepContext, post: str) -> str:
+    """Пост «Видео по статье» с источником в неудаляемом хвосте; без источника — отказ (CMP-005)."""
+    if ctx.project["scenario"] != "article":
+        return post
+    url, author = ctx.settings.get("source_url") or "", ctx.settings.get("source_author") or ""
+    if not url or not author:
+        raise StudioError(
+            "Видео по чужой статье публикуется только с источником: укажи ссылку на оригинал и автора "
+            "в настройках выпуска (раздел «Источник») и нажми «Опубликовать» снова."
+        )
+    if url in post:
+        return post
+    return f"{post.rstrip()}\n\nИсточник: {author.replace('*', '')} — [оригинал]({url})\n"
 
 
 def disclaimers_off(ctx: StepContext, title: str) -> dict | None:

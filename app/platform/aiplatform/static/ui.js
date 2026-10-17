@@ -30,7 +30,8 @@ function httpMessage(status, text) {
 // api(метод, путь, тело, { signal, timeout }) → JSON ответа или ApiError.
 // timeout в мс: по умолчанию 30 с, у загрузок (тело — Blob/File) — без срока; 0 — без срока.
 export async function api(method, path, body, { signal, timeout } = {}) {
-  const init = { method, headers: {} };
+  // X-AIP: 1 — признак запроса своей страницы: без него и без Origin сервер POST отклонит (SEC-002).
+  const init = { method, headers: { "X-AIP": "1" } };
   if (body instanceof Blob) {
     init.body = body;
   } else if (body !== undefined) {
@@ -78,11 +79,29 @@ export async function api(method, path, body, { signal, timeout } = {}) {
 export const NARRATOR_TIMEOUT_MS = 190000;
 export const narratorApi = (method, path, body, opts = {}) => api(method, path, body, { timeout: NARRATOR_TIMEOUT_MS, ...opts });
 
+// Атрибуты-ссылки: сюда приходят адреса из лент, статей и реестра, то есть чужие данные.
+const URL_ATTRS = new Set(["href", "src", "action", "formaction", "poster", "xlink:href"]);
+const MEDIA_ATTRS = new Set(["src", "poster"]);
+
+// Ссылка безопасна: http(s), относительная, blob:, а в src/poster ещё data:image|audio|video.
+// javascript:, vbscript:, data:text/html и прочее — нет: атрибут не ставим (SEC-003).
+export function safeUrl(key, value) {
+  let url;
+  try {
+    url = new URL(String(value), location.href); // разбор как в браузере: пробелы, регистр, \t в схеме
+  } catch {
+    return false;
+  }
+  if (url.protocol === "http:" || url.protocol === "https:" || url.protocol === "blob:") return true;
+  return url.protocol === "data:" && MEDIA_ATTRS.has(key) && /^data:(image|audio|video)\//i.test(url.href);
+}
+
 // h("p", { class: "x", onclick: fn }, "текст", child, null) — null и false пропускаются.
 export function h(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
     if (value === null || value === undefined || value === false) continue;
+    if (URL_ATTRS.has(key.toLowerCase()) && !safeUrl(key.toLowerCase(), value)) continue;
     if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
     else if (key === "value") node.value = value;
     else if (value === true) node.setAttribute(key, "");
@@ -106,8 +125,24 @@ export const STATUS = {
   skipped: "пропущен",
 };
 
+// Тон статуса задачи — один словарь цветов на все вкладки (классы .tone-* в ui.css).
+export const STATUS_TONE = {
+  queued: "info",
+  running: "info",
+  done: "success",
+  failed: "danger",
+  canceled: "neutral",
+  waiting: "warning",
+  pending: "neutral",
+  skipped: "neutral",
+};
+
+export function toneOf(status) {
+  return STATUS_TONE[status] || "neutral";
+}
+
 export function statusChip(status) {
-  return h("span", { class: `status ${status}` }, STATUS[status] || status);
+  return chip(STATUS[status] || status, toneOf(status));
 }
 
 export function progressBar(progress) {
@@ -171,9 +206,12 @@ export function fill(node, ...children) {
   return node;
 }
 
-// chip("готово", "ok") — метка состояния: ok, warn, bad, info или без тона.
+// Старые имена тонов у chip(): ok/warn/bad — те же success/warning/danger.
+const TONE_ALIAS = { ok: "success", warn: "warning", bad: "danger" };
+
+// chip("готово", "success") — метка состояния: neutral (по умолчанию), info, success, warning, danger.
 export function chip(text, tone = "") {
-  return h("span", { class: `chip${tone ? ` ${tone}` : ""}` }, text);
+  return h("span", { class: `chip tone-${TONE_ALIAS[tone] || tone || "neutral"}` }, text);
 }
 
 export function debounce(fn, ms) {
@@ -244,7 +282,7 @@ export function confirmAction({ title, body = null, confirmLabel = "Да", cance
   });
 }
 
-const VERDICT_TONES = { готово: "ok", "готово с оговорками": "warn", "не готово": "bad" };
+const VERDICT_TONES = { готово: "success", "готово с оговорками": "warning", "не готово": "danger" };
 
 // Подтверждение публикации (доска и шаг «Публикация»): каналы по названиям, начало подписи, вердикт судьи.
 // channels: [{ label, type }], caption — текст поста, review — отчёт судьи (необязательно).

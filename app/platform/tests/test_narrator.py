@@ -26,6 +26,10 @@ class NarratorTest(unittest.TestCase):
             real.make("news-rescue", DAY="2026-10-01", X=""),
             ["make", "-C", str(real.home), "news-rescue", "DAY=2026-10-01"],
         )
+        # Пометки в подписях narrator — по реестру платформы (ADR 0001).
+        self.assertEqual(real.env, {narrator.REGISTRY_ENV: str(config.data_dir / "registry.json")})
+        own = narrator.load(platform_config.load({"AIP_DATA_DIR": "/tmp/x", "NARRATOR_REGISTRY": "/r.json"}))
+        self.assertEqual(own.env[narrator.REGISTRY_ENV], "/r.json")
 
     def test_bridge_engines_and_preview(self):
         engines = self.narrator.bridge("engines")

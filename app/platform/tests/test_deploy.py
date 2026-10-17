@@ -1,4 +1,4 @@
-"""Теги релизов и деплой живого checkout (REL-014): tools/release.sh в песочнице git."""
+"""Деплой живого checkout на тег и откат (REL-014): tools/deploy.sh в песочнице git."""
 
 import os
 import subprocess
@@ -9,12 +9,12 @@ from pathlib import Path
 from tests import TMP_ROOT
 
 PLATFORM = Path(__file__).resolve().parents[1]
-SCRIPT = PLATFORM / "tools" / "release.sh"
+SCRIPT = PLATFORM / "tools" / "deploy.sh"
 # Под pre-commit GIT_DIR / GIT_INDEX_FILE указывают на настоящий репозиторий — тесту они чужие.
 CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
-class ReleaseTest(unittest.TestCase):
+class DeployTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=TMP_ROOT)
         self.addCleanup(tmp.cleanup)
@@ -30,7 +30,6 @@ class ReleaseTest(unittest.TestCase):
         self.env = {
             **CLEAN_ENV,
             "AIP_RELEASE_REMOTE": "",
-            "AIP_RELEASE_DATE": "2026.10.17",
             "AIP_LOG_DIR": str(self.root / "logs"),
             "LAUNCHCTL": str(fake),
             "AIP_DEPLOY_BACKUP": f'echo backup >> "{self.calls}"',
@@ -62,20 +61,10 @@ class ReleaseTest(unittest.TestCase):
             timeout=60,
         )
 
-    def test_tag_format_and_second_of_day(self):
-        done = self.release("tag")
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.git(self.repo, "tag"), "v2026.10.17")
-        again = self.release("tag")
-        self.assertIn("уже есть тег v2026.10.17", again.stdout)  # тот же коммит — без нового тега
-        self.commit(self.repo, "b")
-        self.assertEqual(self.release("tag").returncode, 0)
-        self.assertEqual(self.git(self.repo, "tag").split(), ["v2026.10.17", "v2026.10.17.2"])
-
     def test_deploy_backs_up_checks_out_and_restarts(self):
-        self.release("tag")
+        self.git(self.repo, "tag", "v2026.10.17")
         self.commit(self.repo, "b")
-        self.release("tag")
+        self.git(self.repo, "tag", "v2026.10.17.2")
         live = self.root / "live"
         self.git(self.root, "clone", "-q", str(self.repo), str(live))
         env = {"AIP_LIVE_DIR": str(live)}
@@ -97,7 +86,7 @@ class ReleaseTest(unittest.TestCase):
         self.assertTrue(log[-1].endswith("v2026.10.17.2 -> v2026.10.17"), log)
 
     def test_deploy_refuses_without_tag_or_on_failed_backup(self):
-        self.release("tag")
+        self.git(self.repo, "tag", "v2026.10.17")
         live = self.root / "live"
         self.git(self.root, "clone", "-q", str(self.repo), str(live))
         env = {"AIP_LIVE_DIR": str(live)}

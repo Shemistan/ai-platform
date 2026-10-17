@@ -183,7 +183,7 @@ make -C ~/apps/aiplatform/app/platform uninstall-agent install-agent   # аге�
 После слияния PR в `main` — человек, из любого checkout `app/platform`:
 
 ```sh
-make release-tag           # тег vYYYY.MM.DD (второй за день — .2) на origin/main и push
+make release-tag           # в main: тег v<версия> (версия-дата, DX-009), затем git push origin <тег>
 make deploy TAG=v2026.10.17   # бэкап → git fetch → checkout тега в живом checkout → перезапуск агента
 make deployed              # какой тег сейчас у живого сервиса
 ```
@@ -200,8 +200,11 @@ make deployed              # какой тег сейчас у живого се
 Один раз, в обычном терминале из основного checkout:
 
 ```sh
-sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word
+sh app/narrator/tools/import-old.sh <old-narrator-dir>
 ```
+
+`<old-narrator-dir>` — каталог старого narrator, где лежат `library/`,
+`telegram_tems.md` и `bot_token.md`.
 
 Скрипт копирует `library/` (статьи, база новостей, подписчики бота),
 `telegram_tems.md` и `bot_token.md` и ничего не удаляет. Проверь «Статьи»,
@@ -222,7 +225,7 @@ sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word
 | Дайджест или промпты слайдов падают: `claude: command not found` | claude CLI (Claude Code) не установлен или его нет в `PATH` процесса — у launchd `PATH` короче, чем в терминале | установить Claude Code, залогиниться, проверить `claude --version`; под launchd — полный путь в `AIP_LLM_CMD` и `CLAUDE=/полный/путь/claude` для `make news` движка |
 | Агент (Claude Code) не может скачать модели, `make check` движка падает на `uv`, нет GPU | sandbox агента: сети к Hugging Face и PyPI нет, GPU нет, `~/.cache/uv` закрыт на запись | модели и первую установку зависимостей — в обычном терминале (`make models`, `make check` в `app/narrator`); `./narrate` сам переносит кэш uv в `$TMPDIR`, для своих команд — `UV_CACHE_DIR=$TMPDIR/uv-cache` |
 | Шаг «Постер» дайджеста ждёт картинку, локальная модель обложку не рисует | так задумано: обложку дайджеста делают в ChatGPT по `image_prompt.md` выпуска — кириллические заголовки локальные модели рисуют хуже | сгенерировать в ChatGPT по промпту шага 2 и перетащить в шаг или положить `cover.*` в каталог выпуска narrator; локально — галочка «локальная модель» |
-| `git commit` не гоняет `./check`, сообщение коммита не проверяется | хуки репозитория не включены на этой машине | `sh bootstrap.sh` в корне репозитория |
+| `git commit` не гоняет `./check`, сообщение коммита не проверяется | хуки репозитория не включены на этой копии | `sh bootstrap.sh` в корне репозитория |
 
 Эксплуатация живого сервиса — дайджест не вышел, GPU завис, диск не
 примонтирован, Telegram не принимает — не здесь: это runbook (задача
@@ -335,7 +338,22 @@ Telegram, если в «Настройках» указан твой чат (id 
 подписчиков через Bot API (`getChatMemberCount`, бот — админ канала), а
 просмотры — со страницы `t.me/<канал>/<id>?embed=1`: только у публичных
 каналов. У пакетов для YouTube и TikTok и у приватных каналов просмотры
-вносятся руками в карточке на доске.
+вносятся руками в карточке на доске. Посты сравниваются в окнах:
+просмотры за 24ч/72ч/7д (интерполяция между снимками по возрасту поста,
+закрытое окно замораживается) и прирост подписчиков за сутки после поста
+(до следующего поста канала, за вычетом медианного суточного прироста за
+неделю без постов). «Что работает» считает только посты с закрытым окном 24ч.
+Пакет для YouTube / TikTok — ещё не публикация: выпуск лежит в группе
+«Выгружено, залей руками», пока на доске не нажато «Залил» со ссылкой на
+ролик (`POST /api/studio/projects/<id>/uploaded`); с этого момента считается
+время публикации и окна просмотров.
+
+**Журнал событий.** `data/events.jsonl` — по строке JSON на событие выпуска:
+создание и архив, старт/конец/ожидание/падение/перезапуск шага, действия
+человека (с временем ожидания), отправки и снимки отклика. Поле `actor` —
+system, human или scheduler. Выпуски, собранные до журнала, дописываются
+бэкфиллом из их project.json, лога и published.json:
+`python -m aiplatform.studio.backfill [--data data]` (повтор не дублирует).
 
 **Уборка** («Настройки»). Сколько места у задач вкладок, выпусков, архива,
 кэша и загрузок. «Убрать сейчас» (и раз в сутки сам — включено по
@@ -380,7 +398,11 @@ Telegram, если в «Настройках» указан твой чат (id 
 `channels.json` (`AIP_CHANNELS`); дальше каналы берутся оттуда, «убрать» —
 удаляет. Токен бота — как у narrator: `$NARRATOR_TELEGRAM_TOKEN`, файл
 `$NARRATOR_TELEGRAM_TOKEN_FILE` или `bot_token.md` в каталоге narrator; у
-канала можно задать свою переменную `token_env`. Тот же список — на вкладке
+канала можно задать свою переменную `token_env` — только с именем
+`AIP_TG_<ИМЯ>`, `AIP_TELEGRAM_TOKEN` или `NARRATOR_TELEGRAM_TOKEN[_<ИМЯ>]`
+(чужие секреты окружения вроде `HF_TOKEN` в URL Telegram не уйдут), а её
+значение должно выглядеть как токен бота (`123456:ABC…`) — иначе публикация
+не отправит ни одного запроса. Тот же список — на вкладке
 «Каналы»: там каналы правятся, берутся из движка, там же бот и его подписчики.
 
 ## Оформление: плей и плашка «подпишись»
@@ -448,6 +470,35 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 
 ## Настройка
 
+### Доступ и защита
+
+Аутентификации у платформы нет: кто достучался до порта, тот может публиковать
+в каналы, запускать агентов и удалять данные. Поэтому по умолчанию сервер
+слушает только `127.0.0.1`, а запросы проверяются так:
+
+- **Host** — только `127.0.0.1:<порт>`, `localhost:<порт>`, `[::1]:<порт>`,
+  адрес из `AIP_HOST` и `AIP_ALLOWED_HOSTS`; чужое имя (DNS rebinding) — 421;
+- **POST** — с `Origin` из того же списка или с заголовком `X-AIP: 1` (его
+  ставит `ui.js api()`); иначе 403. Скрипты и `curl` шлют `-H 'X-AIP: 1'`;
+- во всех ответах `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer` и `Content-Security-Policy` (только свои
+  скрипты, без встраивания в чужие фреймы).
+
+**Удалённый доступ** — не открывай порт наружу. Ходи через SSH-туннель
+(`ssh -L 8780:127.0.0.1:8780 мак`, затем http://127.0.0.1:8780) или Tailscale
+(`tailscale serve 8780`). Если всё же слушать сеть (`AIP_HOST=0.0.0.0` или
+адрес интерфейса), нужен `AIP_AUTH_TOKEN` — без него сервер не стартует:
+
+```sh
+export AIP_AUTH_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
+```
+
+Вход — по ссылке `http://box.local:8780/?token=<токен>`: сервер ставит cookie
+(HttpOnly, SameSite=Strict) и уводит на адрес без токена; скрипты шлют
+`Authorization: Bearer <токен>`. Без токена — 401 (страницы показывают форму
+входа). `GET /api/health` отвечает без токена.
+
 Переменные окружения — в `local.mk` рядом с Makefile (не в git) или в
 окружении. Пустое значение — значение по умолчанию. Готовый пример с путями,
 которые ставит `make models`: `cp local.mk.example local.mk`.
@@ -455,8 +506,10 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | Переменная | По умолчанию | Что это |
 |---|---|---|
 | `AIP_PORT`, `AIP_HOST` | `8780`, `127.0.0.1` | где слушать |
+| `AIP_AUTH_TOKEN` | — | токен доступа; без него сервер на не-loopback адресе не стартует |
+| `AIP_ALLOWED_HOSTS` | — | свои имена в Host через запятую (`box.local,10.0.0.5:8780`) |
 | `AIP_DATA_DIR` | `~/Library/Application Support/aiplatform`; пока его нет, а `app/platform/data` есть — старый путь | задачи, загрузки, выпуски, настройки, каналы (вне рабочей копии — см. «Данные и бэкап») |
-| `AIP_MODELS_DIR` | `/Volumes/External SSD/local_models` | веса фото- и видеомоделей |
+| `AIP_MODELS_DIR` | `/Volumes/External SSD/local_models` (у автора — внешний диск) | веса фото- и видеомоделей; диска нет — свой каталог, `~/local_models`, см. «Если не работает при установке» |
 | `AIP_LOW_RAM` | — | экономия памяти для фото и видео |
 | `AIP_PHOTO_MFLUX_BIN`, `AIP_PHOTO_FLUX2_CMD` | из PATH | пайплайны фото (или старые `PHOTOGEN_*`) |
 | `AIP_VIDEO_LTX_CMD`, `AIP_VIDEO_WAN_CMD`, `AIP_VIDEO_MODEL` | из PATH | пайплайны видео (или старые `VIDEOGEN_*`) |
@@ -487,7 +540,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | `AIP_VIDEO_WAN_STEPS` | `10` | шаги Wan 2.2 (или старый `VIDEOGEN_WAN_STEPS`); целое от 1 |
 | `AIP_TEST_GUARD` | — | ставят тесты (`tests/__init__.py`): с ним сервис отказывается работать на боевых `data/` и `data-demo/` |
 | `NARRATOR_ENGINE` | — | запасное имя для `AIP_AUDIO_ENGINE`; его же читает Makefile движка |
-| `NARRATOR_MODELS_DIR` | `/Volumes/External SSD/local_models` | папка моделей озвучки; читает движок `app/narrator` |
+| `NARRATOR_MODELS_DIR` | `/Volumes/External SSD/local_models` (у автора — внешний диск) | папка моделей озвучки; читает движок `app/narrator`; диска нет — свой каталог |
 | `AIP_TELEGRAM_TOKEN` (или другое имя) | — | токен бота канала: имя переменной задаёт `token_env` в `channels.json`, см. «Каналы публикации»; значение не в git |
 | `NARRATOR_TELEGRAM_TOKEN` | — | токен бота движка для каналов без своего `token_env`; значение не в git |
 | `NARRATOR_TELEGRAM_TOKEN_FILE` | `app/narrator/bot_token.md` | файл с токеном бота, если переменная выше пуста |
@@ -550,7 +603,7 @@ mflux, веса (~7 ГБ) докачиваются в `AIP_MODELS_DIR/.photogen-
 Озвучка и новости: в `app/narrator` — `make models`; для дайджеста нужен ещё
 claude CLI. Данные старого narrator (статьи, база новостей, каналы, токен
 бота) переносит один раз
-`sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word`.
+`sh app/narrator/tools/import-old.sh <old-narrator-dir>` (`<old-narrator-dir>` — каталог старого narrator).
 
 ### Каналы публикации
 
@@ -558,7 +611,8 @@ claude CLI. Данные старого narrator (статьи, база нов�
 
 - `telegram` — видео отправляется ботом (`sendVideo`, до 50 МБ) с подписью из
   шага «Публикация». Токен бота — в переменной из `token_env` (например,
-  `export AIP_TELEGRAM_TOKEN=…`); в файлы и логи он не пишется.
+  `export AIP_TG_NEWS=…`; имя — `AIP_TG_…`, `AIP_TELEGRAM_TOKEN` или
+  `NARRATOR_TELEGRAM_TOKEN…`); в файлы и логи он не пишется.
 - `manual` — пакет для ручной загрузки: `video.mp4`, `title.txt`,
   `description.txt` в `data/studio/projects/<id>/publish/<канал>/`. Так
   сделано для YouTube, TikTok и Instagram: их API требуют OAuth-приложений.
@@ -570,6 +624,7 @@ claude CLI. Данные старого narrator (статьи, база нов�
 
 ```sh
 make check   # ruff (если стоит), node --check, unittest — всё на фейках
+make cov     # покрытие по модулям (худшие сверху) и html в tmp/cov/html, без порога
 make smoke   # на настоящих моделях: картинка, фраза озвучки, черновик статьи — с временем шагов
 ```
 
@@ -585,14 +640,5 @@ make smoke   # на настоящих моделях: картинка, фра�
 
 ## Что проверено на настоящих моделях
 
-По выпускам в `data/` за 15–16.10.2026 платформа работала на этой машине:
-картинки Z-Image Turbo и увеличение SeedVR2 до 4K, ролики LTX, озвучка
-Higgs (статья на 38 минут), сбор дайджеста движком narrator с агентом и
-судьёй, публикация в Telegram и пакеты для ручной загрузки.
-
-Новое из «Выпусков» — доска, дубликаты и кэш, оценка и проверка до
-запуска, черновик, серия и выжимка, расписание и уведомления, отклик,
-уборка — проверено тестами на фейках и прогоном `python -m aiplatform.smoke --fake`. С
-настоящим Telegram (getChat, getChatMemberCount, страница embed) отклик не
-проверялся; системные уведомления osascript — тоже. Первый `make smoke`
-на этой машине стоит запустить руками.
+Отчёты о прогонах на настоящих моделях — в журнале версий
+[`docs/CHANGELOG.md`](../../docs/CHANGELOG.md), под версией, на которой их делали.

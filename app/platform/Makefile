@@ -1,5 +1,5 @@
-.PHONY: run demo smoke test lint check python-check models install-agent uninstall-agent agent-status digest-check \
-	backup restore migrate-data tm-exclude release-tag deploy deployed
+.PHONY: run demo smoke test cov lint check release-prep release-tag python-check models install-agent uninstall-agent agent-status digest-check \
+	backup restore migrate-data tm-exclude deploy deployed
 
 # Нужен Python 3.11+. Не задан (make PYTHON=… или окружение) — берём первый подходящий
 # из PATH: на чистом Mac python3 — это 3.9 из Xcode CLT, а python3.12 из brew лежит рядом.
@@ -58,17 +58,14 @@ tm-exclude:
 	  if [ -e "$$p" ]; then tmutil addexclusion "$$p" && echo "исключено из Time Machine: $$p"; \
 	  else echo "нет, пропущено: $$p"; fi; done
 
-# Тег релиза vYYYY.MM.DD[.N] на origin/main и push (README «Обновление и откат»); запускает человек.
-release-tag:
-	sh tools/release.sh tag
-
-# Живой checkout (AIP_LIVE_DIR, ~/apps/aiplatform) на тег: бэкап → checkout → перезапуск агента.
+# Живой checkout (AIP_LIVE_DIR, ~/apps/aiplatform) на тег релиза (make release-tag, DX-009):
+# бэкап → checkout тега → перезапуск агента. Откат — то же с прошлым тегом (README «Обновление и откат»).
 deploy:
-	sh tools/release.sh deploy "$(TAG)"
+	sh tools/deploy.sh deploy "$(TAG)"
 
 # Какой тег у живого сервиса.
 deployed:
-	@sh tools/release.sh current
+	@sh tools/deploy.sh current
 
 # Короткий прогон на настоящих моделях с замером времени: картинка, фраза озвучки, черновик статьи.
 smoke: python-check
@@ -82,6 +79,19 @@ models: python-check
 
 test: python-check
 	$(PYTHON) -W error::ResourceWarning -m unittest discover -s tests -t .
+
+# Покрытие тестами без порога: отчёт по модулям и html в tmp/cov/html (coverage — свой или через uv).
+cov: python-check
+	PYTHON=$(PYTHON) sh tools/cov.sh
+
+# Релиз (docs/README.md «Версии»): версия = дата релиза, тег v<версия>.
+# release-prep — в ветке задачи: версия во всех файлах и заголовок в docs/CHANGELOG.md, дальше PR.
+# release-tag — человек в main после слияния PR: тег на HEAD, если версия совпадает.
+release-prep: python-check
+	$(PYTHON) ../../tools/release.py prep $(if $(DATE),--date $(DATE),)
+
+release-tag: python-check
+	$(PYTHON) ../../tools/release.py tag
 
 # ruff и node не обязательны для работы сервиса — проверяем, если установлены.
 # node: синтаксис static/*.js и юнит-тесты фронтенда tests/js/*.test.mjs (node --test).

@@ -34,11 +34,20 @@ class ChannelsTest(PlatformCase):
         self.assertTrue(body["custom"])
         self.assertEqual(self.json("POST", "/api/channels/channels", {"label": "Мой", "chat_id": "плохой"})[0], 400)
 
-        _, body = self.json("POST", f"/api/channels/channels/{added}", {"label": "Шортсы", "token_env": "MY_TOKEN"})
+        _, body = self.json("POST", f"/api/channels/channels/{added}", {"label": "Шортсы", "token_env": "AIP_TG_SH"})
         mine = next(c for c in body["channels"] if c["id"] == added)
-        self.assertEqual((mine["label"], mine["format"], mine["token_env"]), ("Шортсы", "vertical", "MY_TOKEN"))
-        self.assertIn("MY_TOKEN", mine["problem"])
+        self.assertEqual((mine["label"], mine["format"], mine["token_env"]), ("Шортсы", "vertical", "AIP_TG_SH"))
+        self.assertIn("AIP_TG_SH", mine["problem"])
         self.assertEqual(self.json("POST", f"/api/channels/channels/{added}", {"token_env": "плохо"})[0], 400)
+        # Чужие секреты окружения в токен канала не берём (SEC-006).
+        for name in ("HF_TOKEN", "ANTHROPIC_API_KEY", "NARRATOR_TELEGRAM_TOKEN_FILE", "AIP_TG_"):
+            status, body = self.json("POST", f"/api/channels/channels/{added}", {"token_env": name})
+            self.assertEqual(status, 400, name)
+            self.assertIn("AIP_TG_", body["error"])
+        status, _ = self.json(
+            "POST", "/api/channels/channels", {"label": "Чужой", "chat_id": "@other", "token_env": "HF_TOKEN"}
+        )
+        self.assertEqual(status, 400)
         self.assertEqual(self.json("POST", "/api/channels/channels/nope", {"label": "x"})[0], 404)
 
         _, body = self.json("POST", "/api/channels/channels/import")

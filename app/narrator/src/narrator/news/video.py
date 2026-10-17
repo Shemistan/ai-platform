@@ -10,6 +10,7 @@ Pillow, видео склеивает ffmpeg.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -21,6 +22,7 @@ SUBSCRIBE = ASSETS / "subscribe.png"
 POSTER = "video-poster.jpg"  # обложка видео и первый кадр: размытый фон, плей, плашка
 POSTER_THUMB = "video-thumb.jpg"  # миниатюра обложки: JPEG до 320×320 и 200 КБ
 FRAME = "video-frame.png"  # остальные кадры: картинка дня + плашка в углу
+NOTE = "video-note.txt"  # пометки о запрещённых организациях, с которыми собран кадр
 FRAMES = (POSTER, POSTER_THUMB, FRAME)
 PLAY_SHARE = 0.26  # кнопка — доля короткой стороны
 POSTER_BLUR = 0.00  # размытие фона обложки: радиус — доля короткой стороны
@@ -29,6 +31,13 @@ SUBSCRIBE_BOTTOM = (0.92, 0.26)  # плашка на обложке: доля ш
 SUBSCRIBE_CORNER = 0.32  # плашка в углу: доля ширины
 MARGIN = 0.03  # отступ от края — доля короткой стороны
 THUMB_SIDE = 320
+NOTE_SHARE = 0.022  # кегль пометки — доля короткой стороны
+FONT_CANDIDATES = (  # нужен шрифт с кириллицей; свой — $NARRATOR_FONT
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
 
 
 class VideoError(RuntimeError):
@@ -65,17 +74,66 @@ def _backdrop(base):
     return Image.alpha_composite(blurred, shade)
 
 
-def make_frames(cover: Path) -> tuple[Path, Path, Path]:
+def _font(size: int):
+    from PIL import ImageFont
+
+    for path in (os.environ.get("NARRATOR_FONT"), *FONT_CANDIDATES):
+        if path and Path(path).is_file():
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default(size)
+
+
+def _wrap(text: str, font, width: int) -> list[str]:
+    lines, line = [], ""
+    for word in text.split():
+        probe = f"{line} {word}".strip()
+        if line and font.getlength(probe) > width:
+            lines.append(line)
+            line = word
+        else:
+            line = probe
+    return lines + ([line] if line else [])
+
+
+def draw_notes(img, notes: list[str]):
+    """Пометки о запрещённых организациях: мелко, во всю ширину внизу, на тёмной полосе.
+
+    Возвращает (кадр, верх полосы)."""
+    from PIL import Image, ImageDraw
+
+    w, h = img.size
+    size = max(round(min(w, h) * NOTE_SHARE), 10)
+    font = _font(size)
+    margin = round(min(w, h) * MARGIN)
+    lines = [line for note in notes for line in _wrap(note, font, w - 2 * margin)]
+    step = round(size * 1.25)
+    band = h - margin - len(lines) * step - size // 2
+    shade = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(shade).rectangle((0, band, w, h), fill=(0, 0, 0, 140))
+    img = Image.alpha_composite(img, shade)
+    draw = ImageDraw.Draw(img)
+    for n, line in enumerate(lines):
+        draw.text((margin, band + size // 2 + n * step), line, font=font, fill=(255, 255, 255, 220))
+    return img, band
+
+
+def make_frames(cover: Path, notes: list[str] | None = None) -> tuple[Path, Path, Path]:
     """Обложка видео, её миниатюра и обычный кадр — рядом с картинкой дня.
 
-    Пересобирает, только если картинка, заготовки или этот модуль новее кадров.
+    notes — пометки о запрещённых организациях: полосой внизу обычного кадра,
+    то есть всего видео после первой секунды. Пересобирает, только если
+    картинка, заготовки или этот модуль новее кадров или пометки другие.
     """
     from PIL import Image
 
     d = cover.parent
     poster, thumb, frame = (d / name for name in FRAMES)
+    note_file = d / NOTE
+    wanted = "\n".join(notes or [])
+    had = note_file.read_text(encoding="utf-8") if note_file.exists() else ""
     newest = max(p.stat().st_mtime for p in (cover, PLAY, SUBSCRIBE, Path(__file__)))
-    if all(p.exists() and p.stat().st_mtime >= newest for p in (poster, thumb, frame)):
+    fresh = all(p.exists() and p.stat().st_mtime >= newest for p in (poster, thumb, frame))
+    if fresh and had == wanted:
         return poster, thumb, frame
     base = _base(cover)
     w, h = base.size
@@ -99,8 +157,17 @@ def make_frames(cover: Path) -> tuple[Path, Path, Path]:
     small.save(thumb, "JPEG", quality=85)
 
     img = base.copy()
-    img.alpha_composite(corner, (w - corner.width - margin, h - corner.height - margin))
+    if notes:  # плашка в углу — над полосой пометок
+        img, band = draw_notes(img, notes)
+        lift = h - band
+    else:
+        lift = 0
+    img.alpha_composite(corner, (w - corner.width - margin, h - corner.height - margin - lift))
     img.convert("RGB").save(frame, "PNG")
+    if notes:
+        note_file.write_text(wanted, encoding="utf-8")
+    else:
+        note_file.unlink(missing_ok=True)
     return poster, thumb, frame
 
 

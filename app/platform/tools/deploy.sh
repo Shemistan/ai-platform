@@ -1,19 +1,17 @@
 #!/bin/sh
-# Релизы и деплой живого сервиса (REL-014): tag | deploy <тег> | current.
-# Зовут цели make release-tag / deploy TAG=… / deployed.
+# Деплой живого сервиса на тег релиза (REL-014): deploy <тег> | current.
+# Зовут цели make deploy TAG=… / deployed. Тег ставит человек: make release-tag (DX-009,
+# tools/release.py) в main после слияния PR и git push origin <тег>; агент main не трогает.
 #
-#   tag     — тег vYYYY.MM.DD (второй за день — vYYYY.MM.DD.2, …) на origin/main
-#             (нет origin — на HEAD) и push тега. Запускает человек после слияния PR:
-#             агент main не трогает.
 #   deploy  — живой checkout (AIP_LIVE_DIR, по умолчанию ~/apps/aiplatform):
 #             git fetch --tags → make backup → git checkout <тег> → launchctl kickstart -k.
 #             Откат — тот же deploy с прошлым тегом (README «Обновление и откат»).
 #   current — какой тег сейчас у живого checkout.
 #
 # Переопределения (тесты, нестандартные машины): AIP_LIVE_DIR, AIP_AGENT_LABEL,
-# AIP_RELEASE_REMOTE (origin; пусто — без fetch/push), AIP_RELEASE_DATE (YYYY.MM.DD),
-# AIP_DEPLOY_BACKUP (команда бэкапа; по умолчанию make -C <live>/app/platform backup),
-# AIP_DEPLOY_NO_BACKUP=1 (деплой без бэкапа — только осознанно), AIP_LOG_DIR, LAUNCHCTL.
+# AIP_RELEASE_REMOTE (origin; пусто — без fetch), AIP_DEPLOY_BACKUP (команда бэкапа;
+# по умолчанию make -C <live>/app/platform backup), AIP_DEPLOY_NO_BACKUP=1 (деплой без
+# бэкапа — только осознанно), AIP_LOG_DIR, LAUNCHCTL.
 set -eu
 
 REMOTE=${AIP_RELEASE_REMOTE-origin}
@@ -32,40 +30,6 @@ die() {
 
 has_remote() { # $1 — каталог репозитория
 	[ -n "$REMOTE" ] && git -C "$1" remote get-url "$REMOTE" >/dev/null 2>&1
-}
-
-next_tag() { # следующий свободный тег на дату: vD, vD.2, vD.3…
-	base="v${AIP_RELEASE_DATE:-$(date +%Y.%m.%d)}"
-	if ! git rev-parse -q --verify "refs/tags/$base" >/dev/null; then
-		echo "$base"
-		return
-	fi
-	n=2
-	while git rev-parse -q --verify "refs/tags/$base.$n" >/dev/null; do
-		n=$((n + 1))
-	done
-	echo "$base.$n"
-}
-
-cmd_tag() {
-	top=$(git rev-parse --show-toplevel)
-	if has_remote "$top"; then
-		git fetch -q --tags "$REMOTE" main
-		target=$(git rev-parse "$REMOTE/main")
-	else
-		target=$(git rev-parse HEAD)
-	fi
-	existing=$(git tag --points-at "$target" 'v[0-9]*' | head -1)
-	if [ -n "$existing" ]; then
-		echo "у $(git rev-parse --short "$target") уже есть тег $existing — новый не нужен"
-		return
-	fi
-	tag=$(next_tag)
-	git tag -a "$tag" -m "release $tag" "$target"
-	if has_remote "$top"; then
-		git push -q "$REMOTE" "refs/tags/$tag"
-	fi
-	echo "$tag → $(git rev-parse --short "$target")"
 }
 
 cmd_current() {
@@ -103,11 +67,10 @@ cmd_deploy() {
 }
 
 case "${1:-}" in
-tag) cmd_tag ;;
 deploy) cmd_deploy "${2:-}" ;;
 current) cmd_current ;;
 *)
-	echo "использование: sh tools/release.sh tag | deploy <тег> | current" >&2
+	echo "использование: sh tools/deploy.sh deploy <тег> | current" >&2
 	exit 2
 	;;
 esac
