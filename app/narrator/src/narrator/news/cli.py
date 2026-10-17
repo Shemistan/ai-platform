@@ -733,7 +733,7 @@ def cmd_publish(args) -> int:
     отметка своя.
     """
     from narrator import cli as app
-    from narrator import telegram
+    from narrator import registry, telegram
 
     fmt = post_format(args.as_)
     try:  # имя канала проверяем до сборки видео
@@ -751,7 +751,9 @@ def cmd_publish(args) -> int:
         from narrator.news.video import VideoError, make_frames, make_video
 
         try:
-            poster, thumb, frame = make_frames(cover)
+            # Видео могут переслать без подписи — пометки реестра и в кадре.
+            notes = registry.notes(telegram.spoken_text(d, meta), registry.load())
+            poster, thumb, frame = make_frames(cover, notes)
             out = d / audio.name.replace("_gemini.mp3", ".mp4")
             video = make_video(poster, frame, audio, out, meta.duration_sec)
         except VideoError as e:
@@ -819,6 +821,7 @@ def cmd_check(args) -> int:
         problems.append(f"нет {PROMPT} — промпта для картинки в ChatGPT")
     if post.exists():
         problems += digest.check_post(post.read_text(encoding="utf-8"))
+        problems += check_footnotes(post.read_text(encoding="utf-8"))
     else:
         problems.append(f"нет {POST}")
     narration = d / NARRATION
@@ -866,6 +869,16 @@ def cmd_check(args) -> int:
     return 1 if problems else 0
 
 
+def check_footnotes(post: str) -> list[str]:
+    """Упоминание из реестра запрещённых организаций без пометки в post.md — ошибка."""
+    from narrator import registry
+
+    return [
+        f"{POST}: упоминание без пометки реестра — допиши в конец строку «* {n}»"
+        for n in registry.missing(post, post, registry.load())
+    ]
+
+
 def check_video(d: Path, meta: Entry) -> int:
     """Обзор недели или месяца: текст для суфлёра и пост, сколько идёт видео.
 
@@ -877,6 +890,7 @@ def check_video(d: Path, meta: Entry) -> int:
     post = d / POST
     if post.exists():
         problems += digest.check_post(post.read_text(encoding="utf-8"))
+        problems += check_footnotes(post.read_text(encoding="utf-8"))
     else:
         problems.append(f"нет {POST}")
     prompter = d / TELEPROMPTER
