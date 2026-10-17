@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Ежедневный бэкап (REL-012): make backup раз в день. Шаблон для tools/agent.sh; ставится, если задан AIP_BACKUP_DIR. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>@LABEL@</string>
+	<!-- make backup: каталог, ключ age и срок хранения — из local.mk, как у сервиса. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/make</string>
+		<string>-C</string>
+		<string>@PLATFORM_DIR@</string>
+		<string>backup</string>
+		<string>PYTHON=@PYTHON@</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>@PLATFORM_DIR@</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>@PATH@</string>
+	</dict>
+	<!-- Время — AIP_BACKUP_AT (по умолчанию 03:30); Mac спал — launchd запустит при пробуждении. -->
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>@HOUR@</integer>
+		<key>Minute</key>
+		<integer>@MINUTE@</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>@LOG_DIR@/backup.log</string>
+	<key>StandardErrorPath</key>
+	<string>@LOG_DIR@/backup.log</string>
+</dict>
+</plist>

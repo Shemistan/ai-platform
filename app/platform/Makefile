@@ -1,4 +1,5 @@
-.PHONY: run demo smoke test lint check python-check models install-agent uninstall-agent agent-status digest-check
+.PHONY: run demo smoke test lint check python-check models install-agent uninstall-agent agent-status digest-check \
+	backup restore migrate-data tm-exclude release-tag deploy deployed
 
 # Нужен Python 3.11+. Не задан (make PYTHON=… или окружение) — берём первый подходящий
 # из PATH: на чистом Mac python3 — это 3.9 из Xcode CLT, а python3.12 из brew лежит рядом.
@@ -35,6 +36,39 @@ agent-status:
 # Внешний чекер вручную: сервис жив, дайджест за день есть (иначе — сообщение в Telegram).
 digest-check: python-check
 	$(PYTHON) tools/digest_check.py
+
+# Бэкап невосстановимых данных (README «Бэкап»): зашифрованный age архив в AIP_BACKUP_DIR, ротация 30 дней.
+backup: python-check
+	$(PYTHON) -m aiplatform.backup create
+
+# Восстановление в пустой каталог: make restore FILE=<архив> TO=<каталог>.
+restore: python-check
+	@test -n "$(FILE)" -a -n "$(TO)" || { echo "укажи архив и пустой каталог: make restore FILE=… TO=…" >&2; exit 2; }
+	$(PYTHON) -m aiplatform.backup restore "$(FILE)" "$(TO)"
+
+# Один раз: data/ из рабочей копии → ~/Library/Application Support/aiplatform (копия; старое не удаляется).
+migrate-data: python-check
+	$(PYTHON) -m aiplatform.backup migrate
+
+# Исключить из Time Machine восстановимое и тяжёлое: веса моделей, кэш генераций, .venv движка, кэш HF.
+tm-exclude:
+	@for p in "$${AIP_MODELS_DIR:-/Volumes/External SSD/local_models}" \
+	  "$${AIP_DATA_DIR:-$$HOME/Library/Application Support/aiplatform}/studio/cache" \
+	  "$(CURDIR)/../narrator/.venv" "$$HOME/.cache/huggingface"; do \
+	  if [ -e "$$p" ]; then tmutil addexclusion "$$p" && echo "исключено из Time Machine: $$p"; \
+	  else echo "нет, пропущено: $$p"; fi; done
+
+# Тег релиза vYYYY.MM.DD[.N] на origin/main и push (README «Обновление и откат»); запускает человек.
+release-tag:
+	sh tools/release.sh tag
+
+# Живой checkout (AIP_LIVE_DIR, ~/apps/aiplatform) на тег: бэкап → checkout → перезапуск агента.
+deploy:
+	sh tools/release.sh deploy "$(TAG)"
+
+# Какой тег у живого сервиса.
+deployed:
+	@sh tools/release.sh current
 
 # Короткий прогон на настоящих моделях с замером времени: картинка, фраза озвучки, черновик статьи.
 smoke: python-check

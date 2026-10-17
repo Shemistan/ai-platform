@@ -78,7 +78,12 @@ def load(config: Config) -> StudioConfig:
         news_cmd = pick(env, "AIP_NEWS_CMD", default=DEFAULT_NEWS_CMD)
         news_where = pick(env, "AIP_NEWS_WHERE", default=DEFAULT_NEWS_WHERE)
     # В демо свой список каналов в данных демо: настоящий channels.json не трогаем.
-    home = config.data_dir if config.fake else SERVICE_DIR
+    # Каналы — данные: в каталоге данных (вне рабочей копии). Старый channels.json рядом
+    # с Makefile читается, пока в данных своего нет (перенос — make migrate-data).
+    home = config.data_dir
+    legacy = SERVICE_DIR / "channels.json"
+    if not config.fake and not (home / "channels.json").is_file() and legacy.is_file():
+        home = SERVICE_DIR
     channels = pick(env, "AIP_CHANNELS", default=str(home / "channels.json"))
     return StudioConfig(
         data_dir=data_dir,
