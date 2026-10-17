@@ -5,6 +5,7 @@
 | `superpowers/specs/` | дизайн-спеки (superpowers:brainstorming) |
 | `superpowers/plans/` | планы реализации (superpowers:writing-plans) |
 | `decisions/` | ADR: одно решение = контекст → решение → последствия |
+| `api.md` | контракт HTTP API: ресурсы, глаголы, коды, формат ошибок |
 | `грабли.md` | системные ошибки и предохранители от них |
 | `CHANGELOG.md` | журнал версий: что вошло в каждый релиз |
 

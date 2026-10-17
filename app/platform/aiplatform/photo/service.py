@@ -82,7 +82,7 @@ class PhotoModule:
                     job = self.jobs.create(payload)
                 except params.ValidationError as exc:
                     raise bad_request(str(exc)) from exc
-                return req.send_json(job, HTTPStatus.CREATED)
+                return req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/photo/jobs/{job['id']}"})
             case ("GET", ["jobs", job_id]):
                 return req.send_json(found(self.jobs.get(job_id)))
             case ("POST", ["jobs", job_id, "cancel"]):
@@ -93,7 +93,7 @@ class PhotoModule:
                     job = found(self.jobs.upscale(job_id, payload))
                 except params.ValidationError as exc:
                     raise bad_request(str(exc)) from exc
-                return req.send_json(job, HTTPStatus.CREATED)
+                return req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/photo/jobs/{job['id']}"})
             case ("GET", ["jobs", job_id, "image"]):
                 path = self.jobs.image_path(job_id)
                 if path is None:

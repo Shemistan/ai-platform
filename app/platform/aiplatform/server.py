@@ -313,7 +313,8 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST":
                 self._check_origin()
             if method == "POST" and self.app.stopping:
-                raise HttpError(HTTPStatus.SERVICE_UNAVAILABLE, "Сервис останавливается — повтори после перезапуска.")
+                stopping = "Сервис останавливается — повтори после перезапуска."
+                raise HttpError(HTTPStatus.SERVICE_UNAVAILABLE, stopping, code="stopping")
             if parts[:1] != ["api"]:
                 if method != "GET":
                     raise HttpError(
@@ -329,13 +330,16 @@ class Handler(BaseHTTPRequestHandler):
                     return req.send_json(self.app.health())
                 case ("GET", ["ready"]):
                     ready = self.app.ready()
-                    return req.send_json(ready, HTTPStatus.OK if ready["ok"] else HTTPStatus.SERVICE_UNAVAILABLE)
+                    if ready["ok"]:
+                        return req.send_json(ready)
+                    # 503 — тоже ответ-ошибка: code есть в каждом (BE-011), отчёт проверок — рядом.
+                    return req.send_json(ready | {"code": "not_ready"}, HTTPStatus.SERVICE_UNAVAILABLE)
                 case (_, [prefix, *rest]) if prefix in self.app.modules:
                     req.sub = rest
                     return self.app.modules[prefix].handle(req)
             raise not_found()
         except HttpError as exc:
-            req.send_json({"error": exc.message, **exc.extra}, exc.status, exc.headers)
+            req.send_json(exc.body(), exc.status, exc.headers)
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
         except Exception:  # баг в модуле: ответить JSON, а не рвать соединение молча

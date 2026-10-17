@@ -185,7 +185,7 @@ class DisclaimersOffTest(StudioCase):
 
     def publish(self, pid, **extra):
         status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"]} | extra)
-        self.assertEqual(status, 200, view)
+        self.assertEqual(status, 202, view)
         done = self.settle(pid)
         return done, next(s for s in done["steps"] if s["id"] == "publish")
 

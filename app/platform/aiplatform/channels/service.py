@@ -35,7 +35,9 @@ def channel_errors() -> Iterator[None]:
         yield
     except ChannelsBroken as exc:
         raise HttpError(
-            HTTPStatus.SERVICE_UNAVAILABLE, f"Каналы: файл настроек сломан, правки недоступны — {exc}"
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            f"Каналы: файл настроек сломан, правки недоступны — {exc}",
+            code="config_broken",
         ) from exc
     except LookupError as exc:
         raise not_found(str(exc)) from exc
@@ -165,16 +167,20 @@ class ChannelsModule:
     # --- маршруты ---
 
     def handle(self, req: Request) -> None:
-        match (req.method, req.sub):
+        # Каналы — ресурс items: /api/channels/items[/<id>]. Старый /api/channels/channels… — алиас (BE-011).
+        sub = ["items", *req.sub[1:]] if req.sub[:1] == ["channels"] else req.sub
+        match (req.method, sub):
             case ("GET", ["state"]):
                 return req.send_json(self.state())
-            case ("POST", ["channels"]):
-                return req.send_json(self.add(req.json()), HTTPStatus.CREATED)
-            case ("POST", ["channels", "import"]):
+            case ("POST", ["items"]):
+                view = self.add(req.json())
+                location = f"/api/channels/items/{view['added']}"
+                return req.send_json(view, HTTPStatus.CREATED, {"Location": location})
+            case ("POST", ["items", "import"]):
                 return req.send_json(self.import_narrator())
-            case ("POST", ["channels", channel_id, "delete"]):
+            case ("POST", ["items", channel_id, "delete"]):
                 return req.send_json(self.delete(channel_id))
-            case ("POST", ["channels", channel_id]):
+            case ("POST", ["items", channel_id]):
                 return req.send_json(self.edit(channel_id, req.json()))
             case ("POST", ["bot", "check"]):
                 return req.send_json(self._bridge("bot", "--check"))

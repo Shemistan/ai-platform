@@ -76,6 +76,8 @@ KIND_STATUS = {
     INVALID: HTTPStatus.BAD_REQUEST,
 }
 
+KIND_CODE = {UNAVAILABLE: "engine_unavailable", NOT_FOUND: "not_found", INVALID: "engine_rejected"}
+
 
 class NarratorError(RuntimeError):
     """Движок ответил ошибкой или не запустился; текст — для человека, kind — для HTTP-кода."""
@@ -88,7 +90,7 @@ class NarratorError(RuntimeError):
 
 def http_error(exc: NarratorError) -> HttpError:
     """Единый маппинг ошибки движка в ответ ручки: unavailable → 503, not_found → 404, invalid → 400."""
-    return HttpError(KIND_STATUS[exc.kind], str(exc), {"kind": exc.kind})
+    return HttpError(KIND_STATUS[exc.kind], str(exc), {"kind": exc.kind}, code=KIND_CODE[exc.kind])
 
 
 @dataclass(frozen=True)
