@@ -20,7 +20,16 @@ from aiplatform.studio import estimate as estimate_module
 from aiplatform.studio import news, prompts, publish, schedule, series, slides, stats, steps
 from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError, complete
-from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, attention, blockers, dependents
+from aiplatform.studio.pipeline import (
+    LABELS,
+    STEP_IDS,
+    Conflict,
+    ProjectNotFound,
+    Studio,
+    attention,
+    blockers,
+    dependents,
+)
 from aiplatform.studio.render import Renderer
 from aiplatform.updates import registry
 from aiplatform.video import models as video_models
@@ -1111,7 +1120,7 @@ class StudioModule:
             self._route(req)
         except Conflict as exc:
             raise HttpError(HTTPStatus.CONFLICT, str(exc)) from exc
-        except KeyError as exc:
+        except ProjectNotFound as exc:
             raise not_found("Проект не найден.") from exc
 
     def _route(self, req: Request) -> None:
