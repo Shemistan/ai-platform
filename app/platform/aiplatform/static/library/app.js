@@ -1,9 +1,9 @@
 // Вкладка «Статьи»: библиотека статей движка — текст для озвучки, озвучка, проверка, канал.
-import { $, narratorApi as api, chip, fill, h, minutes, shortDate, taskCard } from "/ui.js";
+import { $, narratorApi as api, chip, fill, h, minutes, poller, shortDate, taskCard } from "/ui.js";
 
 const API = "/api/library";
 const QUALITY = { verbatim: "текст дословно", pasted: "текст прислан", webfetch: "текст по пересказу WebFetch" };
-const state = { data: null, audio: null, card: null, selected: null, filter: "all", search: "", polling: false };
+const state = { data: null, audio: null, card: null, selected: null, filter: "all", search: "" };
 
 const isActive = (t) => t.status === "queued" || t.status === "running";
 
@@ -323,22 +323,24 @@ async function addArticle(payload) {
 
 // --- данные ---
 
-async function refresh() {
+// Опрос, пока идёт задача: раз в 1,5 с; в простое не опрашиваем — каждый ответ стоит запуска движка
+// (poller из ui.js: после сбоя связи — с растущей паузой до 30 с, в скрытой вкладке — раз в минуту,
+// при возврате на вкладку — сразу).
+const libraryPoll = poller({ run: (signal) => refresh(signal), fast: 1500, slow: Infinity, isActive: () => state.data?.tasks.some(isActive) });
+
+async function refresh(signal) {
   try {
-    state.data = await api("GET", `${API}/state`);
-    state.failures = 0;
+    state.data = await api("GET", `${API}/state`, undefined, { signal });
   } catch (err) {
-    state.failures = (state.failures || 0) + 1;
-    if (state.data) fill($("tasks"), h("p", { class: "job-error" }, `Нет связи с сервисом (${err.message}) — обновлю, когда он вернётся.`));
+    if (state.data && err.kind !== "abort") fill($("tasks"), h("p", { class: "job-error" }, `Нет связи с сервисом (${err.message}) — обновлю, когда он вернётся.`));
     throw err;
-  } finally {
-    schedule();
   }
   renderStats();
   renderList();
+  libraryPoll.later();
   if (state.selected) {
     try {
-      const fresh = await api("GET", `${API}/articles/${encodeURIComponent(state.selected)}`);
+      const fresh = await api("GET", `${API}/articles/${encodeURIComponent(state.selected)}`, undefined, { signal });
       const editing = document.activeElement && $("card").contains(document.activeElement);
       const changed = JSON.stringify(fresh.tasks) !== JSON.stringify(state.card?.tasks) || fresh.has_audio !== state.card?.has_audio || fresh.check !== state.card?.check;
       state.card = fresh;
@@ -346,21 +348,6 @@ async function refresh() {
     } catch {
       /* статья могла пропасть */
     }
-  }
-}
-
-// Пока идёт задача — опрос раз в 1,5 с; после сбоя связи — с растущей паузой до 30 с, пока не ответит.
-function schedule() {
-  const active = state.data?.tasks.some(isActive);
-  if ((active || state.failures) && !state.polling) {
-    state.polling = true;
-    setTimeout(
-      () => {
-        state.polling = false;
-        refresh().catch(() => {});
-      },
-      state.failures ? Math.min(1500 * 2 ** state.failures, 30000) : 1500,
-    );
   }
 }
 
@@ -400,6 +387,7 @@ async function init() {
   } catch {
     state.audio = null;
   }
+  libraryPoll.start(Infinity);
   await refresh();
   if (params.get("article")) select(params.get("article"));
 }

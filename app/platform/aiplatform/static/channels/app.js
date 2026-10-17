@@ -1,5 +1,5 @@
 // Вкладка «Каналы»: каналы публикации, бот движка, подписчики и приём подписок.
-import { $, narratorApi as api, chip, fill, h, modal, shortDate } from "/ui.js";
+import { $, narratorApi as api, chip, fill, h, modal, poller, safe, shortDate } from "/ui.js";
 
 const API = "/api/channels";
 const FORMATS = { landscape: "Видео 16:9", vertical: "Шортс 9:16" };
@@ -149,12 +149,18 @@ function renderBot(extra = {}) {
 function renderServe() {
   const s = state.data.serve;
   const toggle = h("input", { type: "checkbox", checked: s.running });
-  toggle.addEventListener("change", async () => {
-    toggle.disabled = true;
-    state.data.serve = await api("POST", `${API}/serve/${toggle.checked ? "start" : "stop"}`);
-    renderServe();
-    schedulePoll(1500);
-  });
+  toggle.addEventListener(
+    "change",
+    safe(async () => {
+      toggle.disabled = true;
+      try {
+        state.data.serve = await api("POST", `${API}/serve/${toggle.checked ? "start" : "stop"}`);
+      } finally {
+        renderServe();
+      }
+      servePoll.later();
+    }),
+  );
   const since = s.running && s.started_at ? `с ${new Date(s.started_at * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : "";
   fill($("serve"), 
     h(
@@ -224,24 +230,15 @@ async function load() {
   renderUnsent();
 }
 
-let pollTimer = null;
+// Пока бот принимает подписки — его лог и список подписчиков свежие: раз в 3 с, иначе раз в 15 с
+// (poller из ui.js: в скрытой вкладке — раз в минуту, после сбоя — реже).
+const servePoll = poller({ run: pollServe, fast: 3000, slow: 15000, isActive: () => state.data?.serve.running });
 
-function schedulePoll(ms) {
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(pollServe, ms);
-}
-
-// Пока бот принимает подписки — его лог и список подписчиков свежие.
-async function pollServe() {
-  try {
-    const wasRunning = state.data.serve.running;
-    state.data.serve = await api("GET", `${API}/serve`);
-    renderServe();
-    if (state.data.serve.running || wasRunning) loadSubscribers();
-  } catch {
-    /* сервер мог перезапуститься */
-  }
-  schedulePoll(state.data.serve.running ? 3000 : 15000);
+async function pollServe(signal) {
+  const wasRunning = state.data.serve.running;
+  state.data.serve = await api("GET", `${API}/serve`, undefined, { signal });
+  renderServe();
+  if (state.data.serve.running || wasRunning) loadSubscribers();
 }
 
 async function init() {
@@ -260,7 +257,7 @@ async function init() {
   $("subs-sync").addEventListener("click", () => loadSubscribers(true));
   await load();
   loadSubscribers();
-  schedulePoll(3000);
+  servePoll.start(3000);
 }
 
 init().catch((err) => fill($("channels"), h("p", { class: "job-error" }, `Не удалось загрузить: ${err.message}`)));

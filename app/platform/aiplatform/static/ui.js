@@ -349,20 +349,122 @@ export function safe(fn) {
   };
 }
 
-const pause = (ms, signal) =>
-  new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
-  });
+// --- Опрос ---
+
+export const POLL_MAX_BACKOFF_MS = 30000;
+export const POLL_HIDDEN_MS = 60000;
+
+// Пауза до следующего опроса: fast — пока идёт работа, slow — в простое; после failures сбоев
+// подряд — вдвое дольше на каждый (не дольше 30 с); в скрытой вкладке — ×10, но не чаще hiddenMs
+// (Infinity — не опрашивать, пока вкладку не откроют).
+export function pollDelay({ fast, slow, active, hidden = false, failures = 0, hiddenMs = POLL_HIDDEN_MS }) {
+  let delay = active ? fast : slow;
+  if (failures) delay = Math.min(Math.max(delay, fast) * 2 ** failures, Math.max(POLL_MAX_BACKOFF_MS, delay));
+  if (hidden) delay = Math.max(delay * 10, hiddenMs);
+  return delay;
+}
+
+// poller({ run, fast, slow, isActive, onError }) → { start, stop, now, later }.
+// run(signal) — один опрос (промис); isActive() — идёт ли работа (быстрый интервал);
+// onError(err, failures) — сбой (интервал растёт сам). Запрос в полёте отменяется по stop().
+// В скрытой вкладке опрос редкий, при возврате — сразу. timers и doc — подмена для тестов.
+export function poller({ run, fast = 1000, slow = 5000, isActive = () => false, onError = null, hiddenMs = POLL_HIDDEN_MS, timers = globalThis, doc = globalThis.document }) {
+  let timer = null;
+  let ctrl = null;
+  let stopped = true;
+  let failures = 0;
+  let again = false;
+
+  const hidden = () => Boolean(doc?.hidden);
+  const clear = () => {
+    if (timer !== null) timers.clearTimeout(timer);
+    timer = null;
+  };
+  const schedule = (delay) => {
+    clear();
+    if (stopped || delay === Infinity) return;
+    timer = timers.setTimeout(tick, delay);
+  };
+  const next = () => pollDelay({ fast, slow, active: Boolean(isActive()), hidden: hidden(), failures, hiddenMs });
+
+  async function tick() {
+    timer = null;
+    if (stopped) return;
+    if (ctrl) {
+      again = true; // опрос уже идёт — повторить сразу после него
+      return;
+    }
+    const mine = (ctrl = new AbortController());
+    try {
+      await run(mine.signal);
+      failures = 0;
+    } catch (err) {
+      if (mine.signal.aborted || err?.kind === "abort") return;
+      failures += 1;
+      try {
+        onError?.(err, failures);
+      } catch (inner) {
+        console.warn(inner);
+      }
+    } finally {
+      if (ctrl === mine) ctrl = null;
+    }
+    if (stopped) return;
+    if (again) {
+      again = false;
+      schedule(0);
+    } else schedule(next());
+  }
+
+  const onVisibility = () => {
+    if (stopped) return;
+    if (hidden()) {
+      if (!ctrl) schedule(next());
+    } else self.now();
+  };
+
+  const self = {
+    // start() — опросить сейчас; start(мс) — первый опрос через паузу.
+    start(delay = 0) {
+      if (!stopped) return self;
+      stopped = false;
+      doc?.addEventListener?.("visibilitychange", onVisibility);
+      schedule(delay);
+      return self;
+    },
+    stop() {
+      stopped = true;
+      clear();
+      ctrl?.abort();
+      ctrl = null;
+      again = false;
+      doc?.removeEventListener?.("visibilitychange", onVisibility);
+    },
+    // Опросить сейчас (после своего действия или возврата на вкладку).
+    now() {
+      if (stopped) return;
+      if (ctrl) again = true;
+      else schedule(0);
+    },
+    // Отложить следующий опрос на обычную паузу (данные только что обновили сами).
+    later() {
+      if (!stopped && !ctrl) schedule(next());
+    },
+    get failures() {
+      return failures;
+    },
+  };
+  return self;
+}
 
 const following = new Map();
 
-// Опрос задачи до конца: onUpdate(задача) на каждом шаге, промис — итог.
+// Опрос задачи до конца поверх poller: onUpdate(задача) на каждом шаге, промис — итог.
 // Ответ 4xx (задачу удалили) — отказ с ошибкой; сбой сети — повтор с растущей паузой,
 // после maxErrors сбоев подряд — отказ. На одну задачу (url) — один опрос: повторный вызов
 // возвращает тот же промис, а onUpdate берётся последний (страница перерисовала свой блок).
 export function followTask(url, onUpdate, opts = {}) {
-  const { interval = 1000, signal, maxErrors = 20 } = typeof opts === "number" ? { interval: opts } : opts;
+  const { interval = 1000, signal, maxErrors = 20, timers, doc } = typeof opts === "number" ? { interval: opts } : opts;
   const known = following.get(url);
   if (known) {
     known.onUpdate = onUpdate;
@@ -370,31 +472,34 @@ export function followTask(url, onUpdate, opts = {}) {
   }
   const entry = { onUpdate };
   following.set(url, entry);
-  entry.promise = (async () => {
+  entry.promise = new Promise((resolve, reject) => {
     let last = null;
-    let errors = 0;
-    try {
-      while (true) {
-        if (signal?.aborted) throw new ApiError("Опрос задачи отменён.", { kind: "abort" });
-        let task;
-        try {
-          task = await api("GET", url, undefined, { signal });
-        } catch (err) {
-          if (err.kind === "abort" || (err.kind === "http" && err.status >= 400 && err.status < 500)) throw err;
-          if (++errors >= maxErrors) throw err;
-          await pause(Math.min(interval * 2 ** errors, 30000), signal);
-          continue;
-        }
-        errors = 0;
+    const finish = (settle, value) => {
+      job.stop();
+      signal?.removeEventListener("abort", onAbort);
+      if (following.get(url) === entry) following.delete(url);
+      settle(value);
+    };
+    const onAbort = () => finish(reject, new ApiError("Опрос задачи отменён.", { kind: "abort" }));
+    const job = poller({
+      fast: interval,
+      slow: interval,
+      ...(timers ? { timers } : {}),
+      ...(doc !== undefined ? { doc } : {}),
+      run: async (sig) => {
+        const task = await api("GET", url, undefined, { signal: sig });
         entry.onUpdate(task);
         if (last && task.status !== last) announce(`${task.title || "Задача"}: ${STATUS[task.status] || task.status}`);
         last = task.status;
-        if (task.status !== "queued" && task.status !== "running") return task;
-        await pause(interval, signal);
-      }
-    } finally {
-      if (following.get(url) === entry) following.delete(url);
-    }
-  })();
+        if (task.status !== "queued" && task.status !== "running") finish(resolve, task);
+      },
+      onError: (err, failures) => {
+        if ((err.kind === "http" && err.status >= 400 && err.status < 500) || failures >= maxErrors) finish(reject, err);
+      },
+    });
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    job.start();
+  });
   return entry.promise;
 }

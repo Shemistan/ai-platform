@@ -1,8 +1,8 @@
 // «Выпуски»: все выпуски всех сценариев по группам. У ждущего — что нужно и кнопка действия.
-import { $, announce, api, confirmPublish, fill, h, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, confirmPublish, fill, h, poller, STATUS, statusChip } from "/ui.js";
 
 const API = "/api/studio";
-const state = { archived: false, timer: null, busy: new Set(), errors: {}, statuses: null };
+const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
 // Дополнения над группами (сводка отклика и т.п.): функции data → узел.
 const extras = [responsePanel];
 
@@ -22,7 +22,7 @@ async function act(project, path, body) {
     state.errors[project.id] = err.message;
   } finally {
     state.busy.delete(project.id);
-    load();
+    boardPoll.now();
   }
 }
 
@@ -102,7 +102,7 @@ function responsePanel(data) {
           $("error").textContent = err.message;
           $("error").hidden = false;
         }
-        load();
+        boardPoll.now();
       },
     },
     s.running ? "Обновляю…" : "Обновить отклик",
@@ -184,24 +184,29 @@ function render(data) {
   );
 }
 
-async function load() {
-  clearTimeout(state.timer);
-  try {
-    const data = await api("GET", `${API}/board${state.archived ? "?archived=1" : ""}`);
-    announceChanges(data);
-    render(data);
-    $("error").hidden = true;
-  } catch (err) {
+// Опрос доски: раз в 2 с, пока что-то идёт, раз в 8 с в простое (poller из ui.js: в скрытой
+// вкладке — раз в минуту, после сбоя — реже). Свои действия зовут boardPoll.now().
+const boardPoll = poller({
+  run: load,
+  fast: 2000,
+  slow: 8000,
+  isActive: () => state.data?.projects.some((p) => p.running),
+  onError: (err) => {
     $("error").textContent = `Доска не загрузилась: ${err.message}`;
     $("error").hidden = false;
-  }
-  const running = state.data?.projects.some((p) => p.running);
-  state.timer = setTimeout(load, running ? 2000 : 8000);
+  },
+});
+
+async function load(signal) {
+  const data = await api("GET", `${API}/board${state.archived ? "?archived=1" : ""}`, undefined, { signal });
+  announceChanges(data);
+  render(data);
+  $("error").hidden = true;
 }
 
 $("show-archived").addEventListener("change", (e) => {
   state.archived = e.target.checked;
-  load();
+  boardPoll.now();
 });
 
-load();
+boardPoll.start();

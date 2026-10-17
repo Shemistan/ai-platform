@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, progressBar, safe, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reportError, safe, STATUS, statusChip } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -1379,28 +1379,27 @@ function show(project) {
   schedule();
 }
 
+// Опрос открытого выпуска: раз в секунду, пока он идёт, раз в 5 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя связи — реже). show() откладывает следующий опрос.
+const projectPoll = poller({ run: (signal) => refresh(signal), fast: 1000, slow: 5000, isActive: () => state.project?.running });
+// Список выпусков слева: раз в 10 с; в скрытой вкладке не опрашивается, при возврате — сразу.
+const listPoll = poller({ run: () => loadProjects(), fast: 10000, slow: 10000, hiddenMs: Infinity, onError: (err, n) => n === 1 && reportError(err) });
+
 function schedule() {
-  clearTimeout(state.timer);
-  state.timer = setTimeout(refresh, state.project?.running ? 1000 : 5000);
+  projectPoll.later();
 }
 
 // Пока человек тащит файл, страницу не перерисовываем — иначе окно под курсором пропадёт.
 document.addEventListener("dragover", () => (state.dragging = Date.now()));
 
-async function refresh() {
-  try {
-    if (state.project && Date.now() - (state.dragging || 0) < 1500) return schedule();
-    if (state.project) {
-      const { id, running } = state.project;
-      const fresh = await api("GET", `${API}/projects/${id}`);
-      if (state.project.id !== id) return; // пока ждали ответ, открыли другой выпуск
-      // Блоки с полем в фокусе не пересобираются или возвращают фокус и курсор — см. reconcile.
-      show(fresh);
-      if (fresh.running !== running) reloadList();
-    }
-  } catch {
-    schedule();
-  }
+async function refresh(signal) {
+  if (!state.project || Date.now() - (state.dragging || 0) < 1500) return;
+  const { id, running } = state.project;
+  const fresh = await api("GET", `${API}/projects/${id}`, undefined, { signal });
+  if (state.project.id !== id) return; // пока ждали ответ, открыли другой выпуск
+  // Блоки с полем в фокусе не пересобираются или возвращают фокус и курсор — см. reconcile.
+  show(fresh);
+  if (fresh.running !== running) reloadList();
 }
 
 // Липкий степпер встаёт под шапку платформы: её высота зависит от ширины окна.
@@ -1424,7 +1423,8 @@ async function init() {
   const wanted = new URLSearchParams(location.search).get("project");
   const first = wanted || state.projects[0]?.id;
   if (first) await open(first).catch(() => {});
-  setInterval(reloadList, 10000);
+  projectPoll.start(1000);
+  listPoll.start(10000);
 }
 
 init().catch((err) => {

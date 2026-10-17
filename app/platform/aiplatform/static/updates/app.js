@@ -1,9 +1,9 @@
 // Вкладка «Обновления»: версии моделей и пайплайнов, реестр запрещённых организаций.
-import { $, api, fill, followTask, h, NARRATOR_TIMEOUT_MS, progressBar, taskCard } from "/ui.js";
+import { $, api, fill, followTask, h, NARRATOR_TIMEOUT_MS, poller, progressBar, taskCard } from "/ui.js";
 
 const API = "/api/updates";
 const MODEL_STATUS = { update: "есть обновление", ok: "актуально", unknown: "не знаю", error: "ошибка" };
-const state = { data: null, timer: null, editing: false };
+const state = { data: null, editing: false };
 
 function chip(status, label) {
   return h("span", { class: `status ${status}` }, label);
@@ -147,22 +147,22 @@ function renderRegistry(reg) {
   renderProposal(reg);
 }
 
+// Опрос: раз в секунду, пока идёт проверка, раз в 10 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя — реже).
+const isBusy = (data) => data?.models.status === "running" || data?.registry.check?.status === "running";
+const statePoll = poller({
+  run: async (signal) => render(await api("GET", `${API}/state`, undefined, { signal })),
+  fast: 1000,
+  slow: 10000,
+  isActive: () => isBusy(state.data),
+  onError: (err) => showError(err.message),
+});
+
 function render(data) {
   state.data = data;
   renderModels(data.models);
   renderRegistry(data.registry);
-  clearTimeout(state.timer);
-  const busy = data.models.status === "running" || data.registry.check?.status === "running";
-  state.timer = setTimeout(refresh, busy ? 1000 : 10000);
-}
-
-async function refresh() {
-  try {
-    render(await api("GET", `${API}/state`));
-  } catch (err) {
-    showError(err.message);
-    state.timer = setTimeout(refresh, 5000);
-  }
+  statePoll.later();
 }
 
 $("models-check").addEventListener("click", () => act("models/check"));
@@ -176,7 +176,7 @@ $("registry-reset").addEventListener("click", async () => {
   state.editing = false;
   await act("registry/reset");
 });
-refresh();
+statePoll.start();
 
 // --- модели озвучки движка: что на диске, скачать основные или модели для сравнения ---
 

@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, narratorApi as api, chip, debounce, fill, followTask, h, logBlock, modal, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, narratorApi as api, chip, debounce, fill, followTask, h, logBlock, modal, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -236,6 +236,7 @@ async function submit(event) {
     state.jobs = [state.selected, ...state.jobs];
     renderHistory();
     remember();
+    jobsPoll.later(); // задача в очереди — опрашивать чаще
   } catch (err) {
     showError(err.message);
   } finally {
@@ -255,6 +256,7 @@ async function submitBatch() {
     renderJob(state.selected);
     renderHistory();
     remember();
+    jobsPoll.later();
   } catch (err) {
     showError(err.message);
   }
@@ -402,23 +404,22 @@ async function cancel(id) {
   renderJob(state.selected);
 }
 
-async function poll() {
-  try {
-    const { jobs } = await api("GET", `${API}/jobs`);
-    state.jobs = jobs;
-    if (state.selected) {
-      const fresh = jobs.find((j) => j.id === state.selected.id);
-      if (fresh && (fresh.status !== state.selected.status || fresh.status === "running" || fresh.status === "queued")) {
-        state.selected = await api("GET", `${API}/jobs/${fresh.id}`);
-        renderJob(state.selected);
-      }
+// Опрос очереди: раз в секунду, пока есть активные задачи, раз в 5 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя связи — реже, без «Uncaught (in promise)»).
+const isRunning = (j) => j.status === "queued" || j.status === "running";
+const jobsPoll = poller({ run: poll, fast: 1000, slow: 5000, isActive: () => state.jobs.some(isRunning) });
+
+async function poll(signal) {
+  const { jobs } = await api("GET", `${API}/jobs`, undefined, { signal });
+  state.jobs = jobs;
+  if (state.selected) {
+    const fresh = jobs.find((j) => j.id === state.selected.id);
+    if (fresh && (fresh.status !== state.selected.status || isRunning(fresh))) {
+      state.selected = await api("GET", `${API}/jobs/${fresh.id}`, undefined, { signal });
+      renderJob(state.selected);
     }
-    renderHistory();
-  } catch {
-    /* сервер мог перезапуститься — следующий опрос попробует снова */
   }
-  const active = state.jobs.some((j) => j.status === "queued" || j.status === "running");
-  setTimeout(poll, active ? 1000 : 5000);
+  renderHistory();
 }
 
 // --- образцы голосов ---
@@ -597,7 +598,7 @@ async function init() {
   $("composer").addEventListener("submit", submit);
   bindDrop();
   updateCount();
-  poll();
+  jobsPoll.start();
 }
 
 init().catch((err) => {
