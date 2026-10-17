@@ -12,22 +12,17 @@
   padding: var(--pad-card);
   background: var(--panel);
   border: 1px solid var(--line);
+  /* Полоса и плашка «что нужно» — от .tone-* карточки (cardTone в app.js). */
   border-left: 4px solid var(--tone-line, var(--line));
   border-radius: var(--r-lg);
   min-width: 0;
 }
-/* Группа доски → тон полосы (те же переменные, что у .tone-* в ui.css). */
-.board-card.attention { --tone-line: var(--warning); }
-.board-card.attention.failed { --tone-line: var(--danger); }
-.board-card.running { --tone-line: var(--info); }
-.board-card.published { --tone-line: var(--success); }
 .board-card .thumb { width: 72px; height: 72px; border-radius: var(--r-md); object-fit: cover; background: var(--sunken); }
 .board-card .body { display: grid; gap: var(--sp-2); min-width: 0; }
 .board-card .title { font-weight: var(--fw-semibold); color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
 .board-card .title:hover { text-decoration: underline; }
 .board-card .meta { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
-.board-card .need { font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-2); border-radius: var(--r-md); background: var(--warn-bg); color: var(--warn); }
-.board-card.failed .need { background: var(--bad-bg); color: var(--bad); }
+.board-card .need { font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-2); border-radius: var(--r-md); background: var(--tone-bg); color: var(--tone); }
 .board-card .actions { gap: var(--sp-2) var(--sp-3); }
 .board-card .error { font-size: var(--fs-sm); color: var(--bad); }
 @media (max-width: 520px) {

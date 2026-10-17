@@ -51,6 +51,14 @@ class TokensTest(unittest.TestCase):
         used += "\n".join(p.read_text(encoding="utf-8") for p in STATIC.rglob("*.html"))
         self.assertNotIn("small-btn", used)
 
+    def test_board_on_tone_classes(self):
+        # Цвет карточки доски — от .tone-* (cardTone → toneOf), без своих правил по группам (DS-017).
+        css = (STATIC / "board" / "style.css").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"\.board-card\.(?:attention|running|published|uploaded|drafts|failed)\b", css), [])
+        self.assertNotRegex(css, r"--(?:warn|warning|info|success)(?:-bg)?\b|--bad-bg")
+        js = (STATIC / "board" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("board-card tone-${cardTone(p)}", js)
+
     def test_channel_remove_is_danger(self):
         js = (STATIC / "channels" / "app.js").read_text(encoding="utf-8")
         line = next(ln for ln in js.splitlines() if "removeChannel(c)" in ln and "Убрать" in ln)

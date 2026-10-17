@@ -1,5 +1,5 @@
 // «Выпуски»: все выпуски всех сценариев по группам. У ждущего — что нужно и кнопка действия.
-import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, h, poller, reconcile, restoreFocus, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, h, poller, reconcile, restoreFocus, STATUS, statusChip, toneOf } from "/ui.js";
 
 const API = "/api/studio";
 const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
@@ -171,6 +171,14 @@ function responsePanel(data) {
   );
 }
 
+// Тон карточки — из общего словаря статусов (toneOf): ждёт тебя — warning, шаг упал — danger,
+// идёт — info, опубликован — success, остальные группы — neutral.
+const GROUP_STATUS = { running: "running", published: "done" };
+function cardTone(p) {
+  if (p.group === "attention") return toneOf(p.attention?.status === "failed" ? "failed" : "waiting");
+  return toneOf(GROUP_STATUS[p.group]);
+}
+
 function card(p) {
   const need = p.attention;
   const meta = [
@@ -182,7 +190,7 @@ function card(p) {
   ];
   return h(
     "article",
-    { class: `board-card ${p.group}${need?.status === "failed" ? " failed" : ""}` },
+    { class: `board-card tone-${cardTone(p)}` },
     p.poster ? h("img", { class: "thumb", src: p.poster, alt: "" }) : h("div", { class: "thumb" }),
     h(
       "div",
