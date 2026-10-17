@@ -4,9 +4,17 @@ set -e
 cd "$(dirname "$0")" || exit 1
 # PreToolUse-guard агента живёт вне репо (~/.claude/hooks) и здесь не проверяется.
 
+# Тесты тулинга: зелёные — одна строка итога, красные — весь вывод и выход.
+# (`… | tail -1` глотал код возврата: упавший тест проходил молча.)
+# GIT_INDEX_FILE и др. от pre-commit тестам не отдаём: свои временные репозитории они бы ломали.
+quiet_test() {
+  out=$(env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE python3 "$1" 2>&1) || { printf '%s\n' "$out"; exit 1; }
+  printf '%s\n' "$out" | tail -1
+}
+
 # --- секреты: токены ботов в отслеживаемых файлах (SEC-001) ---
 if [ -f tools/secret_scan.py ]; then
-  python3 tools/test_secret_scan.py 2>&1 | tail -1
+  quiet_test tools/test_secret_scan.py
   python3 tools/secret_scan.py
 fi
 
@@ -19,6 +27,11 @@ fi
 if [ -f tools/tasks_gate.py ]; then
   python3 tools/test_tasks_gate.py
   python3 tools/tasks_gate.py
+fi
+
+# --- версия: одна во всех pyproject, __version__ и uv.lock; release-скрипт (DX-009) ---
+if [ -f tools/release.py ]; then
+  quiet_test tools/test_release.py
 fi
 
 # --- код: `make check` в каждом сервисе app/<svc>/ с Makefile ---

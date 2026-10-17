@@ -76,7 +76,7 @@ ENGINE_FLAG = --engine $(ENGINE) $(if $(VOICE),--voice $(VOICE),)
 
 .DEFAULT_GOAL := help
 .PHONY: help render render-fast render-all lint synth verify list index say move-models models-mlx voice-charon \
-	unsent send-unsent mark-sent send channels subscribers bot models check need-a \
+	unsent send-unsent mark-sent send channels subscribers bot models check cov need-a \
 	news news-collect news-agent news-judge news-publish news-video news-weekly news-monthly news-sources skills news-top \
 	news-rescue article-prepare
 
@@ -199,6 +199,9 @@ move-models: ## перенести модели из ~/.cache в папку мо
 
 check: ## линтер и тесты (зовётся из корневого ./check)
 	sh tools/check.sh
+
+cov: ## покрытие кода тестами: отчёт по модулям и html в tmp/cov/html
+	sh tools/cov.sh
 
 help: ## показать команды
 	@echo "Озвучка статей. Статья: A=<дата>/<название>. Движок сейчас: $(ENGINE)"

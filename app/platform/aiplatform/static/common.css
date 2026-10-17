@@ -42,6 +42,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var
 .platform-nav .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 .platform-nav .gpu { margin-left: auto; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .platform-nav .gpu.busy { color: var(--warn); }
+.platform-nav .version { font-size: 12px; color: var(--muted); white-space: nowrap; }
 /* Узкий экран: шапка в одну строку и не липнет — 13 вкладок прокручиваются вбок,
    активная вкладка прокручена в видимую область (nav.js). */
 @media (max-width: 640px) {
@@ -52,6 +53,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var
   .platform-nav .tabs > li { flex: none; }
   .platform-nav .tabs a { padding: 6px 10px; }
   .platform-nav .gpu { flex: none; max-width: 32vw; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+  .platform-nav .version { display: none; }
 }
 .platform-problems {
   margin: 12px 16px 0;
