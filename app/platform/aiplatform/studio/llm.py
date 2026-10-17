@@ -67,7 +67,7 @@ def extract_json(text: str) -> object:
             return json.loads(raw)
         except json.JSONDecodeError:
             continue
-    raise StudioError("LLM ответила не JSON — перезапусти шаг или поправь результат руками.")
+    raise StudioError("ИИ вернул ответ в неверном формате. Перезапусти шаг или поправь результат вручную.")
 
 
 def plain(text: str) -> str:

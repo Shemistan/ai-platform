@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from aiplatform.core.http import malformed
+
 FPS = 24
 MIN_KEYFRAME_GAP = 8  # один латентный кадр
 MAX_PROMPT_LEN = 4000
@@ -145,11 +147,11 @@ def build_spec(payload: object, limits: Limits = LTX) -> GenerationSpec:
 
     model = payload.get("model") or ""
     if not isinstance(model, str):
-        raise ValidationError("model должен быть строкой — id модели.")
+        raise ValidationError(malformed("model должен быть строкой — id модели."))
 
     frames = payload.get("frames") or []
     if not isinstance(frames, list) or not all(isinstance(f, dict) for f in frames):
-        raise ValidationError("frames должен быть списком объектов.")
+        raise ValidationError(malformed("frames должен быть списком объектов."))
     if frames and limits.max_keyframes == 0:
         raise ValidationError("Эта модель работает только по промпту: убери кадры или выбери другую модель.")
     if limits.max_keyframes is not None and len(frames) > limits.max_keyframes:
@@ -160,7 +162,7 @@ def build_spec(payload: object, limits: Limits = LTX) -> GenerationSpec:
         )
     ids = [f.get("upload_id") for f in frames]
     if not all(isinstance(i, str) and i for i in ids):
-        raise ValidationError("У каждого кадра должен быть upload_id.")
+        raise ValidationError(malformed("У каждого кадра должен быть upload_id."))
     positions = _positions(frames, num_frames, limits.fps)
 
     return GenerationSpec(

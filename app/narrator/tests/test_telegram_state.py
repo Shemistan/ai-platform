@@ -14,7 +14,7 @@ from narrator.telegram import Bot, State
 def test_save_is_atomic_and_private(tmp_path, monkeypatch):
     path = tmp_path / "telegram.json"
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     state.save(path)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     before = path.read_text(encoding="utf-8")
@@ -22,7 +22,7 @@ def test_save_is_atomic_and_private(tmp_path, monkeypatch):
     def boom(*args, **kwargs):
         raise OSError("диск полон")
 
-    state.upsert(43, "Боря")
+    state.upsert(43)
     monkeypatch.setattr(telegram.os, "replace", boom)
     with pytest.raises(OSError):
         state.save(path)
@@ -36,11 +36,11 @@ def test_serve_does_not_lose_sent_from_other_process(tmp_path):
     serve = State.load(path)  # `bot serve` держит состояние в памяти
     send = State.load(path)  # `bot send` в другом процессе
     send.sent["2026-09-18-x_silero"] = "2026-09-18T10:00:00"
-    send.deactivate(1, "нет")  # подписчика нет — ничего не меняет
+    send.remove(1)  # подписчика нет — ничего не меняет
     send.save(path)
 
     serve.offset = 77
-    serve.upsert(42, "Аня")
+    serve.upsert(42)
     serve.save(path)
 
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -53,16 +53,15 @@ def test_serve_does_not_lose_sent_from_other_process(tmp_path):
 def test_merge_keeps_unsubscribe_from_other_process(tmp_path):
     path = tmp_path / "telegram.json"
     first = State()
-    first.upsert(42, "Аня")
+    first.upsert(42)
     first.save(path)
     serve = State.load(path)
     other = State.load(path)
-    other.deactivate(42, "bot was blocked by the user")
+    other.remove(42)  # бот заблокирован — запись удалена (CMP-006)
     other.save(path)
     serve.offset = 5  # подписчика 42 serve не трогал
     serve.save(path)
-    [sub] = State.load(path).subscribers
-    assert sub.active is False and "blocked" in sub.note
+    assert State.load(path).subscribers == [], "удаление в другом процессе не воскресает"
 
 
 def test_pull_skips_get_updates_while_serve_runs(tmp_path, monkeypatch):

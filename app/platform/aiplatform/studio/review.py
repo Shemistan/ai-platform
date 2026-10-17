@@ -32,7 +32,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from aiplatform.core import log
+from aiplatform.core import log, words
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError
 from aiplatform.studio import publish, steps
@@ -73,7 +73,7 @@ def http_transport(channel: publish.Channel) -> Transport:
         if not token:
             raise StudioError(channel.problem() or "нет токена бота")
         body, ctype = publish.multipart({k: str(v) for k, v in fields.items()}, files)
-        answer = publish.call_api(f"{publish.TELEGRAM_API}/bot{token}/{method}", body, ctype, None, safe=False)
+        answer = publish.call_api(f"{publish.telegram_api()}/bot{token}/{method}", body, ctype, None, safe=False)
         if not answer.get("ok"):
             answer = answer | {"description": str(answer.get("description", "")).replace(token, "***")}
         return answer
@@ -82,11 +82,7 @@ def http_transport(channel: publish.Channel) -> Transport:
 
 
 def plural(n: int) -> str:
-    if n % 10 == 1 and n % 100 != 11:
-        return "канал"
-    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
-        return "канала"
-    return "каналов"
+    return words.plural(n, "канал", "канала", "каналов")
 
 
 def is_owner(user: dict, owner: str) -> bool:

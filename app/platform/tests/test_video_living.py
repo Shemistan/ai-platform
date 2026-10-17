@@ -60,7 +60,7 @@ class SpecTest(unittest.TestCase):
     def test_model_from_request(self):
         available = fake_models()
         self.assertEqual(living.pick_model(available, "ltx-2.5-q4").id, "ltx-2.5-q4")
-        for model_id, reason in (("нет такой", "Неизвестная"), ("wan-2.2-t2v-q4", "не умеет"), (5, "строкой")):
+        for model_id, reason in (("нет такой", "Неизвестная"), ("wan-2.2-t2v-q4", "не умеет"), (5, "Некорректный")):
             with self.assertRaisesRegex(ValidationError, reason):
                 living.pick_model(available, model_id)
         with self.assertRaisesRegex(ValidationError, r"make models M=ltx-2\.5-q4"):

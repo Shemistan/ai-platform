@@ -165,5 +165,7 @@ async function init() {
 }
 
 init().catch((err) => {
-  $("project").replaceChildren(h("p", { class: "job-error" }, `Не удалось загрузить сценарии: ${err.message}`));
+  // Причина — в консоль; человеку — что сделать (TXT-003).
+  console.error(err);
+  $("project").replaceChildren(h("p", { class: "job-error" }, "Не удалось загрузить выпуски. Проверь, что сервис запущен, и обнови страницу."));
 });

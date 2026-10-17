@@ -118,7 +118,7 @@ export function copyButton(text) {
           btn.textContent = "Скопировано";
           toast("Промпт скопирован");
         } catch {
-          btn.textContent = "Не вышло";
+          btn.textContent = "Не скопировалось";
           toast("Не удалось скопировать: браузер не дал доступ к буферу обмена", "danger");
         }
         setTimeout(() => (btn.textContent = "Скопировать промпт"), 1500);

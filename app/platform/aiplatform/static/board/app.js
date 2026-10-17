@@ -1,10 +1,11 @@
 // «Выпуски»: все выпуски всех сценариев по группам. У ждущего — что нужно и кнопка действия.
-import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, h, poller, reconcile, restoreFocus, STATUS, statusChip, toneOf } from "/ui.js";
+import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, fmtNum, h, plural, poller, reconcile, restoreFocus, STATUS, statusChip, toneOf } from "/ui.js";
 
 const API = "/api/studio";
 const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
 // Дополнения над группами (сводка отклика и т.п.): sig(data) — подпись блока, build(data) → узел.
 const extras = [
+  { key: "autopilot", sig: (d) => [d.offers?.digest_autopilot], build: (d) => autopilotBanner(d) },
   { key: "week", sig: (d) => [d.week], build: (d) => weekLine(d.week) },
   { key: "response", sig: (d) => [d.stats, d.response, d.coverage, d.variants], build: (d) => responsePanel(d) },
 ];
@@ -18,6 +19,43 @@ function weekLine(w) {
     { class: "week-line", title: `за ${w.days} дней; брошено — ждут публикации без движения больше 72 ч` },
     h("strong", {}, "Неделя: "),
     `опубликовано ${w.published} · ждут ${w.waiting} · брошено ${w.abandoned} · медиана до публикации ${lead}`,
+  );
+}
+
+// Дайджест собирают руками каждый день — предложить расписание и уведомления одной кнопкой (PRD-003).
+function autopilotBanner(d) {
+  if (!d.offers?.digest_autopilot) return h("div", { hidden: true });
+  const fail = (err) => {
+    $("error").textContent = err.message;
+    $("error").hidden = false;
+  };
+  const enable = async () => {
+    try {
+      await api("POST", "/api/settings/section/schedule", { enabled: true, time: "07:00" });
+      await api("POST", "/api/settings/section/notify", { enabled: true });
+    } catch (err) {
+      fail(err);
+    }
+    boardPoll.now();
+  };
+  const dismiss = async () => {
+    try {
+      await api("POST", "/api/settings/section/offers", { digest_autopilot: false });
+    } catch (err) {
+      fail(err);
+    }
+    boardPoll.now();
+  };
+  return h(
+    "div",
+    { class: "panel autopilot-offer", role: "status" },
+    h("p", {}, h("strong", {}, "Дайджест собирается вручную."), " Расписание выключено — включить сборку дайджеста каждый день в 07:00 и присылать уведомления, когда выпуск ждёт тебя?"),
+    h(
+      "div",
+      { class: "actions" },
+      h("button", { type: "button", class: "btn btn--primary btn--sm", onclick: busyClick(enable) }, "Включить в 07:00 с уведомлениями"),
+      h("button", { type: "button", class: "btn btn--link", onclick: busyClick(dismiss) }, "Не предлагать"),
+    ),
   );
 }
 
@@ -63,7 +101,7 @@ function actions(p) {
   const to = targets(p);
   if (need?.step === "publish" && to.length && p.verdict !== "не готово") {
     const names = to.map((c) => c.label).join(", ");
-    const label = !p.channels.length ? `Опубликовать в ${names}…` : to.length === 1 ? `Опубликовать: ${names}…` : `Опубликовать в ${to.length} канала…`;
+    const label = !p.channels.length ? `Опубликовать в ${names}…` : to.length === 1 ? `Опубликовать: ${names}…` : `Опубликовать в ${to.length} ${plural(to.length, "канал", "канала", "каналов")}…`;
     out.unshift(h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: busy, title: names, onclick: () => publish(p) }, label));
   } else if (need?.step === "publish" && !to.length) {
     out.push(h("a", { class: "btn--link", href: "/settings/#defaults-panel", title: "Каналы по умолчанию — и кнопка публикации появится здесь" }, "Задать каналы по умолчанию"));
@@ -82,10 +120,11 @@ function actions(p) {
   return h("div", { class: "actions" }, ...out);
 }
 
-const number = (n) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}K` : String(n));
+// Полностью и с разрядами: «12 400», а не «12.4K» (TXT-002).
+const number = (n) => fmtNum(Math.round(n));
 
 const known = (v) => v !== null && v !== undefined;
-const signed = (n) => `${n >= 0 ? "+" : ""}${n}`;
+const signed = (n) => `${n >= 0 ? "+" : ""}${number(n)}`;
 
 // Куда ушёл выпуск и что там с ним: просмотры (всего и за 24ч/72ч/7д), прирост подписчиков за сутки
 // после поста; руками — у пакетов и приватных каналов.
@@ -102,11 +141,11 @@ async function submitField(p, path, id, body) {
 
 function reachRow(p, r) {
   const facts = [];
-  if (known(r.views)) facts.push(`${number(r.views)} просм.`);
+  if (known(r.views)) facts.push(`${number(r.views)} ${plural(r.views, "просмотр", "просмотра", "просмотров")}`);
   const spans = [["24ч", r.views_24h], ["72ч", r.views_72h], ["7д", r.views_7d]].filter(([, v]) => known(v));
   if (spans.length) facts.push(spans.map(([k, v]) => `${k}: ${number(v)}`).join(", "));
   else if (known(r.views) && known(r.age_h)) facts.push("окно 24ч не закрыто");
-  if (known(r.growth_24h_attr)) facts.push(`${signed(r.growth_24h_attr)} подп. за сутки${r.growth_trend ? "" : " (без тренда)"}`);
+  if (known(r.growth_24h_attr)) facts.push(`${signed(r.growth_24h_attr)} ${plural(r.growth_24h_attr, "подписчик", "подписчика", "подписчиков")} за сутки${r.growth_trend ? "" : " (без тренда)"}`);
   // Пакет для ручной загрузки опубликован, только когда автор залил его и дал ссылку на ролик.
   if (r.state === "packaged") {
     const id = fieldId("link", p, r);

@@ -139,7 +139,7 @@ def _when(value: object) -> float:
             return datetime.fromisoformat(value.strip()).timestamp()
         except ValueError:
             pass
-    raise ValueError("at — дата замера: ISO-строка «2026-10-15T12:00» или unix-время.")
+    raise ValueError("Дата замера — в виде «2026-10-15T12:00» (или unix-время).")
 
 
 def manual_snapshot(payload: dict, start: float | None, now: float | None = None) -> tuple[dict, float]:
@@ -152,17 +152,18 @@ def manual_snapshot(payload: dict, start: float | None, now: float | None = None
         if value is None:
             continue
         if isinstance(value, bool) or not isinstance(value, int) or (key != "subs_gained" and value < 0):
-            raise ValueError(f"{key} ({LABELS[key]}) — целое число{'' if key == 'subs_gained' else ' от 0'}.")
+            label = LABELS[key][:1].upper() + LABELS[key][1:]
+            raise ValueError(f"{label} — целое число{'' if key == 'subs_gained' else ' от 0'}.")
         snapshot[key] = value
     for key in PERCENTS:
         value = payload.get(key)
         if value is None:
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
-            raise ValueError(f"{key} ({LABELS[key]}) — процент от 0 до 100.")
+            raise ValueError(f"{LABELS[key]} — процент от 0 до 100.")
         snapshot[key] = round(float(value), 2)
     if all(snapshot.get(key) is None for key in MANUAL_METRICS):
-        raise ValueError("Внеси хотя бы одну метрику: views, impressions, ctr, avg_view_pct или subs_gained.")
+        raise ValueError("Внеси хотя бы одну метрику: просмотры, показы, CTR, % досмотра или подписки.")
     at = now if payload.get("at") in (None, "") else _when(payload["at"])
     if at > now + 60:
         raise ValueError("Дата замера — в будущем.")

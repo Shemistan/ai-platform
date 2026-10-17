@@ -42,7 +42,7 @@ def test_start_payload_saved_as_start_param():
     state = State()
     pull(state, "/start abc123")
     assert state.find(42).start_param == "abc123"
-    # Не по правилам Telegram (кириллица, пробелы в одном слове нет, длина) — метки нет.
+    # Не по правилам Telegram (кириллица) — метки нет, подписка есть.
     pull(state, "/start проект", chat_id=43)
     assert state.find(43).start_param is None
 
@@ -57,24 +57,29 @@ def test_start_payload_with_invite():
     assert state.find(3) is None, "неверный код — не подписан"
 
 
-def test_stop_writes_deactivated_at_and_restart_clears(monkeypatch):
+def test_stop_records_departure_without_pii_and_restart_is_new(monkeypatch):
+    # /stop удаляет запись (CMP-006); дата отписки — только строкой без chat_id в departed.
     days = iter(["2026-10-01", "2026-10-05", "2026-10-09"])
     monkeypatch.setattr(library, "today", lambda: next(days))
     state = State()
     pull(state, "/start post-1")
     pull(state, "/stop")
-    sub = state.find(42)
-    assert (sub.active, sub.deactivated_at) == (False, "2026-10-05")
-    # Строка для retention — без chat_id и имени.
+    assert state.find(42) is None
     assert state.departed == [{"added": "2026-10-01", "source": "post-1", "left": "2026-10-05"}]
     pull(state, "/start post-2")
     sub = state.find(42)
-    assert (sub.active, sub.deactivated_at, sub.added, sub.start_param) == (
-        True,
-        None,
-        "2026-10-09",
-        "post-2",
-    )
+    assert (sub.added, sub.start_param) == ("2026-10-09", "post-2"), "вернувшийся — новая подписка"
+    assert "42" not in json.dumps(state.departed)
+
+
+def test_forget_also_keeps_only_aggregate(monkeypatch):
+    monkeypatch.setattr(library, "today", lambda: "2026-10-03")
+    state = State()
+    state.upsert(42, start_param="p1")
+    assert state.remove(42)
+    assert state.departed == [{"added": "2026-10-03", "source": "p1", "left": "2026-10-03"}]
+    assert not state.remove(42)
+    assert len(state.departed) == 1
 
 
 def test_old_telegram_json_reads(tmp_path):
@@ -95,25 +100,21 @@ def test_old_telegram_json_reads(tmp_path):
     }
     path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
     state = State.load(path)
-    assert (state.find(42).start_param, state.find(42).deactivated_at, state.departed) == (
-        None,
-        None,
-        [],
-    )
+    assert (state.find(42).start_param, state.departed) == (None, [])
     state.save(path)
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["subscribers"][1]["name"] == "Боря" and saved["departed"] == []
+    assert saved["departed"] == [] and saved["subscribers"][0]["start_param"] is None
 
 
 def test_departed_merges_between_processes(tmp_path):
     path = tmp_path / "telegram.json"
     base = State()
-    base.upsert(1, "")
-    base.upsert(2, "")
+    base.upsert(1)
+    base.upsert(2)
     base.save(path)
     a, b = State.load(path), State.load(path)
-    a.deactivate(1, "/stop")
-    b.deactivate(2, "blocked")
+    a.remove(1)
+    b.remove(2)
     a.save(path)
     b.save(path)
     assert len(State.load(path).departed) == 2
@@ -127,7 +128,7 @@ def test_audience_aggregates_without_pii():
         (3, "2026-09-03", None),
     ):
         state.subscribers.append(
-            telegram.Subscriber(chat_id=chat_id, name="x", added=added, start_param=source)
+            telegram.Subscriber(chat_id=chat_id, added=added, start_param=source)
         )
     state.departed = [
         {"added": "2026-09-01", "source": "p1", "left": "2026-09-04"},  # ушёл до D7
@@ -142,23 +143,23 @@ def test_audience_aggregates_without_pii():
     first, last = report["cohorts"][0], report["cohorts"][-1]
     assert (first["cohort"], first["n"], first["d7"], first["d30"]) == ("2026-08-31", 5, 0.8, 0.6)
     assert (last["cohort"], last["n"], last["d7"], last["d7_n"]) == ("2026-10-05", 1, None, 0)
-    assert "chat_id" not in json.dumps(report) and "name" not in json.dumps(report)
+    assert "chat_id" not in json.dumps(report)
 
 
 def test_cli_audience(tmp_path, monkeypatch, capsys):
     state = State()
     state.subscribers.append(
-        telegram.Subscriber(chat_id=777001, name="Аня", added="2026-09-01", start_param="p1")
+        telegram.Subscriber(chat_id=777001, added="2026-09-01", start_param="p1")
     )
     path = tmp_path / "telegram.json"
     state.save(path)
     monkeypatch.setattr(telegram, "state_path", lambda root=None: path)
     assert cli.main(["bot", "audience"]) == 0
     out = capsys.readouterr().out
-    assert "p1" in out and "777001" not in out and "Аня" not in out
+    assert "p1" in out and "777001" not in out
 
 
-def test_start_link_and_post(monkeypatch):
+def test_start_link_and_tag():
     assert telegram.start_link("abc", username="") is None
     assert (
         telegram.start_link("abc", username="@my_bot", invite="") == "https://t.me/my_bot?start=abc"

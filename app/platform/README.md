@@ -62,8 +62,7 @@ PATH под launchd, перезапуск, логи, время чекера, п
 
 Данные — вне рабочей копии, в `~/Library/Application Support/aiplatform`
 (`AIP_DATA_DIR`). Перенос (`make migrate-data`), шифрованный бэкап
-(`make backup`, `make restore`) и Time Machine (`make tm-exclude`) —
-[`docs/configuration.md`](../../docs/configuration.md#данные-и-бэкап).
+(`make backup`, `make restore`), Time Machine (`make tm-exclude`) — [`docs/configuration.md`](../../docs/configuration.md#данные-и-бэкап); сроки хранения личных данных — [«Данные и сроки»](../../docs/configuration.md#данные-и-сроки).
 
 ### Обновление и откат
 
@@ -158,9 +157,8 @@ FLUX.2 сам докладывает `mlx.metallib` к Flux2CLI и ставит 
 Размеры — `du` установленных каталогов (у LTX — файлы режима `--distilled`;
 `FULL=1` качает репозиторий целиком). Сверху — пайплайны (~2 ГБ на все) и
 веса апскейлера SeedVR2 (~7 ГБ, докачиваются при первом увеличении).
-Обновил пайплайн (mflux, Flux2CLI, ltx-2-mlx, Wan) — пересними справку его CLI:
-`make contracts` пишет `tests/contracts/<cli>-help.txt`, а тест сверяет с ней каждый
-флаг, который передаёт платформа; переименованный флаг роняет тест, а не генерацию.
+Обновил пайплайн (mflux, Flux2CLI, ltx-2-mlx, Wan) — `make contracts`: тест сверяет со справкой
+CLI в `tests/contracts/` каждый флаг платформы; переименованный флаг роняет тест, а не генерацию.
 Озвучка и новости: `make models` в `app/narrator`; дайджесту нужен claude CLI.
 
 ### Каналы публикации
@@ -199,4 +197,3 @@ make smoke   # на настоящих моделях: картинка, фра�
 подпроцессом через `bridge` (0005), LLM через `claude -p` (0006), файлы `data/`
 вместо БД (0007), ручные каналы вместо OAuth (0008). Маршруты HTTP API и команды
 моста — [`docs/api-routes.md`](../../docs/api-routes.md) (собирается из кода, `./check` сверяет).
-

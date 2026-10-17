@@ -18,7 +18,7 @@ from aiplatform.audio import voices
 from aiplatform.config import Config
 from aiplatform.core import narrator as narrator_module
 from aiplatform.core import tasks as tasks_module
-from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
+from aiplatform.core.http import HttpError, Request, bad_request, found, malformed, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 
 PREFIX = "library"
@@ -192,7 +192,7 @@ class LibraryModule:
                 # после таймаута не дублирует пост, narrator сам не шлёт уже отправленное.
                 force = payload.get("force", False)
                 if not isinstance(force, bool):
-                    raise bad_request("force — true или false.")
+                    raise bad_request(malformed("force — true или false."))
                 channel = str(payload.get("channel") or "").strip()
                 if card.get("sent") and not force and not channel:
                     raise HttpError(

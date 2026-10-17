@@ -61,7 +61,7 @@ class RetriesTest(unittest.TestCase):
         self.assertEqual(replies.methods, ["sendVideo"])
 
     def test_send_retried_when_not_sent(self):
-        replies = Replies(StudioError("Telegram недоступен: URLError"))
+        replies = Replies(StudioError(publish.TELEGRAM_DOWN))
         self.assertTrue(self.publish(replies)["ok"])
         self.assertEqual(replies.methods, ["sendVideo", "sendVideo"])
 

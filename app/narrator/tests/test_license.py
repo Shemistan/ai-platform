@@ -40,7 +40,7 @@ def bot_with_subscriber():
         return {"ok": True, "result": {"message_id": 1}}
 
     state = telegram.State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     return telegram.Bot("t", transport), state, calls
 
 

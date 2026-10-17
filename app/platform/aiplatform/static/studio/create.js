@@ -1,5 +1,5 @@
 // Студия: форма нового выпуска, оценка времени и проверка до запуска, серия и копия выпуска.
-import { $, api, busyClick, confirmAction, debounce, h } from "/ui.js";
+import { $, api, busyClick, confirmAction, countLabel, debounce, fmtNum, h } from "/ui.js";
 import { API, CAPTION_LIMIT, scenario, state } from "./state.js";
 import { readSettings, settingsForm } from "./settings.js";
 import { act, alertBox, loadProjects, open, show } from "./app.js";
@@ -75,7 +75,7 @@ export function captionCounter(area) {
   const count = h("span", { class: "hint" });
   const update = () => {
     const visible = area.value.replace(/\*\*/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").length;
-    count.textContent = `${visible} знаков из ${CAPTION_LIMIT}${visible > CAPTION_LIMIT ? " — длинно: вместо подписи уйдёт заголовок" : ""}`;
+    count.textContent = `${countLabel(visible, "знак", "знака", "знаков")} из ${fmtNum(CAPTION_LIMIT)}${visible > CAPTION_LIMIT ? " — длинно: вместо подписи уйдёт заголовок" : ""}`;
     count.classList.toggle("warn", visible > CAPTION_LIMIT);
   };
   area.addEventListener("input", update);

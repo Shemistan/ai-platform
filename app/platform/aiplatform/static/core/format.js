@@ -36,5 +36,9 @@ export function plural(n, one, few, many) {
   return many;
 }
 
-// Число со словом: countLabel(21, "слово", "слова", "слов") → «21 слово».
-export const countLabel = (n, one, few, many) => `${n} ${plural(n, one, few, many)}`;
+// Число с разрядами по-русски: 1200 → «1 200» (неразрывный пробел). Python-близнец — core/words.py (TXT-002).
+const NUM = new Intl.NumberFormat("ru-RU");
+export const fmtNum = (n) => NUM.format(n);
+
+// Число со словом: countLabel(21, "слово", "слова", "слов") → «21 слово», 1200 → «1 200 просмотров».
+export const countLabel = (n, one, few, many) => `${fmtNum(n)} ${plural(n, one, few, many)}`;

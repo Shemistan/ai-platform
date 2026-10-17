@@ -12,7 +12,6 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from aiplatform.channels.service import BotServe
 from aiplatform.studio import review as review_module
@@ -197,16 +196,6 @@ class FinalCaptionTest(ReviewCase):
     """PRD-016: владелец одобряет ровно ту подпись, что уйдёт в канал — со сносками и источником."""
 
     def test_preview_caption_equals_channel_caption(self):
-        sent: list[tuple[str, str | None]] = []
-        fake = self.tg
-
-        def capture(url, body, ctype):
-            sent.append((url.rsplit("/", 1)[-1], field(body, "caption")))
-            return fake(url, body, ctype)
-
-        patcher = mock.patch.object(review_module.publish, "_http_post", capture)
-        patcher.start()
-        self.addCleanup(patcher.stop)
         settings = {"channels": ["tg-a"]}
         pid = self.create(scenario="article", text=ARTICLE, settings=settings)["id"]
         (self.folder(pid) / "video.mp4").write_bytes(b"x")
@@ -223,7 +212,7 @@ class FinalCaptionTest(ReviewCase):
         self.review.handle(click(pid, self.review.record(pid)["nonce"], "ok"))
         done = self.settle(pid)
         self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
-        channel = [c for m, c in sent if m == "sendVideo" and c]
+        channel = [c.fields["caption"] for c in self.tg.sent("sendVideo")]  # multipart разобран фейком
         self.assertEqual(channel, [preview])
 
     def test_article_without_source_preview_warns(self):

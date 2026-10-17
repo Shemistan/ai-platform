@@ -203,6 +203,7 @@ def voices() -> dict:
     """Образцы голосов-клонов: какой записан, где, сколько секунд, что сказано."""
     import soundfile as sf
 
+    from narrator import consent
     from narrator import synth as s
     from narrator.stress import strip_marks
 
@@ -217,12 +218,19 @@ def voices() -> dict:
             "seconds": None,
             "text": "",
             "custom": False,
+            # CMP-009: synthetic — ничей голос; live — есть согласие владельца; None — нет.
+            "consent": "synthetic" if stem in consent.SYNTHETIC else None,
+            "consent_error": None,
         }
         try:
             wav, text = s.ref_sample(voice)
+        except s.ConsentMissingError as e:
+            out.append(item | {"consent_error": str(e)})  # образец есть, клон без согласия нельзя
+            continue
         except s.ModelMissingError:
             out.append(item)
             continue
+        item["consent"] = consent.check(stem, wav).get("kind")
         try:
             seconds = round(sf.info(str(wav)).duration, 1)
         except RuntimeError:

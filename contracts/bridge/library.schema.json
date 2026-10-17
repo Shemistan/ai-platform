@@ -1,0 +1,115 @@
+{
+  "$comment": "ответ `narrate bridge library`",
+  "type": "object",
+  "required": [
+    "articles",
+    "digests",
+    "root",
+    "unsent"
+  ],
+  "properties": {
+    "root": {
+      "type": "string"
+    },
+    "articles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "added",
+          "check",
+          "duration_sec",
+          "engine",
+          "has_audio",
+          "has_script",
+          "has_source",
+          "id",
+          "kind",
+          "license",
+          "sent",
+          "source_quality",
+          "stale",
+          "summary",
+          "title",
+          "url",
+          "versions",
+          "voice"
+        ],
+        "properties": {
+          "versions": {
+            "$comment": "движок → версия озвучки; ключи — данные",
+            "type": "object"
+          },
+          "voice": {},
+          "engine": {},
+          "title": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "check": {},
+          "source_quality": {
+            "type": "string"
+          },
+          "has_script": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "sent": {
+            "type": "boolean"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "license": {
+            "type": "string"
+          },
+          "duration_sec": {},
+          "has_source": {
+            "type": "boolean"
+          },
+          "added": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "has_audio": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "digests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "added",
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "added": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "unsent": {
+      "type": "number"
+    }
+  }
+}

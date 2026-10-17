@@ -14,7 +14,9 @@
 `<id группы>_<id темы>`, как в адресе web.telegram.org (`-1003755616451_3`).
 Список подписчиков и отметки об отправке лежат в
 `library/telegram.json` — это личные данные, а не код, поэтому и живут в
-библиотеке, которая не в git.
+библиотеке, которая не в git. О подписчике хранится только chat_id, дата
+подписки и тема (CMP-007); /stop и блокировка бота удаляют запись (CMP-006).
+В логах chat_id — маской `mask()`.
 
 Токен бота берётся из `$NARRATOR_TELEGRAM_TOKEN`, иначе из файла
 `$NARRATOR_TELEGRAM_TOKEN_FILE`, иначе из `bot_token.md` в корне репозитория.
@@ -79,13 +81,32 @@ _NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 _OFF = ("", "off", "none", "no")
 GENERAL_THREAD = 1  # тема General: в неё пишут без message_thread_id
 
-WELCOME = (
-    "Привет! Это бот с озвучкой статей.\n\n"
-    "Как только очередная статья превращается в аудио, он пришлёт mp3 и короткое "
-    "описание: о чём статья и сколько слушать.\n\n"
-    "Отписаться — команда /stop."
+PRIVACY_URL_ENV = "NARRATOR_PRIVACY_URL"
+PRIVACY_URL = (  # короткая политика: что храним, зачем, сколько, как удалить (CMP-008)
+    "https://github.com/Shemistan/ai-platform/blob/main/app/narrator/docs/privacy.md"
 )
-GOODBYE = "Отписал. Чтобы снова получать озвучки, пришли /start."
+
+
+def privacy_url() -> str:
+    return os.environ.get(PRIVACY_URL_ENV, "").strip() or PRIVACY_URL
+
+
+def welcome() -> str:
+    """Приветствие подписчику: что пришлёт бот, что хранит и как всё удалить."""
+    return (
+        "Привет! Это бот с озвучкой статей.\n\n"
+        "Как только очередная статья превращается в аудио, он пришлёт mp3 и короткое "
+        "описание: о чём статья и сколько слушать.\n\n"
+        "Храню только номер этого чата, дату подписки и метку ссылки-приглашения — "
+        "чтобы присылать озвучки. "
+        "Имя и сообщения не сохраняю.\n"
+        "/stop — отписаться и удалить эти данные.\n"
+        f"Подробнее: {privacy_url()}"
+    )
+
+
+WELCOME = welcome()  # текст с адресом политики по умолчанию; в ответе — welcome()
+GOODBYE = "Отписал и удалил ваши данные. Чтобы снова получать озвучки, пришли /start."
 HINT = "Я только рассылаю озвучки статей. Команды: /start — подписаться, /stop — отписаться."
 NEED_INVITE = "Подписка по приглашению: пришли /start <код> или открой ссылку-приглашение."
 FULL = "Мест в рассылке пока нет."
@@ -203,16 +224,24 @@ def channel() -> int | str | None:
     return _default_channel(None)[0]
 
 
+def mask(chat_id: int | str) -> str:
+    """chat_id для логов: последние четыре цифры, остальное скрыто (CMP-007)."""
+    text = str(chat_id)
+    return f"chat …{text[-4:]}" if len(text) > 4 else "chat …"
+
+
 @dataclass
 class Subscriber:
+    """Подписчик — только номер чата и дата: имени и истории не храним (CMP-007).
+
+    Отписка и блокировка бота удаляют запись целиком (CMP-006), поэтому
+    неактивных подписчиков нет.
+    """
+
     chat_id: int
-    name: str
     added: str
-    active: bool = True
-    note: str = ""  # почему отписан: команда /stop или ошибка отправки
     thread: int | None = None  # тема в группе, если получатель — канал-тема
     start_param: str | None = None  # откуда подписался: метка из /start <payload> (AN-011)
-    deactivated_at: str | None = None  # дата отписки; повторный /start её очищает (AN-011)
 
     def address(self) -> dict:
         """Куда слать: chat_id и, если это тема в группе, message_thread_id."""
@@ -242,8 +271,7 @@ class State:
         unknown = set(data) - known
         if unknown:
             raise ValueError(f"{path}: неизвестные поля {sorted(unknown)}")
-        subs = [Subscriber(**s) for s in data.pop("subscribers", [])]
-        state = cls(subscribers=subs, **data)
+        state = cls(subscribers=_subscribers(data.pop("subscribers", [])), **data)
         state._base = copy.deepcopy(state)
         return state
 
@@ -281,37 +309,45 @@ class State:
         return next((s for s in self.subscribers if s.chat_id == chat_id), None)
 
     def active(self) -> list[Subscriber]:
-        return [s for s in self.subscribers if s.active]
+        """Кому слать в личку: все записанные — отписавшихся не храним."""
+        return list(self.subscribers)
 
-    def upsert(self, chat_id: int, name: str, start_param: str | None = None) -> bool:
-        """Подписывает чат. True — если подписчик новый или вернулся после /stop.
-        Вернувшийся — новая подписка (AN-011): дата и источник — этого /start,
-        дата отписки стёрта."""
-        sub = self.find(chat_id)
-        if sub is None:
-            self.subscribers.append(
-                Subscriber(
-                    chat_id=chat_id, name=name, added=library.today(), start_param=start_param
-                )
-            )
-            return True
-        sub.name = name or sub.name
-        if sub.active:
+    def upsert(self, chat_id: int, start_param: str | None = None) -> bool:
+        """Подписывает чат. True — если подписчик новый (в том числе вернулся после /stop:
+        его прежняя запись удалена, это новая подписка со своей датой и источником, AN-011)."""
+        if self.find(chat_id) is not None:
             return False
-        sub.active, sub.note, sub.deactivated_at = True, "", None
-        sub.added, sub.start_param = library.today(), start_param
+        self.subscribers.append(
+            Subscriber(chat_id=chat_id, added=library.today(), start_param=start_param)
+        )
         return True
 
-    def deactivate(self, chat_id: int, note: str) -> None:
-        """Отписка: дата отписки у записи и строка без ПДн в departed — для retention (AN-011)."""
-        sub = self.find(chat_id)
-        if sub is None or not sub.active:
-            if sub is not None:
-                sub.note = note
-            return
-        left = library.today()
-        sub.active, sub.note, sub.deactivated_at = False, note, left
-        self.departed.append({"added": sub.added, "source": sub.start_param, "left": left})
+    def remove(self, chat_id: int) -> bool:
+        """Удаляет подписчика целиком (/stop, бот заблокирован, `bot forget`). True — был.
+
+        Дата отписки (AN-011) запись не переживает: она уходит только в departed —
+        строку {added, source, left} без chat_id и имени, связать её с человеком нечем."""
+        gone = [s for s in self.subscribers if s.chat_id == chat_id]
+        self.subscribers = [s for s in self.subscribers if s.chat_id != chat_id]
+        for sub in gone:
+            self.departed.append(
+                {"added": sub.added, "source": sub.start_param, "left": library.today()}
+            )
+        return bool(gone)
+
+
+def _subscribers(raw: list[dict]) -> list[Subscriber]:
+    """Подписчики из файла. Старый формат (до CMP-006/007) читается так:
+
+    имя, заметка и прочие лишние поля отбрасываются, неактивные (`active: false`)
+    не загружаются — при следующем save их в файле уже нет.
+    """
+    known = {f.name for f in fields(Subscriber)}
+    return [
+        Subscriber(**{k: v for k, v in s.items() if k in known})
+        for s in raw
+        if s.get("active", True)
+    ]
 
 
 @contextlib.contextmanager
@@ -336,8 +372,10 @@ def _merge(base: State, mine: State, disk: State) -> State:
     was = {s.chat_id: s for s in base.subscribers}
     ours = {s.chat_id: s for s in mine.subscribers}
     subs = {s.chat_id: s for s in disk.subscribers}
+    for chat_id in was.keys() - ours.keys():  # удалён здесь (/stop, блокировка, forget)
+        subs.pop(chat_id, None)
     for chat_id, sub in ours.items():
-        if was.get(chat_id) != sub:  # подписался, отписался или переименован здесь
+        if was.get(chat_id) != sub:  # подписался здесь
             subs[chat_id] = sub
     out.subscribers = list(subs.values())
     # departed только дописывается: чужие строки с диска плюс свои новые с момента load.
@@ -378,8 +416,8 @@ def _days(a: str, b: str) -> int:
 
 def audience(state: State, today: str | None = None) -> dict:
     """Аудитория бота агрегатами, без chat_id и имён (AN-011): подписки по источнику и
-    retention D7/D30 по недельным когортам. Подписка — активная запись или строка departed;
-    отписанные записи без departed (до AN-011) не учитываются: даты отписки у них нет."""
+    retention D7/D30 по недельным когортам. Подписка — запись подписчика (идёт) или строка
+    departed (закончилась); отписанные до AN-011 не учитываются: дат у них нет."""
     today = today or library.today()
     spells = [
         {"added": s.added, "source": s.start_param, "left": None} for s in state.active() if s.added
@@ -473,7 +511,7 @@ def recipients(
     chat, thread = resolve_channel(channel) if channel else _default_channel(entry)
     if chat is None:
         return state.active()
-    return [Subscriber(chat_id=chat, name="канал", added="", thread=thread)]
+    return [Subscriber(chat_id=chat, added="", thread=thread)]
 
 
 def state_path(root: Path | None = None) -> Path:
@@ -622,6 +660,7 @@ def _reply(data: dict) -> Reply:
 
 
 def chat_name(chat: dict) -> str:
+    """Имя чата для показа человеку (`bot subscribers --names`); в файл не пишется."""
     parts = [chat.get("first_name"), chat.get("last_name")]
     name = " ".join(p for p in parts if p) or chat.get("title") or ""
     username = chat.get("username")
@@ -672,7 +711,7 @@ def pull(
 ) -> list[Subscriber]:
     """Забирает накопившиеся сообщения и ведёт по ним список подписчиков.
 
-    /start — подписка, /stop — отписка, остальное — подсказка. Возвращает тех,
+    /start — подписка, /stop — отписка с удалением записи, остальное — подсказка. Возвращает тех,
     кто подписался в этот заход. Курсор getUpdates хранится в state.offset,
     поэтому одно и то же сообщение не обрабатывается дважды.
 
@@ -717,21 +756,18 @@ def pull(
         words = (msg.get("text") or "").strip().split()
         command = words[0].split("@")[0].lower() if words else ""
         if command == "/start":
-            sub = state.find(chat_id)
-            if sub is not None and sub.active:
+            if state.find(chat_id) is not None:
                 continue  # уже подписан — молчим
             code, source = start_source(words[1] if len(words) > 1 else "", invite)
             if invite and not secrets.compare_digest(code.encode(), invite.encode()):
                 reply(chat_id, NEED_INVITE)
             elif max_subscribers and len(state.active()) >= max_subscribers:
                 reply(chat_id, FULL)
-            elif state.upsert(chat_id, chat_name(chat), start_param=source):
+            elif state.upsert(chat_id, start_param=source):
                 fresh.append(state.find(chat_id))
-                reply(chat_id, WELCOME)
+                reply(chat_id, welcome())
         elif command == "/stop":
-            sub = state.find(chat_id)
-            if sub is not None and sub.active:
-                state.deactivate(chat_id, "отписался командой /stop")
+            if state.remove(chat_id):  # отзыв согласия — данные удаляем сразу (CMP-006)
                 reply(chat_id, GOODBYE)
         else:
             reply(chat_id, HINT)
@@ -815,10 +851,8 @@ def _send_annotation(
     for sub in people:
         reply = bot.request("sendMessage", {**sub.address(), "text": text, "parse_mode": "HTML"})
         if not reply.ok and _is_gone(reply):
-            state.deactivate(sub.chat_id, reply.description)
-        done.append(
-            Delivery(sub.chat_id, sub.name, reply.ok, "" if reply.ok else reply.description)
-        )
+            state.remove(sub.chat_id)  # бот заблокирован — данные удаляем (CMP-006)
+        done.append(Delivery(sub.chat_id, reply.ok, "" if reply.ok else reply.description))
     if any(d.ok for d in done):
         mark_sent(state, path, engine, tag, caption=text, done=done)
     return done
@@ -914,7 +948,6 @@ def mark_sent(
 @dataclass
 class Delivery:
     chat_id: int
-    name: str
     ok: bool
     error: str = ""
 
@@ -944,7 +977,7 @@ def broadcast(
     annotation — вместо озвучки аннотация (до 20 % объёма) со ссылкой на оригинал.
 
     channel — другой канал вместо обычного. Заблокировавших бота подписчиков
-    помечает неактивными.
+    удаляет из списка (CMP-006).
 
     Файл больше 50 МБ Telegram от бота не примет — тогда уходит только описание
     с пометкой, где лежит mp3.
@@ -1004,9 +1037,9 @@ def broadcast(
                 {"audio": audio},
             )
         if not reply.ok and _is_gone(reply):
-            state.deactivate(sub.chat_id, reply.description)
+            state.remove(sub.chat_id)  # бот заблокирован — данные удаляем (CMP-006)
         error = "" if reply.ok else reply.description
-        done.append(Delivery(sub.chat_id, sub.name, reply.ok, error))
+        done.append(Delivery(sub.chat_id, reply.ok, error))
     if any(d.ok for d in done):
         mark_sent(state, path, engine, tag, caption=caption, media=(audio,), done=done)
     return done
@@ -1073,8 +1106,8 @@ def _send_digest(
                 {"audio": audio, "thumbnail": thumb},
             )
     if not reply.ok and _is_gone(reply):
-        state.deactivate(sub.chat_id, reply.description)
-    return Delivery(sub.chat_id, sub.name, reply.ok, "" if reply.ok else reply.description)
+        state.remove(sub.chat_id)  # бот заблокирован — данные удаляем (CMP-006)
+    return Delivery(sub.chat_id, reply.ok, "" if reply.ok else reply.description)
 
 
 def audio_caption(path: Path, entry: Entry, title: str) -> str:
@@ -1136,9 +1169,9 @@ def send_digest_video(
             {"video": video, "thumbnail": thumb, "cover": cover},
         )
         if not reply.ok and _is_gone(reply):
-            state.deactivate(sub.chat_id, reply.description)
+            state.remove(sub.chat_id)  # бот заблокирован — данные удаляем (CMP-006)
         error = "" if reply.ok else reply.description
-        done.append(Delivery(sub.chat_id, sub.name, reply.ok, error))
+        done.append(Delivery(sub.chat_id, reply.ok, error))
     if any(d.ok for d in done):
         tag = sent_tag(entry, channel)
         mark_sent(
@@ -1268,7 +1301,7 @@ def send_folder(
             if not reply.ok:
                 break
         error = "" if reply.ok else reply.description
-        done.append(Delivery(sub.chat_id, sub.name, reply.ok, error))
+        done.append(Delivery(sub.chat_id, reply.ok, error))
     if any(d.ok for d in done):
         files = tuple(p for p in (parcel.image, parcel.audio, video) if p)
         mark_sent(state, path, FOLDER_ENGINE, tag, caption=caption, media=files, done=done)

@@ -92,6 +92,17 @@ def event(name: str, *, level: int = logging.INFO, exc: bool = False, **fields) 
         logger.log(level, name, exc_info=exc, extra=fields)
 
 
+# Текст для UI при непредвиденном исключении (TXT-003): без repr и имени класса — они уходят
+# в лог через internal_error().
+STEP_INTERNAL = "Шаг упал из-за внутренней ошибки. Перезапусти шаг; подробности — в журнале выпуска."
+TASK_INTERNAL = "Задача упала из-за внутренней ошибки. Запусти её ещё раз; подробности — в логе задачи."
+
+
+def internal_error(exc: BaseException, **fields) -> None:
+    """Непредвиденное исключение — в лог с трассой; звать из блока except."""
+    event("internal.error", level=logging.ERROR, exc=True, error=repr(exc), **fields)
+
+
 def rotate(path: Path, max_bytes: int = MAX_BYTES, backups: int = BACKUPS) -> None:
     """Ротация файла, который пишут не через logging (notifications.log): file → file.1 → … → file.N."""
     try:

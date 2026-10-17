@@ -12,6 +12,7 @@ import threading
 import time
 import urllib.parse
 from dataclasses import dataclass, field
+from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from aiplatform.audio import voices
 from aiplatform.core import events, log, media, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
-from aiplatform.core.http import HttpError, Request, bad_request, not_found
+from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
@@ -45,6 +46,7 @@ PREFIX = "studio"
 URL_BASE = f"/api/{PREFIX}"
 SCENARIOS = {"digest": "Дайджест новостей", "article": "Видео по статье", "post": "Пост в канал"}
 DIGEST_CHANNEL = "tg-voice-news"  # канал дайджеста у narrator (NEWS_CHANNEL = VOICE_NEWS)
+OFFER_DAYS, OFFER_MANUAL = 3, 2  # ≥2 дайджеста руками за 3 дня — предложить расписание (PRD-003)
 MAX_TEXT = 100_000
 MAX_BODY = 4 * MAX_TEXT + 64 * 1024
 POSTER_MODES = ("local", "upload")
@@ -55,6 +57,7 @@ VOICE_MODES = ("tts", "upload")
 # Настройка → шаг, который она меняет (его и зависящие — заново).
 SETTING_STEPS = {
     "poster_mode": "poster",
+    "poster_deadline": None,  # до скольких ждать свою обложку (PRD-002): шаги не сбрасывает
     "draw_images": "images",
     "images_mode": "images",
     "image_model": ("poster", "images"),
@@ -332,6 +335,61 @@ class StudioModule:
                 important=True,
             )
 
+    def autopilot_offer(self, now: float | None = None) -> bool:
+        """Предложить на доске расписание дайджеста и уведомления (PRD-003): расписание выключено,
+        «Не предлагать» не нажимали, а за последние OFFER_DAYS дня руками собрано ≥ OFFER_MANUAL
+        дайджестов (выпуски расписания — origin=schedule — не в счёт, архивные — в счёт)."""
+        settings = self.ctx.config.settings.load()
+        if settings["schedule"]["digest"]["enabled"] or not settings["offers"]["digest_autopilot"]:
+            return False
+        since = (now or time.time()) - OFFER_DAYS * 86400
+        manual = 0
+        for item in self.studio.list(archived=False) + self.studio.list(archived=True):
+            if item["scenario"] != "digest" or item["created_at"] < since:
+                continue
+            project = self.studio.get(item["id"]) or {}
+            if project.get("origin") != schedule.ORIGIN:
+                manual += 1
+        return manual >= OFFER_MANUAL
+
+    def poster_deadlines(self, now: datetime) -> list[str]:
+        """Шаг «Постер» ждёт свою обложку (upload), а срок poster_deadline прошёл — переключить шаг
+        на локальную модель и продолжить выпуск (PRD-002). Срок — время дня: ожидание, начатое уже
+        после сегодняшнего срока, ждёт до завтрашнего. Зовётся тиком расписания."""
+        done = []
+        for item in self.studio.list(archived=False):
+            project = self.studio.get(item["id"])
+            if project is None or project.get("running"):
+                continue
+            settings, poster = project.get("settings", {}), project["steps"].get("poster", {})
+            deadline = settings.get("poster_deadline") or ""
+            if settings.get("poster_mode") != "upload" or not deadline or poster.get("status") != "waiting":
+                continue
+            hour, minute = map(int, deadline.split(":"))
+            due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            since = poster.get("waiting_since") or project.get("updated_at") or 0
+            if now < due or datetime.fromtimestamp(since) >= due:
+                continue
+
+            def to_local(p: dict) -> set[str]:
+                p["settings"]["poster_mode"] = "local"
+                return {"poster"}
+
+            try:
+                self.studio.update(project["id"], to_local)
+                self.studio.log(project["id"], f"[Постер] свою обложку не дождались к {deadline} — рисую локально")
+                self.studio.run(project["id"])
+            except (Conflict, ProjectNotFound):
+                continue  # выпуск запустили руками в этот момент — проверим на следующем тике
+            log.event("poster.deadline", project=project["id"], deadline=deadline)
+            self.notify(
+                "Свою обложку не дождались — нарисовал локально",
+                f"{project['title']}: срок {deadline}, выпуск продолжается.",
+                important=True,
+            )
+            done.append(f"постер {project['id']}: после {deadline} — локально")
+        return done
+
     def _daily_stats(self) -> str | None:
         if not self.ctx.config.settings.load()["stats"]["auto"]:
             return None
@@ -428,11 +486,11 @@ class StudioModule:
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
         if not isinstance(force, bool) or not isinstance(ignore_verdict, bool):
-            raise bad_request("force и ignore_verdict — true или false.")
+            raise bad_request(malformed("force и ignore_verdict — true или false."))
         # Пометки выключены, а в тексте есть упоминания из реестра: публикация — с причиной (CMP-004).
         ignore_disclaimers = payload.get("ignore_disclaimers") or ""
         if not isinstance(ignore_disclaimers, str) or len(ignore_disclaimers) > 500:
-            raise bad_request("ignore_disclaimers — причина публикации без пометок, строка до 500 знаков.")
+            raise bad_request("Причина публикации без пометок — не длиннее 500 знаков.")
 
         def apply(project: dict) -> set[str]:
             project["settings"]["channels"] = list(dict.fromkeys(chosen))
@@ -451,7 +509,7 @@ class StudioModule:
             raise bad_request("Укажи канал.")
         posted = payload.get("posted")
         if not isinstance(posted, bool):
-            raise bad_request("posted — true или false.")
+            raise bad_request(malformed("posted — true или false."))
         folder = self.studio.project_dir(project_id)
 
         def apply(project: dict) -> set[str]:
@@ -548,6 +606,8 @@ class StudioModule:
             # Доля переделок и сравнение вариантов одного оригинала (AN-019).
             "variants": stats.variants(everything),
             "stats": {"running": self._stats_thread is not None, "at": self.scheduler.state().get("stats_at")},
+            # Баннер «включить расписание дайджеста и уведомления» (PRD-003).
+            "offers": {"digest_autopilot": self.autopilot_offer()},
         }
 
     def _board_published(self, published: list[dict], known: dict, facts: stats.Facts) -> list[dict]:
@@ -812,7 +872,7 @@ class StudioModule:
     def archive(self, project_id: str, payload: object) -> dict:
         archived = payload.get("archived", True) if isinstance(payload, dict) else True
         if not isinstance(archived, bool):
-            raise bad_request("archived — true или false.")
+            raise bad_request(malformed("archived — true или false."))
         self.studio.archive(project_id, archived)
         return self.view(project_id)
 
@@ -840,6 +900,7 @@ class StudioModule:
         audio = self.ctx.modules["audio"].config
         return {
             "poster_mode": "local",
+            "poster_deadline": "",  # пусто — свою обложку ждать без срока
             "draw_images": True,
             "images_mode": "local",
             "image_model": self.default_image_model(),
@@ -875,6 +936,10 @@ class StudioModule:
             # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
             # по промпту выпуска — постер загружает человек.
             out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
+            # Не дождались своей обложки к сроку — рисуем локально (PRD-002); срок — в «Настройках».
+            deadline = self.ctx.config.settings.load().get("digest_defaults", {}).get("poster_deadline")
+            if deadline:
+                out["poster_deadline"] = deadline
         elif scenario == "post":
             # Пост — из готового: свой постер и свой mp3, оформление канала, кадр по постеру.
             out = {
@@ -971,44 +1036,48 @@ class StudioModule:
         if raw is None:
             return dict(base)
         if not isinstance(raw, dict):
-            raise bad_request("settings — объект.")
+            raise bad_request(malformed("settings — объект."))
         out = dict(base)
         for key, value in raw.items():
             if key not in SETTING_STEPS:
-                raise bad_request(f"Неизвестная настройка {key}.")
+                raise bad_request(malformed(f"Неизвестная настройка {key}."))
             out[key] = value
         if out["poster_mode"] not in POSTER_MODES:
-            raise bad_request("poster_mode — local или upload.")
+            raise bad_request(malformed("poster_mode — local или upload."))
+        out.setdefault("poster_deadline", "")
+        deadline = out["poster_deadline"]
+        if not isinstance(deadline, str) or (deadline and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", deadline)):
+            raise bad_request(malformed("poster_deadline — время ЧЧ:ММ или пусто."))
         if out["images_mode"] not in IMAGES_MODES:
-            raise bad_request("images_mode — local или upload.")
+            raise bad_request(malformed("images_mode — local или upload."))
         if out["clips_mode"] not in CLIPS_MODES:
-            raise bad_request("clips_mode — local или upload.")
+            raise bad_request(malformed("clips_mode — local или upload."))
         if out["voice_mode"] not in VOICE_MODES:
-            raise bad_request("voice_mode — tts или upload.")
+            raise bad_request(malformed("voice_mode — tts или upload."))
         if out["frame"] not in steps.FRAMES:
-            raise bad_request("frame — landscape, square или poster.")
+            raise bad_request(malformed("frame — landscape, square или poster."))
         if out["post_format"] not in publish.POST_FORMATS:
-            raise bad_request("post_format — video или photo.")
+            raise bad_request(malformed("post_format — video или photo."))
         if out["upscale_images"] not in UPSCALE_CHOICES:
-            raise bad_request("upscale_images — none, 2k или 4k.")
+            raise bad_request(malformed("upscale_images — none, 2k или 4k."))
         bools = (
             "draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "ai_badge", "branding",
             "draft",
         )  # fmt: skip
         for key in bools:
             if not isinstance(out[key], bool):
-                raise bad_request(f"{key} — true или false.")
+                raise bad_request(malformed(f"{key} — true или false."))
         tempo = out["tempo"]
         if isinstance(tempo, bool) or not isinstance(tempo, int | float) or float(tempo) not in steps.TEMPOS:
-            raise bad_request(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}.")
+            raise bad_request(malformed(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}."))
         out["tempo"] = float(tempo)
         slide_s = out.get("slide_s", slides.TARGET_SLIDE_S)
         if isinstance(slide_s, bool) or slide_s not in slides.SLIDE_SECONDS:
-            raise bad_request(f"slide_s — одно из: {', '.join(map(str, slides.SLIDE_SECONDS))}.")
+            raise bad_request(malformed(f"slide_s — одно из: {', '.join(map(str, slides.SLIDE_SECONDS))}."))
         out["slide_s"] = int(slide_s)
         out.setdefault("reading", "normal")
         if out["reading"] not in slides.READING:
-            raise bad_request(f"reading — одно из: {', '.join(slides.READING)}.")
+            raise bad_request(malformed(f"reading — одно из: {', '.join(slides.READING)}."))
         engine = self.ctx.modules["audio"].config.engines().get(out["engine"])
         if engine is None:
             raise bad_request(voices.unknown(out["engine"]))
@@ -1016,7 +1085,7 @@ class StudioModule:
             raise bad_request(voices.unknown(engine.id, out["voice"]))
         speed = out["speed"]
         if speed not in (None, "") and (isinstance(speed, bool) or not isinstance(speed, int | float)):
-            raise bad_request("speed — число или null.")
+            raise bad_request(malformed("speed — число или null."))
         if speed not in (None, ""):
             low, high = voices.SPEED_RANGE
             if not low <= speed <= high:
@@ -1030,16 +1099,18 @@ class StudioModule:
         video_ids = {m["id"] for m in self.video_models()}
         if out["video_model"] not in video_ids and (video_ids or out["video_model"] is not None):
             raise bad_request(video_models.unknown(out["video_model"], "Неизвестная модель видео."))
-        for key, limit in (("source_url", 500), ("source_author", 200)):
+        for key, label, limit in (("source_url", "Ссылка на источник", 500), ("source_author", "Автор источника", 200)):
             value = out.get(key) or ""
-            if not isinstance(value, str) or len(value) > limit:
-                raise bad_request(f"{key} — строка до {limit} знаков.")
+            if not isinstance(value, str):
+                raise bad_request(malformed(f"{key} — строка."))
+            if len(value) > limit:
+                raise bad_request(f"{label} — не длиннее {limit} знаков.")
             out[key] = " ".join(value.split())
         if out["source_url"] and not re.fullmatch(r"https?://\S+", out["source_url"]):
             raise bad_request("Ссылка на источник — вида https://…")
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
-            raise bad_request("channels — список id каналов.")
+            raise bad_request(malformed("channels — список id каналов."))
         unknown = [c for c in out["channels"] if c not in known]
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
@@ -1061,7 +1132,7 @@ class StudioModule:
         extra: dict = {"auto_title": not title}
         force_new = payload.get("force_new", False)
         if not isinstance(force_new, bool):
-            raise bad_request("force_new — true или false.")
+            raise bad_request(malformed("force_new — true или false."))
         if scenario == "digest":
             try:
                 day = news.parse_day(payload.get("day"))
@@ -1215,7 +1286,7 @@ class StudioModule:
             raise HttpError(HTTPStatus.CONFLICT, "Проект сейчас выполняется — дождись или останови его.")
         variant = payload.get("variant") if isinstance(payload, dict) else None
         if variant is not None and (not isinstance(variant, str) or len(variant) > 200):
-            raise bad_request("variant — что меняли в копии, строка до 200 знаков.")
+            raise bad_request("Что меняли в копии — не длиннее 200 знаков.")
         extra = {k: source[k] for k in ("day", "source", "auto_title") if k in source}
         extra["variant_of"] = source.get("variant_of") or project_id
         if variant and variant.strip():
@@ -1690,7 +1761,7 @@ class StudioModule:
         settings = payload.get("settings") if isinstance(payload, dict) else None
         if settings is not None:
             if only is None:
-                raise bad_request("settings передают вместе с шагом.")
+                raise bad_request(malformed("settings передают вместе с шагом."))
             self._guard(project_id)
             self.update_settings(project_id, settings)
         self.studio.run(project_id, only)

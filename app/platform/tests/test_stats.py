@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from aiplatform.studio import publish, stats, steps
+from tests.fake_telegram import FakeTelegram
 from tests.fixtures import ARTICLE, TOKEN
 from tests.helpers import StudioCase
 
@@ -397,9 +398,10 @@ class StatsHttpTest(StudioCase):
         ]
         (self.folder(pid) / "published.json").write_text(json.dumps(published), encoding="utf-8")
 
+        tg = FakeTelegram(members=150, chat={"username": "mychan"}).start()
+        self.addCleanup(tg.stop)
         with (
-            mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}),
-            mock.patch.object(publish, "_http_post", fake_post),
+            mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN, **tg.env()}),
             mock.patch.object(stats, "http_get", lambda url: EMBED),
         ):
             status, _ = self.json("POST", "/api/studio/stats/refresh")
@@ -471,9 +473,9 @@ class StatsHttpTest(StudioCase):
         cases = [
             ({"channel": "yt", "ctr": 120}, "CTR обложки"),
             ({"channel": "yt", "avg_view_pct": -1}, "% досмотра"),
-            ({"channel": "yt", "impressions": 1.5}, "показы"),
+            ({"channel": "yt", "impressions": 1.5}, "Показы"),
             ({"channel": "yt"}, "хотя бы одну"),
-            ({"channel": "yt", "views": 1, "at": "вчера"}, "дата замера"),
+            ({"channel": "yt", "views": 1, "at": "вчера"}, "Дата замера"),
             ({"channel": "yt", "views": 1, "at": time.time() + 86400}, "в будущем"),
             ({"channel": "yt", "views": 1, "at": time.time() - 86400}, "раньше публикации"),
         ]

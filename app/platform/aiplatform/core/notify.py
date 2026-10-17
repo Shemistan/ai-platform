@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import shlex
 import subprocess
 import sys
@@ -34,6 +35,14 @@ from aiplatform.core import log
 
 LOG = "notifications.log"
 TELEGRAM_API = "https://api.telegram.org"
+TELEGRAM_API_ENV = "AIP_TELEGRAM_API"  # другой адрес Bot API: фейковый сервер тестов (QA-007), прокси
+
+
+def telegram_api() -> str:
+    """Адрес Bot API без «/» в конце: AIP_TELEGRAM_API или api.telegram.org. Читается при каждом запросе."""
+    return (os.environ.get(TELEGRAM_API_ENV) or TELEGRAM_API).rstrip("/")
+
+
 TELEGRAM_TIMEOUT_S = 15
 _OSASCRIPT = (
     "osascript",
@@ -126,9 +135,14 @@ class Notifier:
             return {"via": "telegram", "ok": False, "error": "нет токена бота"}
         fields = {**chat, "text": f"{title}\n{text}".strip(), "disable_web_page_preview": "true"}
         try:
-            answer = self.telegram_post(f"{TELEGRAM_API}/bot{token}/sendMessage", fields)
+            answer = self.telegram_post(f"{telegram_api()}/bot{token}/sendMessage", fields)
         except Exception as exc:  # noqa: BLE001 — сеть, таймаут; str(exc) может нести URL с токеном
-            return {"via": "telegram", "ok": False, "error": f"Telegram недоступен: {type(exc).__name__}"}
+            return {
+                "via": "telegram",
+                "ok": False,
+                "error": "Нет связи с Telegram. Проверь интернет или VPN.",
+                "detail": type(exc).__name__,
+            }
         if not answer.get("ok"):
             description = str(answer.get("description") or "ответ без ok").replace(token, "***")
             return {"via": "telegram", "ok": False, "error": f"Telegram ответил «{description}»"}

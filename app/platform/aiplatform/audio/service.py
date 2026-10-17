@@ -268,10 +268,15 @@ class AudioModule:
             argv += ["--from", str(path)]
             if not (isinstance(text, str) and text.strip()):
                 raise bad_request("Напиши, что сказано в записи, слово в слово.")
+            argv += voice_consent(payload)  # чей голос и есть ли согласие (CMP-010)
         elif voice["record"] != "gemini":
             raise bad_request("Для этого голоса нужна своя запись и её текст.")
 
         def done(task: dict) -> None:
+            if upload:  # on_done зовётся только после успешной записи
+                # Исходная запись — голос человека: образец записан, копия в uploads/ не нужна.
+                # Не вышло — запись остаётся для повтора, её уберёт уборка (CMP-016).
+                path.unlink(missing_ok=True)
             self.engines(fresh=True)  # появился образец — у клонов новый голос
             self.audit.write(
                 "voice_record",
@@ -282,6 +287,8 @@ class AudioModule:
                 status=task.get("status"),
                 text_sha256=audit.sha256_text(text) if isinstance(text, str) and text.strip() else None,
                 upload_sha256=upload_sha256,
+                # Форма согласия владельца (self | written); имя владельца — в consent.json у образца.
+                consent_form=payload["consent"].get("form", "self") if upload else None,
             )
 
         who = audit.actor()
@@ -302,6 +309,29 @@ class AudioModule:
     def close(self) -> None:
         self.tasks.close()
         self.jobs.close()
+
+
+CONSENT_FORMS = ("self", "written")  # мой голос / письменное согласие владельца (narrator consent.py)
+MAX_OWNER = 200
+
+
+def voice_consent(payload: dict) -> list[str]:
+    """Аргументы согласия для `narrate voice`: без галочки и имени владельца — 400 (CMP-010).
+
+    payload["consent"] = {"confirmed": true, "owner": "чей голос", "form": "self" | "written"}.
+    Запись о согласии `<stem>.consent.json` кладёт narrator рядом с образцом.
+    """
+    consent = payload.get("consent")
+    if not isinstance(consent, dict) or consent.get("confirmed") is not True:
+        raise bad_request("Подтверди, что это твой голос или у тебя есть письменное согласие владельца.")
+    owner = consent.get("owner")
+    owner = " ".join(owner.split()) if isinstance(owner, str) else ""
+    if not owner or len(owner) > MAX_OWNER:
+        raise bad_request("Напиши, чей это голос.")
+    form = consent.get("form", "self")
+    if form not in CONSENT_FORMS:
+        raise bad_request("Согласие — self (мой голос) или written (письменное согласие владельца).")
+    return ["--owner", owner, "--form", form]
 
 
 def _text_field(payload: object) -> str:

@@ -13,10 +13,11 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
-from aiplatform.core import cleanup, runner, schema
+from aiplatform.core import cleanup, log, runner, schema
 from aiplatform.core import jobs as core_jobs
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
+from aiplatform.core.http import malformed
 from aiplatform.core.schema import JOB_FIELDS, JOB_SCHEMA
 from aiplatform.core.uploads import UploadStore
 from aiplatform.video import living, ltx, models, timeline, wan
@@ -114,7 +115,7 @@ class JobManager:
     def pick(self, model_id: object) -> models.Available:
         """Модель по id из запроса; пусто — модель по умолчанию."""
         if model_id is not None and not isinstance(model_id, str):
-            raise ValidationError("model должен быть строкой — id модели.")
+            raise ValidationError(malformed("model должен быть строкой — id модели."))
         available = self._config.models()
         if not model_id:
             model = models.default(available)
@@ -311,7 +312,9 @@ class JobManager:
                 self._finish(job, "failed", error=_error_text(str(exc), job["log"]))
         except Exception as exc:  # noqa: BLE001 — воркер не должен умереть из-за одной задачи
             with self._lock:
-                self._finish(job, "failed", error=f"Внутренняя ошибка сервиса: {exc!r}")
+                log.internal_error(exc, task=job["id"])
+                job["log"].append(f"✗ {type(exc).__name__}: {exc}")
+                self._finish(job, "failed", error=log.TASK_INTERNAL)
         else:
             with self._lock:
                 self._finish(job, "done")

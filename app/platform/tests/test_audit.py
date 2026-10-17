@@ -72,7 +72,8 @@ class VoiceAuditTest(AudioServerCase):
         wav = (self.config.data_dir / "fake-narrator" / "voices" / "m1.wav").read_bytes()
         status, _, raw = self.call("POST", "/api/audio/uploads", wav, {"Content-Type": "audio/wav"})
         self.assertEqual(status, 201, raw)
-        body = {"upload": json.loads(raw)["id"], "text": "Мой голос."}
+        consent = {"confirmed": True, "owner": "Аня", "form": "self"}  # без согласия — 400 (CMP-010)
+        body = {"upload": json.loads(raw)["id"], "text": "Мой голос.", "consent": consent}
         status, task = self.json("POST", "/api/audio/voices/shem", body)
         self.assertEqual(status, 202, task)
         self.poll(f"/api/audio/tasks/{task['id']}", lambda t: t["status"] not in ("queued", "running"))
@@ -83,6 +84,7 @@ class VoiceAuditTest(AudioServerCase):
         self.assertEqual((record["action"], record["stem"], record["source"]), ("voice_record", "shem", "upload"))
         self.assertEqual(len(record["upload_sha256"]), 64)
         self.assertEqual(record["text_sha256"], audit.sha256_text("Мой голос."))
+        self.assertEqual(record["consent_form"], "self")
 
 
 @NEEDS_FFMPEG

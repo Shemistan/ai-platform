@@ -61,6 +61,7 @@ sh tools/import-old.sh <old-narrator-dir>   # каталог старого narr
 | `make channels` | каналы из `telegram_tems.md` |
 | `make unsent`, `make send-unsent`, `make mark-sent` | неотправленные озвучки статей |
 | `make subscribers`, `make bot` | подписчики бота; приём `/start` и `/stop` |
+| `./narrate bot forget <chat_id>` | удалить подписчика по его просьбе |
 | **Модели и голоса** | |
 | `make models-mlx E="qwen3 chatterbox"` | модели для сравнения на mlx-audio (~45 ГБ все) |
 | `make move-models` | перенести модели из `~/.cache` в папку моделей |
@@ -71,7 +72,9 @@ sh tools/import-old.sh <old-narrator-dir>   # каталог старого narr
 Движки: `espeech` (лучшее качество, видеокарта), `silero` (секунды на CPU,
 CC BY-NC), `supertonic` (быстро на CPU), для сравнения на Apple Silicon —
 `higgs`, `fish`, `moss`, `qwen3`, `chatterbox`. Голоса-клоны — `Charon`,
-`M1`, `Shem`, `Shem-v2`.
+`M1`, `Shem`, `Shem-v2`. Shem — живой голос: образца нет в репозитории, он
+лежит в `<папка моделей>/voices/` вместе с согласием владельца —
+[`docs/voice-consent.md`](docs/voice-consent.md).
 
 ## Как устроено
 
@@ -85,3 +88,18 @@ CC BY-NC), `supertonic` (быстро на CPU), для сравнения на 
   добор, обзоры.
 - `docs/tts-guide.md` — правила текста для озвучки, `docs/news/` — подборки
   источников.
+
+## Подписчики бота и личные данные
+
+О подписчике в `library/telegram.json` хранится только chat_id, дата
+подписки и тема (если это канал-тема). Имя не пишется: `bot subscribers`
+показывает chat_id маской `chat …1234`, полный id и имя из Telegram — с
+`--names`, на лету. `/stop` и блокировка бота удаляют запись; по просьбе —
+`./narrate bot forget <chat_id>`. Старый файл с именами и отписавшимися
+чистится при первом сохранении.
+
+Бот при `/start` пишет, что хранит, и даёт ссылку на
+[`docs/privacy.md`](docs/privacy.md) (другой адрес —
+`$NARRATOR_PRIVACY_URL`). Перед ростом аудитории сверить с юристом
+формулировки политики и нужно ли уведомление РКН об обработке ПДн
+(152-ФЗ ст. 22).
