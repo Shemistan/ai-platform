@@ -18,7 +18,7 @@ from aiplatform.audio import voices
 from aiplatform.core import events, log, media
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
-from aiplatform.core.http import HttpError, Request, bad_request, not_found
+from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
@@ -357,11 +357,11 @@ class StudioModule:
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
         if not isinstance(force, bool) or not isinstance(ignore_verdict, bool):
-            raise bad_request("force и ignore_verdict — true или false.")
+            raise bad_request(malformed("force и ignore_verdict — true или false."))
         # Пометки выключены, а в тексте есть упоминания из реестра: публикация — с причиной (CMP-004).
         ignore_disclaimers = payload.get("ignore_disclaimers") or ""
         if not isinstance(ignore_disclaimers, str) or len(ignore_disclaimers) > 500:
-            raise bad_request("ignore_disclaimers — причина публикации без пометок, строка до 500 знаков.")
+            raise bad_request("Причина публикации без пометок — не длиннее 500 знаков.")
 
         def apply(project: dict) -> set[str]:
             project["settings"]["channels"] = list(dict.fromkeys(chosen))
@@ -380,7 +380,7 @@ class StudioModule:
             raise bad_request("Укажи канал.")
         posted = payload.get("posted")
         if not isinstance(posted, bool):
-            raise bad_request("posted — true или false.")
+            raise bad_request(malformed("posted — true или false."))
         folder = self.studio.project_dir(project_id)
 
         def apply(project: dict) -> set[str]:
@@ -580,7 +580,7 @@ class StudioModule:
             raise bad_request("Тело запроса — не объект JSON.")
         channel, views = payload.get("channel"), payload.get("views")
         if isinstance(views, bool) or not isinstance(views, int) or views < 0:
-            raise bad_request("views — целое число от 0.")
+            raise bad_request("Просмотры — целое число от 0.")
         if self.studio.get(project_id) is None:
             raise not_found("Проект не найден.")
         folder = self.studio.project_dir(project_id)
@@ -686,7 +686,7 @@ class StudioModule:
     def archive(self, project_id: str, payload: object) -> dict:
         archived = payload.get("archived", True) if isinstance(payload, dict) else True
         if not isinstance(archived, bool):
-            raise bad_request("archived — true или false.")
+            raise bad_request(malformed("archived — true или false."))
         self.studio.archive(project_id, archived)
         return self.view(project_id)
 
@@ -834,41 +834,41 @@ class StudioModule:
         if raw is None:
             return dict(base)
         if not isinstance(raw, dict):
-            raise bad_request("settings — объект.")
+            raise bad_request(malformed("settings — объект."))
         out = dict(base)
         for key, value in raw.items():
             if key not in SETTING_STEPS:
-                raise bad_request(f"Неизвестная настройка {key}.")
+                raise bad_request(malformed(f"Неизвестная настройка {key}."))
             out[key] = value
         if out["poster_mode"] not in POSTER_MODES:
-            raise bad_request("poster_mode — local или upload.")
+            raise bad_request(malformed("poster_mode — local или upload."))
         if out["images_mode"] not in IMAGES_MODES:
-            raise bad_request("images_mode — local или upload.")
+            raise bad_request(malformed("images_mode — local или upload."))
         if out["clips_mode"] not in CLIPS_MODES:
-            raise bad_request("clips_mode — local или upload.")
+            raise bad_request(malformed("clips_mode — local или upload."))
         if out["voice_mode"] not in VOICE_MODES:
-            raise bad_request("voice_mode — tts или upload.")
+            raise bad_request(malformed("voice_mode — tts или upload."))
         if out["frame"] not in steps.FRAMES:
-            raise bad_request("frame — landscape, square или poster.")
+            raise bad_request(malformed("frame — landscape, square или poster."))
         if out["post_format"] not in publish.POST_FORMATS:
-            raise bad_request("post_format — video или photo.")
+            raise bad_request(malformed("post_format — video или photo."))
         if out["upscale_images"] not in UPSCALE_CHOICES:
-            raise bad_request("upscale_images — none, 2k или 4k.")
+            raise bad_request(malformed("upscale_images — none, 2k или 4k."))
         bools = ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding", "draft")
         for key in bools:
             if not isinstance(out[key], bool):
-                raise bad_request(f"{key} — true или false.")
+                raise bad_request(malformed(f"{key} — true или false."))
         tempo = out["tempo"]
         if isinstance(tempo, bool) or not isinstance(tempo, int | float) or float(tempo) not in steps.TEMPOS:
-            raise bad_request(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}.")
+            raise bad_request(malformed(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}."))
         out["tempo"] = float(tempo)
         slide_s = out.get("slide_s", slides.TARGET_SLIDE_S)
         if isinstance(slide_s, bool) or slide_s not in slides.SLIDE_SECONDS:
-            raise bad_request(f"slide_s — одно из: {', '.join(map(str, slides.SLIDE_SECONDS))}.")
+            raise bad_request(malformed(f"slide_s — одно из: {', '.join(map(str, slides.SLIDE_SECONDS))}."))
         out["slide_s"] = int(slide_s)
         out.setdefault("reading", "normal")
         if out["reading"] not in slides.READING:
-            raise bad_request(f"reading — одно из: {', '.join(slides.READING)}.")
+            raise bad_request(malformed(f"reading — одно из: {', '.join(slides.READING)}."))
         engine = self.ctx.modules["audio"].config.engines().get(out["engine"])
         if engine is None:
             raise bad_request(voices.unknown(out["engine"]))
@@ -876,7 +876,7 @@ class StudioModule:
             raise bad_request(voices.unknown(engine.id, out["voice"]))
         speed = out["speed"]
         if speed not in (None, "") and (isinstance(speed, bool) or not isinstance(speed, int | float)):
-            raise bad_request("speed — число или null.")
+            raise bad_request(malformed("speed — число или null."))
         if speed not in (None, ""):
             low, high = voices.SPEED_RANGE
             if not low <= speed <= high:
@@ -890,16 +890,18 @@ class StudioModule:
         video_ids = {m["id"] for m in self.video_models()}
         if out["video_model"] not in video_ids and (video_ids or out["video_model"] is not None):
             raise bad_request(video_models.unknown(out["video_model"], "Неизвестная модель видео."))
-        for key, limit in (("source_url", 500), ("source_author", 200)):
+        for key, label, limit in (("source_url", "Ссылка на источник", 500), ("source_author", "Автор источника", 200)):
             value = out.get(key) or ""
-            if not isinstance(value, str) or len(value) > limit:
-                raise bad_request(f"{key} — строка до {limit} знаков.")
+            if not isinstance(value, str):
+                raise bad_request(malformed(f"{key} — строка."))
+            if len(value) > limit:
+                raise bad_request(f"{label} — не длиннее {limit} знаков.")
             out[key] = " ".join(value.split())
         if out["source_url"] and not re.fullmatch(r"https?://\S+", out["source_url"]):
             raise bad_request("Ссылка на источник — вида https://…")
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
-            raise bad_request("channels — список id каналов.")
+            raise bad_request(malformed("channels — список id каналов."))
         unknown = [c for c in out["channels"] if c not in known]
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
@@ -921,7 +923,7 @@ class StudioModule:
         extra: dict = {"auto_title": not title}
         force_new = payload.get("force_new", False)
         if not isinstance(force_new, bool):
-            raise bad_request("force_new — true или false.")
+            raise bad_request(malformed("force_new — true или false."))
         if scenario == "digest":
             try:
                 day = news.parse_day(payload.get("day"))
@@ -1036,7 +1038,7 @@ class StudioModule:
             raise HttpError(HTTPStatus.CONFLICT, "Проект сейчас выполняется — дождись или останови его.")
         variant = payload.get("variant") if isinstance(payload, dict) else None
         if variant is not None and (not isinstance(variant, str) or len(variant) > 200):
-            raise bad_request("variant — что меняли в копии, строка до 200 знаков.")
+            raise bad_request("Что меняли в копии — не длиннее 200 знаков.")
         extra = {k: source[k] for k in ("day", "source", "auto_title") if k in source}
         extra["variant_of"] = source.get("variant_of") or project_id
         if variant and variant.strip():
@@ -1496,7 +1498,7 @@ class StudioModule:
         settings = payload.get("settings") if isinstance(payload, dict) else None
         if settings is not None:
             if only is None:
-                raise bad_request("settings передают вместе с шагом.")
+                raise bad_request(malformed("settings передают вместе с шагом."))
             self._guard(project_id)
             self.update_settings(project_id, settings)
         self.studio.run(project_id, only)

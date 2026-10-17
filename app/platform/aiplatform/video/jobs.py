@@ -16,6 +16,7 @@ from pathlib import Path
 from aiplatform.core import cleanup, log, runner
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
+from aiplatform.core.http import malformed
 from aiplatform.core.uploads import UploadStore
 from aiplatform.video import living, ltx, models, timeline, wan
 from aiplatform.video.config import VideoConfig
@@ -111,7 +112,7 @@ class JobManager:
     def pick(self, model_id: object) -> models.Available:
         """Модель по id из запроса; пусто — модель по умолчанию."""
         if model_id is not None and not isinstance(model_id, str):
-            raise ValidationError("model должен быть строкой — id модели.")
+            raise ValidationError(malformed("model должен быть строкой — id модели."))
         available = self._config.models()
         if not model_id:
             model = models.default(available)

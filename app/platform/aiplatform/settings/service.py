@@ -13,7 +13,7 @@ from aiplatform import backup
 from aiplatform.audio import voices
 from aiplatform.core import settings as settings_module
 from aiplatform.core.cleanup import Cleaner
-from aiplatform.core.http import HttpError, Request, bad_request, not_found
+from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.video import models as video_models
 
@@ -182,7 +182,7 @@ class SettingsModule:
             raise bad_request("Тело запроса — не объект JSON.")
         kind, item, enabled = payload.get("kind"), payload.get("id"), payload.get("enabled")
         if not isinstance(enabled, bool):
-            raise bad_request("enabled — true или false.")
+            raise bad_request(malformed("enabled — true или false."))
         if kind == "voice":
             engine = voices.ENGINES.get(payload.get("engine")) if isinstance(payload.get("engine"), str) else None
             if engine is None:
@@ -204,7 +204,7 @@ class SettingsModule:
                 data["disabled"][kind] = sorted(names - {item} if enabled else names | {item})
 
         else:
-            raise bad_request("kind — photo, video, audio или voice.")
+            raise bad_request(malformed("kind — photo, video, audio или voice."))
         self.settings.change(apply)
         return self.state()
 
