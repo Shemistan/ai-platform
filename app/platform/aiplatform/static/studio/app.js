@@ -178,6 +178,11 @@ function fieldsOf(values, prefix) {
           ["photo", "Картинка, затем аудио", values.post_format === "photo"],
         ]),
       ),
+    // «Видео по статье»: без источника выпуск не опубликуется — строка в конце поста и на последнем слайде.
+    source_url: () =>
+      h("label", { class: "field" }, h("span", { class: "hint" }, "Ссылка на оригинал статьи"), h("input", { type: "url", id: id("source_url"), value: values.source_url || "", placeholder: "https://…" })),
+    source_author: () =>
+      h("label", { class: "field" }, h("span", { class: "hint" }, "Автор оригинала"), h("input", { type: "text", id: id("source_author"), value: values.source_author || "", placeholder: "Имя автора или издание" })),
     review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
     draft: () =>
       check(
@@ -239,6 +244,7 @@ function settingsForm(values, prefix) {
     group("Слайды", f.slide_s(), f.reading()),
     group("Оформление", f.frame(), f.branding(), f.disclaimers()),
     group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish()),
+    scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author()) : null,
     f.review_text(),
   );
 }
@@ -255,7 +261,10 @@ const POST_SETTINGS = [
 ]; // prettier-ignore
 
 // Читает поля формы с этим префиксом; names — какие именно (engine читается вместе с голосом).
-function readSettings(prefix, names = scenario === "post" ? POST_SETTINGS : SETTING_NAMES) {
+// У статьи ещё источник: ссылка и автор оригинала.
+const ARTICLE_SETTINGS = [...SETTING_NAMES, "source_url", "source_author"];
+
+function readSettings(prefix, names = { post: POST_SETTINGS, article: ARTICLE_SETTINGS }[scenario] || SETTING_NAMES) {
   const get = (name) => document.getElementById(`${prefix}-${name}`);
   const radio = (name) => document.querySelector(`input[name="${prefix}-${name}"]:checked`)?.value;
   const special = {

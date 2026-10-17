@@ -62,6 +62,9 @@ SETTING_STEPS = {
     "draft": ("images", "clips", "render", "short"),  # черновик: без картинок и роликов, половинный кадр
     "frame": "render",  # готовые картинки остаются — кадр берёт их с обрезкой; новые рисуются под кадр
     "review_text": None,
+    # «Видео по статье»: источник — в конце поста и на последнем слайде (CMP-005).
+    "source_url": ("render", "short"),
+    "source_author": ("render", "short"),
 }
 # Правка файла на странице → (файл, шаг, чей это результат).
 ARTIFACTS = {
@@ -463,6 +466,8 @@ class StudioModule:
             "auto_publish": False,
             "post_format": "video",
             "channels": [],
+            "source_url": "",
+            "source_author": "",
         }
 
     def scenario_defaults(self, scenario: str) -> dict:
@@ -578,6 +583,13 @@ class StudioModule:
         video_ids = {m["id"] for m in self.video_models()}
         if out["video_model"] not in video_ids and (video_ids or out["video_model"] is not None):
             raise bad_request(video_models.unknown(out["video_model"], "Неизвестная модель видео."))
+        for key, limit in (("source_url", 500), ("source_author", 200)):
+            value = out.get(key) or ""
+            if not isinstance(value, str) or len(value) > limit:
+                raise bad_request(f"{key} — строка до {limit} знаков.")
+            out[key] = " ".join(value.split())
+        if out["source_url"] and not re.fullmatch(r"https?://\S+", out["source_url"]):
+            raise bad_request("Ссылка на источник — вида https://…")
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
             raise bad_request("channels — список id каналов.")

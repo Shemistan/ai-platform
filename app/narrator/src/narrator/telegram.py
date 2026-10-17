@@ -409,6 +409,53 @@ def describe(path: Path, entry: Entry, engine: str) -> str:
     return "\n\n".join(part for part in (head, html.escape(summary), tail, notes) if part)
 
 
+ANNOTATION_SHARE = 0.2  # аннотация без права на переработку — не больше пятой части статьи
+
+
+def no_license(path: Path, entry: Entry) -> str:
+    return (
+        f"{path.name}: license={entry.license} — права на переработку нет, полный пересказ"
+        " в канал не уходит (слушать локально можно). Есть право — license в meta.json:"
+        " own, cc-by или permission; иначе только аннотация: ./narrate bot send"
+        f" {path} --annotation"
+    )
+
+
+def annotation_text(path: Path, entry: Entry) -> str:
+    """Аннотация (HTML): заголовок, summary не длиннее 20 % статьи, автор и ссылка, сноски."""
+    found = next((f for f in (path / "source.md", path / "script.txt") if f.exists()), None)
+    body = found.read_text(encoding="utf-8") if found else ""
+    room = int(len(" ".join(body.split())) * ANNOTATION_SHARE) if body.strip() else 400
+    summary = " ".join(entry.summary.split())
+    if len(summary) > room:
+        summary = summary[: max(room - 1, 0)].rstrip() + "…"
+    facts = " · ".join(x for x in (entry.author,) if x)
+    link = f'<a href="{html.escape(entry.url)}">Оригинал статьи</a>' if entry.url else ""
+    notes = registry.footnotes_html(f"{entry.title}\n{summary}", registry.load())
+    head = f"<b>{html.escape(entry.title.strip())}</b>"
+    parts = (head, html.escape(summary), "\n".join(p for p in (facts, link) if p), notes)
+    return "\n\n".join(p for p in parts if p)
+
+
+def _send_annotation(
+    bot: Bot, state: State, path: Path, entry: Entry, engine: str, people, tag: str
+) -> list[Delivery]:
+    if not entry.url:
+        raise TelegramError(f"{path.name}: у аннотации нужна ссылка на оригинал — url в meta.json")
+    text = annotation_text(path, entry)
+    done = []
+    for sub in people:
+        reply = bot.request("sendMessage", {**sub.address(), "text": text, "parse_mode": "HTML"})
+        if not reply.ok and _is_gone(reply):
+            state.deactivate(sub.chat_id, reply.description)
+        done.append(
+            Delivery(sub.chat_id, sub.name, reply.ok, "" if reply.ok else reply.description)
+        )
+    if any(d.ok for d in done):
+        mark_sent(state, path, engine, tag)
+    return done
+
+
 def sent_tag(entry: Entry | None, channel: str | None) -> str:
     """Хвост отметки об отправке, когда канал назвали сами: `@<id>` или `@<id>_<тема>`.
 
@@ -497,8 +544,13 @@ def broadcast(
     engine: str,
     targets: list[Subscriber] | None = None,
     channel: str | None = None,
+    annotation: bool = False,
 ) -> list[Delivery]:
     """Шлёт озвучку статьи в канал или подписчикам (см. `recipients`).
+
+    Полный пересказ чужой статьи уходит, только если в meta.json есть право
+    на переработку (`license` из PUBLISHABLE); иначе TelegramError.
+    annotation — вместо озвучки аннотация (до 20 % объёма) со ссылкой на оригинал.
 
     channel — другой канал вместо обычного. Заблокировавших бота подписчиков
     помечает неактивными.
@@ -529,6 +581,10 @@ def broadcast(
             mark_sent(state, path, engine, tag)
         return done
 
+    if entry.kind == "article" and annotation:
+        return _send_annotation(bot, state, path, entry, engine, people, tag)
+    if entry.kind == "article" and entry.license not in library.PUBLISHABLE:
+        raise TelegramError(no_license(path, entry))
     caption = describe(path, entry, engine)
     duration = int(entry.versions.get(engine, entry.duration_sec) or 0)
     oversized = audio.stat().st_size > SIZE_LIMIT

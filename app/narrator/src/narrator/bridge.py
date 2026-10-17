@@ -312,6 +312,7 @@ def _entry_view(path: Path, entry: Entry, unsent: set[str]) -> dict:
         "summary": entry.summary,
         "url": entry.url,
         "source_quality": entry.source_quality,
+        "license": entry.license,  # право на переработку: без него в канал — только аннотация
         "engine": engine,
         "voice": entry.voice,
         "duration_sec": entry.duration_sec,
@@ -382,6 +383,10 @@ def article_save(article_id: str, data: dict) -> dict:
         entry.title = title
     if "summary" in data:
         entry.summary = str(data["summary"] or "").strip()
+    if "license" in data:
+        if data["license"] not in library.LICENSES:
+            raise BridgeError(f"license — одно из: {', '.join(library.LICENSES)}.")
+        entry.license = data["license"]
     if "script" in data:
         (path / SCRIPT).write_text(str(data["script"] or "").strip() + "\n", encoding="utf-8")
     entry.save(path / META_NAME)

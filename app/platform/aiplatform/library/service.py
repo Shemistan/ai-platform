@@ -145,9 +145,10 @@ class LibraryModule:
     def save(self, article_id: str, payload: object) -> dict:
         if not isinstance(payload, dict):
             raise bad_request("Тело запроса — не объект JSON.")
-        changes = {k: payload[k] for k in ("title", "summary", "script") if isinstance(payload.get(k), str)}
+        keys = ("title", "summary", "script", "license")  # license — право на переработку (CMP-005)
+        changes = {k: payload[k] for k in keys if isinstance(payload.get(k), str)}
         if not changes:
-            raise bad_request("Нечего сохранять: title, summary или script.")
+            raise bad_request("Нечего сохранять: title, summary, script или license.")
         self._bridge("article-save", article_id, stdin=changes)
         return self.article(article_id)
 

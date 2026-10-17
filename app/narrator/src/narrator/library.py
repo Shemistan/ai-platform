@@ -36,6 +36,11 @@ INDEX_NAME = "index.md"
 META_NAME = "meta.json"
 SOURCE_QUALITIES = ("verbatim", "pasted", "webfetch")
 KINDS = ("article", "digest", "weekly", "monthly")
+# Право на переработку чужой статьи (ГК РФ ст. 1270, 1274): own — своя, cc-by — свободная
+# лицензия с указанием автора, permission — разрешение автора, none — права нет. С none
+# полный пересказ слушают локально, в канал уходит только аннотация со ссылкой.
+LICENSES = ("own", "cc-by", "permission", "none")
+PUBLISHABLE = ("own", "cc-by", "permission")
 # Обзоры недели и месяца для YouTube: library/youtube_news/week_…/ и month_…/.
 YOUTUBE_DIR = "youtube_news"
 
@@ -69,6 +74,7 @@ class Entry:
     # weekly, monthly — обзоры недели и месяца: текст для суфлёра, видео снимает человек.
     kind: str = "article"
     image_prompt: str = ""  # устарело: промпт обложки теперь в image_prompt.md
+    license: str = "none"  # право на переработку статьи: одно из LICENSES
 
     @classmethod
     def load(cls, path: Path) -> Entry:
@@ -84,6 +90,8 @@ class Entry:
             )
         if entry.kind not in KINDS:
             raise ValueError(f"{path}: kind={entry.kind!r}, ждём {KINDS}")
+        if entry.license not in LICENSES:
+            raise ValueError(f"{path}: license={entry.license!r}, ждём {LICENSES}")
         return entry
 
     def save(self, path: Path) -> None:
