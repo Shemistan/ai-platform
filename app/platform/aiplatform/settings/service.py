@@ -14,8 +14,9 @@ from aiplatform.audio import voices
 from aiplatform.core import schema
 from aiplatform.core import settings as settings_module
 from aiplatform.core.cleanup import Cleaner
-from aiplatform.core.http import HttpError, Request, bad_request, not_found
+from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
 from aiplatform.photo import models as photo_models
+from aiplatform.studio import service as studio_service
 from aiplatform.video import models as video_models
 
 PREFIX = "settings"
@@ -26,7 +27,13 @@ CATALOGS = {
 }
 KIND_LABELS = {"photo": "модели фото", "video": "модели видео", "audio": "движки озвучки"}
 # Разделы настроек вне «что выключено»: имя → путь к словарю в settings.json.
-SECTIONS = {"schedule": ("schedule", "digest"), "notify": ("notify",), "stats": ("stats",), "cleanup": ("cleanup",)}
+SECTIONS = {
+    "schedule": ("schedule", "digest"),
+    "notify": ("notify",),
+    "stats": ("stats",),
+    "cleanup": ("cleanup",),
+    "default_channels": ("default_channels",),  # каналы по умолчанию по сценариям (PRD-005)
+}
 
 
 class SettingsModule:
@@ -45,11 +52,14 @@ class SettingsModule:
             studio.scheduler.daily["cleanup"] = self._daily_cleanup
 
     def _daily_cleanup(self) -> str | None:
+        """Брошенные выпуски — в архив (свой порог draft_days, 0 — выкл.); уборка — по флажку."""
         plan = self.settings.load()["cleanup"]
-        if not plan["auto"]:
-            return None
-        found = self.cleaner.run(plan["days"], dry=False)
-        return f"уборка: освобождено {found['bytes'] // 2**20} МБ"
+        stale = self.cleaner.archive_stale(plan["draft_days"])
+        done = [f"в архив без движения: {len(stale)}"] if stale else []
+        if plan["auto"]:
+            found = self.cleaner.run(plan["days"], dry=False)
+            done.append(f"освобождено {found['bytes'] // 2**20} МБ")
+        return f"уборка: {', '.join(done)}" if done else None
 
     def cleanup(self, run: bool) -> dict:
         days = self.settings.load()["cleanup"]["days"]
@@ -121,6 +131,17 @@ class SettingsModule:
             "notify": full["notify"],
             "stats": full["stats"],
             "cleanup": full["cleanup"] | {"choices": list(settings_module.CLEANUP_DAYS)},
+            "default_channels": full["default_channels"],
+            # Что выбрать в «каналах по умолчанию» и что сейчас действует у сценария (с учётом VOICE_NEWS).
+            "channels": [{"id": c.id, "label": c.label} for c in studio.channels()] if studio else [],
+            "scenarios": (
+                [
+                    {"id": k, "label": v, "channels": studio.default_channels(k)}
+                    for k, v in studio_service.SCENARIOS.items()
+                ]
+                if studio
+                else []
+            ),
             "last_runs": studio.scheduler.state() if studio else {},
             "notifications": self.ctx.notifier.recent(10),
         }
@@ -190,13 +211,13 @@ class SettingsModule:
             raise bad_request("Тело запроса — не объект JSON.")
         kind, item, enabled = payload.get("kind"), payload.get("id"), payload.get("enabled")
         if not isinstance(enabled, bool):
-            raise bad_request("enabled — true или false.")
+            raise bad_request(malformed("enabled — true или false."))
         if kind == "voice":
             engine = voices.ENGINES.get(payload.get("engine")) if isinstance(payload.get("engine"), str) else None
             if engine is None:
                 raise bad_request("Неизвестный движок озвучки.")
             if item not in engine.voices:
-                raise bad_request(f"У движка {engine.label} нет голоса {item!r}.")
+                raise bad_request(f"У движка {engine.label} нет голоса «{item}».")
 
             def apply(data: dict) -> None:
                 names = set(data["disabled"]["voices"].get(engine.id, []))
@@ -205,14 +226,14 @@ class SettingsModule:
 
         elif kind in CATALOGS:
             if item not in CATALOGS[kind]:
-                raise bad_request(f"Нет такого в каталоге: {KIND_LABELS[kind]} — {item!r}.")
+                raise bad_request(f"Нет такого в каталоге: {KIND_LABELS[kind]} — «{item}».")
 
             def apply(data: dict) -> None:
                 names = set(data["disabled"][kind])
                 data["disabled"][kind] = sorted(names - {item} if enabled else names | {item})
 
         else:
-            raise bad_request("kind — photo, video, audio или voice.")
+            raise bad_request(malformed("kind — photo, video, audio или voice."))
         self.settings.change(apply)
         return self.state()
 

@@ -1,5 +1,5 @@
 // Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены; расписание, уведомления, уборка.
-import { $, api, busyClick, chip, fill, h, toast } from "/ui.js";
+import { $, api, busyClick, chip, fill, h, icon, plural, toast } from "/ui.js";
 
 const API = "/api/settings";
 
@@ -30,12 +30,13 @@ function installedChip(item) {
   return null;
 }
 
-// Строка каталога: флажок «включено», название, пометки и под ними — extra (голоса движка).
-// Подпись связана с флажком через for/id, пояснение — через aria-describedby: имя флажка = название.
+// Строка каталога: переключатель «включено» (role=switch), название, пометки и под ними — extra (голоса движка).
+// Подпись связана с переключателем через for/id, пояснение — через aria-describedby: имя = название.
 function row(item, kind, note, extra = null) {
   const id = `t-${kind}-${String(item.id).replace(/[^\w-]/g, "_")}`;
   const box = h("input", {
     type: "checkbox",
+    role: "switch",
     id,
     checked: item.enabled,
     "aria-describedby": note ? `${id}-note` : null,
@@ -76,7 +77,8 @@ function voiceButtons(engine) {
           title: v.id === engine.default_voice ? "голос по умолчанию" : null,
           onclick: () => toggle({ kind: "voice", engine: engine.id, id: v.id, enabled: !v.enabled }),
         },
-        v.id === engine.default_voice ? `${v.id} ★` : v.id,
+        v.id,
+        v.id === engine.default_voice ? [icon("star"), h("span", { class: "sr-only" }, "голос по умолчанию")] : null,
       ),
     ),
   );
@@ -140,7 +142,7 @@ function renderSchedule(data) {
       ),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: busyClick(() => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)), "notify-test") }, "Проверить уведомление")),
       data.notifications.length
-        ? h("details", {}, h("summary", { class: "btn btn--link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
+        ? h("details", { class: "disclosure" }, h("summary", {}, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
         : null,
     ),
   );
@@ -202,11 +204,17 @@ function renderUpkeep(data) {
           "label",
           { class: "field" },
           h("span", { class: "hint" }, "Удалять старше"),
-          h("select", { onchange: (e) => section("cleanup", { days: Number(e.target.value) }).then(loadCleanup) }, ...data.cleanup.choices.map((d) => h("option", { value: d, selected: d === data.cleanup.days }, `${d} дней`))),
+          h("select", { onchange: (e) => section("cleanup", { days: Number(e.target.value) }).then(loadCleanup) }, ...data.cleanup.choices.map((d) => h("option", { value: d, selected: d === data.cleanup.days }, `${d} ${plural(d, "день", "дня", "дней")}`))),
+        ),
+        h(
+          "label",
+          { class: "field" },
+          h("span", { class: "hint" }, "Брошенные выпуски — в архив через"),
+          h("select", { onchange: (e) => section("cleanup", { draft_days: Number(e.target.value) }) }, ...[...new Set([0, 3, 7, 14, 30, data.cleanup.draft_days ?? 7])].sort((a, b) => a - b).map((d) => h("option", { value: d, selected: d === (data.cleanup.draft_days ?? 7) }, d ? `${d} дн. без движения` : "никогда"))),
         ),
       ),
       checkRow("Убирать раз в сутки сам", null, data.cleanup.auto, (v) => section("cleanup", { auto: v })),
-      h("p", { class: "hint" }, `Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша, загрузки и выпуски из архива. У опубликованных через ${data.cleanup.trim_days ?? 14} дн. убираются картинки слайдов и исходники клипов (видео и журнал публикаций остаются), через ${data.cleanup.archive_days ?? 60} дн. выпуск уходит в архив сам. Неопубликованные выпуски и идущие задачи не трогаются.`),
+      h("p", { class: "hint" }, `Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша, загрузки и выпуски из архива. У опубликованных через ${data.cleanup.trim_days ?? 14} дн. убираются картинки слайдов и исходники клипов (видео и журнал публикаций остаются), через ${data.cleanup.archive_days ?? 60} дн. выпуск уходит в архив сам. Неопубликованный выпуск без движения уходит в архив по сроку выше (с уведомлением, файлы остаются); идущие задачи не трогаются.`),
       found ? h("p", {}, what.length ? `Сейчас под уборку: ${what.join(", ")} — ${mb(found.bytes)}.` : "Сейчас убирать нечего.") : null,
       h(
         "div",
@@ -221,10 +229,37 @@ function renderUpkeep(data) {
 
 const state = { data: null };
 
+// Каналы по умолчанию по сценариям (PRD-005): новый выпуск получает их сам, доска публикует в них
+// выпуски без выбранных каналов.
+function renderDefaults(data) {
+  const box = $("defaults");
+  if (!box) return;
+  if (!data.channels?.length) {
+    fill(box, h("p", { class: "hint" }, "Каналов публикации пока нет — добавь их во вкладке ", h("a", { href: "/channels/" }, "«Каналы»"), "."));
+    return;
+  }
+  const rows = (data.scenarios || []).map((s) => {
+    const current = new Set(s.channels);
+    const save = (id, on) => {
+      const next = data.channels.map((c) => c.id).filter((c) => (c === id ? on : current.has(c)));
+      section("default_channels", { [s.id]: next });
+    };
+    return h(
+      "div",
+      { class: "field" },
+      h("span", { class: "field-label" }, s.label),
+      h("div", { class: "inline-fields" }, ...data.channels.map((c) => h("label", { class: "check" }, h("input", { type: "checkbox", checked: current.has(c.id), onchange: (e) => save(c.id, e.target.checked) }), h("span", {}, c.label)))),
+      current.size ? null : h("p", { class: "hint" }, "Не заданы — каналы выбираются у каждого выпуска."),
+    );
+  });
+  fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Новый выпуск сразу получает каналы своего сценария; у выпусков без каналов доска предлагает опубликовать в них."), ...rows));
+}
+
 function render(data) {
   state.data = data;
   renderSchedule(data);
   renderUpkeep(data);
+  renderDefaults(data);
   const { photo, video, audio } = data.sections;
   fill($("photo"), h("div", { class: "toggle-list" }, ...photo.map((m) => row(m, "photo", m.note))));
   fill($("video"), h("div", { class: "toggle-list" }, ...video.map((m) => row(m, "video", m.note))));
@@ -273,7 +308,7 @@ async function loadHealth() {
           line("Упавшие шаги", (x) => `${pct(x.failed_share)} (${x.failed_steps} из ${x.steps})`),
           line("Упавшие публикации", (x) => `${pct(x.publish_failed_share)} из ${x.publish_steps}`),
           line("Сборка видео p50 / p90", (x) => `${secs(x.render_p50_s)} / ${secs(x.render_p90_s)}`),
-          line(`Дайджест до ${data.deadline}`, (x) => `${pct(x.digest_on_time_share)} (${x.digest_on_time_days} из ${x.digest_days} дн.)`),
+          line(`Дайджест до ${data.deadline}`, (x) => `${pct(x.digest_on_time_share)} (${x.digest_on_time_days} из ${x.digest_days} ${plural(x.digest_days, "дня", "дней", "дней")})`),
         ),
       ),
       h("p", { class: "hint" }, `Считается по журналу событий ${data.file}. Время дедлайна дайджеста — AIP_DIGEST_DEADLINE.`),

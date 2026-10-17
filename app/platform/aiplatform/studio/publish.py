@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from aiplatform.core import perms, schema
+from aiplatform.core import log, perms, schema
 from aiplatform.core.notify import TELEGRAM_API, telegram_api  # noqa: F401 — TELEGRAM_API для старых импортов
 from aiplatform.studio.llm import StudioError
 
@@ -39,6 +39,9 @@ TELEGRAM, MANUAL = "telegram", "manual"
 LANDSCAPE, VERTICAL = "landscape", "vertical"
 CAPTION_LIMIT = 1024
 BOT_VIDEO_LIMIT = 50 * 2**20  # Bot API принимает файлы до 50 МБ
+# Тексты для автора (TXT-003): что случилось и что сделать, без имён классов и «Bot API».
+TELEGRAM_DOWN = "Нет связи с Telegram. Проверь интернет или VPN и повтори публикацию."
+TOO_BIG = "Telegram не принимает файлы больше 50 МБ. Сократи текст или включи ускорение озвучки."
 DEFAULT_CHANNELS = (
     {"id": "download-16x9", "label": "Файл для YouTube / VK (16:9)", "type": MANUAL, "format": LANDSCAPE},
     {"id": "download-9x16", "label": "Файл для Shorts / TikTok / Reels (9:16)", "type": MANUAL, "format": VERTICAL},
@@ -440,7 +443,8 @@ def _http_post(url: str, body: bytes, content_type: str) -> dict:
             return {"ok": False, "error_code": exc.code, "description": f"HTTP {exc.code}"}
     except urllib.error.URLError as exc:
         # urllib заворачивает в URLError сбои соединения и отправки запроса: целиком он не дошёл.
-        raise StudioError(f"Telegram недоступен: {exc.__class__.__name__}") from exc
+        log.event("telegram.unreachable", error=exc.__class__.__name__)  # класс сбоя — в лог, не в UI (TXT-003)
+        raise StudioError(TELEGRAM_DOWN) from exc
     except OSError as exc:
         # Запрос отправлен, ответа нет (таймаут чтения, обрыв) — пост мог уйти.
         raise Unknown(f"Telegram не ответил ({exc.__class__.__name__}) — пост мог уйти") from exc
@@ -554,7 +558,7 @@ def photo_problem(channel: Channel, poster: Path, audio: Path) -> str | None:
     if poster.stat().st_size > PHOTO_LIMIT:
         return f"{channel.label}: картинка больше 10 МБ — Telegram не примет её фото."
     if audio.stat().st_size > BOT_VIDEO_LIMIT:
-        return f"{channel.label}: аудио больше 50 МБ — Bot API такое не примет."
+        return f"{channel.label}: {TOO_BIG}"
     return None
 
 
@@ -689,7 +693,7 @@ def publish(
     if problem:
         raise StudioError(f"{channel.label}: {problem}.")
     if video.stat().st_size > BOT_VIDEO_LIMIT:
-        raise StudioError(f"{channel.label}: видео больше 50 МБ — Bot API такое не примет.")
+        raise StudioError(f"{channel.label}: {TOO_BIG}")
     token = channel.token()
     fields = {
         **channel.target(),

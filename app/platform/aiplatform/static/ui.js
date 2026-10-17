@@ -1,4 +1,8 @@
 // Общие помощники страниц платформы: запросы к API и построение DOM без сборки и зависимостей.
+// Чистые форматтеры живут в core/format.js (тестируются без DOM) и реэкспортируются отсюда.
+import { seconds } from "./core/format.js";
+
+export { countLabel, fmtNum, minutes, plural, seconds, shortDate } from "./core/format.js";
 
 export const $ = (id) => document.getElementById(id);
 
@@ -18,7 +22,8 @@ export class ApiError extends Error {
   }
 }
 
-// Текст ответа-ошибки без JSON: код и первая непустая строка (HTML-теги срезаны).
+// Текст ответа-ошибки без JSON: что случилось и что сделать; код и первая непустая строка
+// (HTML-теги срезаны) — в скобках, чтобы было что искать в логе (TXT-003).
 function httpMessage(status, text) {
   if (status === 413) return "Файл больше лимита.";
   const line = String(text || "")
@@ -26,7 +31,8 @@ function httpMessage(status, text) {
     .split("\n")
     .map((s) => s.trim())
     .find(Boolean);
-  return line ? `Ошибка ${status}: ${line.slice(0, 200)}` : `Ошибка ${status}`;
+  const what = line ? `${status}: ${line.slice(0, 80)}` : status;
+  return `Сервис ответил ошибкой (${what}). Обнови страницу; если повторится — посмотри лог сервиса.`;
 }
 
 // api(метод, путь, тело, { signal, timeout }) → JSON ответа или ApiError.
@@ -118,6 +124,42 @@ export function h(tag, attrs = {}, ...children) {
   return node;
 }
 
+// Иконки (DS-014): контуры 24×24 со stroke=currentColor — цвет от текста, вид одинаков в любом шрифте.
+// Глифы × + → ★ ✓ ▶ ↗ в кнопках не используем: у каждого своя базовая линия и размер.
+export const ICONS = {
+  close: "M6 6l12 12M18 6 6 18",
+  plus: "M12 5v14M5 12h14",
+  arrow: "M5 12h14M13 6l6 6-6 6",
+  prev: "M15 6l-6 6 6 6",
+  next: "M9 6l6 6-6 6",
+  check: "M5 12.5l4.5 4.5L19 7.5",
+  star: "M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z",
+  play: "M8 5.5v13l10-6.5z",
+  external: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+};
+const SOLID_ICONS = new Set(["star", "play"]); // залитые, остальные — контур
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// icon("close") → <svg class="icon-svg"> 16px (size: 20 — крупнее). Всегда aria-hidden: имя кнопке
+// даёт aria-label или текст рядом, а не картинка.
+export function icon(name, { size = 16 } = {}) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  const cls = SOLID_ICONS.has(name) ? "icon-svg icon-svg--solid" : "icon-svg";
+  for (const [k, v] of Object.entries({ class: cls, width: size, height: size, viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" })) svg.setAttribute(k, v);
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", ICONS[name] || ICONS.close);
+  svg.append(path);
+  return svg;
+}
+
+// Кнопка-иконка: iconButton("close", "Закрыть", { onclick }) — цель нажатия ≥32px (.btn-icon),
+// доступное имя — aria-label (подсказка title — та же, если не задана своя).
+export function iconButton(name, label, { class: extra, size = 16, ...attrs } = {}) {
+  const cls = ["btn-icon", extra].filter(Boolean).join(" ");
+  return h("button", { type: "button", title: label, ...attrs, class: cls, "aria-label": label }, icon(name, { size }));
+}
+
 export const STATUS = {
   queued: "в очереди",
   running: "идёт",
@@ -193,13 +235,7 @@ export function jobProgress(job, { onCancel, elapsed = seconds } = {}) {
 
 export function logBlock(lines, title = "Лог") {
   if (!lines || !lines.length) return null;
-  return h("details", { class: "log-wrap" }, h("summary", {}, `${title} (${lines.length})`), h("pre", { class: "log" }, lines.join("\n")));
-}
-
-export function seconds(value) {
-  if (value === null || value === undefined) return "";
-  const s = Math.round(value);
-  return s >= 60 ? `${Math.floor(s / 60)} мин ${s % 60} с` : `${s} с`;
+  return h("details", { class: "disclosure log-wrap" }, h("summary", {}, `${title} (${lines.length})`), h("pre", { class: "log" }, lines.join("\n")));
 }
 
 // --- Общие компоненты вкладок движка ---
@@ -226,23 +262,6 @@ export function debounce(fn, ms) {
   };
 }
 
-// «12 окт.», с годом — если не этот.
-export function shortDate(value) {
-  if (!value) return "";
-  const d = new Date(value.length <= 10 ? `${value}T12:00:00` : value);
-  if (Number.isNaN(d.getTime())) return value;
-  const opts = { day: "numeric", month: "short" };
-  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
-  return d.toLocaleDateString("ru-RU", opts);
-}
-
-export function minutes(value) {
-  if (!value) return "";
-  const m = Math.floor(value / 60);
-  const s = Math.round(value % 60);
-  return m ? `${m}:${String(s).padStart(2, "0")}` : `${s} с`;
-}
-
 export function copyButton(getText, label = "Скопировать") {
   const btn = h("button", { type: "button", class: "btn btn--ghost btn--sm" }, label);
   btn.addEventListener("click", async () => {
@@ -251,7 +270,7 @@ export function copyButton(getText, label = "Скопировать") {
       btn.textContent = "Скопировано";
       toast("Скопировано");
     } catch {
-      btn.textContent = "Не вышло";
+      btn.textContent = "Не скопировалось";
       toast("Не удалось скопировать: браузер не дал доступ к буферу обмена", "danger");
     }
     setTimeout(() => (btn.textContent = label), 1500);
@@ -262,7 +281,7 @@ export function copyButton(getText, label = "Скопировать") {
 // Модальное окно на <dialog>: modal("Заголовок", ...содержимое) → { dialog, body, close }.
 export function modal(title, ...children) {
   const body = h("div", { class: "modal-body" }, ...children);
-  const close = h("button", { type: "button", class: "icon-btn", "aria-label": "Закрыть" }, "×");
+  const close = iconButton("close", "Закрыть");
   const dialog = h("dialog", { class: "modal" }, h("div", { class: "modal-head" }, h("h2", {}, title), close), body);
   close.addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", () => dialog.remove());
@@ -311,7 +330,7 @@ export function confirmPublish({ channels, caption = "", verdict = null, review 
         {},
         h("span", { class: "field-label" }, "Судья: "),
         verdict ? chip(verdict, VERDICT_TONES[verdict] || "") : h("span", { class: "muted" }, "вердикта нет"),
-        review && verdict !== "готово" ? h("details", { class: "inline" }, h("summary", {}, "Отчёт судьи"), h("pre", { class: "log" }, review)) : null,
+        review && verdict !== "готово" ? h("details", { class: "disclosure" }, h("summary", {}, "Отчёт судьи"), h("pre", { class: "log" }, review)) : null,
       ),
       note ? h("p", { class: "hint warn" }, note) : null,
       h("p", { class: "hint" }, "Отменить отправленный пост отсюда нельзя."),
@@ -347,7 +366,7 @@ export function toast(text, tone = "success") {
     stack = h("div", { id: "toasts", class: "toasts" });
     document.body.append(stack);
   }
-  const close = h("button", { type: "button", class: "icon-btn", "aria-label": "Скрыть" }, "×");
+  const close = iconButton("close", "Скрыть");
   const item = h("div", { class: `toast tone-${tone}` }, h("span", {}, text), close);
   const remove = () => item.remove();
   close.addEventListener("click", remove);
@@ -442,7 +461,7 @@ export function errorState({ title = "Не удалось загрузить", e
     why ? h("p", {}, why) : null,
     what || auto.engine ? h("p", { class: "hint" }, what || "", auto.engine ? [" ", h("a", { class: "btn btn--link", href: "/settings/" }, "Открыть «Настройки»")] : null) : null,
     onRetry ? h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: busyClick(onRetry) }, "Повторить")) : null,
-    raw && raw !== why ? h("details", { class: "inline" }, h("summary", {}, "Подробности"), h("pre", { class: "log" }, raw)) : null,
+    raw && raw !== why ? h("details", { class: "disclosure" }, h("summary", {}, "Подробности"), h("pre", { class: "log" }, raw)) : null,
   );
 }
 
@@ -483,7 +502,7 @@ export function reportError(err) {
     box = h("div", { id: "platform-toast", class: "platform-toast", role: "alert" });
     document.body.append(box);
   }
-  const close = h("button", { type: "button", class: "icon-btn", "aria-label": "Скрыть" }, "×");
+  const close = iconButton("close", "Скрыть");
   close.addEventListener("click", () => (box.hidden = true));
   fill(box, h("span", {}, message), close);
   box.hidden = false;
@@ -574,7 +593,7 @@ function uploadRow(label, onCancel) {
     tray = h("div", { id: "upload-tray", class: "upload-tray", role: "status", "aria-label": "Загрузки" });
     document.body.append(tray);
   }
-  const fill = h("div", { class: "bar-fill", style: "width:0%" });
+  const fill = h("div", { class: "bar-fill" }); // с нуля (.upload-row .bar-fill), дальше ширину двигает onprogress
   const bar = h("div", { class: "bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": "0", "aria-label": `Загрузка: ${label}` }, fill);
   const percent = h("span", { class: "percent" }, "0%");
   const row = h(

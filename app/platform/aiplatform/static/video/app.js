@@ -1,6 +1,7 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
-import { $, api, chip, h, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { $, api, chip, h, icon, iconButton, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { frameAt, frameCount, frameProblems as problemsOf, keyframeLimit, spread } from "./frames.js";
 
 const state = {
   config: null,
@@ -21,19 +22,17 @@ let dragKey = null;
 // Частота кадров, длительности, кадры и звук зависят от выбранной модели.
 const model = () => state.config.models.find((m) => m.id === $("model").value) || state.config.models[0];
 const fps = () => model().fps;
-const numFrames = () => state.duration * fps() + 1;
-const maxFrames = () =>
-  Math.min(Math.floor((numFrames() - 1) / state.config.min_keyframe_gap) + 1, model().max_keyframes ?? Infinity);
+const numFrames = () => frameCount(state.duration, fps());
+const maxFrames = () => keyframeLimit(numFrames(), state.config.min_keyframe_gap, model().max_keyframes);
 const seconds = (frameIdx) => frameIdx / fps();
 const fmtSec = (value) => `${+value.toFixed(2)} с`;
 
 // ---------- кадры ----------
 
 function distribute() {
-  const last = numFrames() - 1;
-  const count = state.frames.length;
+  const at = spread(state.frames.length, numFrames() - 1);
   state.frames.forEach((frame, i) => {
-    frame.frameIdx = count === 1 ? 0 : Math.round((i * last) / (count - 1));
+    frame.frameIdx = at[i];
   });
 }
 
@@ -44,17 +43,7 @@ function relayout({ keepManual = false } = {}) {
 }
 
 function frameProblems() {
-  const gap = state.config.min_keyframe_gap;
-  const last = numFrames() - 1;
-  return state.frames.map((frame, i) => {
-    if (frame.error) return frame.error;
-    if (i === 0) return frame.frameIdx === 0 ? null : "Первый кадр всегда в начале";
-    if (frame.frameIdx > last) return "Позже конца ролика";
-    if (frame.frameIdx - state.frames[i - 1].frameIdx < gap) {
-      return `Нужно позже кадра ${i} хотя бы на ${(gap / fps()).toFixed(2)} с`;
-    }
-    return null;
-  });
+  return problemsOf(state.frames, { gap: state.config.min_keyframe_gap, last: numFrames() - 1, fps: fps() });
 }
 
 function roleOf(index) {
@@ -112,9 +101,9 @@ function moveFrame(key, toIndex) {
 
 function setFrameTime(key, value) {
   const frame = state.frames.find((f) => f.key === key);
-  const sec = Number(String(value).replace(",", "."));
-  if (!frame || !Number.isFinite(sec)) return renderFrames();
-  frame.frameIdx = Math.max(0, Math.round(sec * fps()));
+  const at = frameAt(value, fps());
+  if (!frame || at === null) return renderFrames();
+  frame.frameIdx = at;
   state.manual = true;
   renderFrames();
 }
@@ -154,14 +143,14 @@ function frameCard(frame, index, problem) {
     h("div", { class: "thumb" },
       h("img", { src: frame.preview, alt: frame.name, draggable: false }),
       h("span", { class: "badge" }, String(index + 1)),
-      h("button", { type: "button", class: "icon remove", title: "Убрать кадр", "aria-label": `Убрать кадр ${index + 1}`, onclick: () => removeFrame(frame.key) }, "×"),
+      iconButton("close", `Убрать кадр ${index + 1}`, { class: "btn-icon--overlay remove", title: "Убрать кадр", onclick: () => removeFrame(frame.key) }),
     ),
     h("div", { class: "frame-card-body" },
       h("span", { class: "role" }, frame.uploading ? "Загрузка…" : roleOf(index)),
       h("label", { class: "time" }, timeInput, h("span", {}, "с")),
       h("div", { class: "order" },
-        h("button", { type: "button", class: "icon", title: "Раньше", "aria-label": `Кадр ${index + 1} раньше`, disabled: index === 0, onclick: () => moveFrame(frame.key, index - 1) }, "◀"),
-        h("button", { type: "button", class: "icon", title: "Позже", "aria-label": `Кадр ${index + 1} позже`, disabled: index === count - 1, onclick: () => moveFrame(frame.key, index + 1) }, "▶"),
+        iconButton("prev", `Кадр ${index + 1} раньше`, { class: "btn-icon--outline", title: "Раньше", disabled: index === 0, onclick: () => moveFrame(frame.key, index - 1) }),
+        iconButton("next", `Кадр ${index + 1} позже`, { class: "btn-icon--outline", title: "Позже", disabled: index === count - 1, onclick: () => moveFrame(frame.key, index + 1) }),
       ),
     ),
     problem && h("p", { class: "card-error" }, problem),
@@ -173,15 +162,15 @@ function renderFrames() {
   const problems = frameProblems();
   const items = [];
   state.frames.forEach((frame, index) => {
-    if (index > 0) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, "→"));
+    if (index > 0) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, icon("arrow")));
     items.push(frameCard(frame, index, problems[index]));
   });
   if (state.frames.length < maxFrames()) {
-    if (state.frames.length) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, "→"));
+    if (state.frames.length) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, icon("arrow")));
     items.push(
       h("li", { class: "add" },
         h("button", { type: "button", class: "add-tile", onclick: () => $("file-input").click() },
-          h("span", { class: "plus" }, "+"),
+          h("span", { class: "plus" }, icon("plus", { size: 20 })),
           h("span", {}, state.frames.length ? "Следующий кадр" : "Добавить кадр"),
           h("span", { class: "muted small" }, "или перетащи фото сюда"),
         ),
@@ -292,13 +281,16 @@ function segments(root, name, options, current, onPick) {
   );
 }
 
+// Размер кадра для подписи: [704, 448] → «704×448».
+const frameSize = ([w, hgt]) => `${w}×${hgt}`;
+
 function renderLivingOptions() {
   const cfg = state.config.living;
   segments("living-orientations", "living-orientation", cfg.orientations, state.livingOrientation, (id) => {
     state.livingOrientation = id;
     renderLivingOptions();
   });
-  const qualities = cfg.qualities.map((q) => ({ ...q, title: q.sizes[state.livingOrientation].join("×") }));
+  const qualities = cfg.qualities.map((q) => ({ ...q, title: frameSize(q.sizes[state.livingOrientation]) }));
   segments("living-qualities", "living-quality", qualities, state.livingQuality, (id) => {
     state.livingQuality = id;
     renderLivingOptions();
@@ -342,7 +334,7 @@ function renderLiving() {
   if (!photo) {
     box.replaceChildren(
       h("button", { type: "button", class: "add-tile", onclick: () => $("living-input").click() },
-        h("span", { class: "plus" }, "+"),
+        h("span", { class: "plus" }, icon("plus", { size: 20 })),
         h("span", {}, "Выбрать фото"),
         h("span", { class: "muted small" }, "или перетащи его сюда"),
       ),
@@ -361,7 +353,7 @@ function renderLiving() {
             renderLivingOptions();
           },
         }),
-        h("button", { type: "button", class: "icon remove", title: "Убрать фото", "aria-label": "Убрать фото", onclick: clearLiving }, "×"),
+        iconButton("close", "Убрать фото", { class: "btn-icon--overlay remove", onclick: clearLiving }),
       ),
       ...(photo.error ? [h("p", { class: "card-error photo-note" }, photo.error)] : []),
     );
@@ -435,7 +427,7 @@ function filmstrip(job) {
   if (!job.frames.length) return h("p", { class: "muted small" }, "Без кадров — только по промпту");
   const items = [];
   job.frames.forEach((frame, index) => {
-    if (index > 0) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, "→"));
+    if (index > 0) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, icon("arrow")));
     items.push(
       h("li", { class: "mini" },
         h("img", { src: frame.url, alt: `Кадр ${index + 1}`, loading: "lazy" }),
@@ -450,7 +442,7 @@ function filmstrip(job) {
 function logBlock(job, open) {
   if (!job.log || !job.log.length) return null;
   const pre = h("pre", { class: "log" }, job.log.join("\n"));
-  const details = h("details", { class: "log-wrap", open }, h("summary", {}, "Лог процесса"), pre);
+  const details = h("details", { class: "disclosure log-wrap", open }, h("summary", {}, "Лог процесса"), pre);
   details.addEventListener("toggle", () => (pre.scrollTop = pre.scrollHeight));
   queueMicrotask(() => (pre.scrollTop = pre.scrollHeight));
   return details;

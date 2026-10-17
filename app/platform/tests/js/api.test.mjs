@@ -52,11 +52,11 @@ test("ответ-ошибка с JSON — текст из поля error", async
   assert.equal(err.message, "Нет такой статьи.");
 });
 
-test("ответ-ошибка без JSON — код и первая строка текста", async () => {
+test("ответ-ошибка без JSON — человеческий текст, код и первая строка в скобках", async () => {
   globalThis.fetch = async () => new Response("\n<h1>Bad Gateway</h1>\nnginx", { status: 502 });
   const err = await api("GET", "/api/x").catch((e) => e);
   assert.equal(err.kind, "http");
-  assert.equal(err.message, "Ошибка 502: Bad Gateway");
+  assert.equal(err.message, "Сервис ответил ошибкой (502: Bad Gateway). Обнови страницу; если повторится — посмотри лог сервиса.");
 });
 
 test("ответ-ошибка с code — err.code; без JSON — null (BE-011)", async () => {
