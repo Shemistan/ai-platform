@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import mimetypes
 import re
 import threading
@@ -11,7 +12,7 @@ import time
 from http import HTTPStatus
 
 from aiplatform.audio import voices
-from aiplatform.core import media
+from aiplatform.core import log, media
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
@@ -20,7 +21,16 @@ from aiplatform.studio import estimate as estimate_module
 from aiplatform.studio import news, prompts, publish, schedule, series, slides, stats, steps
 from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError, complete
-from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, attention, blockers, dependents
+from aiplatform.studio.pipeline import (
+    LABELS,
+    STEP_IDS,
+    Conflict,
+    ProjectNotFound,
+    Studio,
+    attention,
+    blockers,
+    dependents,
+)
 from aiplatform.studio.render import Renderer
 from aiplatform.updates import registry
 from aiplatform.video import models as video_models
@@ -157,6 +167,7 @@ class StudioModule:
         self.config = studio_config.load(ctx.config)
         self.studio = Studio(self.config.projects_dir, steps.STEPS)
         self.studio.on_stop = self._on_stop
+        ctx.notifier.telegram = self.owner_telegram
         self.scheduler = schedule.Scheduler(self, self.config.data_dir, self.config.schedule_tick_s)
         self._rates: tuple[float, estimate_module.Rates] | None = None
         self._durations: dict[tuple[str, int], float] = {}
@@ -175,6 +186,24 @@ class StudioModule:
             cache=MediaCache(self.config.cache_dir),
         )
         self.scheduler.start()
+        self._after_restart()
+
+    def _after_restart(self) -> None:
+        """Выпуски, прерванные остановкой сервиса: сказать человеку и (auto) один раз продолжить."""
+        interrupted, self.studio.interrupted = self.studio.interrupted, []
+        for project_id, step_id in interrupted:
+            project = self.studio.get(project_id)
+            if project is None or project.get("archived"):
+                continue
+            label = LABELS.get(step_id, step_id)
+            resumed = self.studio.resume_interrupted(project_id, step_id)
+            more = "продолжаю шаг сам" if resumed else "запусти шаг заново, когда проверишь"
+            log.event("project.interrupted", level=logging.WARNING, project=project_id, step=step_id, resumed=resumed)
+            self.notify(
+                f"Выпуск прерван перезапуском: {project['title']}",
+                f"Шаг «{label}» не закончился — {more}.",
+                important=True,
+            )
 
     def _daily_stats(self) -> str | None:
         if not self.ctx.config.settings.load()["stats"]["auto"]:
@@ -187,6 +216,19 @@ class StudioModule:
         """В журнал уведомлений всегда; показать — если важно и уведомления включены в настройках."""
         show = important and self.ctx.config.settings.load()["notify"]["enabled"]
         self.ctx.notifier.send(title, text, show=show)
+
+    def owner_channel(self) -> publish.Channel | None:
+        """Личный чат владельца из настроек как канал Telegram: токен — тем же путём, что у каналов."""
+        chat = self.ctx.config.settings.load()["notify"]["telegram_chat"]
+        if not chat:
+            return None
+        token_file = "" if self.config.fake else str(self.config.narrator_dir / publish.NARRATOR_TOKEN_FILE)
+        return publish.Channel(id="owner", label="Владелец", type=publish.TELEGRAM, chat_id=chat, token_file=token_file)
+
+    def owner_telegram(self) -> tuple[str, dict[str, str]] | None:
+        """Для Notifier: (токен, чат) или None. В демо не шлём ничего наружу."""
+        channel = None if self.config.fake else self.owner_channel()
+        return (channel.token(), channel.target()) if channel else None
 
     def _on_stop(self, project: dict, before: dict[str, str]) -> None:
         """Запуск выпуска закончился: опубликован — сказать; ждёт тебя или упал — тоже, если это новое."""
@@ -514,7 +556,38 @@ class StudioModule:
             self.config.channels()
         except ValueError as exc:
             out.append(f"Каналы: {exc}")
+        out += [f"Дайджест: канал {c.label} — {c.problem()}." for c in self._digest_channels() if c.problem()]
         return out
+
+    def _digest_channels(self) -> list[publish.Channel]:
+        """Каналы Telegram, куда по умолчанию публикуется дайджест."""
+        chosen = set(self.scenario_defaults("digest").get("channels") or [])
+        return [c for c in self.channels() if c.id in chosen and c.type == publish.TELEGRAM]
+
+    def ready_checks(self) -> list[dict]:
+        """Для /api/ready: поток расписания жив, у каналов дайджеста есть токен, последний дайджест не упал."""
+        checks = []
+        tick = self.scheduler.tick_s
+        if tick <= 0:
+            checks.append(
+                {"name": "schedule", "ok": True, "detail": "поток расписания выключен (AIP_SCHEDULE_TICK_S=0)"}
+            )
+        else:
+            last = self.scheduler.state().get("last_tick_at") or "ещё не было"
+            checks.append(
+                {
+                    "name": "schedule",
+                    "ok": self.scheduler.alive(),
+                    "detail": f"последний тик: {last}, интервал {tick:g} с",
+                }
+            )
+        broken = [f"{c.label}: {c.problem()}" for c in self._digest_channels() if c.problem()]
+        checks.append({"name": "token", "ok": not broken, "detail": "; ".join(broken) or "токен каналов найден"})
+        run = self.scheduler.digest_run()
+        failed = run.get("result") == "failed" and run.get("day") == time.strftime("%Y-%m-%d")
+        detail = f"{run.get('day')}: {run.get('result')}" + (f" — {run.get('error')}" if failed else "")
+        checks.append({"name": "last_digest", "ok": not failed, "detail": detail if run else "ещё не было"})
+        return checks
 
     # --- настройки ---
 
@@ -1116,7 +1189,7 @@ class StudioModule:
             self._route(req)
         except Conflict as exc:
             raise HttpError(HTTPStatus.CONFLICT, str(exc)) from exc
-        except KeyError as exc:
+        except ProjectNotFound as exc:
             raise not_found("Проект не найден.") from exc
 
     def _route(self, req: Request) -> None:

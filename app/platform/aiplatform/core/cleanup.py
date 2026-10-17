@@ -12,6 +12,8 @@ import shutil
 import time
 from pathlib import Path
 
+from aiplatform.core import log
+
 DAY_S = 86400
 JOB_TABS = {"photo": "Задачи «Фото»", "video": "Задачи «Видео»", "audio": "Задачи «Аудио»"}
 ACTIVE = ("queued", "running")
@@ -95,4 +97,6 @@ class Cleaner:
                 found["archived"] += 1
                 folder = studio.studio.project_dir(project["id"])
                 found["bytes"] += size_of(folder) if dry else studio.studio.delete(project["id"])
+        if not dry:
+            log.event("cleanup.done", days=days, **found)
         return found

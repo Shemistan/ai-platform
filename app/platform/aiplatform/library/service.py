@@ -19,7 +19,7 @@ from aiplatform.config import Config
 from aiplatform.core import narrator as narrator_module
 from aiplatform.core import tasks as tasks_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
-from aiplatform.core.narrator import INSTALL_HINT, NarratorError
+from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 
 PREFIX = "library"
 URL_BASE = f"/api/{PREFIX}"
@@ -93,9 +93,7 @@ class LibraryModule:
         try:
             return self.narrator.bridge(*args, stdin=stdin, timeout=timeout)
         except NarratorError as exc:
-            message = str(exc)
-            status = HTTPStatus.NOT_FOUND if "нет в библиотеке" in message else HTTPStatus.BAD_REQUEST
-            raise HttpError(status, message) from exc
+            raise http_error(exc) from exc
 
     def state(self) -> dict:
         data = self._bridge("library")

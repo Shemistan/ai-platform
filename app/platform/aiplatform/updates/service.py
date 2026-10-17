@@ -262,7 +262,7 @@ class UpdatesModule:
         try:
             data = self.narrator.bridge("models")
         except narrator_module.NarratorError as exc:
-            raise HttpError(HTTPStatus.BAD_GATEWAY, str(exc)) from exc
+            raise narrator_module.http_error(exc) from exc
         return data | {"tasks": self.tasks.list()[:5]}
 
     def download_voice_models(self, action: str, payload: object) -> dict:
