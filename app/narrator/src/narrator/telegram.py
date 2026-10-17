@@ -27,6 +27,9 @@ api.telegram.org идут через `Bot.transport`, в тестах вмест
 
 from __future__ import annotations
 
+import contextlib
+import copy
+import fcntl
 import html
 import json
 import mimetypes
@@ -37,7 +40,7 @@ import secrets
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
@@ -54,6 +57,7 @@ ARTICLE_CHANNEL = "HISTORY_CHAN"  # имя канала с озвученным�
 NEWS_CHANNEL_ENV = "NARRATOR_NEWS_CHANNEL"
 NEWS_CHANNEL = "VOICE_NEWS"  # имя канала с дайджестом новостей
 STATE_NAME = "telegram.json"
+SERVE_LOCK = "telegram.serve.lock"  # держит `bot serve`: getUpdates зовёт только он
 API_ROOT = "https://api.telegram.org"
 CAPTION_LIMIT = 1024
 SIZE_LIMIT = 50 * 1024 * 1024  # предел Telegram на файл от бота
@@ -217,13 +221,39 @@ class State:
         if unknown:
             raise ValueError(f"{path}: неизвестные поля {sorted(unknown)}")
         subs = [Subscriber(**s) for s in data.pop("subscribers", [])]
-        return cls(subscribers=subs, **data)
+        state = cls(subscribers=subs, **data)
+        state._base = copy.deepcopy(state)
+        return state
 
     def save(self, path: Path) -> None:
+        """Атомарно (tmp + os.replace, права 600) и без потери чужих правок.
+
+        Файл пишут и `bot serve`, и `bot send`, и `synth --send` из других процессов.
+        Под flock на `<файл>.lock` файл перечитывается и сливается с тем, что
+        поменял этот процесс с момента load: свой offset (максимум), свои отметки
+        `sent` и подписчики поверх чужих. Чего этот процесс не трогал — берётся с диска.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(asdict(self), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        with state_lock(path):
+            disk = State.load(path) if path.exists() else State()
+            merged = _merge(getattr(self, "_base", None) or State(), self, disk)
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+            try:
+                tmp.write_text(
+                    json.dumps(asdict(merged), ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                os.chmod(tmp, 0o600)  # подписчики — личные данные
+                os.replace(tmp, path)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+            self.offset, self.subscribers, self.sent = (
+                merged.offset,
+                merged.subscribers,
+                merged.sent,
+            )
+            self._base = copy.deepcopy(merged)
 
     def find(self, chat_id: int) -> Subscriber | None:
         return next((s for s in self.subscribers if s.chat_id == chat_id), None)
@@ -247,6 +277,81 @@ class State:
         sub = self.find(chat_id)
         if sub is not None:
             sub.active, sub.note = False, note
+
+
+@contextlib.contextmanager
+def state_lock(path: Path) -> Iterator[None]:
+    """Межпроцессный замок файла состояния: flock на соседнем `<файл>.lock`."""
+    lock = path.with_name(path.name + ".lock")
+    with open(lock, "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _merge(base: State, mine: State, disk: State) -> State:
+    """Трёхстороннее слияние: что процесс поменял относительно base — его, прочее — с диска."""
+    out = State(offset=max(mine.offset, disk.offset))
+    out.sent = dict(disk.sent)
+    for key, stamp in mine.sent.items():
+        if base.sent.get(key) != stamp:
+            out.sent[key] = max(stamp, disk.sent.get(key, ""))
+    was = {s.chat_id: s for s in base.subscribers}
+    ours = {s.chat_id: s for s in mine.subscribers}
+    subs = {s.chat_id: s for s in disk.subscribers}
+    for chat_id, sub in ours.items():
+        if was.get(chat_id) != sub:  # подписался, отписался или переименован здесь
+            subs[chat_id] = sub
+    out.subscribers = list(subs.values())
+    return out
+
+
+_SERVING = False  # этот процесс держит SERVE_LOCK (`bot serve`)
+
+
+def serve_lock_path(root: Path | None = None) -> Path:
+    return state_path(root).with_name(SERVE_LOCK)
+
+
+@contextlib.contextmanager
+def serving(root: Path | None = None) -> Iterator[None]:
+    """Держит `bot serve`: второй serve — TelegramError, остальные не зовут getUpdates."""
+    global _SERVING
+    path = serve_lock_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as e:
+            raise TelegramError("bot serve уже запущен в другом процессе") from e
+        fh.seek(0)
+        fh.truncate()
+        fh.write(f"{os.getpid()}\n")
+        fh.flush()
+        _SERVING = True
+        try:
+            yield
+        finally:
+            _SERVING = False
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def serve_running(root: Path | None = None) -> bool:
+    """Запущен ли `bot serve` в другом процессе: его flock на SERVE_LOCK не взять."""
+    if _SERVING:
+        return False
+    path = serve_lock_path(root)
+    if not path.exists():
+        return False
+    with open(path) as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(fh, fcntl.LOCK_UN)
+    return False
 
 
 def recipients(
@@ -424,7 +529,12 @@ def pull(bot: Bot, state: State, timeout: int = 0) -> list[Subscriber]:
     /start — подписка, /stop — отписка, остальное — подсказка. Возвращает тех,
     кто подписался в этот заход. Курсор getUpdates хранится в state.offset,
     поэтому одно и то же сообщение не обрабатывается дважды.
+
+    Пока работает `bot serve` в другом процессе, getUpdates не зовём: два опроса
+    дают 409 и роняют serve. Подписки тогда забирает он.
     """
+    if serve_running():
+        return []
     params = {"offset": state.offset, "allowed_updates": ["message"]}
     if timeout:
         params["timeout"] = timeout
