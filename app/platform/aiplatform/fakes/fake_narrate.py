@@ -8,7 +8,8 @@ $FAKE_NARRATOR_HOME (state.json, статьи, образцы голосов); �
 
 `say` пишет mp3 длиной по числу слов (~150 слов в минуту): тон 220 Гц через
 ffmpeg, без ffmpeg — WAV-заглушка. Окружение: FAKE_TTS_STEP_DELAY — пауза на
-абзац, с (по умолчанию 0.3); FAKE_TTS_FAIL=1 — упасть на середине;
+абзац, с (по умолчанию 0.3); FAKE_TTS_WORDS_PER_SECOND — темп речи (по умолчанию
+2.5; тесты ускоряют: короче аудио — короче рендер); FAKE_TTS_FAIL=1 — упасть на середине;
 FAKE_NARRATOR_DELAY — пауза шагов остальных долгих команд (по умолчанию 0.05).
 """
 
@@ -92,7 +93,8 @@ def paragraphs(text: str) -> list[str]:
 
 
 def seconds_for(text: str) -> float:
-    return max(len(text.split()) / WORDS_PER_SECOND, MIN_SECONDS)
+    pace = float(os.environ.get("FAKE_TTS_WORDS_PER_SECOND") or WORDS_PER_SECOND)
+    return max(len(text.split()) / pace, MIN_SECONDS)
 
 
 def write_wav(path: Path, seconds: float, rate: int = 8000) -> None:

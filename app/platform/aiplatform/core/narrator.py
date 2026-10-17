@@ -33,10 +33,32 @@ REGISTRY_FILE = "registry.json"  # = aiplatform.updates.registry.FILE_NAME, в �
 INSTALL_HINT = "Нужен движок app/narrator: `make models` в нём (или задай AIP_NARRATE_CMD)."
 # Версия контракта моста, с которой работает платформа (narrator.bridge.BRIDGE_API).
 EXPECTED_BRIDGE_API = 1
+# Команды моста, которые только читают: при падении процесса на запуске их повторяем один раз (BE-013).
+# Таймаут не повторяем — второй заход удвоил бы ожидание; запросы с записью — тоже (могли сработать).
+READS = frozenset(
+    {
+        "version",
+        "engines",
+        "library",
+        "article",
+        "bot",
+        "voices",
+        "models",
+        "sources",
+        "failed",
+        "issue",
+        "top",
+        "reviews",
+        "preview",
+        "split",
+    }
+)
+RETRY_PAUSE_S = 0.5
 CHECK_TTL_S = 60.0  # check() дёргают problems() всех вкладок и каждый /api/config
 _MISSING_CMD = re.compile(r"invalid choice: '?(bridge|version)\b")
 _checks: dict[tuple, tuple[float, str | None]] = {}
 _checks_lock = threading.Lock()
+_sleep = time.sleep  # тесты подменяют
 
 
 def reset_checks() -> None:
@@ -54,18 +76,21 @@ KIND_STATUS = {
     INVALID: HTTPStatus.BAD_REQUEST,
 }
 
+KIND_CODE = {UNAVAILABLE: "engine_unavailable", NOT_FOUND: "not_found", INVALID: "engine_rejected"}
+
 
 class NarratorError(RuntimeError):
     """Движок ответил ошибкой или не запустился; текст — для человека, kind — для HTTP-кода."""
 
-    def __init__(self, message: str, kind: str = UNAVAILABLE) -> None:
+    def __init__(self, message: str, kind: str = UNAVAILABLE, crashed: bool = False) -> None:
         super().__init__(message)
         self.kind = kind if kind in KIND_STATUS else INVALID
+        self.crashed = crashed  # процесс упал без ответа — для чтения стоит один повтор
 
 
 def http_error(exc: NarratorError) -> HttpError:
     """Единый маппинг ошибки движка в ответ ручки: unavailable → 503, not_found → 404, invalid → 400."""
-    return HttpError(KIND_STATUS[exc.kind], str(exc), {"kind": exc.kind})
+    return HttpError(KIND_STATUS[exc.kind], str(exc), {"kind": exc.kind}, code=KIND_CODE[exc.kind])
 
 
 @dataclass(frozen=True)
@@ -93,7 +118,20 @@ class Narrator:
         return self.fake or shutil.which(self.cmd[0]) is not None
 
     def bridge(self, *args: str, stdin: str | dict | None = None, timeout: float = BRIDGE_TIMEOUT_S) -> dict:
-        """`narrate bridge <args>` → ответ JSON. NarratorError — ошибка движка или запуска."""
+        """`narrate bridge <args>` → ответ JSON. NarratorError — ошибка движка или запуска.
+
+        Чтение (READS), чей процесс упал без ответа, повторяем один раз: разовый сбой
+        запуска (uv собирает окружение, гонка за файл) не должен ронять вкладку.
+        """
+        try:
+            return self._bridge_once(*args, stdin=stdin, timeout=timeout)
+        except NarratorError as exc:
+            if not exc.crashed or not args or args[0] not in READS:
+                raise
+        _sleep(RETRY_PAUSE_S)
+        return self._bridge_once(*args, stdin=stdin, timeout=timeout)
+
+    def _bridge_once(self, *args: str, stdin: str | dict | None, timeout: float) -> dict:
         data = json.dumps(stdin, ensure_ascii=False) if isinstance(stdin, dict) else stdin
         try:
             done = subprocess.run(
@@ -119,7 +157,10 @@ class Narrator:
             raise NarratorError(str(payload["error"]), str(payload.get("kind") or INVALID))
         if done.returncode != 0 or not isinstance(payload, dict):
             tail = (done.stderr or done.stdout).strip().splitlines()[-3:]
-            raise NarratorError("Движок упал: " + (" ".join(tail) or f"код {done.returncode}"))
+            text = " ".join(tail)
+            # «Нет такой команды» у старого движка — не сбой запуска, повтор не поможет.
+            crashed = not _MISSING_CMD.search(text)
+            raise NarratorError("Движок упал: " + (text or f"код {done.returncode}"), crashed=crashed)
         return payload
 
     def check(self) -> str | None:

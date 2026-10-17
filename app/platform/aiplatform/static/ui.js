@@ -5,7 +5,8 @@ export const $ = (id) => document.getElementById(id);
 export const API_TIMEOUT_MS = 30000;
 
 // Ошибка запроса к API. kind: network — сервис не отвечает, timeout — не уложился в срок,
-// http — ответ с кодом ошибки, abort — запрос отменили сами (signal). status и data — у http.
+// http — ответ с кодом ошибки, abort — запрос отменили сами (signal). status и data — у http;
+// code — машинный код ошибки сервера (docs/api.md), у http; иначе null.
 export class ApiError extends Error {
   constructor(message, { kind, status = 0, data = {}, cause } = {}) {
     super(message, cause ? { cause } : undefined);
@@ -13,6 +14,7 @@ export class ApiError extends Error {
     this.kind = kind;
     this.status = status;
     this.data = data;
+    this.code = typeof data?.code === "string" ? data.code : null;
   }
 }
 
