@@ -501,7 +501,8 @@ async function addChannel(prefix) {
   const get = (name) => document.getElementById(`${prefix}-${name}`);
   const error = get("new-error");
   try {
-    const res = await api("POST", `${API}/channels`, { label: get("new-label").value, chat_id: get("new-chat").value, format: get("new-format").value });
+    // Каналы правит только вкладка «Каналы» (ChannelStore) — сценарии зовут её API.
+    const res = await api("POST", "/api/channels/channels", { label: get("new-label").value, chat_id: get("new-chat").value, format: get("new-format").value });
     state.config.channels = res.channels;
     for (const name of ["new-label", "new-chat"]) get(name).value = ""; // иначе перерисовка вернёт набранное
     if (prefix === "step-publish") publishPick(state.project).channels.add(res.added); // канал из шага — сразу в выбранные

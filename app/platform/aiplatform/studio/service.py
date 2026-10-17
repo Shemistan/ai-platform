@@ -213,40 +213,11 @@ class StudioModule:
     # --- описание ---
 
     def channels(self) -> list[publish.Channel]:
+        """Каналы только читаем; правит их вкладка «Каналы» через ChannelStore (/api/channels)."""
         try:
             return self.config.channels()
         except ValueError:
             return []
-
-    def add_channel(self, payload: object) -> dict:
-        """Канал Telegram со страницы: список целиком записывается в channels.json."""
-        if not isinstance(payload, dict):
-            raise bad_request("Тело запроса — не объект JSON.")
-        current = self._channels_or_400()
-        try:
-            channel = publish.new_channel(
-                current,
-                str(payload.get("label") or ""),
-                str(payload.get("chat_id") or ""),
-                str(payload.get("format") or publish.LANDSCAPE),
-            )
-        except ValueError as exc:
-            raise bad_request(str(exc)) from exc
-        publish.save_channels(self.config.channels_file, [*current, channel])
-        return {"channels": [c.public() for c in self.channels()], "added": channel.id}
-
-    def delete_channel(self, channel_id: str) -> dict:
-        current = self._channels_or_400()
-        if channel_id not in {c.id for c in current}:
-            raise not_found("Нет такого канала.")
-        publish.save_channels(self.config.channels_file, [c for c in current if c.id != channel_id])
-        return {"channels": [c.public() for c in self.channels()]}
-
-    def _channels_or_400(self) -> list[publish.Channel]:
-        try:
-            return self.config.channels()
-        except ValueError as exc:
-            raise bad_request(f"Каналы: {exc}") from exc
 
     def publish_now(self, project_id: str, payload: object) -> dict:
         """Кнопка «Опубликовать», как `make news-publish`: выбранные каналы, повторно — с force."""
@@ -519,10 +490,7 @@ class StudioModule:
         out = []
         if not self.config.llm_available():
             out.append(f"Сценарии: LLM-команда «{self.config.llm_cmd[0]}» не найдена — задай AIP_LLM_CMD.")
-        try:
-            self.config.channels()
-        except ValueError as exc:
-            out.append(f"Каналы: {exc}")
+        # Битый channels.json в баннер выносит вкладка «Каналы» — владелец файла (ChannelStore).
         return out
 
     # --- настройки ---
@@ -1173,10 +1141,6 @@ class StudioModule:
                 return req.send_json(self.publish_now(pid, req.json()))
             case ("POST", ["projects", pid, "publish", "resolve"]):
                 return req.send_json(self.resolve_publish(pid, req.json()))
-            case ("POST", ["channels"]):
-                return req.send_json(self.add_channel(req.json()), HTTPStatus.CREATED)
-            case ("POST", ["channels", channel_id, "delete"]):
-                return req.send_json(self.delete_channel(channel_id))
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):

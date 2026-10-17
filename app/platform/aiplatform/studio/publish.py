@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from aiplatform.core.fsutil import atomic_write_json
 from aiplatform.studio.llm import StudioError
 
 TELEGRAM, MANUAL = "telegram", "manual"
@@ -165,10 +166,8 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
 
 
 def save_channels(path: Path, channels: list[Channel]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps([c.stored() for c in channels], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    """Записать список целиком. Зовёт только ChannelStore — под своим замком (channels/store.py)."""
+    atomic_write_json(path, [c.stored() for c in channels])
 
 
 def new_channel(existing: list[Channel], label: str, chat_id: str, fmt: str) -> Channel:

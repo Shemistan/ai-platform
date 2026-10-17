@@ -153,20 +153,23 @@ class PublishButtonTest(StudioCase):
             self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/publish", body)[0], 400, body)
 
     def test_add_and_delete_channel(self):
+        """Каналы правит вкладка «Каналы»; сценарии видят изменения, token_env сохраняется."""
         status, body = self.json(
-            "POST", "/api/studio/channels", {"label": "Шортсы", "chat_id": "@my_shorts", "format": "vertical"}
+            "POST",
+            "/api/channels/channels",
+            {"label": "Шортсы", "chat_id": "@my_shorts", "format": "vertical", "token_env": "MY_SHORTS_TOKEN"},
         )
         self.assertEqual(status, 201, body)
         self.assertEqual(body["added"], "tg-my-shorts")
         saved = json.loads(self.channels_file.read_text(encoding="utf-8"))
         self.assertEqual([c["id"] for c in saved], ["tg", "tg-my-shorts"])
-        self.assertEqual(saved[1]["format"], "vertical")
+        self.assertEqual((saved[1]["format"], saved[1]["token_env"]), ("vertical", "MY_SHORTS_TOKEN"))
         _, cfg = self.json("GET", "/api/studio/config")
         self.assertIn("tg-my-shorts", [c["id"] for c in cfg["channels"]])
-        self.assertEqual(self.json("POST", "/api/studio/channels", {"label": "X", "chat_id": "плохой"})[0], 400)
-        status, body = self.json("POST", "/api/studio/channels/tg-my-shorts/delete")
+        self.assertEqual(self.json("POST", "/api/studio/channels", {"label": "X", "chat_id": "@x_chan"})[0], 404)
+        status, body = self.json("POST", "/api/channels/channels/tg-my-shorts/delete")
         self.assertEqual((status, [c["id"] for c in body["channels"]]), (200, ["tg"]))
-        self.assertEqual(self.json("POST", "/api/studio/channels/tg-my-shorts/delete")[0], 404)
+        self.assertEqual(self.json("POST", "/api/channels/channels/tg-my-shorts/delete")[0], 404)
 
 
 if __name__ == "__main__":
