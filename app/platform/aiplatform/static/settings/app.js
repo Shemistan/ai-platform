@@ -177,7 +177,7 @@ async function runCleanup() {
 function renderUpkeep(data) {
   const c = cleanupState.data;
   const found = c?.found;
-  const what = found ? [found.jobs && `задач вкладок: ${found.jobs}`, found.cache && `записей кэша: ${found.cache}`, found.archived && `выпусков из архива: ${found.archived}`].filter(Boolean) : [];
+  const what = found ? [found.jobs && `задач вкладок: ${found.jobs}`, found.cache && `записей кэша: ${found.cache}`, found.archived && `выпусков из архива: ${found.archived}`, found.uploads && `загрузок: ${found.uploads}`, found.trimmed && `опубликованных без промежуточных файлов: ${found.trimmed}`, found.auto_archived && `в архив: ${found.auto_archived}`].filter(Boolean) : [];
   const done = cleanupState.result;
   fill(
     $("upkeep"),
@@ -203,7 +203,7 @@ function renderUpkeep(data) {
         ),
       ),
       checkRow("Убирать раз в сутки сам", null, data.cleanup.auto, (v) => section("cleanup", { auto: v })),
-      h("p", { class: "hint" }, "Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша и выпуски из архива. Неархивные выпуски и идущие задачи не трогаются."),
+      h("p", { class: "hint" }, `Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша, загрузки и выпуски из архива. У опубликованных через ${data.cleanup.trim_days ?? 14} дн. убираются картинки слайдов и исходники клипов (видео и журнал публикаций остаются), через ${data.cleanup.archive_days ?? 60} дн. выпуск уходит в архив сам. Неопубликованные выпуски и идущие задачи не трогаются.`),
       found ? h("p", {}, what.length ? `Сейчас под уборку: ${what.join(", ")} — ${mb(found.bytes)}.` : "Сейчас убирать нечего.") : null,
       h(
         "div",
@@ -241,5 +241,43 @@ async function load() {
   }
 }
 
+// «Здоровье» (REL-010): доля упавших шагов, p90 сборки и дайджест вовремя за 7 и 28 дней — по журналу событий.
+const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+const secs = (v) => (v == null ? "—" : v >= 90 ? `${(v / 60).toFixed(1)} мин` : `${Math.round(v)} с`);
+
+async function loadHealth() {
+  let data;
+  try {
+    data = await api("GET", "/api/studio/health/stats");
+  } catch (err) {
+    fill($("health"), h("p", { class: "muted" }, `Не загрузилось: ${err.message}`));
+    return;
+  }
+  const w = [data.windows["7"], data.windows["28"]];
+  const line = (label, f) => h("tr", {}, h("th", {}, label), ...w.map((x) => h("td", {}, f(x))));
+  fill(
+    $("health"),
+    h(
+      "div",
+      { class: "settings-stack" },
+      h(
+        "table",
+        { class: "usage" },
+        h("thead", {}, h("tr", {}, h("th", {}, ""), h("td", {}, "7 дней"), h("td", {}, "28 дней"))),
+        h(
+          "tbody",
+          {},
+          line("Упавшие шаги", (x) => `${pct(x.failed_share)} (${x.failed_steps} из ${x.steps})`),
+          line("Упавшие публикации", (x) => `${pct(x.publish_failed_share)} из ${x.publish_steps}`),
+          line("Сборка видео p50 / p90", (x) => `${secs(x.render_p50_s)} / ${secs(x.render_p90_s)}`),
+          line(`Дайджест до ${data.deadline}`, (x) => `${pct(x.digest_on_time_share)} (${x.digest_on_time_days} из ${x.digest_days} дн.)`),
+        ),
+      ),
+      h("p", { class: "hint" }, `Считается по журналу событий ${data.file}. Время дедлайна дайджеста — AIP_DIGEST_DEADLINE.`),
+    ),
+  );
+}
+
 load();
 loadCleanup();
+loadHealth();
