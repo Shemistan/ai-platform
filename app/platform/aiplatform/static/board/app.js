@@ -4,7 +4,47 @@ import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, fmtNum
 const API = "/api/studio";
 const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
 // Дополнения над группами (сводка отклика и т.п.): sig(data) — подпись блока, build(data) → узел.
-const extras = [{ key: "response", sig: (d) => [d.stats, d.response], build: (d) => responsePanel(d) }];
+const extras = [
+  { key: "autopilot", sig: (d) => [d.offers?.digest_autopilot], build: (d) => autopilotBanner(d) },
+  { key: "response", sig: (d) => [d.stats, d.response], build: (d) => responsePanel(d) },
+];
+
+// Дайджест собирают руками каждый день — предложить расписание и уведомления одной кнопкой (PRD-003).
+function autopilotBanner(d) {
+  if (!d.offers?.digest_autopilot) return h("div", { hidden: true });
+  const fail = (err) => {
+    $("error").textContent = err.message;
+    $("error").hidden = false;
+  };
+  const enable = async () => {
+    try {
+      await api("POST", "/api/settings/section/schedule", { enabled: true, time: "07:00" });
+      await api("POST", "/api/settings/section/notify", { enabled: true });
+    } catch (err) {
+      fail(err);
+    }
+    boardPoll.now();
+  };
+  const dismiss = async () => {
+    try {
+      await api("POST", "/api/settings/section/offers", { digest_autopilot: false });
+    } catch (err) {
+      fail(err);
+    }
+    boardPoll.now();
+  };
+  return h(
+    "div",
+    { class: "panel autopilot-offer", role: "status" },
+    h("p", {}, h("strong", {}, "Дайджест собирается вручную."), " Расписание выключено — включить сборку дайджеста каждый день в 07:00 и присылать уведомления, когда выпуск ждёт тебя?"),
+    h(
+      "div",
+      { class: "actions" },
+      h("button", { type: "button", class: "btn btn--primary btn--sm", onclick: busyClick(enable) }, "Включить в 07:00 с уведомлениями"),
+      h("button", { type: "button", class: "btn btn--link", onclick: busyClick(dismiss) }, "Не предлагать"),
+    ),
+  );
+}
 
 const href = (p) => `/studio/?scenario=${p.scenario}&project=${p.id}`;
 
