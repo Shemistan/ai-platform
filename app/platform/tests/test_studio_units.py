@@ -276,7 +276,8 @@ class PublishTest(unittest.TestCase):
             publish.post_html("**Жирно** <тег> [ссылка](https://e.x/a?b=1&c=2)"),
             '<b>Жирно</b> &lt;тег&gt; <a href="https://e.x/a?b=1&amp;c=2">ссылка</a>',
         )
-        self.assertEqual(publish.caption("x" * 2000, "Заголовок"), "<b>Заголовок</b>")
+        self.assertEqual(publish.caption("", "Заголовок"), "<b>Заголовок</b>")
+        self.assertEqual(publish.caption("x" * 2000, "Заголовок"), "x" * 1023 + "…")
         self.assertEqual(publish.plain_text("**a** [b](https://c)"), "a b (https://c)")
 
     def test_manual_package(self):
