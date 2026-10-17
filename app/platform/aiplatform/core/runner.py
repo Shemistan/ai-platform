@@ -54,6 +54,9 @@ _limits: Callable[[], dict] | None = None
 _live: dict[int, subprocess.Popen] = {}
 _live_lock = threading.Lock()
 _stopping = threading.Event()  # сервис останавливается: процессы гасит kill_all, это не сбой
+# Группы, погашенные kill_all: флаг _stopping сбрасывает configure(None) в конце App.close(),
+# а поток модели может проснуться позже — и всё равно должен увидеть отмену, а не сбой.
+_killed_on_stop: set[int] = set()
 
 
 def configure(run_dir: Path | None, limits: Callable[[], dict] | None = None) -> None:
@@ -179,7 +182,10 @@ def run(
             feeder.join(timeout=5)
         _unregister(proc)
 
-    if cancel.is_set() or _stopping.is_set():
+    with _live_lock:
+        killed = proc.pid in _killed_on_stop
+        _killed_on_stop.discard(proc.pid)
+    if cancel.is_set() or _stopping.is_set() or killed:
         raise Canceled
     if expired:
         raise RunFailed(expired[0], returncode)
@@ -260,6 +266,7 @@ def kill_all() -> int:
     with _live_lock:
         _stopping.set()
         procs = list(_live.values())
+        _killed_on_stop.update(proc.pid for proc in procs)
     for proc in procs:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(proc.pid, signal.SIGTERM)
