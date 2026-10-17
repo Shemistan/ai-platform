@@ -1,13 +1,12 @@
 // Вкладка «Обновления»: версии моделей и пайплайнов, реестр запрещённых организаций.
-import { $, api, busy, busyClick, fill, followTask, h, NARRATOR_TIMEOUT_MS, poller, progressBar, reportError, taskCard } from "/ui.js";
+import { $, api, busy, busyClick, chip, fill, followTask, h, NARRATOR_TIMEOUT_MS, poller, progressBar, reportError, taskCard } from "/ui.js";
 
 const API = "/api/updates";
 const MODEL_STATUS = { update: "есть обновление", ok: "актуально", unknown: "не знаю", error: "ошибка" };
 const state = { data: null, editing: false };
 
-function chip(status, label) {
-  return h("span", { class: `status ${status}` }, label);
-}
+// Тон статуса модели: тот же словарь цветов, что у задач (chip в ui.js).
+const MODEL_TONE = { update: "warning", ok: "success", unknown: "neutral", error: "danger" };
 
 function when(ts) {
   return ts ? new Date(ts * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "";
@@ -59,7 +58,7 @@ function renderModels(job) {
         h("td", {}, r.url ? h("a", { class: "link", href: r.url, target: "_blank", rel: "noopener" }, r.label) : r.label),
         h("td", { class: "version" }, r.installed || "—"),
         h("td", { class: "version" }, r.latest || "—"),
-        h("td", {}, chip(r.status, MODEL_STATUS[r.status] || r.status)),
+        h("td", {}, chip(MODEL_STATUS[r.status] || r.status, MODEL_TONE[r.status])),
         h("td", {}, h("div", {}, r.message), r.hint ? h("div", { class: "hint" }, r.hint) : null),
       ),
     );
@@ -69,7 +68,7 @@ function renderModels(job) {
     h(
       "div",
       { class: "table-wrap" },
-      h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Что"), h("th", {}, "У нас"), h("th", {}, "В источнике"), h("th", {}, "Статус"), h("th", {}, "Подробности"))), h("tbody", {}, ...rows)),
+      h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Что"), h("th", {}, "У нас"), h("th", {}, "В источнике"), h("th", {}, "Статус"), h("th", {}, "Подробности"))), h("tbody", {}, ...rows)),
     ),
   );
 }
@@ -91,7 +90,7 @@ function entryTable(rows) {
   return h(
     "div",
     { class: "table-wrap" },
-    h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Организация и как ищем"), h("th", {}, "Статус"), h("th", {}, "Пометка на видео"), h("th", {}, "Основание"))), h("tbody", {}, ...rows)),
+    h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Организация и как ищем"), h("th", {}, "Статус"), h("th", {}, "Пометка на видео"), h("th", {}, "Основание"))), h("tbody", {}, ...rows)),
   );
 }
 
@@ -190,7 +189,7 @@ const voice = { picked: new Set(), active: null };
 
 function renderVoiceModels(data) {
   const main = data.main.map((m) =>
-    h("tr", {}, h("td", {}, m.label, h("span", { class: "sub" }, m.path)), h("td", {}, m.exists ? chip("done", "на месте") : chip("failed", "нет"))),
+    h("tr", {}, h("td", {}, m.label, h("span", { class: "sub" }, m.path)), h("td", {}, m.exists ? chip("на месте", "success") : chip("нет", "danger"))),
   );
   const mlx = data.mlx.map((m) => {
     const box = h("input", { type: "checkbox", checked: voice.picked.has(m.id), disabled: m.downloaded });
@@ -203,7 +202,7 @@ function renderVoiceModels(data) {
       "tr",
       {},
       h("td", {}, h("label", { class: "check" }, box, h("span", {}, m.label, h("span", { class: "hint" }, `${m.note}, около ${m.size_gb} ГБ`)))),
-      h("td", {}, m.downloaded ? chip("done", "скачана") : chip("pending", "не скачана")),
+      h("td", {}, m.downloaded ? chip("скачана", "success") : chip("не скачана")),
     );
   });
   const pick = h("button", { type: "button", class: "secondary", id: "voice-mlx", onclick: busyClick(() => startVoice("mlx", { engines: [...voice.picked] }), "voice") }, "Скачать выбранные");

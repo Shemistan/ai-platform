@@ -1,24 +1,23 @@
-/* Только своё для вкладки «Фото»: токены — в /common.css, общие элементы — в /ui.css. */
+/* Только своё для вкладки «Фото»: токены — в /tokens.css, общие элементы — в /ui.css. */
 
 .top {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 16px 24px 8px;
-  max-width: 1280px;
+  max-width: var(--container);
   margin: 0 auto;
 }
 .top h1 { font-size: 20px; letter-spacing: -0.01em; }
 
 .banner {
-  max-width: 1232px;
+  max-width: calc(var(--container) - 48px);
   margin: 8px auto 0;
   padding: 10px 14px;
   border-radius: var(--radius);
   background: var(--info-bg);
 }
-.banner.warn { background: var(--warn-bg); color: var(--warn); }
-.banner.error { background: var(--bad-bg); color: var(--bad); }
+.banner:is(.tone-warning, .tone-danger) { background: var(--tone-bg); color: var(--tone); }
 .banner code { user-select: all; overflow-wrap: anywhere; }
 
 @media (max-width: 960px) {
@@ -74,7 +73,7 @@
 .tools label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .tool {
   padding: 5px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--panel);
   cursor: pointer;

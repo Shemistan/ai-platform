@@ -1,6 +1,6 @@
 // Вкладка «Фото» (перенос UI photogen): режим, промпт, исходное фото с маской или полями, запуск и результат. Без сборки и зависимостей.
 
-import { $, api, busyClick, h, jobProgress, poller, STATUS } from "/ui.js";
+import { $, api, busyClick, chip, h, jobProgress, poller, STATUS, statusChip, toneOf } from "/ui.js";
 
 const state = {
   config: null,
@@ -418,8 +418,8 @@ function renderJob() {
 
   const parts = [
     h("div", { class: "job-head" },
-      h("span", { class: `status ${job.status}` }, STATUS[job.status]),
-      job.backend === "fake" ? h("span", { class: "status demo" }, "Демо — не модель") : null,
+      statusChip(job.status),
+      job.backend === "fake" ? chip("Демо — не модель", "warning") : null,
       h("span", { class: "muted small" }, jobMeta(job)),
     ),
     h("p", { class: "job-text" }, job.prompt),
@@ -473,7 +473,7 @@ function renderHistory() {
             h("span", { class: "muted small" },
               [when, job.model_label, modeLabel(job.mode), job.status === "done" ? fmtElapsed(job.elapsed_s) : null].filter(Boolean).join(" · ")),
           ),
-          h("span", { class: `status ${job.status}` }, job.status === "running" ? `${Math.round(job.progress.percent)}%` : STATUS[job.status]),
+          chip(job.status === "running" ? `${Math.round(job.progress.percent)}%` : STATUS[job.status], toneOf(job.status)),
         ),
       );
     }),
@@ -530,12 +530,14 @@ async function poll(signal) {
 
 let configBanner = null;
 
+const BANNER_TONE = { warn: "warning", error: "danger" };
+
 function setBanner(text, kind) {
   const banner = $("banner");
   const shown = text ? { text, kind } : configBanner;
   banner.hidden = !shown;
   if (!shown) return;
-  banner.className = `banner ${shown.kind}`;
+  banner.className = `banner${BANNER_TONE[shown.kind] ? ` tone-${BANNER_TONE[shown.kind]}` : ""}`;
   banner.setAttribute("role", shown.kind === "error" ? "alert" : "status"); // ошибку зачитать сразу
   banner.replaceChildren(...[].concat(shown.text));
 }

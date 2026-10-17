@@ -108,8 +108,24 @@ export const STATUS = {
   skipped: "пропущен",
 };
 
+// Тон статуса задачи — один словарь цветов на все вкладки (классы .tone-* в ui.css).
+export const STATUS_TONE = {
+  queued: "info",
+  running: "info",
+  done: "success",
+  failed: "danger",
+  canceled: "neutral",
+  waiting: "warning",
+  pending: "neutral",
+  skipped: "neutral",
+};
+
+export function toneOf(status) {
+  return STATUS_TONE[status] || "neutral";
+}
+
 export function statusChip(status) {
-  return h("span", { class: `status ${status}` }, STATUS[status] || status);
+  return chip(STATUS[status] || status, toneOf(status));
 }
 
 export function progressBar(progress) {
@@ -173,9 +189,12 @@ export function fill(node, ...children) {
   return node;
 }
 
-// chip("готово", "ok") — метка состояния: ok, warn, bad, info или без тона.
+// Старые имена тонов у chip(): ok/warn/bad — те же success/warning/danger.
+const TONE_ALIAS = { ok: "success", warn: "warning", bad: "danger" };
+
+// chip("готово", "success") — метка состояния: neutral (по умолчанию), info, success, warning, danger.
 export function chip(text, tone = "") {
-  return h("span", { class: `chip${tone ? ` ${tone}` : ""}` }, text);
+  return h("span", { class: `chip tone-${TONE_ALIAS[tone] || tone || "neutral"}` }, text);
 }
 
 export function debounce(fn, ms) {
@@ -246,7 +265,7 @@ export function confirmAction({ title, body = null, confirmLabel = "Да", cance
   });
 }
 
-const VERDICT_TONES = { готово: "ok", "готово с оговорками": "warn", "не готово": "bad" };
+const VERDICT_TONES = { готово: "success", "готово с оговорками": "warning", "не готово": "danger" };
 
 // Подтверждение публикации (доска и шаг «Публикация»): каналы по названиям, начало подписи, вердикт судьи.
 // channels: [{ label, type }], caption — текст поста, review — отчёт судьи (необязательно).
