@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hmac
 import html
+import json
 import logging
 import mimetypes
 import os
@@ -452,10 +453,52 @@ class Handler(BaseHTTPRequestHandler):
         req.send_file(target, ctype, cache="no-cache")
 
 
+MAX_HANDLERS = 64  # одновременных соединений-обработчиков; сверх — сразу 503 (SEC-009)
+_BUSY = json.dumps({"error": "Сервер занят — повтори через пару секунд."}, ensure_ascii=False).encode()
+
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer с потолком потоков: флуд соединений не плодит потоки без счёта.
+
+    Сверх max_handlers соединение получает 503 прямо из цикла приёма и закрывается."""
+
+    daemon_threads = True
+    max_handlers = MAX_HANDLERS
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(self.max_handlers)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._slots.acquire(blocking=False):
+            head = (
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json; charset=utf-8\r\n"
+                f"Content-Length: {len(_BUSY)}\r\nRetry-After: 2\r\nConnection: close\r\n\r\n"
+            )
+            try:
+                request.settimeout(1)
+                request.sendall(head.encode() + _BUSY)
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 def make_server(config: Config, modules: ModulesFactory = default_modules) -> tuple[ThreadingHTTPServer, App]:
     app = App(config, modules)
     handler = type("BoundHandler", (Handler,), {"app": app})
-    server = ThreadingHTTPServer((config.host, config.port), handler)
+    server = BoundedHTTPServer((config.host, config.port), handler)
     server.daemon_threads = True
     handler.hosts = allowed_hosts(config, server.server_address[1])
     return server, app

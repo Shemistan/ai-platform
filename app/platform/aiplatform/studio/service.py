@@ -6,11 +6,13 @@ import hashlib
 import json
 import logging
 import mimetypes
+import os
 import re
 import threading
 import time
 from dataclasses import dataclass, field
 from http import HTTPStatus
+from pathlib import Path
 
 from aiplatform.audio import voices
 from aiplatform.core import events, log, media
@@ -193,6 +195,11 @@ def _read_json_list(path) -> list[dict]:
     except json.JSONDecodeError:
         return []
     return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
+
+
+def place_upload(src: Path, target: Path) -> None:
+    """Загрузка из временного файла — на место атомарно (та же ФС: папка проекта)."""
+    os.replace(src, target)
 
 
 class StudioModule:
@@ -1229,18 +1236,33 @@ class StudioModule:
             )
         return out
 
-    def upload_slide(self, project_id: str, kind: str, key: str, data: bytes) -> dict:
+    def _receive(self, req: Request, project_id: str) -> Path:
+        """Загрузка в проект: тело потоком во временный файл в папке проекта (SEC-009)."""
+        if self.studio.get(project_id) is None:
+            raise not_found("Проект не найден.")
+        folder = self.studio.project_dir(project_id)
+        return req.body_to_file(folder, uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
+
+    def upload_slide(self, project_id: str, kind: str, key: str, src: Path) -> dict:
         """Картинка или видео слайда от человека. Все на месте — шаг готов, сборка заново."""
+        try:
+            return self._upload_slide(project_id, kind, key, src)
+        finally:
+            src.unlink(missing_ok=True)  # не принят — временный файл не остаётся
+
+    def _upload_slide(self, project_id: str, kind: str, key: str, src: Path) -> dict:
         if kind not in steps.MEDIA or not _SLIDE.match(key):
             raise not_found("Загружать можно images/NN или clips/NN.")
+        size = src.stat().st_size
+        first = uploads_module.head(src) if size else b""
         if kind == steps.IMAGES:
-            ext = uploads_module.sniff(data) if data else None
+            ext = uploads_module.sniff(first) if first else None
             if ext not in uploads_module.IMAGE_MIME:
                 raise bad_request(uploads_module._accepted((uploads_module.IMAGE,)))
-            if len(data) > uploads_module.MAX_UPLOAD_BYTES:
+            if size > uploads_module.MAX_UPLOAD_BYTES:
                 raise bad_request(f"Картинка больше {uploads_module.MAX_UPLOAD_BYTES // 2**20} МБ.")
         else:
-            ext = uploads_module.sniff_video(data) if data else None
+            ext = uploads_module.sniff_video(first) if first else None
             if ext is None:
                 raise bad_request("Поддерживаются только видео MP4, MOV, WebM.")
         self._guard_step(project_id, kind)
@@ -1250,7 +1272,7 @@ class StudioModule:
         if n not in prompts:
             raise not_found(f"В плане нет слайда {n}, которому нужны {steps.MEDIA[kind][1]}.")
         with self.studio.idle(project_id, kind):  # шаг не стартует между проверкой и записью
-            steps.save_slide_media(folder / kind, n, ext, data, prompts[n], kind)
+            steps.save_slide_media(folder / kind, n, ext, src, prompts[n], kind)
         have = sum(steps.slide_media(folder / kind, m, kind, p) is not None for m, p in prompts.items())
         note = f"Загружено вручную: {have} из {len(prompts)}."
         state = (self.studio.get(project_id) or {}).get("steps", {}).get(kind, {})
@@ -1301,11 +1323,18 @@ class StudioModule:
             self.studio.mark_done(project_id, step, note="Поправлено вручную.")
         return self.view(project_id)
 
-    def upload(self, project_id: str, what: str, data: bytes) -> dict:
+    def upload(self, project_id: str, what: str, src: Path) -> dict:
+        """Постер или озвучка от человека; src — загрузка во временном файле (body_to_file)."""
+        try:
+            return self._upload(project_id, what, src)
+        finally:
+            src.unlink(missing_ok=True)  # не принят — временный файл не остаётся
+
+    def _upload(self, project_id: str, what: str, src: Path) -> dict:
         kinds = {"poster": (uploads_module.IMAGE,), "voice": (uploads_module.AUDIO,)}.get(what)
         if kinds is None:
             raise not_found("Загружать можно poster или voice.")
-        ext = uploads_module.sniff(data) if data else None
+        ext = uploads_module.sniff(uploads_module.head(src)) if src.stat().st_size else None
         if ext is None or uploads_module.kind_of(ext) not in kinds:
             raise bad_request(uploads_module._accepted(kinds))
         self._guard_step(project_id, what)
@@ -1315,7 +1344,7 @@ class StudioModule:
         with self.studio.idle(project_id, what):
             # Сначала новый файл целиком, потом — прежний в другом формате: сбой между ними
             # не оставит выпуск без постера или озвучки.
-            atomic_write(target, data)
+            place_upload(src, target)
             for old in (folder / f"{what}{e}" for e in stems):
                 if old != target:
                     old.unlink(missing_ok=True)
@@ -1433,11 +1462,9 @@ class StudioModule:
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):
-                data = req.body(uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
-                return req.send_json(self.upload(pid, what, data))
+                return req.send_json(self.upload(pid, what, self._receive(req, pid)))
             case ("POST", ["projects", pid, "upload", kind, key]):
-                data = req.body(uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
-                return req.send_json(self.upload_slide(pid, kind, key, data))
+                return req.send_json(self.upload_slide(pid, kind, key, self._receive(req, pid)))
             case ("GET", ["projects", pid, "files", *rest]):
                 return self._send_file(req, pid, "/".join(rest))
         raise not_found()

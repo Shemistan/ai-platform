@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -11,6 +14,9 @@ from pathlib import Path
 from aiplatform.core.uploads import IMAGE, MAX_AUDIO_BYTES, MAX_UPLOAD_BYTES, MIME, UploadError, UploadStore
 
 MAX_JSON_BYTES = 1024 * 1024
+CHUNK = 1024 * 1024  # загрузка читается и пишется на диск кусками по 1 МБ
+UPLOAD_SLOTS = 2  # одновременных загрузок файлов; сверх — 503
+_upload_slots = threading.BoundedSemaphore(UPLOAD_SLOTS)
 _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
@@ -72,6 +78,47 @@ class Request:
     # --- ввод ---
 
     def body(self, limit: int, too_big: str = "Слишком большой запрос.") -> bytes:
+        """Тело целиком в память — только для небольших запросов (JSON); файлы — body_to_file."""
+        return self._h.rfile.read(self._length(limit, too_big))
+
+    def body_to_file(self, folder: Path, limit: int, too_big: str = "Слишком большой файл.") -> Path:
+        """Тело запроса — потоком во временный файл в folder, кусками по CHUNK (SEC-009).
+
+        В памяти не больше куска: загрузка на 200 МБ не раздувает процесс. Лимит
+        проверяется по Content-Length до чтения и по факту при чтении. Обрыв, лимит,
+        любая ошибка — временный файл удаляется. Одновременно — не больше
+        UPLOAD_SLOTS загрузок, сверх — 503. Вызывающий переносит файл os.replace.
+        """
+        length = self._length(limit, too_big)
+        if not _upload_slots.acquire(blocking=False):
+            self._h.close_connection = True  # тело не читали — соединение дальше не годится
+            raise HttpError(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "Сейчас идут другие загрузки — повтори через минуту.",
+                headers={"Retry-After": "10"},
+            )
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(dir=folder, prefix=".upload-", suffix=".part")
+            tmp = Path(name)
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    left = length
+                    while left > 0:
+                        chunk = self._h.rfile.read(min(CHUNK, left))
+                        if not chunk:
+                            self._h.close_connection = True
+                            raise bad_request("Загрузка оборвалась — пришло меньше, чем обещано.")
+                        fh.write(chunk)
+                        left -= len(chunk)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+            return tmp
+        finally:
+            _upload_slots.release()
+
+    def _length(self, limit: int, too_big: str) -> int:
         try:
             length = int(self.headers.get("Content-Length", ""))
         except ValueError as exc:
@@ -83,7 +130,7 @@ class Request:
         if length > limit:
             self._h.close_connection = True  # тело не читаем — соединение дальше не годится
             raise HttpError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, too_big)
-        return self._h.rfile.read(length)
+        return length
 
     def json(self, limit: int = MAX_JSON_BYTES) -> object:
         raw = self.body(limit)
@@ -187,9 +234,9 @@ def handle_uploads(req: Request, store: UploadStore, url_base: str, kinds: tuple
     match (req.method, req.sub):
         case ("POST", ["uploads"]):
             limit = MAX_AUDIO_BYTES if len(kinds) > 1 or IMAGE not in kinds else MAX_UPLOAD_BYTES
-            data = req.body(limit, f"Файл больше {limit // 2**20} МБ.")
+            tmp = req.body_to_file(store.root, limit, f"Файл больше {limit // 2**20} МБ.")
             try:
-                upload_id = store.save(data, kinds)
+                upload_id = store.save_file(tmp, kinds)
             except UploadError as exc:
                 raise bad_request(str(exc)) from exc
             width, height = store.size(upload_id) or (None, None)
