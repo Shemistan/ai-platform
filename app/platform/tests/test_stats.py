@@ -90,10 +90,36 @@ class WindowsTest(unittest.TestCase):
         self.assertEqual(record["stats"][-1]["age_h"], 25.0)
         self.assertEqual(record["views_24h"], 240)
         self.assertNotIn("views_72h", record)
-        # Замороженное окно не сдвигается: ни новыми снимками, ни потерей старых (KEEP).
+        # Замороженное окно не сдвигается: ни новыми снимками, ни потерей старых (разреживание).
         record = stats.add_snapshot(record | {"stats": []}, {"views": 5000, "members": None}, now=T0 + 200 * H)
         self.assertEqual(record["views_24h"], 240)
         self.assertEqual(record["views_7d"], round(5000 * 168 / 200))
+
+
+class ThinTest(unittest.TestCase):
+    """Разреживание снимков AN-004: ранние — все, после 7 суток — по одному на неделю."""
+
+    def grow(self, record, times):
+        for n, at in enumerate(times):
+            record = stats.add_snapshot(record, {"views": 10 * (n + 1), "members": 100 + n}, now=at)
+        return record
+
+    def test_early_snapshots_kept(self):
+        # 100 снимков за первые ~4 суток (раз в час) и ещё 30 суток раз в сутки.
+        times = [T0 + (n + 1) * H for n in range(100)] + [T0 + 5 * D + k * D for k in range(30)]
+        record = self.grow({"sent": T0}, times)
+        early = [s for s in record["stats"] if s["age_h"] < 168]
+        self.assertEqual([s["at"] for s in early], [t for t in times if t - T0 < 168 * H], "ранние все на месте")
+        late = [s for s in record["stats"] if s["age_h"] >= 168]
+        weeks = [int(s["age_h"] // 168) for s in late]
+        self.assertEqual(len(weeks), len(set(weeks)), "после 7 суток — не больше одного снимка в неделю")
+        self.assertEqual(record["stats"][-1]["at"], times[-1], "последний снимок остаётся")
+        self.assertEqual((record["views_24h"], record["views_72h"]), (240, 720), "окна заморожены до разреживания")
+
+    def test_year_of_daily_snapshots_is_bounded(self):
+        record = self.grow({"sent": T0}, [T0 + k * D for k in range(1, 366)])
+        self.assertLessEqual(len(record["stats"]), 7 + 53)
+        self.assertIsNotNone(record["views_7d"])
 
     def test_growth_window_cut_by_next_post(self):
         first = {"channel": "tg", "sent": T0, "members_at_publish": 100}

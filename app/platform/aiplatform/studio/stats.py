@@ -7,7 +7,7 @@ Bot API не отдаёт просмотры сообщений, поэтому:
 У пакетов для ручной загрузки (YouTube, TikTok…) просмотры вносятся руками.
 
 Снимки копятся в записи канала в published.json: `stats: [{at, age_h, views,
-members, manual?}]`, не больше KEEP последних. Сравнивать посты можно только в
+members, manual?}]`: первые 7 суток — все, дальше — по одному в неделю (AN-004). Сравнивать посты можно только в
 окнах: просмотры за 24ч/72ч/7д (интерполяция по возрасту поста, закрытое окно
 замораживается в записи) и прирост подписчиков за сутки после поста за вычетом
 базового тренда канала (AN-001).
@@ -24,7 +24,7 @@ from collections.abc import Callable
 
 from aiplatform.studio import publish
 
-KEEP = 60
+FULL_H = 168  # первые 7 суток снимки хранятся все, дальше — по одному на неделю (AN-004)
 EMBED = "https://t.me/{username}/{message_id}?embed=1"
 _VIEWS = re.compile(r'class="tgme_widget_message_views"[^>]*>([^<]+)<')
 _COUNT = re.compile(r"^\s*([\d.,]+)\s*([KMkм]?)\s*$")
@@ -71,7 +71,25 @@ def add_snapshot(record: dict, snapshot: dict, now: float | None = None) -> dict
     if start is not None:
         entry["age_h"] = round((at - start) / HOUR, 3)
     history = [*record.get("stats", []), entry]
-    return freeze(record | {"stats": history[-KEEP:]})
+    frozen = freeze(record | {"stats": history})  # окна — до разреживания, по полной истории
+    return frozen | {"stats": thin(history, start)}
+
+
+def thin(history: list[dict], start: float | None) -> list[dict]:
+    """Разреживание снимков (AN-004): первые 7 суток после публикации — все (по ним окна 24/72ч и
+    кривая набора), дальше — последний снимок каждой недели. Возраст — от публикации, без неё —
+    от первого снимка. За год ежедневных снимков — не больше недели снимков плюс ~52."""
+    if not history:
+        return history
+    base = start if start is not None else min(s["at"] for s in history if isinstance(s.get("at"), (int, float)))
+    early, weekly = [], {}
+    for snap in history:
+        age = (snap["at"] - base) / HOUR if isinstance(snap.get("at"), (int, float)) else 0.0
+        if age < FULL_H:
+            early.append(snap)
+        else:
+            weekly[int(age // FULL_H)] = snap  # в неделе остаётся последний
+    return early + [weekly[k] for k in sorted(weekly)]
 
 
 def latest(record: dict) -> dict:
@@ -130,7 +148,7 @@ def window_views(points: list[tuple[float, float]], hours: float) -> float | Non
 
 
 def freeze(record: dict) -> dict:
-    """Закрывшиеся окна — в запись: дальше их не сдвинут ни новые снимки, ни обрезка истории до KEEP."""
+    """Закрывшиеся окна — в запись: дальше их не сдвинут ни новые снимки, ни разреживание истории."""
     points = view_points(record)
     out = record
     for hours, key in WINDOWS:
