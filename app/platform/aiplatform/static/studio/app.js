@@ -987,7 +987,7 @@ function stepBody(step) {
                 return h(
                   "li",
                   {},
-                  `${mark} ${r.label}: ${r.message} `,
+                  `${mark} ${r.label}${r.republish ? " (повторно)" : ""}: ${r.message} `,
                   ...(r.files || []).filter((x) => x.endsWith(".mp4")).map((x) => h("a", { class: "btn--link", href: `${API}/projects/${p.id}/files/${x}?download=1` }, "скачать")),
                   ...(unclear && !p.running
                     ? [
