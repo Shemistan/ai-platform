@@ -18,7 +18,7 @@ from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
-from aiplatform.studio import news, prompts, publish, schedule, series, slides, stats, steps
+from aiplatform.studio import history, news, prompts, publish, schedule, series, slides, stats, steps
 from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError, complete, missing_cli
 from aiplatform.studio.pipeline import (
@@ -193,6 +193,7 @@ class StudioModule:
         self.events = events.EventLog(ctx.config.data_dir / events.FILE)  # журнал событий (AN-002)
         self.studio = Studio(self.config.projects_dir, steps.STEPS, journal=self.events)
         self.studio.on_stop = self._on_stop
+        self.studio.before_delete = self._keep_history
         ctx.notifier.telegram = self.owner_telegram
         self.scheduler = schedule.Scheduler(self, self.config.data_dir, self.config.schedule_tick_s)
         self._rates: tuple[float, estimate_module.Rates] | None = None
@@ -406,26 +407,7 @@ class StudioModule:
                     ],
                     # Начало подписи — показать в подтверждении публикации с доски.
                     "caption": _read_text(folder / steps.POST).strip()[:300],
-                    "published": [
-                        {
-                            "channel": r["channel"],
-                            "label": r.get("label") or channels.get(r["channel"], r["channel"]),
-                            "type": known[r["channel"]].type if r["channel"] in known else None,
-                            "format": known[r["channel"]].format if r["channel"] in known else None,
-                            "public": r.get("public"),
-                            "message_id": r.get("message_id"),
-                            "state": steps.publication_state(r),
-                            "external_url": r.get("external_url"),
-                            "published_at": stats.sent_at(r),
-                            # Повтор публикации — отдельная запись канала (AN-005): доска пишет «повторно».
-                            "attempt": steps.attempt_of(r),
-                            "republish": bool(r.get("republish")),
-                            "publication_id": r.get("publication_id"),
-                            **stats.reach(r, facts),
-                        }
-                        for r in published
-                        if r.get("ok")
-                    ],
+                    "published": self._board_published(published, known, facts),
                     "video_s": video_seconds(project),
                     "verdict": steps.verdict(review) if review else None,
                     "poster": self._poster_url(item["id"], folder),
@@ -436,9 +418,61 @@ class StudioModule:
             "groups": list(BOARD_GROUPS.items()),
             "counts": counts,
             "projects": items,
-            "response": stats.summary(items),
+            # «Что работает» — по всем выпускам: и с другой вкладки доски, и удалённым уборкой (AN-008).
+            "response": stats.summary(items + self._response_items(not archived, known, facts)),
             "stats": {"running": self._stats_thread is not None, "at": self.scheduler.state().get("stats_at")},
         }
+
+    def _board_published(self, published: list[dict], known: dict, facts: stats.Facts) -> list[dict]:
+        """Записи публикации для доски: состояние, ссылки и отклик в окнах."""
+        return [
+            {
+                "channel": r["channel"],
+                "label": r.get("label") or (known[r["channel"]].label if r["channel"] in known else r["channel"]),
+                "type": known[r["channel"]].type if r["channel"] in known else None,
+                "format": known[r["channel"]].format if r["channel"] in known else None,
+                "public": r.get("public"),
+                "message_id": r.get("message_id"),
+                "state": steps.publication_state(r),
+                "external_url": r.get("external_url"),
+                "published_at": stats.sent_at(r),
+                # Повтор публикации — отдельная запись канала (AN-005): доска пишет «повторно».
+                "attempt": steps.attempt_of(r),
+                "republish": bool(r.get("republish")),
+                "publication_id": r.get("publication_id"),
+                **stats.reach(r, facts),
+            }
+            for r in published
+            if r.get("ok")
+        ]
+
+    def _response_items(self, archived: bool, known: dict, facts: stats.Facts) -> list[dict]:
+        """Для «Что работает» сверх показанных: выпуски другой вкладки доски и удалённые уборкой."""
+        out = []
+        for item in self.studio.list(archived=archived):
+            project = self.studio.get(item["id"]) or {}
+            records = _read_json_list(self.studio.project_dir(item["id"]) / steps.PUBLISHED)
+            out.append(self._response_item(project, records, known, facts))
+        for kept in history.load(self.history_file):
+            out.append(self._response_item(kept["project"], kept["published"], known, facts))
+        return out
+
+    def _response_item(self, project: dict, records: list[dict], known: dict, facts: stats.Facts) -> dict:
+        scenario = project.get("scenario") or ""
+        return {
+            "id": project.get("id"),
+            "scenario_label": SCENARIOS.get(scenario, scenario),
+            "video_s": video_seconds(project),
+            "published": self._board_published(records, known, facts),
+        }
+
+    @property
+    def history_file(self):
+        return self.ctx.config.data_dir / history.FILE
+
+    def _keep_history(self, project: dict, folder) -> None:
+        """Перед удалением выпуска уборкой: его публикации и снимки — в архив аналитики (AN-008)."""
+        history.keep(self.history_file, project, steps.load_published(folder))
 
     # --- отклик ---
 
@@ -564,6 +598,8 @@ class StudioModule:
         records: list[dict] = []
         for item in self.studio.list() + self.studio.list(archived=True):
             records += _read_json_list(self.studio.project_dir(item["id"]) / steps.PUBLISHED)
+        for kept in history.load(self.history_file):  # и удалённых уборкой: подписчики канала те же
+            records += kept["published"]
         return stats.Facts(records)
 
     def _poster_url(self, project_id: str, folder) -> str | None:
