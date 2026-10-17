@@ -96,6 +96,7 @@ function reachRow(p, r) {
     "li",
     {},
     h("span", {}, `✓ ${r.label}`),
+    r.republish ? h("span", { class: "muted" }, " · опубликовано повторно") : null,
     r.external_url ? h("a", { class: "link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
     facts.length ? h("span", { class: "muted" }, ` · ${facts.join(" · ")}`) : null,
     manual
@@ -103,7 +104,7 @@ function reachRow(p, r) {
           "span",
           { class: "manual-views" },
           input,
-          h("button", { type: "button", class: "small-btn", onclick: () => input.value !== "" && act(p, "stats", { channel: r.channel, views: Number(input.value) }) }, "Сохранить"),
+          h("button", { type: "button", class: "small-btn", onclick: () => input.value !== "" && act(p, "stats", { channel: r.channel, publication_id: r.publication_id, views: Number(input.value) }) }, "Сохранить"),
         )
       : null,
   );

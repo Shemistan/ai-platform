@@ -131,6 +131,16 @@ class WindowsTest(unittest.TestCase):
         self.assertEqual([(r["label"], r["avg_views"]) for r in rows], [("Свежий", 384), ("Старый", 100)])
         self.assertEqual(items[0]["published"][0]["views"], 5000, "сырые последние просмотры остаются в API")
 
+    def test_summary_counts_channel_once(self):
+        # Повтор в тот же канал (AN-005): в «Что работает» — только первая вышедшая публикация.
+        first = {"channel": "tg", "state": "sent", "views_24h": 100}
+        again = {"channel": "tg", "state": "sent", "views_24h": 900, "republish": True}
+        other = {"channel": "tg2", "state": "sent", "views_24h": 300}
+        failed = {"channel": "tg3", "state": "failed", "views_24h": 5}
+        items = [{"scenario_label": "Статья", "published": [first, again, other, failed]}]
+        row = {d["dimension"]: d["rows"] for d in stats.summary(items)}["Сценарий"][0]
+        self.assertEqual((row["posts"], row["avg_views"]), (2, 200))
+
 
 class StatsHttpTest(StudioCase):
     def setUp(self):

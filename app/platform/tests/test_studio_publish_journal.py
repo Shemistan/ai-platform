@@ -211,6 +211,52 @@ class UnknownStateTest(JournalCase):
         self.assertFalse(state.get("force"))
 
 
+class RepublishTest(JournalCase):
+    """Повтор с «Опубликовать повторно» — новая запись канала, прежняя цела (AN-005)."""
+
+    def records(self, pid) -> list[dict]:
+        return json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+
+    def test_force_keeps_first_record(self):
+        pid = self.video_project()
+        self.press(pid, channels=["tg-a"])
+        first = self.records(pid)[0]
+        snap = {"at": first["sent"] + 3600, "views": 42, "members": 10}
+        # Отклик у первой публикации уже собран — повтор его не стирает.
+        (self.folder(pid) / "published.json").write_text(json.dumps([first | {"stats": [snap]}]), encoding="utf-8")
+
+        self.press(pid, channels=["tg-a"], force=True)
+        records = self.records(pid)
+        self.assertEqual(len(records), 2, "повтор — новая запись, не замена")
+        old, new = records
+        self.assertEqual((old["message_id"], old["stats"], old["state"]), (first["message_id"], [snap], "sent"))
+        self.assertNotIn("skipped", old)
+        self.assertEqual((old["attempt"], old["publication_id"]), (1, f"{pid}:tg-a:1"))
+        self.assertEqual((new["attempt"], new["publication_id"], new["republish"]), (2, f"{pid}:tg-a:2", True))
+        self.assertNotEqual(new["message_id"], old["message_id"])
+        self.assertEqual(self.tg.count("tg-a", "sendVideo"), 2)
+
+        # Без force повтор не шлёт: текущая попытка уже ушла.
+        self.press(pid, channels=["tg-a"])
+        self.assertEqual(self.tg.count("tg-a", "sendVideo"), 2)
+        self.assertEqual(len(self.records(pid)), 2)
+
+        board = self.json("GET", "/api/studio/board")[1]
+        item = next(i for i in board["projects"] if i["id"] == pid)
+        self.assertEqual([r["republish"] for r in item["published"]], [False, True], "доска: «повторно»")
+
+    def test_failed_republish_retry_stays_second_attempt(self):
+        pid = self.video_project()
+        self.press(pid, channels=["tg-a"])
+        self.tg.refuse.add(("tg-a", "sendVideo"))
+        self.press(pid, channels=["tg-a"], force=True)
+        self.tg.refuse.clear()
+        self.press(pid, channels=["tg-a"])
+        records = self.records(pid)
+        self.assertEqual([(r["attempt"], r["state"]) for r in records], [(1, "sent"), (2, "sent")])
+        self.assertTrue(records[1]["republish"])
+
+
 class HttpPostTest(unittest.TestCase):
     """Сбой до отправки — «не отправлено»; без ответа — «неизвестно»; 200 с мусором — отправлено."""
 

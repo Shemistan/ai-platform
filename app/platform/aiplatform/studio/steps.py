@@ -936,6 +936,30 @@ def resolve_record(record: dict, posted: bool) -> dict:
     return out | {"state": SEND_FAILED, "ok": False, "message": message}
 
 
+# Повторная публикация (force в канал, куда пост уже ушёл) — новая запись канала со следующим
+# attempt, а не замена прежней: у первой остаются message_id, stats и members_at_publish (AN-005).
+# Запись узнаётся по (channel, attempt); у записей до AN-005 attempt нет — это 1.
+
+
+def attempt_of(record: dict) -> int:
+    value = record.get("attempt")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 1
+
+
+def current_record(records: list[dict], channel_id: str) -> dict | None:
+    """Текущая (последняя) попытка канала: её продолжает повтор, по ней решают «Пост есть» и «Залил»."""
+    return next((r for r in reversed(records) if r["channel"] == channel_id), None)
+
+
+def first_live(records: list[dict], channel_id: str) -> dict | None:
+    """Первая вышедшая публикация канала: по ней метрики и «Что работает», повтор не считается."""
+    return next((r for r in records if r["channel"] == channel_id and is_live(r)), None)
+
+
+def next_attempt(records: list[dict], channel_id: str) -> int:
+    return max((attempt_of(r) for r in records if r["channel"] == channel_id), default=0) + 1
+
+
 class Journal:
     """published.json как журнал: файл переписывается атомарно при каждой смене состояния записи."""
 
@@ -944,13 +968,18 @@ class Journal:
         self.records = read_published(ctx)
 
     def get(self, channel_id: str) -> dict | None:
-        return next((r for r in self.records if r["channel"] == channel_id), None)
+        return current_record(self.records, channel_id)
 
     def put(self, record: dict) -> dict:
-        # Запись канала — на своём месте, новый канал — в конец: порядок как в выборе каналов.
-        same = [n for n, r in enumerate(self.records) if r["channel"] == record["channel"]]
-        if same:
-            self.records[same[0]] = record
+        # Запись (канал, попытка) — на своём месте; новая попытка или новый канал — в конец.
+        channel = record["channel"]
+        same = [n for n, r in enumerate(self.records) if r["channel"] == channel]
+        if "attempt" not in record:  # без явной попытки — продолжение текущей
+            record = record | {"attempt": attempt_of(self.records[same[-1]]) if same else 1}
+        record = record | {"publication_id": f"{self.ctx.project['id']}:{channel}:{record['attempt']}"}
+        match = [n for n in same if attempt_of(self.records[n]) == record["attempt"]]
+        if match:
+            self.records[match[0]] = record
         else:
             self.records.append(record)
         self.ctx.write(PUBLISHED, json.dumps(self.records, ensure_ascii=False, indent=2) + "\n")
@@ -1014,10 +1043,16 @@ def step_publish(ctx: StepContext) -> None:
             journal.put(prev | {"label": channel.label, "skipped": True, "message": message})
             continue
         ctx.progress(f"{channel.label} ({n} из {len(chosen)})", 100.0 * (n - 1) / len(chosen))
+        again = channel.type == publish.TELEGRAM and force and prev is not None and send_state(prev) == SENT
+        if again:  # повтор — новая запись, прежняя остаётся в журнале как была (без пометки «пропущено»)
+            journal.put({k: v for k, v in prev.items() if k not in ("skipped",)})
+            base = {"attempt": next_attempt(journal.records, channel_id), "republish": True}
+        else:  # продолжение текущей попытки (сбой, рестарт): номер и пометка повтора сохраняются
+            base = {k: prev[k] for k in ("attempt", "republish") if prev and k in prev}
         if channel.type == publish.TELEGRAM and photo_post:
-            record = publish_photo(ctx, journal, channel, title, post, None if force else prev)
+            record = publish_photo(ctx, journal, channel, title, post, None if force else prev, base)
         elif channel.type == publish.TELEGRAM:
-            record = publish_video(ctx, journal, channel, title, post)
+            record = publish_video(ctx, journal, channel, title, post, base)
         else:
             video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
             result = publish.publish(channel, video=video, title=title, post=post, out_dir=ctx.path("publish"))
@@ -1038,7 +1073,6 @@ def step_publish(ctx: StepContext) -> None:
             message_id=record.get("message_id"),
             state=record.get("state"),
         )
-        again = channel.type == publish.TELEGRAM and force and prev is not None and send_state(prev) == SENT
         published_event(ctx, channel, record, again=again)
 
 
@@ -1111,7 +1145,9 @@ def journaled(journal: Journal, channel: publish.Channel, record: dict, part: st
     return mark(SENT, message_id=message_id)
 
 
-def publish_video(ctx: StepContext, journal: Journal, channel: publish.Channel, title: str, post: str) -> dict:
+def publish_video(
+    ctx: StepContext, journal: Journal, channel: publish.Channel, title: str, post: str, base: dict | None = None
+) -> dict:
     svc = services(ctx)
     video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
     width, height = media.video_size(video, svc.config.ffmpeg)
@@ -1142,7 +1178,7 @@ def publish_video(ctx: StepContext, journal: Journal, channel: publish.Channel, 
         "ok": False,
         "attempt_id": uuid.uuid4().hex[:12],
         "message": "Отправляется…",
-    }
+    } | (base or {})
     record = journaled(journal, channel, record, None, send)  # уже sent в журнале — дальше ничего не теряем
     return journal.put(record | result | {"ok": True, "state": SENT, "sent": time.time()} | audience(channel))
 
@@ -1192,7 +1228,13 @@ def audience(channel: publish.Channel) -> dict:
 
 
 def publish_photo(
-    ctx: StepContext, journal: Journal, channel: publish.Channel, title: str, post: str, prev: dict | None
+    ctx: StepContext,
+    journal: Journal,
+    channel: publish.Channel,
+    title: str,
+    post: str,
+    prev: dict | None,
+    base: dict | None = None,
 ) -> dict:
     """Вид поста «картинка и аудио»: постер с подписью, затем mp3 озвучки.
 
@@ -1210,7 +1252,7 @@ def publish_photo(
     if prev and done:
         record = {k: v for k, v in prev.items() if k != "skipped"} | {"parts": done}
     else:
-        record = {"channel": channel.id, "attempt_id": uuid.uuid4().hex[:12]}
+        record = {"channel": channel.id, "attempt_id": uuid.uuid4().hex[:12]} | (base or {})
     record |= {"label": channel.label, "ok": False, "message": "Отправляется…"}
     for part in publish.PHOTO_PARTS:
         if part in done:

@@ -352,7 +352,7 @@ class StudioModule:
         def apply(project: dict) -> set[str]:
             # Под замком студии и только когда выпуск не запущен: шаг публикации журнал сейчас не пишет.
             records = steps.load_published(folder)
-            found = next((r for r in records if r["channel"] == payload["channel"]), None)
+            found = steps.current_record(records, payload["channel"])
             if not steps.is_unclear(found):
                 raise bad_request("По этому каналу нечего решать: статус отправки известен.")
             fixed = steps.resolve_record(found, posted)
@@ -417,6 +417,10 @@ class StudioModule:
                             "state": steps.publication_state(r),
                             "external_url": r.get("external_url"),
                             "published_at": stats.sent_at(r),
+                            # Повтор публикации — отдельная запись канала (AN-005): доска пишет «повторно».
+                            "attempt": steps.attempt_of(r),
+                            "republish": bool(r.get("republish")),
+                            "publication_id": r.get("publication_id"),
                             **stats.reach(r, facts),
                         }
                         for r in published
@@ -483,15 +487,16 @@ class StudioModule:
             raise not_found("Проект не найден.")
         path = self.studio.project_dir(project_id) / steps.PUBLISHED
         records = _read_json_list(path)
-        if channel not in {r["channel"] for r in records}:
+        # Какая попытка: publication_id из доски, иначе текущая (последняя) запись канала (AN-005).
+        wanted = payload.get("publication_id")
+        found = next((r for r in records if wanted and r.get("publication_id") == wanted), None)
+        found = found or (steps.current_record(records, channel) if isinstance(channel, str) else None)
+        if found is None:
             raise bad_request("В этот канал выпуск не публиковался.")
-        records = [
-            stats.add_snapshot(r, {"views": views, "members": None, "manual": True}) if r["channel"] == channel else r
-            for r in records
-        ]
+        record = stats.add_snapshot(found, {"views": views, "members": None, "manual": True})
+        records = [record if r is found else r for r in records]
         _write_json(path, records)
         project = self.studio.get(project_id) or {}
-        record = next(r for r in records if r["channel"] == channel)
         self._snapshot_event(project, record, events.actor())
         return self.view(project_id)
 
@@ -509,7 +514,7 @@ class StudioModule:
         def apply(project: dict) -> set[str]:
             # Под замком студии и только когда выпуск не запущен: шаг публикации журнал сейчас не пишет.
             records = steps.load_published(folder)
-            found = next((r for r in records if r["channel"] == payload["channel"]), None)
+            found = steps.current_record(records, payload["channel"])
             if found is None or steps.publication_state(found) not in (steps.PACKAGED, steps.UPLOADED):
                 raise bad_request("В этот канал не выгружался пакет для ручной загрузки.")
             # Поправить ссылку можно; время публикации — первое «Залил».

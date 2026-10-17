@@ -260,6 +260,7 @@ class Refresher:
         return add_snapshot(record | {"public": bool(chat["username"])}, {"views": views, "members": chat["members"]})
 
 
+LIVE = (None, "sent", "uploaded")  # состояния вышедшего поста (steps.SENT/UPLOADED); None — записи до журнала
 LENGTHS = ((180, "до 3 мин"), (480, "3–8 мин"), (900, "8–15 мин"), (float("inf"), "длиннее 15 мин"))
 
 
@@ -275,7 +276,13 @@ def summary(items: list[dict]) -> list[dict]:
     24ч: свежий пост с недобранными сутками и старый с накопленными просмотрами несравнимы."""
     posts = []
     for item in items:
+        seen: set[str] = set()
         for record in item.get("published", []):
+            # Канал выпуска — один раз: первая вышедшая публикация, повтор не считается (AN-005).
+            channel = record.get("channel")
+            if record.get("state") not in LIVE or (channel and channel in seen):
+                continue
+            seen.add(channel)
             if record.get("views_24h") is None:
                 continue
             posts.append(
