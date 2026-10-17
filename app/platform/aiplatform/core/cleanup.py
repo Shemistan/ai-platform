@@ -2,8 +2,17 @@
 
 Удаляется только то, что выпуски уже скопировали к себе или что можно
 сделать заново: завершённые задачи вкладок «Фото», «Видео», «Аудио», записи
-кэша генераций, к которым давно не обращались, и выпуски из архива. Идущие
-задачи и неархивные выпуски не трогаются никогда.
+кэша генераций, к которым давно не обращались, загрузки и выпуски из архива
+(старше `days`). Опубликованные выпуски (шаг «Публикация» готов):
+
+- через `trim_days` после публикации — без тяжёлых промежуточных файлов
+  (картинки слайдов, исходники клипов, файлы шортса, озвучка в другом
+  темпе); `video.mp4`, `short.mp4`, `project.json`, `published.json`, тексты
+  и постер остаются;
+- через `archive_days` — в архив сами. Такой выпуск (`archived_by:
+  cleanup`) уборка потом не удаляет: в нём история публикаций.
+
+Идущие задачи и выпуски не трогаются никогда; неопубликованные неархивные — тоже.
 """
 
 from __future__ import annotations
@@ -17,6 +26,10 @@ from aiplatform.core import log
 DAY_S = 86400
 JOB_TABS = {"photo": "Задачи «Фото»", "video": "Задачи «Видео»", "audio": "Задачи «Аудио»"}
 ACTIVE = ("queued", "running")
+# Тяжёлые промежуточные файлы опубликованного выпуска: каталоги и шаблоны файлов (steps.py).
+TRIM_DIRS = ("images", "clips", "short")
+TRIM_GLOBS = ("voice-x*.mp3", "*.tmp")
+AUTO_ARCHIVED = "cleanup"  # project["archived_by"]: выпуск убрала в архив уборка
 
 
 def size_of(path: Path) -> int:
@@ -67,10 +80,15 @@ class Cleaner:
         out.append({"id": "uploads", "label": "Загрузки", "bytes": size_of(data / "uploads")})
         return out
 
-    def run(self, days: int, *, dry: bool, now: float | None = None) -> dict:
-        """Удалить (или с dry — только посчитать) всё восстановимое старше days дней."""
-        cutoff = (now or time.time()) - days * DAY_S
-        found = {"jobs": 0, "cache": 0, "archived": 0, "bytes": 0}
+    def run(self, days: int, *, dry: bool, now: float | None = None, policy: dict | None = None) -> dict:
+        """Удалить (или с dry — только посчитать) всё восстановимое старше days дней.
+
+        policy — раздел cleanup настроек (trim_days, archive_days); не задан — из settings.json."""
+        now = now or time.time()
+        cutoff = now - days * DAY_S
+        if policy is None:
+            policy = self.ctx.config.settings.load()["cleanup"]
+        found = {"jobs": 0, "cache": 0, "archived": 0, "uploads": 0, "trimmed": 0, "auto_archived": 0, "bytes": 0}
         for tab in JOB_TABS:
             module = self.ctx.modules.get(tab)
             if module is None:
@@ -82,6 +100,13 @@ class Cleaner:
                 found["jobs"] += 1
                 folder = self.ctx.config.data_dir / tab / "jobs" / job["id"]
                 found["bytes"] += size_of(folder) if dry else module.jobs.forget(job["id"])
+        uploads = self.ctx.config.uploads_dir
+        for entry in uploads.iterdir() if uploads.is_dir() else []:
+            if entry.is_file() and entry.stat().st_mtime < cutoff:
+                found["uploads"] += 1
+                found["bytes"] += entry.stat().st_size
+                if not dry:
+                    entry.unlink(missing_ok=True)
         studio = self.studio
         if studio is not None:
             cache = studio.config.cache_dir
@@ -91,12 +116,58 @@ class Cleaner:
                     found["bytes"] += entry.stat().st_size
                     if not dry:
                         entry.unlink(missing_ok=True)
+            self._published(studio.studio, found, now, policy, dry=dry)
             for project in studio.studio.list(archived=True):
                 if project["running"] or project["updated_at"] >= cutoff:
                     continue
+                full = studio.studio.get(project["id"]) or {}
+                if full.get("archived_by") == AUTO_ARCHIVED:
+                    continue  # убран в архив уборкой: история публикаций остаётся
                 found["archived"] += 1
                 folder = studio.studio.project_dir(project["id"])
                 found["bytes"] += size_of(folder) if dry else studio.studio.delete(project["id"])
         if not dry:
             log.event("cleanup.done", days=days, **found)
         return found
+
+    def _published(self, studio, found: dict, now: float, policy: dict, *, dry: bool) -> None:
+        """Опубликованные выпуски: через trim_days — без промежуточных файлов, через archive_days — в архив."""
+        trim_days, archive_days = policy.get("trim_days") or 0, policy.get("archive_days") or 0
+        if not trim_days and not archive_days:
+            return
+        for item in studio.list(archived=False) + studio.list(archived=True):
+            project = studio.get(item["id"])
+            if project is None or project.get("running"):
+                continue
+            publish = project.get("steps", {}).get("publish", {})
+            if publish.get("status") != "done":
+                continue
+            age_days = (now - (publish.get("updated_at") or project.get("updated_at") or now)) / DAY_S
+            if trim_days and age_days >= trim_days:
+                freed = trim(studio.project_dir(project["id"]), dry=dry)
+                if freed:
+                    found["trimmed"] += 1
+                    found["bytes"] += freed
+                    if not dry:
+                        studio.annotate(project["id"], trimmed_at=now)
+            if archive_days and age_days >= archive_days and not project.get("archived"):
+                found["auto_archived"] += 1
+                if not dry:
+                    studio.archive(project["id"], True)
+                    studio.annotate(project["id"], archived_by=AUTO_ARCHIVED)
+
+
+def trim(folder: Path, *, dry: bool) -> int:
+    """Удалить тяжёлые промежуточные файлы выпуска (TRIM_DIRS, TRIM_GLOBS); вернуть байты."""
+    freed = 0
+    for name in TRIM_DIRS:
+        path = folder / name
+        if path.is_dir():
+            freed += size_of(path) if dry else remove_tree(path)
+    for pattern in TRIM_GLOBS:
+        for path in folder.glob(pattern):
+            if path.is_file():
+                freed += path.stat().st_size
+                if not dry:
+                    path.unlink(missing_ok=True)
+    return freed

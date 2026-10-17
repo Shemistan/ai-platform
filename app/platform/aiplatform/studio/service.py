@@ -20,7 +20,7 @@ from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
-from aiplatform.studio import news, prompts, publish, schedule, series, slides, stats, steps
+from aiplatform.studio import metrics, news, prompts, publish, schedule, series, slides, stats, steps
 from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError, complete, missing_cli
 from aiplatform.studio.pipeline import (
@@ -227,6 +227,7 @@ class StudioModule:
             video=self.ctx.modules["video"].jobs,
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
             cache=MediaCache(self.config.cache_dir),
+            space=self.ctx.gate.check,
         )
         channels = self.ctx.modules.get("channels")
         if channels is not None:  # нажатия кнопок бота приходят из `bot serve` этой вкладки
@@ -710,6 +711,13 @@ class StudioModule:
         """Каналы Telegram, куда по умолчанию публикуется дайджест."""
         chosen = set(self.scenario_defaults("digest").get("channels") or [])
         return [c for c in self.channels() if c.id in chosen and c.type == publish.TELEGRAM]
+
+    def health_stats(self) -> dict:
+        """«Здоровье» за 7 и 28 дней по журналу событий (REL-010): упавшие шаги, сборка, дайджест вовремя."""
+        deadline = self.ctx.config.env.get("AIP_DIGEST_DEADLINE") or metrics.DEFAULT_DEADLINE
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", deadline):
+            deadline = metrics.DEFAULT_DEADLINE
+        return metrics.report(self.events.read(), deadline=deadline) | {"file": str(self.events.path)}
 
     def ready_checks(self) -> list[dict]:
         """Для /api/ready: поток расписания жив, у каналов дайджеста есть токен, последний дайджест не упал."""
@@ -1400,6 +1408,8 @@ class StudioModule:
                 return req.send_json(self.refresh_stats(), HTTPStatus.ACCEPTED)
             case ("POST", ["projects", pid, "stats"]):
                 return req.send_json(self.manual_stats(pid, req.json()))
+            case ("GET", ["health", "stats"]):
+                return req.send_json(self.health_stats())
             case ("GET", ["board"]):
                 return req.send_json(self.board(archived=req.arg("archived") in ("1", "true")))
             case ("POST", ["projects", pid, "split"]):

@@ -151,7 +151,6 @@
 .step-main { display: grid; gap: var(--sp-2); min-width: 0; }
 .step.collapsed { padding-block: var(--sp-2); }
 .step-summary { flex: 1 1 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.step-head .secondary.small { padding: var(--sp-1) var(--sp-3); font-size: var(--fs-sm); }
 
 /* Автопубликация: необратимо — тумблер предупреждающего цвета. */
 .auto-publish { padding: var(--sp-2) var(--sp-2); border-radius: var(--r-md); background: var(--warn-bg); }

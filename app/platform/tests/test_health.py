@@ -103,6 +103,20 @@ class AgentScriptTest(unittest.TestCase):
         self.assertEqual(list(agents.iterdir()), [])
         self.assertIn(f"bootout gui/{uid}/com.aiplatform.digest-check", self.calls.read_text())
 
+    def test_backup_agent_only_with_backup_dir(self):
+        agents = self.tmp / "agents"
+        self.assertEqual(self.agent("install").returncode, 0)
+        self.assertFalse((agents / "com.aiplatform.backup.plist").exists())
+        self.env |= {"AIP_BACKUP_DIR": str(self.tmp / "backups"), "AIP_BACKUP_AT": "04:05"}
+        done = self.agent("install")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        plist = plistlib.loads((agents / "com.aiplatform.backup.plist").read_bytes())
+        self.assertEqual(plist["ProgramArguments"][:4], ["/usr/bin/make", "-C", str(PLATFORM.resolve()), "backup"])
+        self.assertEqual(plist["StartCalendarInterval"], {"Hour": 4, "Minute": 5})
+        self.assertNotIn("AGE", str(plist))  # ключи — в local.mk, не в plist
+        self.assertEqual(self.agent("uninstall").returncode, 0)
+        self.assertEqual(list(agents.iterdir()), [])
+
     def test_unknown_command(self):
         self.assertEqual(self.agent("nope").returncode, 2)
 

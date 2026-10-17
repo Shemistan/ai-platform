@@ -74,13 +74,30 @@ def default_font() -> str:
 # Выставляет tests/__init__.py (и наследуют подпроцессы тестов): под ним боевые
 # каталоги данных запрещены — тест не должен читать чужие настройки и портить их.
 TEST_GUARD_ENV = "AIP_TEST_GUARD"
-SERVICE_DATA_DIRS = (SERVICE_DIR / "data", SERVICE_DIR / "data-demo")
+LEGACY_DATA_DIR = SERVICE_DIR / "data"  # до REL-012 данные жили в рабочей копии
+SERVICE_DATA_DIRS = (LEGACY_DATA_DIR, SERVICE_DIR / "data-demo")
+# Данные вне рабочей копии: чистка, ветки и worktree агента их не трогают.
+USER_DATA_DIR = "Library/Application Support/aiplatform"
+
+
+def user_data_dir(env: Mapping[str, str]) -> Path:
+    return Path(env.get("HOME") or Path.home()) / USER_DATA_DIR
+
+
+def default_data_dir(env: Mapping[str, str], legacy: Path = LEGACY_DATA_DIR) -> Path:
+    """AIP_DATA_DIR не задан: ~/Library/Application Support/aiplatform; пока его нет, а старый
+    app/platform/data есть — старый (перенос — make migrate-data, см. README)."""
+    new = user_data_dir(env)
+    if not new.exists() and legacy.is_dir():
+        return legacy
+    return new
 
 
 def _guard_tests(data_dir: Path) -> None:
     if not flag(os.environ, TEST_GUARD_ENV):
         return
-    if data_dir in {d.resolve() for d in SERVICE_DATA_DIRS}:
+    guarded = {d.resolve() for d in SERVICE_DATA_DIRS} | {user_data_dir(os.environ).resolve()}
+    if data_dir in guarded:
         raise RuntimeError(
             f"тесты не должны работать с боевым каталогом данных {data_dir}: "
             "задай AIP_DATA_DIR во временный каталог (tests.helpers.isolated_config)"
@@ -125,7 +142,7 @@ def load(env: Mapping[str, str] | None = None) -> Config:
     backend = pick(env, "AIP_BACKEND", default="real")
     if backend not in ("real", "fake"):
         raise ValueError(f"AIP_BACKEND: ожидается real или fake, получено {backend!r}")
-    data = pick(env, "AIP_DATA_DIR", default=str(SERVICE_DIR / "data"))
+    data = pick(env, "AIP_DATA_DIR", default=str(default_data_dir(env)))
     data_dir = Path(data).expanduser()
     if not data_dir.is_absolute():
         data_dir = SERVICE_DIR / data_dir
