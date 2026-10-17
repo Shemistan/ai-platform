@@ -1,9 +1,9 @@
 // Вкладка «Статьи»: библиотека статей движка — текст для озвучки, озвучка, проверка, канал.
-import { $, narratorApi as api, chip, confirmAction, fill, h, minutes, shortDate, taskCard } from "/ui.js";
+import { $, busyClick, chip, confirmAction, errorState, fill, h, loadLast, minutes, narratorApi as api, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
 
 const API = "/api/library";
 const QUALITY = { verbatim: "текст дословно", pasted: "текст прислан", webfetch: "текст по пересказу WebFetch" };
-const state = { data: null, audio: null, card: null, selected: null, filter: "all", search: "", polling: false };
+const state = { data: null, audio: null, card: null, selected: null, filter: "all", search: "" };
 
 const isActive = (t) => t.status === "queued" || t.status === "running";
 
@@ -52,10 +52,10 @@ function renderStats() {
   const running = state.data.tasks.some((t) => isActive(t) && (t.kind === "render" || t.kind === "unsent"));
   fill(
     $("bulk"),
-    h("button", { type: "button", class: "primary", disabled: !waiting || running, onclick: () => render(false) }, waiting ? `Озвучить новые (${waiting})` : "Новых нет"),
-    h("button", { type: "button", class: "small-btn", disabled: running || !list.length, onclick: () => render(true) }, "Переозвучить все"),
-    h("button", { type: "button", class: "small-btn accent", disabled: !state.data.unsent || running, onclick: () => bulkUnsent("send") }, `Отправить неотправленные (${state.data.unsent})`),
-    h("button", { type: "button", class: "small-btn", disabled: !state.data.unsent || running, onclick: () => bulkUnsent("mark") }, "Считать отправленными"),
+    h("button", { type: "button", class: "primary", disabled: !waiting || running, onclick: busyClick(() => render(false), "bulk") }, waiting ? `Озвучить новые (${waiting})` : "Новых нет"),
+    h("button", { type: "button", class: "small-btn", disabled: running || !list.length, onclick: busyClick(() => render(true), "bulk") }, "Переозвучить все"),
+    h("button", { type: "button", class: "small-btn accent", disabled: !state.data.unsent || running, onclick: busyClick(() => bulkUnsent("send"), "bulk") }, `Отправить неотправленные (${state.data.unsent})`),
+    h("button", { type: "button", class: "small-btn", disabled: !state.data.unsent || running, onclick: busyClick(() => bulkUnsent("mark"), "bulk") }, "Считать отправленными"),
     h("span", { class: "hint" }, `Озвучка — движком «Аудио» по умолчанию (${defaultEngineLabel()}), с проверкой распознаванием и отправкой в канал статей.`),
   );
   const recent = state.data.tasks.filter((t) => isActive(t) || Date.now() / 1000 - (t.finished_at || 0) < 600).slice(0, 4);
@@ -133,7 +133,7 @@ function renderList() {
                 {},
                 h("button", { type: "button", class: "row-link", "data-article": a.id, "aria-current": a.id === state.selected ? "true" : null }, a.title),
                 h("span", { class: "sub" }, [shortDate(a.added), a.duration_sec ? minutes(a.duration_sec) : "", a.engine ? engineLabel(a.engine) : ""].filter(Boolean).join(" · ")),
-                h("span", { class: "toolbar", style: "margin-top:6px" }, ...statusChips(a)),
+                h("span", { class: "toolbar", style: "margin-top:var(--sp-2)" }, ...statusChips(a)),
               ),
             ),
           ),
@@ -189,7 +189,7 @@ function renderCard() {
     }
   };
 
-  const title = h("input", { type: "text", value: c.title, "aria-label": "Название", style: "font-size:17px;font-weight:600" });
+  const title = h("input", { type: "text", value: c.title, "aria-label": "Название", class: "title-input" });
   const summary = h("input", { type: "text", value: c.summary || "", placeholder: "1–3 предложения: о чём статья и главный вывод" });
   // Право на переработку: без него полный пересказ в канал не уходит — только аннотация со ссылкой.
   const license = h(
@@ -258,9 +258,9 @@ function renderCard() {
         h(
           "div",
           { class: "toolbar" },
-          h("button", { type: "button", class: "secondary", disabled: locked, onclick: save }, "Сохранить"),
+          h("button", { type: "button", class: "secondary", disabled: locked, onclick: busyClick(save, `save:${c.id}`) }, "Сохранить"),
           c.source ? h("button", { type: "button", class: "small-btn", disabled: locked, onclick: fromSource }, "Взять исходный текст") : null,
-          c.has_source ? h("button", { type: "button", class: "small-btn accent", disabled: locked, onclick: run("prepare") }, "Подготовить агентом") : null,
+          c.has_source ? h("button", { type: "button", class: "small-btn accent", disabled: locked, onclick: busyClick(run("prepare"), `act:${c.id}`) }, "Подготовить агентом") : null,
         ),
         h("p", { class: "hint" }, "Агент пишет полный пересказ для уха по правилам озвучки и заполняет описание. Цифры и латиницу движок и так переведёт в произношение."),
         c.source ? h("details", { class: "inline" }, h("summary", {}, "Исходный текст (source.md)"), h("pre", { class: "preview-text" }, c.source)) : null,
@@ -275,7 +275,7 @@ function renderCard() {
         h(
           "div",
           { class: "toolbar" },
-          h("button", { type: "button", class: "primary", disabled: locked || !c.has_script || !summary.value.trim(), onclick: () => run("synth", { ...value(), send: send.checked })() }, c.has_audio ? "Переозвучить" : "Озвучить"),
+          h("button", { type: "button", class: "primary", disabled: locked || !c.has_script || !summary.value.trim(), onclick: busyClick(() => run("synth", { ...value(), send: send.checked })(), `act:${c.id}`) }, c.has_audio ? "Переозвучить" : "Озвучить"),
           !summary.value.trim() && c.has_script ? h("span", { class: "hint warn" }, "Нужно описание — сохрани его выше.") : null,
         ),
       ),
@@ -286,7 +286,7 @@ function renderCard() {
           ? h("div", { class: "check-head" }, h("span", { class: `score ${c.check >= 85 ? "ok" : "warn"}` }, `${c.check}%`), h("span", { class: "muted" }, "совпадение по словам"))
           : h("p", { class: "hint" }, "Озвучка распознаётся обратно в текст: так видно, где модель исказила слова."),
         c.check_report ? h("details", { class: "inline" }, h("summary", {}, "Отчёт проверки"), h("pre", { class: "preview-text" }, c.check_report)) : null,
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: run("verify") }, "Проверить")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: busyClick(run("verify"), `act:${c.id}`) }, "Проверить")),
       ),
       section(
         4,
@@ -296,11 +296,11 @@ function renderCard() {
           "div",
           { class: "toolbar" },
           channel,
-          h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: () => run("send", { channel: channel.value })() }, "Отправить"),
-          c.sent ? h("button", { type: "button", class: "small-btn", disabled: locked, onclick: sendAgain }, "Отправить ещё раз") : null,
+          h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: busyClick(() => run("send", { channel: channel.value })(), `act:${c.id}`) }, "Отправить"),
+          c.sent ? h("button", { type: "button", class: "small-btn", disabled: locked, onclick: busyClick(sendAgain, `act:${c.id}`) }, "Отправить ещё раз") : null,
         ),
         h("p", { class: "hint" }, "Уходит mp3 с описанием статьи. Уже отправленное «Отправить» не повторяет — для повтора есть «Отправить ещё раз»."),
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "small-btn accent", disabled: !c.has_script, onclick: () => makeVideo(c, script.value) }, "Сделать видео по статье →")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "small-btn accent", disabled: !c.has_script, onclick: busyClick(() => makeVideo(c, script.value)) }, "Сделать видео по статье →")),
       ),
     ),
   );
@@ -318,7 +318,7 @@ async function select(id) {
     state.card = await api("GET", `${API}/articles/${encodeURIComponent(id)}`);
   } catch (err) {
     state.card = null;
-    fill($("card"), h("p", { class: "job-error" }, err.message));
+    fill($("card"), errorState({ title: "Статья не открылась", error: err, onRetry: () => select(id) }));
     return;
   }
   history.replaceState(null, "", `?article=${encodeURIComponent(id)}`);
@@ -347,22 +347,51 @@ async function addArticle(payload) {
 
 // --- данные ---
 
-async function refresh() {
+// Опрос, пока идёт задача: раз в 1,5 с; в простое не опрашиваем — каждый ответ стоит запуска движка
+// (poller из ui.js: после сбоя связи — с растущей паузой до 30 с, в скрытой вкладке — раз в минуту,
+// при возврате на вкладку — сразу).
+const libraryPoll = poller({ run: (signal) => refresh(signal), fast: 1500, slow: Infinity, isActive: () => state.data?.tasks.some(isActive) });
+
+// Место над сводкой для ошибки загрузки (errorState): «Повторить», а при поломке движка —
+// последний удачный список из браузера с пометкой, от какого он времени.
+const problem = h("div", { class: "problem-slot" });
+
+function showProblem(err) {
+  if (err.kind === "abort") return;
+  let note = null;
+  if (!state.data) {
+    const last = loadLast("library");
+    if (last?.data) {
+      state.data = last.data;
+      state.stale = last.at;
+      renderStats();
+      renderList();
+    } else fill($("articles"), h("p", { class: "muted" }, "Список не загрузился — см. ошибку выше."));
+  }
+  if (state.stale) note = `Показаны данные от ${stamp(state.stale)}: свежие не пришли.`;
+  if (problem.dataset.error === err.message && problem.firstChild) return; // опрос повторил ту же ошибку — не мигаем
+  problem.dataset.error = err.message;
+  fill(problem, errorState({ title: "Библиотека не обновилась", error: err, note, onRetry: () => refresh().catch(() => {}) }));
+}
+
+async function refresh(signal) {
   try {
-    state.data = await api("GET", `${API}/state`);
-    state.failures = 0;
+    const data = await api("GET", `${API}/state`, undefined, { signal });
+    state.data = data;
+    state.stale = null;
+    saveLast("library", data);
+    fill(problem);
+    delete problem.dataset.error;
   } catch (err) {
-    state.failures = (state.failures || 0) + 1;
-    if (state.data) fill($("tasks"), h("p", { class: "job-error" }, `Нет связи с сервисом (${err.message}) — обновлю, когда он вернётся.`));
+    showProblem(err);
     throw err;
-  } finally {
-    schedule();
   }
   renderStats();
   renderList();
+  libraryPoll.later();
   if (state.selected) {
     try {
-      const fresh = await api("GET", `${API}/articles/${encodeURIComponent(state.selected)}`);
+      const fresh = await api("GET", `${API}/articles/${encodeURIComponent(state.selected)}`, undefined, { signal });
       const editing = document.activeElement && $("card").contains(document.activeElement);
       const changed = JSON.stringify(fresh.tasks) !== JSON.stringify(state.card?.tasks) || fresh.has_audio !== state.card?.has_audio || fresh.check !== state.card?.check;
       state.card = fresh;
@@ -370,21 +399,6 @@ async function refresh() {
     } catch {
       /* статья могла пропасть */
     }
-  }
-}
-
-// Пока идёт задача — опрос раз в 1,5 с; после сбоя связи — с растущей паузой до 30 с, пока не ответит.
-function schedule() {
-  const active = state.data?.tasks.some(isActive);
-  if ((active || state.failures) && !state.polling) {
-    state.polling = true;
-    setTimeout(
-      () => {
-        state.polling = false;
-        refresh().catch(() => {});
-      },
-      state.failures ? Math.min(1500 * 2 ** state.failures, 30000) : 1500,
-    );
   }
 }
 
@@ -424,8 +438,10 @@ async function init() {
   } catch {
     state.audio = null;
   }
+  $("stats").before(problem);
+  libraryPoll.start(Infinity);
   await refresh();
   if (params.get("article")) select(params.get("article"));
 }
 
-init().catch((err) => fill($("articles"), h("p", { class: "job-error" }, `Не удалось загрузить библиотеку: ${err.message}`)));
+init().catch((err) => problem.isConnected || fill($("articles"), errorState({ title: "Не удалось загрузить библиотеку", error: err, onRetry: () => location.reload() })));
