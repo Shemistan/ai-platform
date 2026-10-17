@@ -1,0 +1,25 @@
+{
+  "$comment": "ответ `narrate bridge bot`",
+  "type": "object",
+  "required": [
+    "channels",
+    "channels_file",
+    "token",
+    "token_error",
+    "username"
+  ],
+  "properties": {
+    "token": {
+      "type": "boolean"
+    },
+    "token_error": {},
+    "username": {},
+    "channels": {
+      "$comment": "имя канала из telegram_tems.md → цель; ключи — данные",
+      "type": "object"
+    },
+    "channels_file": {
+      "type": "string"
+    }
+  }
+}

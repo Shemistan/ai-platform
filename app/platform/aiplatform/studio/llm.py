@@ -10,10 +10,24 @@ from __future__ import annotations
 import json
 import re
 import threading
+from pathlib import Path
 
 from aiplatform.core import runner
 
 INSTALL_HINT = "Нужен CLI модели: claude (Claude Code) или своя команда в AIP_LLM_CMD."
+
+
+def missing_cli(cmd: str) -> str:
+    """Баннер «Проблемы»: нет CLI модели. Один текст из студии и новостей — шапка покажет его раз."""
+    if Path(cmd).name == "claude":
+        return (
+            "Нет claude CLI — дайджест и тексты сценариев не соберутся: поставь Claude Code "
+            "(npm install -g @anthropic-ai/claude-code), залогинься и проверь claude --version; "
+            "под launchd — полный путь в AIP_LLM_CMD и CLAUDE."
+        )
+    return f"LLM-команда «{cmd}» не найдена — дайджест и тексты сценариев не соберутся: проверь AIP_LLM_CMD."
+
+
 _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.S)
 
 
@@ -31,7 +45,7 @@ def complete(prompt: str, *, cmd: tuple[str, ...], cancel: threading.Event, on_l
             on_line(line)
 
     try:
-        runner.run(list(cmd), collect, cancel, stdin=prompt.encode("utf-8"), missing_hint=INSTALL_HINT)
+        runner.run(list(cmd), collect, cancel, stdin=prompt.encode("utf-8"), missing_hint=INSTALL_HINT, kind="llm")
     except runner.RunFailed as exc:
         tail = " ".join(x.strip() for x in lines[-3:] if x.strip())
         raise StudioError(f"LLM: {exc}{' — ' + tail if tail else ''}") from exc
@@ -53,7 +67,7 @@ def extract_json(text: str) -> object:
             return json.loads(raw)
         except json.JSONDecodeError:
             continue
-    raise StudioError("LLM ответила не JSON — перезапусти шаг или поправь результат руками.")
+    raise StudioError("ИИ вернул ответ в неверном формате. Перезапусти шаг или поправь результат вручную.")
 
 
 def plain(text: str) -> str:

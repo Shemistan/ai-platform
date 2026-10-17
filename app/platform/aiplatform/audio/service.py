@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import replace
 from http import HTTPStatus
 from pathlib import Path
 
@@ -25,9 +26,12 @@ from aiplatform.audio.jobs import (
     build_spec,
     parse_tempo,
 )
+from aiplatform.core import audit
+from aiplatform.core import jobs as core_jobs
 from aiplatform.core import tasks as tasks_module
+from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, handle_uploads, not_found
-from aiplatform.core.narrator import INSTALL_HINT, NarratorError
+from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.core.uploads import AUDIO
 
 PREFIX = "audio"
@@ -44,11 +48,12 @@ class AudioModule:
     label = "Аудио"
 
     def __init__(self, ctx) -> None:
-        self.config = audio_config.load(ctx.config)
+        self.config = replace(audio_config.load(ctx.config), installed=self._installed)
         self.narrator = self.config.narrator
         self.uploads = ctx.uploads
         self.jobs = AudioJobs(self.config, ctx.gate, URL_BASE)
         self.tasks = tasks_module.Tasks(self.config.data_dir / "tasks", ctx.gate)
+        self.audit = audit.AuditLog(ctx.config.data_dir / audit.FILE)  # запись голоса — в журнал комплаенса
         self._engines_lock = threading.Lock()
         self._engines: tuple[float, dict] | None = None
 
@@ -95,12 +100,32 @@ class AudioModule:
             "engines_error": info.get("error"),
             "models_hint": info.get("models_hint"),
             "install_hint": INSTALL_HINT,
+            "upload_limits": uploads_module.limits(),
         }
 
+    def _installed(self) -> set[str] | None:
+        """Движки, у которых мост не нашёл проблем (веса на месте); None — мост не ответил."""
+        info = self.engines()
+        if info.get("error") or not isinstance(info.get("engines"), list):
+            return None
+        return {e["id"] for e in info["engines"] if isinstance(e, dict) and not e.get("problem")}
+
     def problems(self) -> list[str]:
-        if self.config.runner_available():
+        problem = self.narrator.check()  # нет команды, старый движок, другая версия моста
+        if problem:
+            return [problem]
+        info = self.engines()
+        live = {e.get("id"): e for e in info.get("engines") or [] if isinstance(e, dict)}
+        engine_id = self.config.default_engine
+        problem = (live.get(engine_id) or {}).get("problem")
+        if info.get("error") or not problem:
             return []
-        return [f"Аудио: команда «{self.config.narrate_cmd[0]}» не найдена. {INSTALL_HINT}"]
+        engine = voices.ENGINES.get(engine_id)
+        label = engine.label if engine else engine_id
+        hint = voices.models_command(engine_id)
+        where = info.get("models_hint")
+        tail = f" Папка моделей: {where}." if where and not info.get("models_dir_exists", True) else ""
+        return [f"Аудио: у движка по умолчанию {label} нет весов ({problem}). Поставь: {hint}.{tail}"]
 
     # --- маршруты ---
 
@@ -122,14 +147,14 @@ class AudioModule:
                 card = self._bridge("article", item_id)
                 return req.send_json({"id": item_id, "title": card.get("title", ""), "text": card.get("script", "")})
             case ("GET", ["jobs"]):
-                return req.send_json({"jobs": self.jobs.list()})
+                return req.send_json({"jobs": self.jobs.list(*core_jobs.list_args(req))})
             case ("POST", ["jobs"]):
                 payload = req.json(MAX_BODY)
                 try:
                     job = self.jobs.create(payload)
                 except ValidationError as exc:
                     raise bad_request(str(exc)) from exc
-                return req.send_json(job, HTTPStatus.CREATED)
+                return req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/audio/jobs/{job['id']}"})
             case ("POST", ["jobs", "batch"]):
                 return req.send_json(self.batch(req.json(MAX_FILE_BODY)), HTTPStatus.CREATED)
             case ("GET", ["jobs", job_id]):
@@ -167,9 +192,7 @@ class AudioModule:
         try:
             return self.narrator.bridge(*args, stdin=stdin)
         except NarratorError as exc:
-            message = str(exc)
-            status = HTTPStatus.NOT_FOUND if "нет в библиотеке" in message else HTTPStatus.BAD_GATEWAY
-            raise HttpError(status, message) from exc
+            raise http_error(exc) from exc
 
     def library(self) -> dict:
         """Что можно взять в поле текста: статьи с текстом для озвучки и дайджесты."""
@@ -245,11 +268,31 @@ class AudioModule:
             argv += ["--from", str(path)]
             if not (isinstance(text, str) and text.strip()):
                 raise bad_request("Напиши, что сказано в записи, слово в слово.")
+            argv += voice_consent(payload)  # чей голос и есть ли согласие (CMP-010)
         elif voice["record"] != "gemini":
             raise bad_request("Для этого голоса нужна своя запись и её текст.")
 
-        def done(_task: dict) -> None:
+        def done(task: dict) -> None:
+            if upload:  # on_done зовётся только после успешной записи
+                # Исходная запись — голос человека: образец записан, копия в uploads/ не нужна.
+                # Не вышло — запись остаётся для повтора, её уберёт уборка (CMP-016).
+                path.unlink(missing_ok=True)
             self.engines(fresh=True)  # появился образец — у клонов новый голос
+            self.audit.write(
+                "voice_record",
+                who=who,
+                voice=voice["voice"],
+                stem=stem,
+                source="upload" if upload else "gemini",
+                status=task.get("status"),
+                text_sha256=audit.sha256_text(text) if isinstance(text, str) and text.strip() else None,
+                upload_sha256=upload_sha256,
+                # Форма согласия владельца (self | written); имя владельца — в consent.json у образца.
+                consent_form=payload["consent"].get("form", "self") if upload else None,
+            )
+
+        who = audit.actor()
+        upload_sha256 = audit.sha256_file(path) if upload else None  # до задачи: файл загрузки она заберёт
 
         spec = tasks_module.Spec(
             kind=VOICE_TASK,
@@ -266,6 +309,29 @@ class AudioModule:
     def close(self) -> None:
         self.tasks.close()
         self.jobs.close()
+
+
+CONSENT_FORMS = ("self", "written")  # мой голос / письменное согласие владельца (narrator consent.py)
+MAX_OWNER = 200
+
+
+def voice_consent(payload: dict) -> list[str]:
+    """Аргументы согласия для `narrate voice`: без галочки и имени владельца — 400 (CMP-010).
+
+    payload["consent"] = {"confirmed": true, "owner": "чей голос", "form": "self" | "written"}.
+    Запись о согласии `<stem>.consent.json` кладёт narrator рядом с образцом.
+    """
+    consent = payload.get("consent")
+    if not isinstance(consent, dict) or consent.get("confirmed") is not True:
+        raise bad_request("Подтверди, что это твой голос или у тебя есть письменное согласие владельца.")
+    owner = consent.get("owner")
+    owner = " ".join(owner.split()) if isinstance(owner, str) else ""
+    if not owner or len(owner) > MAX_OWNER:
+        raise bad_request("Напиши, чей это голос.")
+    form = consent.get("form", "self")
+    if form not in CONSENT_FORMS:
+        raise bad_request("Согласие — self (мой голос) или written (письменное согласие владельца).")
+    return ["--owner", owner, "--form", form]
 
 
 def _text_field(payload: object) -> str:

@@ -1,5 +1,5 @@
 // Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены; расписание, уведомления, уборка.
-import { $, api, chip, fill, h } from "/ui.js";
+import { $, api, busyClick, chip, fill, h, icon, plural, toast } from "/ui.js";
 
 const API = "/api/settings";
 
@@ -10,13 +10,17 @@ function showError(message) {
 }
 
 async function toggle(body) {
+  // Каталог перерисовывается целиком: фокус возвращаем на тот же флажок или кнопку голоса.
+  const focused = document.activeElement?.id;
   try {
     render(await api("POST", `${API}/toggle`, body));
     showError("");
+    toast("Сохранено");
+    if (focused) $(focused)?.focus();
   } catch (err) {
     showError(err.message);
     load();
-loadCleanup();
+    loadCleanup();
   }
 }
 
@@ -26,28 +30,33 @@ function installedChip(item) {
   return null;
 }
 
-// Строка каталога: флажок «включено», название, пометки и под ними — extra (голоса движка).
+// Строка каталога: переключатель «включено» (role=switch), название, пометки и под ними — extra (голоса движка).
+// Подпись связана с переключателем через for/id, пояснение — через aria-describedby: имя = название.
 function row(item, kind, note, extra = null) {
+  const id = `t-${kind}-${String(item.id).replace(/[^\w-]/g, "_")}`;
   const box = h("input", {
     type: "checkbox",
+    role: "switch",
+    id,
     checked: item.enabled,
+    "aria-describedby": note ? `${id}-note` : null,
     onchange: (e) => toggle({ kind, id: item.id, enabled: e.target.checked }),
   });
   return h(
     "div",
     { class: `toggle-row${item.enabled ? "" : " off"}` },
-    h("label", {}, box),
+    box,
     h(
       "div",
       { class: "toggle-body" },
       h(
-        "label",
-        { class: "toggle-title", onclick: () => box.click() },
-        h("span", { class: "toggle-name" }, item.label),
+        "div",
+        { class: "toggle-title" },
+        h("label", { class: "toggle-name", for: id }, item.label),
         installedChip(item),
         item.enabled ? null : chip("выключено"),
       ),
-      note ? h("span", { class: "hint" }, note) : null,
+      note ? h("span", { class: "hint", id: `${id}-note` }, note) : null,
       extra,
     ),
   );
@@ -56,18 +65,20 @@ function row(item, kind, note, extra = null) {
 function voiceButtons(engine) {
   return h(
     "div",
-    { class: "voices", role: "group", "aria-label": `Голоса ${engine.label}` },
+    { class: "segmented voices", role: "group", "aria-label": `Голоса ${engine.label}` },
     ...engine.voices.map((v) =>
       h(
         "button",
         {
           type: "button",
+          id: `v-${engine.id}-${v.id}`.replace(/[^\w-]/g, "_"),
           "aria-pressed": String(v.enabled),
           disabled: !engine.enabled,
           title: v.id === engine.default_voice ? "голос по умолчанию" : null,
           onclick: () => toggle({ kind: "voice", engine: engine.id, id: v.id, enabled: !v.enabled }),
         },
-        v.id === engine.default_voice ? `${v.id} ★` : v.id,
+        v.id,
+        v.id === engine.default_voice ? [icon("star"), h("span", { class: "sr-only" }, "голос по умолчанию")] : null,
       ),
     ),
   );
@@ -77,10 +88,11 @@ async function section(name, body) {
   try {
     render(await api("POST", `${API}/section/${name}`, body));
     showError("");
+    toast("Настройки сохранены");
   } catch (err) {
     showError(err.message);
     load();
-loadCleanup();
+    loadCleanup();
   }
 }
 
@@ -95,7 +107,9 @@ function checkRow(label, hint, checked, onchange) {
 
 function renderSchedule(data) {
   const plan = data.schedule;
-  const last = data.last_runs?.digest;
+  // schedule.json: {day, result, error, at, attempts}; старая запись — строка-дата.
+  const run = data.last_runs?.digest;
+  const last = typeof run === "string" ? run : run?.result === "failed" ? `${run.day} — не удался (${run.error}), попыток ${run.attempts}` : run?.day;
   fill(
     $("schedule"),
     h(
@@ -119,10 +133,16 @@ function renderSchedule(data) {
         ),
       ),
       last ? h("p", { class: "hint" }, `Последний запуск по расписанию: ${last}. Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день.`) : h("p", { class: "hint" }, "Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день."),
-      checkRow("Уведомлять меня", "Когда выпуск ждёт тебя, упал или опубликован. На Mac — системное уведомление; своя команда — AIP_NOTIFY_CMD.", data.notify.enabled, (v) => section("notify", { enabled: v })),
-      h("div", { class: "actions" }, h("button", { type: "button", class: "small-btn", onclick: () => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)) }, "Проверить уведомление")),
+      checkRow("Уведомлять меня", "Когда выпуск ждёт тебя, упал или опубликован. В Telegram — если указан чат ниже; на Mac — системное уведомление; своя команда — AIP_NOTIFY_CMD.", data.notify.enabled, (v) => section("notify", { enabled: v })),
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "hint" }, "Мой чат в Telegram (id или @username) — бот каналов пишет туда; сначала напиши боту /start"),
+        h("input", { type: "text", value: data.notify.telegram_chat || "", placeholder: "123456789", onchange: (e) => section("notify", { telegram_chat: e.target.value.trim() }) }),
+      ),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: busyClick(() => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)), "notify-test") }, "Проверить уведомление")),
       data.notifications.length
-        ? h("details", {}, h("summary", { class: "link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
+        ? h("details", { class: "disclosure" }, h("summary", {}, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
         : null,
     ),
   );
@@ -151,6 +171,7 @@ async function runCleanup() {
     cleanupState.data = await api("POST", `${API}/cleanup/run`);
     cleanupState.result = cleanupState.data.found;
     cleanupState.data = await api("GET", `${API}/cleanup`);
+    toast("Уборка выполнена");
   } catch (err) {
     showError(`Уборка: ${err.message}`);
   }
@@ -161,7 +182,7 @@ async function runCleanup() {
 function renderUpkeep(data) {
   const c = cleanupState.data;
   const found = c?.found;
-  const what = found ? [found.jobs && `задач вкладок: ${found.jobs}`, found.cache && `записей кэша: ${found.cache}`, found.archived && `выпусков из архива: ${found.archived}`].filter(Boolean) : [];
+  const what = found ? [found.jobs && `задач вкладок: ${found.jobs}`, found.cache && `записей кэша: ${found.cache}`, found.archived && `выпусков из архива: ${found.archived}`, found.uploads && `загрузок: ${found.uploads}`, found.trimmed && `опубликованных без промежуточных файлов: ${found.trimmed}`, found.auto_archived && `в архив: ${found.auto_archived}`].filter(Boolean) : [];
   const done = cleanupState.result;
   fill(
     $("upkeep"),
@@ -183,17 +204,23 @@ function renderUpkeep(data) {
           "label",
           { class: "field" },
           h("span", { class: "hint" }, "Удалять старше"),
-          h("select", { onchange: (e) => section("cleanup", { days: Number(e.target.value) }).then(loadCleanup) }, ...data.cleanup.choices.map((d) => h("option", { value: d, selected: d === data.cleanup.days }, `${d} дней`))),
+          h("select", { onchange: (e) => section("cleanup", { days: Number(e.target.value) }).then(loadCleanup) }, ...data.cleanup.choices.map((d) => h("option", { value: d, selected: d === data.cleanup.days }, `${d} ${plural(d, "день", "дня", "дней")}`))),
+        ),
+        h(
+          "label",
+          { class: "field" },
+          h("span", { class: "hint" }, "Брошенные выпуски — в архив через"),
+          h("select", { onchange: (e) => section("cleanup", { draft_days: Number(e.target.value) }) }, ...[...new Set([0, 3, 7, 14, 30, data.cleanup.draft_days ?? 7])].sort((a, b) => a - b).map((d) => h("option", { value: d, selected: d === (data.cleanup.draft_days ?? 7) }, d ? `${d} дн. без движения` : "никогда"))),
         ),
       ),
       checkRow("Убирать раз в сутки сам", null, data.cleanup.auto, (v) => section("cleanup", { auto: v })),
-      h("p", { class: "hint" }, "Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша и выпуски из архива. Неархивные выпуски и идущие задачи не трогаются."),
+      h("p", { class: "hint" }, `Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша, загрузки и выпуски из архива. У опубликованных через ${data.cleanup.trim_days ?? 14} дн. убираются картинки слайдов и исходники клипов (видео и журнал публикаций остаются), через ${data.cleanup.archive_days ?? 60} дн. выпуск уходит в архив сам. Неопубликованный выпуск без движения уходит в архив по сроку выше (с уведомлением, файлы остаются); идущие задачи не трогаются.`),
       found ? h("p", {}, what.length ? `Сейчас под уборку: ${what.join(", ")} — ${mb(found.bytes)}.` : "Сейчас убирать нечего.") : null,
       h(
         "div",
         { class: "actions" },
-        h("button", { type: "button", class: cleanupState.confirm ? "small-btn danger" : "small-btn", disabled: cleanupState.busy || !what.length, onclick: runCleanup }, cleanupState.busy ? "Убираю…" : cleanupState.confirm ? `Да, удалить ${found ? mb(found.bytes) : ""}` : "Убрать сейчас"),
-        cleanupState.confirm ? h("button", { type: "button", class: "link", onclick: () => ((cleanupState.confirm = false), renderUpkeep(state.data)) }, "Отмена") : null,
+        h("button", { type: "button", class: cleanupState.confirm ? "btn btn--danger btn--sm" : "btn btn--ghost btn--sm", disabled: cleanupState.busy || !what.length, onclick: runCleanup }, cleanupState.busy ? "Убираю…" : cleanupState.confirm ? `Да, удалить ${found ? mb(found.bytes) : ""}` : "Убрать сейчас"),
+        cleanupState.confirm ? h("button", { type: "button", class: "btn btn--link", onclick: () => ((cleanupState.confirm = false), renderUpkeep(state.data)) }, "Отмена") : null,
         done ? h("span", { class: "hint" }, `Освобождено ${mb(done.bytes)}.`) : null,
       ),
     ),
@@ -202,10 +229,47 @@ function renderUpkeep(data) {
 
 const state = { data: null };
 
+// Каналы по умолчанию по сценариям (PRD-005): новый выпуск получает их сам, доска публикует в них
+// выпуски без выбранных каналов.
+function renderDefaults(data) {
+  const box = $("defaults");
+  if (!box) return;
+  if (!data.channels?.length) {
+    fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Каналов публикации пока нет — добавь их во вкладке ", h("a", { href: "/channels/" }, "«Каналы»"), "."), posterDeadline(data)));
+    return;
+  }
+  const rows = (data.scenarios || []).map((s) => {
+    const current = new Set(s.channels);
+    const save = (id, on) => {
+      const next = data.channels.map((c) => c.id).filter((c) => (c === id ? on : current.has(c)));
+      section("default_channels", { [s.id]: next });
+    };
+    return h(
+      "div",
+      { class: "field" },
+      h("span", { class: "field-label" }, s.label),
+      h("div", { class: "inline-fields" }, ...data.channels.map((c) => h("label", { class: "check" }, h("input", { type: "checkbox", checked: current.has(c.id), onchange: (e) => save(c.id, e.target.checked) }), h("span", {}, c.label)))),
+      current.size ? null : h("p", { class: "hint" }, "Не заданы — каналы выбираются у каждого выпуска."),
+    );
+  });
+  fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Новый выпуск сразу получает каналы своего сценария; у выпусков без каналов доска предлагает опубликовать в них."), ...rows, posterDeadline(data)));
+}
+
+// Дайджест: свою обложку (ChatGPT) ждать до срока, потом рисовать локально (PRD-002).
+function posterDeadline(data) {
+  return h(
+    "label",
+    { class: "field" },
+    h("span", { class: "hint" }, "Дайджест: своя обложка не пришла к этому времени — нарисовать локально и продолжить (пусто — ждать)"),
+    h("input", { type: "time", value: data.digest_defaults?.poster_deadline || "", onchange: (e) => section("digest_defaults", { poster_deadline: e.target.value }) }),
+  );
+}
+
 function render(data) {
   state.data = data;
   renderSchedule(data);
   renderUpkeep(data);
+  renderDefaults(data);
   const { photo, video, audio } = data.sections;
   fill($("photo"), h("div", { class: "toggle-list" }, ...photo.map((m) => row(m, "photo", m.note))));
   fill($("video"), h("div", { class: "toggle-list" }, ...video.map((m) => row(m, "video", m.note))));
@@ -225,5 +289,43 @@ async function load() {
   }
 }
 
+// «Здоровье» (REL-010): доля упавших шагов, p90 сборки и дайджест вовремя за 7 и 28 дней — по журналу событий.
+const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+const secs = (v) => (v == null ? "—" : v >= 90 ? `${(v / 60).toFixed(1)} мин` : `${Math.round(v)} с`);
+
+async function loadHealth() {
+  let data;
+  try {
+    data = await api("GET", "/api/studio/health/stats");
+  } catch (err) {
+    fill($("health"), h("p", { class: "muted" }, `Не загрузилось: ${err.message}`));
+    return;
+  }
+  const w = [data.windows["7"], data.windows["28"]];
+  const line = (label, f) => h("tr", {}, h("th", {}, label), ...w.map((x) => h("td", {}, f(x))));
+  fill(
+    $("health"),
+    h(
+      "div",
+      { class: "settings-stack" },
+      h(
+        "table",
+        { class: "usage" },
+        h("thead", {}, h("tr", {}, h("th", {}, ""), h("td", {}, "7 дней"), h("td", {}, "28 дней"))),
+        h(
+          "tbody",
+          {},
+          line("Упавшие шаги", (x) => `${pct(x.failed_share)} (${x.failed_steps} из ${x.steps})`),
+          line("Упавшие публикации", (x) => `${pct(x.publish_failed_share)} из ${x.publish_steps}`),
+          line("Сборка видео p50 / p90", (x) => `${secs(x.render_p50_s)} / ${secs(x.render_p90_s)}`),
+          line(`Дайджест до ${data.deadline}`, (x) => `${pct(x.digest_on_time_share)} (${x.digest_on_time_days} из ${x.digest_days} ${plural(x.digest_days, "дня", "дней", "дней")})`),
+        ),
+      ),
+      h("p", { class: "hint" }, `Считается по журналу событий ${data.file}. Время дедлайна дайджеста — AIP_DIGEST_DEADLINE.`),
+    ),
+  );
+}
+
 load();
 loadCleanup();
+loadHealth();

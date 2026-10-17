@@ -3,7 +3,7 @@
 # check → push ветки задачи → staging fast-forward на HEAD → push staging →
 # PR staging → main (создать или обновить). Запускать из ветки задачи
 # (любой, кроме main/master/staging); обычно это делает агент.
-# Дизайн: docs/superpowers/specs/2026-09-07-staging-flow-design.md
+# Поток веток: CLAUDE.md, раздел «Задачи и ветки».
 set -e
 cd "$(dirname "$0")" || exit 1
 fail() { echo "⛔ finish: $1" >&2; exit 1; }
@@ -46,11 +46,9 @@ if [ -n "$REMOTE" ]; then
 fi
 
 # 2. staging → HEAD, только fast-forward (история staging не переписывается).
-git merge-base --is-ancestor staging HEAD || \
-  fail "staging не предок HEAD — влей её (git merge staging) и повтори"
-git branch -f staging HEAD >/dev/null || \
-  fail "staging занята другим checkout — освободи её (git checkout $DEFAULT там)"
-echo "✓ staging → $(git rev-parse --short HEAD)"
+# Проверка предка и запись — одной командой с compare-and-swap (docs/грабли.md, запись 3).
+sh tools/advance-staging.sh HEAD || \
+  fail "staging не сдвинута — влей её (git merge staging) и повтори"
 
 [ -n "$REMOTE" ] || { warn "origin нет — push и PR пропущены"; exit 0; }
 git push -q origin staging:staging

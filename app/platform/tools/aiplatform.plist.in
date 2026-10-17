@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LaunchAgent платформы. Шаблон: @…@ подставляет tools/agent.sh (make install-agent). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>@LABEL@</string>
+	<!-- make run: подхватывает local.mk (AIP_*) так же, как запуск из терминала. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/make</string>
+		<string>-C</string>
+		<string>@PLATFORM_DIR@</string>
+		<string>run</string>
+		<string>PYTHON=@PYTHON@</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>@PLATFORM_DIR@</string>
+	<!-- launchd не читает .zshrc: brew (ffmpeg), uv и claude — явным PATH. -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>@PATH@</string>
+		<key>PYTHONUNBUFFERED</key>
+		<string>1</string>
+		<!-- Лог процесса (data/logs/platform.log) — ещё и в server.err.log. -->
+		<key>AIP_LOG_STDERR</key>
+		<string>1</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Упал или убит — поднять снова; штатный выход (код 0) — не трогать. -->
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>ExitTimeOut</key>
+	<integer>30</integer>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>StandardOutPath</key>
+	<string>@LOG_DIR@/server.log</string>
+	<key>StandardErrorPath</key>
+	<string>@LOG_DIR@/server.err.log</string>
+</dict>
+</plist>

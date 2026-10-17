@@ -124,7 +124,7 @@ def _choose_model(payload: dict, mode: str, available: list[Available]) -> Avail
     if mode not in chosen.model.modes:
         raise ValidationError(f"{chosen.label} не умеет режим «{MODE_LABELS[mode]}». Выбери другую модель.")
     if not chosen.installed:
-        raise ValidationError(f"Модель {chosen.label} не установлена: запусти ./setup-model.sh {chosen.id}.")
+        raise ValidationError(f"Модель {chosen.label} не установлена: запусти make models M={chosen.id}.")
     return chosen
 
 
@@ -144,14 +144,18 @@ def _source_size(payload: dict, size_of: Callable[[str], tuple[int, int] | None]
     return source, width, height
 
 
+# Подписи сторон как на странице (static/photo/app.js PAD_LABELS): в ошибках — они, а не ключи JSON.
+PAD_LABELS = {"left": "Слева", "top": "Сверху", "right": "Справа", "bottom": "Снизу"}
+
+
 def _padding(raw: object, width: int, height: int) -> Padding:
     if not isinstance(raw, dict):
         raise ValidationError("Укажи, в какие стороны расширять фото.")
     sides = {}
     for side in ("left", "top", "right", "bottom"):
-        value = _integer(raw.get(side, 0), f"Поле «{side}»")
+        value = _integer(raw.get(side, 0), f"Поле «{PAD_LABELS[side]}»")
         if value < 0 or value % GRID:
-            raise ValidationError(f"Поле «{side}»: нужно неотрицательное число, кратное {GRID}.")
+            raise ValidationError(f"Поле «{PAD_LABELS[side]}»: нужно число от 0, кратное {GRID}.")
         sides[side] = value
     padding = Padding(**sides)
     if not padding.any():

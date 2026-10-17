@@ -1,0 +1,30 @@
+{
+  "$comment": "ответ `narrate bridge issue`",
+  "type": "object",
+  "required": [
+    "day",
+    "exists",
+    "folder",
+    "review",
+    "reviewed",
+    "verdict"
+  ],
+  "properties": {
+    "day": {
+      "type": "string"
+    },
+    "folder": {
+      "type": "string"
+    },
+    "exists": {
+      "type": "boolean"
+    },
+    "reviewed": {
+      "type": "boolean"
+    },
+    "verdict": {},
+    "review": {
+      "type": "string"
+    }
+  }
+}

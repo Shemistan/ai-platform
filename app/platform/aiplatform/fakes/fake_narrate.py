@@ -8,7 +8,8 @@ $FAKE_NARRATOR_HOME (state.json, статьи, образцы голосов); �
 
 `say` пишет mp3 длиной по числу слов (~150 слов в минуту): тон 220 Гц через
 ffmpeg, без ffmpeg — WAV-заглушка. Окружение: FAKE_TTS_STEP_DELAY — пауза на
-абзац, с (по умолчанию 0.3); FAKE_TTS_FAIL=1 — упасть на середине;
+абзац, с (по умолчанию 0.3); FAKE_TTS_WORDS_PER_SECOND — темп речи (по умолчанию
+2.5; тесты ускоряют: короче аудио — короче рендер); FAKE_TTS_FAIL=1 — упасть на середине;
 FAKE_NARRATOR_DELAY — пауза шагов остальных долгих команд (по умолчанию 0.05).
 """
 
@@ -30,6 +31,7 @@ from pathlib import Path
 WORDS_PER_SECOND = 2.5
 MIN_SECONDS = 1.0
 HOME_ENV = "FAKE_NARRATOR_HOME"
+BRIDGE_API = 1  # как narrator.bridge.BRIDGE_API; FAKE_BRIDGE_API — подменить в тестах
 ENGINES = (
     ("espeech", "ESpeech", "лучшее качество, нужна видеокарта", True, (32, 1.0)),
     ("silero", "Silero", "секунды на CPU, свои ударения", False, (0, 1.0)),
@@ -91,7 +93,8 @@ def paragraphs(text: str) -> list[str]:
 
 
 def seconds_for(text: str) -> float:
-    return max(len(text.split()) / WORDS_PER_SECOND, MIN_SECONDS)
+    pace = float(os.environ.get("FAKE_TTS_WORDS_PER_SECOND") or WORDS_PER_SECOND)
+    return max(len(text.split()) / pace, MIN_SECONDS)
 
 
 def write_wav(path: Path, seconds: float, rate: int = 8000) -> None:
@@ -241,9 +244,9 @@ def seed() -> dict:
     return {
         "articles": articles,
         "subscribers": [
-            {"chat_id": 1001, "name": "Аня", "added": day(30), "active": True, "note": "", "thread": None},
-            {"chat_id": 1002, "name": "Борис", "added": day(12), "active": True, "note": "", "thread": None},
-            {"chat_id": 1003, "name": "Вера", "added": day(9), "active": False, "note": "/stop", "thread": None},
+            # Как у narrator (CMP-006/007): только chat_id и дата, отписавшихся нет.
+            {"chat_id": 1001, "added": day(30), "thread": None},
+            {"chat_id": 1002, "added": day(12), "thread": None},
         ],
         "sources": [
             {
@@ -314,6 +317,7 @@ def article_view(article_id: str, a: dict) -> dict:
         "summary": a["summary"],
         "url": a.get("url"),
         "source_quality": a.get("source_quality", "verbatim"),
+        "license": a.get("license", "none"),
         "engine": voiced,
         "voice": "Charon" if voiced else None,
         "duration_sec": round(seconds_for(a["script"]), 1) if voiced else None,
@@ -368,6 +372,8 @@ def voice_sample(stem: str) -> Path:
 def bridge(args, state: dict) -> dict:
     ensure_audio(state)
     match args.bridge_cmd:
+        case "version":
+            return {"bridge_api": int(os.environ.get("FAKE_BRIDGE_API", BRIDGE_API))}
         case "engines":
             ready = set(state["mlx"])
             out = []
@@ -413,6 +419,8 @@ def bridge(args, state: dict) -> dict:
                         "seconds": 6.0,
                         "text": (custom or {}).get("text") or REF_TEXT,
                         "custom": bool(custom),
+                        "consent": "synthetic" if stem in ("m1", "charon") else ("live" if custom else None),
+                        "consent_error": None,
                     }
                 )
             return {
@@ -495,6 +503,10 @@ def bridge(args, state: dict) -> dict:
                 a["title"] = str(data["title"]).strip()
             if "summary" in data:
                 a["summary"] = str(data["summary"] or "").strip()
+            if "license" in data:
+                if data["license"] not in ("own", "cc-by", "permission", "none"):
+                    raise ValueError("license — одно из: own, cc-by, permission, none.")
+                a["license"] = data["license"]
             if "script" in data:
                 a["script"] = str(data["script"] or "").strip() + "\n"
                 a["stale"] = True
@@ -608,7 +620,7 @@ def bridge(args, state: dict) -> dict:
         case "subscribers":
             return {
                 "subscribers": state["subscribers"],
-                "active": sum(s["active"] for s in state["subscribers"]),
+                "active": len(state["subscribers"]),
                 "new": [],
                 "error": None,
                 "file": str(home() / "telegram.json"),
@@ -725,6 +737,9 @@ def cmd_bot(args, state: dict) -> int:
             a = find(state, args.dir)
             if not a.get("voiced"):
                 return fail(f"{args.dir}: статья ещё не озвучена")
+            if a.get("sent") and not args.force and not args.channel:  # как narrator: без --force не повторяет
+                print(f"телеграм: {args.dir} уже отправлена, повтор — --force")
+                return 0
             delay()
             a["sent"] = True
             save(state)
@@ -744,7 +759,7 @@ def cmd_bot(args, state: dict) -> int:
                 print(f"отмечено отправленными {len(todo)}, в телеграм ничего не ушло")
             save(state)
         case "subscribers":
-            print(f"подписчиков {sum(s['active'] for s in state['subscribers'])}")
+            print(f"подписчиков {len(state['subscribers'])}")
         case "serve":
             print("бот @demo_narrator_bot слушает подписки, выход — Ctrl+C", flush=True)
             signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
@@ -755,16 +770,7 @@ def cmd_bot(args, state: dict) -> int:
                 if n == 2:
                     fresh = load()
                     chat = 2000 + len(fresh["subscribers"])
-                    fresh["subscribers"].append(
-                        {
-                            "chat_id": chat,
-                            "name": "Новый читатель",
-                            "added": date.today().isoformat(),
-                            "active": True,
-                            "note": "",
-                            "thread": None,
-                        }
-                    )
+                    fresh["subscribers"].append({"chat_id": chat, "added": date.today().isoformat(), "thread": None})
                     save(fresh)
                     print(f"подписался: {chat} Новый читатель", flush=True)
                 if args.once:
@@ -794,17 +800,30 @@ def cmd_voice(args, state: dict) -> int:
     stems = {stem for voice, stem in CLONES.items() if voice != "M1"}
     stem = args.name.lower()
     if stem not in stems:
-        return fail(f"голос {args.name!r} не записывается, есть: {', '.join(sorted(stems))}")
+        return fail(f"голос «{args.name}» не записывается, есть: {', '.join(sorted(stems))}")
     if not args.source and stem != "charon":
         return fail(f"голоса {stem} в Gemini TTS нет: передай запись и её текст")
     if not args.source and not os.environ.get("GEMINI_API_KEY"):
         return fail("нет ключа Gemini: задай $GEMINI_API_KEY или передай файл записи", 2)
+    live = stem not in ("m1", "charon")  # как у narrator: живой голос — с согласием (CMP-009)
+    if live and not (args.owner and args.form):
+        return fail(f"голос {stem} — живой: только с согласием владельца — --owner «…» --form self|written")
     target = home() / "voices" / f"{stem}.wav"
     target.parent.mkdir(parents=True, exist_ok=True)
     if args.source:
         shutil.copyfile(args.source, target)
     else:
         write_wav(target, 6.0)
+    if live:
+        record = {
+            "version": 1,
+            "kind": "live",
+            "owner": args.owner,
+            "date": date.today().isoformat(),
+            "form": args.form,
+        }
+        record |= {"purposes": ["озвучка статей и дайджестов narrator"], "expires": None}
+        target.with_name(f"{stem}.consent.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     state["custom_voices"][stem] = {"text": (args.text or REF_TEXT).strip()}
     save(state)
     print(f"{target}  6.0 с")
@@ -922,7 +941,7 @@ def parser() -> argparse.ArgumentParser:
 
     b = sub.add_parser("bridge").add_subparsers(dest="bridge_cmd", required=True)
     for name in (
-        "engines", "voices", "models", "preview", "split", "library", "article-new",
+        "version", "engines", "voices", "models", "preview", "split", "library", "article-new",
         "sources", "failed", "reviews", "unsent",
     ):  # fmt: skip
         b.add_parser(name)
@@ -936,14 +955,16 @@ def parser() -> argparse.ArgumentParser:
     b.add_parser("bot").add_argument("--check", action="store_true")
     b.add_parser("subscribers").add_argument("--sync", action="store_true")
 
-    for name in ("synth", "verify"):
-        s = sub.add_parser(name)
-        s.add_argument("dir")
-        s.add_argument("--engine", default="espeech")
-        s.add_argument("--voice")
-        s.add_argument("--speed", type=float)
-        s.add_argument("--steps", type=int)
-        s.add_argument("--no-send", action="store_true")
+    s = sub.add_parser("synth")
+    s.add_argument("dir")
+    s.add_argument("--engine", default="espeech")
+    s.add_argument("--voice")
+    s.add_argument("--speed", type=float)
+    s.add_argument("--steps", type=int)
+    s.add_argument("--no-send", action="store_true")
+    v = sub.add_parser("verify")  # флаги — как у настоящего narrate (контракт QA-004)
+    v.add_argument("dir")
+    v.add_argument("--threshold", type=float)
     r = sub.add_parser("render")
     r.add_argument("--engine", default="espeech")
     r.add_argument("--voice")
@@ -962,7 +983,9 @@ def parser() -> argparse.ArgumentParser:
     unsent.add_argument("--mark", action="store_true")
     unsent.add_argument("--list", action="store_true")
     bot.add_parser("subscribers").add_argument("--no-sync", action="store_true")
-    bot.add_parser("serve").add_argument("--once", action="store_true")
+    serve = bot.add_parser("serve")
+    serve.add_argument("--once", action="store_true")
+    serve.add_argument("--updates", action="store_true")
 
     news = sub.add_parser("news").add_subparsers(dest="news_cmd", required=True)
     collect = news.add_parser("collect")
@@ -973,6 +996,8 @@ def parser() -> argparse.ArgumentParser:
     voice.add_argument("name")
     voice.add_argument("--from", dest="source")
     voice.add_argument("--text")
+    voice.add_argument("--owner")
+    voice.add_argument("--form", choices=("self", "written"))
 
     make = sub.add_parser("make")
     make.add_argument("target")
@@ -988,8 +1013,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "bridge":
         try:
             return emit(bridge(args, state))
-        except (ValueError, LookupError) as exc:
-            return emit({"error": str(exc).strip("'\"")}, 1)
+        except LookupError as exc:  # как BridgeError(kind="not_found") в движке
+            return emit({"error": str(exc).strip("'\""), "kind": "not_found"}, 1)
+        except ValueError as exc:
+            return emit({"error": str(exc).strip("'\""), "kind": "invalid"}, 1)
     try:
         match args.cmd:
             case "synth":

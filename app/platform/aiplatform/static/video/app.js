@@ -1,39 +1,7 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
-const $ = (id) => document.getElementById(id);
-
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (value === false || value == null) continue;
-    if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
-    else if (key === "class") el.className = value;
-    else if (key in el && key !== "list") el[key] = value;
-    else el.setAttribute(key, value === true ? "" : value);
-  }
-  for (const child of children.flat()) {
-    if (child != null && child !== false) el.append(child);
-  }
-  return el;
-}
-
-async function api(method, path, body) {
-  const init = { method };
-  if (body instanceof Blob) init.body = body;
-  else if (body !== undefined) {
-    init.body = JSON.stringify(body);
-    init.headers = { "Content-Type": "application/json" };
-  }
-  let resp;
-  try {
-    resp = await fetch(path, init);
-  } catch {
-    throw new Error("Сервис не отвечает. Проверь, что он запущен.");
-  }
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error || `Ошибка ${resp.status}`);
-  return data;
-}
+import { $, api, chip, h, icon, iconButton, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { frameAt, frameCount, frameProblems as problemsOf, keyframeLimit, spread } from "./frames.js";
 
 const state = {
   config: null,
@@ -54,19 +22,17 @@ let dragKey = null;
 // Частота кадров, длительности, кадры и звук зависят от выбранной модели.
 const model = () => state.config.models.find((m) => m.id === $("model").value) || state.config.models[0];
 const fps = () => model().fps;
-const numFrames = () => state.duration * fps() + 1;
-const maxFrames = () =>
-  Math.min(Math.floor((numFrames() - 1) / state.config.min_keyframe_gap) + 1, model().max_keyframes ?? Infinity);
+const numFrames = () => frameCount(state.duration, fps());
+const maxFrames = () => keyframeLimit(numFrames(), state.config.min_keyframe_gap, model().max_keyframes);
 const seconds = (frameIdx) => frameIdx / fps();
 const fmtSec = (value) => `${+value.toFixed(2)} с`;
 
 // ---------- кадры ----------
 
 function distribute() {
-  const last = numFrames() - 1;
-  const count = state.frames.length;
+  const at = spread(state.frames.length, numFrames() - 1);
   state.frames.forEach((frame, i) => {
-    frame.frameIdx = count === 1 ? 0 : Math.round((i * last) / (count - 1));
+    frame.frameIdx = at[i];
   });
 }
 
@@ -77,17 +43,7 @@ function relayout({ keepManual = false } = {}) {
 }
 
 function frameProblems() {
-  const gap = state.config.min_keyframe_gap;
-  const last = numFrames() - 1;
-  return state.frames.map((frame, i) => {
-    if (frame.error) return frame.error;
-    if (i === 0) return frame.frameIdx === 0 ? null : "Первый кадр всегда в начале";
-    if (frame.frameIdx > last) return "Позже конца ролика";
-    if (frame.frameIdx - state.frames[i - 1].frameIdx < gap) {
-      return `Нужно позже кадра ${i} хотя бы на ${(gap / fps()).toFixed(2)} с`;
-    }
-    return null;
-  });
+  return problemsOf(state.frames, { gap: state.config.min_keyframe_gap, last: numFrames() - 1, fps: fps() });
 }
 
 function roleOf(index) {
@@ -115,8 +71,9 @@ async function addFiles(files) {
   await Promise.all(
     added.map(async (frame) => {
       try {
-        frame.uploadId = (await api("POST", "/api/video/uploads", frame.file)).id;
+        frame.uploadId = (await uploadFile("/api/video/uploads", frame.file, { limit: (state.config?.upload_limits || UPLOAD_LIMITS).image })).id;
       } catch (err) {
+        if (err.kind === "abort") return removeFrame(frame.key); // отменили — кадра как не было
         frame.error = err.message;
       }
       frame.uploading = false;
@@ -144,9 +101,9 @@ function moveFrame(key, toIndex) {
 
 function setFrameTime(key, value) {
   const frame = state.frames.find((f) => f.key === key);
-  const sec = Number(String(value).replace(",", "."));
-  if (!frame || !Number.isFinite(sec)) return renderFrames();
-  frame.frameIdx = Math.max(0, Math.round(sec * fps()));
+  const at = frameAt(value, fps());
+  if (!frame || at === null) return renderFrames();
+  frame.frameIdx = at;
   state.manual = true;
   renderFrames();
 }
@@ -155,7 +112,7 @@ function frameCard(frame, index, problem) {
   const count = state.frames.length;
   const timeInput = h("input", {
     type: "text",
-    inputMode: "decimal",
+    inputmode: "decimal",
     class: "time-input",
     value: seconds(frame.frameIdx).toFixed(2),
     disabled: index === 0,
@@ -165,8 +122,8 @@ function frameCard(frame, index, problem) {
   return h(
     "li",
     {
-      class: `card${problem ? " bad" : ""}${frame.uploading ? " busy" : ""}`,
-      draggable: true,
+      class: `frame-card${problem ? " bad" : ""}${frame.uploading ? " busy" : ""}`,
+      draggable: "true",
       ondragstart: (e) => {
         dragKey = frame.key;
         e.dataTransfer.effectAllowed = "move";
@@ -186,14 +143,14 @@ function frameCard(frame, index, problem) {
     h("div", { class: "thumb" },
       h("img", { src: frame.preview, alt: frame.name, draggable: false }),
       h("span", { class: "badge" }, String(index + 1)),
-      h("button", { type: "button", class: "icon remove", title: "Убрать кадр", "aria-label": `Убрать кадр ${index + 1}`, onclick: () => removeFrame(frame.key) }, "×"),
+      iconButton("close", `Убрать кадр ${index + 1}`, { class: "btn-icon--overlay remove", title: "Убрать кадр", onclick: () => removeFrame(frame.key) }),
     ),
-    h("div", { class: "card-body" },
+    h("div", { class: "frame-card-body" },
       h("span", { class: "role" }, frame.uploading ? "Загрузка…" : roleOf(index)),
       h("label", { class: "time" }, timeInput, h("span", {}, "с")),
       h("div", { class: "order" },
-        h("button", { type: "button", class: "icon", title: "Раньше", "aria-label": `Кадр ${index + 1} раньше`, disabled: index === 0, onclick: () => moveFrame(frame.key, index - 1) }, "◀"),
-        h("button", { type: "button", class: "icon", title: "Позже", "aria-label": `Кадр ${index + 1} позже`, disabled: index === count - 1, onclick: () => moveFrame(frame.key, index + 1) }, "▶"),
+        iconButton("prev", `Кадр ${index + 1} раньше`, { class: "btn-icon--outline", title: "Раньше", disabled: index === 0, onclick: () => moveFrame(frame.key, index - 1) }),
+        iconButton("next", `Кадр ${index + 1} позже`, { class: "btn-icon--outline", title: "Позже", disabled: index === count - 1, onclick: () => moveFrame(frame.key, index + 1) }),
       ),
     ),
     problem && h("p", { class: "card-error" }, problem),
@@ -205,15 +162,15 @@ function renderFrames() {
   const problems = frameProblems();
   const items = [];
   state.frames.forEach((frame, index) => {
-    if (index > 0) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, "→"));
+    if (index > 0) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, icon("arrow")));
     items.push(frameCard(frame, index, problems[index]));
   });
   if (state.frames.length < maxFrames()) {
-    if (state.frames.length) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, "→"));
+    if (state.frames.length) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, icon("arrow")));
     items.push(
       h("li", { class: "add" },
-        h("button", { type: "button", class: "add-btn", onclick: () => $("file-input").click() },
-          h("span", { class: "plus" }, "+"),
+        h("button", { type: "button", class: "add-tile", onclick: () => $("file-input").click() },
+          h("span", { class: "plus" }, icon("plus", { size: 20 })),
           h("span", {}, state.frames.length ? "Следующий кадр" : "Добавить кадр"),
           h("span", { class: "muted small" }, "или перетащи фото сюда"),
         ),
@@ -299,7 +256,7 @@ async function submit(event) {
     state.selectedId = job.id;
     upsertJob(job);
     renderJobs();
-    schedulePoll(0);
+    schedulePoll();
   } catch (err) {
     showFormError(err.message);
   } finally {
@@ -324,13 +281,16 @@ function segments(root, name, options, current, onPick) {
   );
 }
 
+// Размер кадра для подписи: [704, 448] → «704×448».
+const frameSize = ([w, hgt]) => `${w}×${hgt}`;
+
 function renderLivingOptions() {
   const cfg = state.config.living;
   segments("living-orientations", "living-orientation", cfg.orientations, state.livingOrientation, (id) => {
     state.livingOrientation = id;
     renderLivingOptions();
   });
-  const qualities = cfg.qualities.map((q) => ({ ...q, title: q.sizes[state.livingOrientation].join("×") }));
+  const qualities = cfg.qualities.map((q) => ({ ...q, title: frameSize(q.sizes[state.livingOrientation]) }));
   segments("living-qualities", "living-quality", qualities, state.livingQuality, (id) => {
     state.livingQuality = id;
     renderLivingOptions();
@@ -348,8 +308,9 @@ async function setLivingFile(file) {
   showLivingError("");
   renderLiving();
   try {
-    photo.uploadId = (await api("POST", "/api/video/uploads", file)).id;
+    photo.uploadId = (await uploadFile("/api/video/uploads", file, { limit: (state.config?.upload_limits || UPLOAD_LIMITS).image })).id;
   } catch (err) {
+    if (err.kind === "abort") return state.living === photo && clearLiving(); // отменили — как до выбора
     photo.error = err.message;
   }
   photo.uploading = false;
@@ -372,8 +333,8 @@ function renderLiving() {
   const box = $("living-photo");
   if (!photo) {
     box.replaceChildren(
-      h("button", { type: "button", class: "add-btn", onclick: () => $("living-input").click() },
-        h("span", { class: "plus" }, "+"),
+      h("button", { type: "button", class: "add-tile", onclick: () => $("living-input").click() },
+        h("span", { class: "plus" }, icon("plus", { size: 20 })),
         h("span", {}, "Выбрать фото"),
         h("span", { class: "muted small" }, "или перетащи его сюда"),
       ),
@@ -392,7 +353,7 @@ function renderLiving() {
             renderLivingOptions();
           },
         }),
-        h("button", { type: "button", class: "icon remove", title: "Убрать фото", "aria-label": "Убрать фото", onclick: clearLiving }, "×"),
+        iconButton("close", "Убрать фото", { class: "btn-icon--overlay remove", onclick: clearLiving }),
       ),
       ...(photo.error ? [h("p", { class: "card-error photo-note" }, photo.error)] : []),
     );
@@ -421,7 +382,7 @@ async function submitLiving(event) {
     state.selectedId = job.id;
     upsertJob(job);
     renderJobs();
-    schedulePoll(0);
+    schedulePoll();
   } catch (err) {
     showLivingError(err.message);
   } finally {
@@ -449,13 +410,6 @@ const isLiving = (job) => job.kind === "living";
 // У живого фото промпт служебный и один на все снимки — вместо него показываем название режима.
 const jobTitle = (job) => (isLiving(job) ? "Живое фото" : job.prompt);
 
-const STATUS = {
-  queued: "В очереди",
-  running: "Генерируется",
-  done: "Готово",
-  failed: "Ошибка",
-  canceled: "Отменено",
-};
 const isActive = (job) => job.status === "queued" || job.status === "running";
 
 function upsertJob(job) {
@@ -473,7 +427,7 @@ function filmstrip(job) {
   if (!job.frames.length) return h("p", { class: "muted small" }, "Без кадров — только по промпту");
   const items = [];
   job.frames.forEach((frame, index) => {
-    if (index > 0) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, "→"));
+    if (index > 0) items.push(h("li", { class: "arrow", "aria-hidden": "true" }, icon("arrow")));
     items.push(
       h("li", { class: "mini" },
         h("img", { src: frame.url, alt: `Кадр ${index + 1}`, loading: "lazy" }),
@@ -485,34 +439,20 @@ function filmstrip(job) {
   return h("ol", { class: "filmstrip" }, items);
 }
 
-function progressBlock(job) {
-  const p = job.progress;
-  const queued = job.status === "queued";
-  const stage = queued
-    ? job.queue_position > 0 ? `Ждёт очереди: впереди ${job.queue_position}` : "Сейчас начнётся"
-    : p.stage;
-  return h("div", { class: "progress" },
-    h("div", { class: "progress-head" },
-      h("span", { class: "stage" }, stage, p.steps ? h("span", { class: "muted" }, ` · шаг ${p.step} из ${p.steps}`) : null),
-      h("span", { class: "percent" }, queued ? "" : `${Math.round(p.percent)}%`),
-    ),
-    h("div", { class: `bar${queued ? " waiting" : ""}`, role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(p.percent)) },
-      h("div", { class: "bar-fill", style: `width:${queued ? 0 : p.percent}%` }),
-    ),
-    h("div", { class: "progress-foot" },
-      h("span", { class: "muted small" }, queued ? "" : `Прошло ${fmtElapsed(job.elapsed_s)}`),
-      h("button", { type: "button", class: "link danger", onclick: () => cancelJob(job.id) }, "Отменить"),
-    ),
-  );
-}
-
 function logBlock(job, open) {
   if (!job.log || !job.log.length) return null;
   const pre = h("pre", { class: "log" }, job.log.join("\n"));
-  const details = h("details", { class: "log-wrap", open }, h("summary", {}, "Лог процесса"), pre);
+  const details = h("details", { class: "disclosure log-wrap", open }, h("summary", {}, "Лог процесса"), pre);
   details.addEventListener("toggle", () => (pre.scrollTop = pre.scrollHeight));
   queueMicrotask(() => (pre.scrollTop = pre.scrollHeight));
   return details;
+}
+
+// muted — свойство, а не атрибут: без него браузер не даст автозапуск созданному из JS плееру.
+function player(src) {
+  const video = h("video", { class: "player", src, controls: true, loop: true, autoplay: true, playsinline: true });
+  video.muted = true;
+  return video;
 }
 
 let jobSignature = "";
@@ -532,20 +472,20 @@ function renderJob() {
 
   const parts = [
     h("div", { class: "job-head" },
-      h("span", { class: `status ${job.status}` }, STATUS[job.status]),
-      job.backend === "fake" ? h("span", { class: "status demo" }, "Демо — не модель") : null,
+      statusChip(job.status),
+      job.backend === "fake" ? chip("Демо — не модель", "warning") : null,
       h("span", { class: "muted small" }, `${job.model_label ? `${job.model_label} · ` : ""}${job.width}×${job.height} · ${job.duration_s} с · seed ${job.seed}${job.audio ? "" : " · без звука"}`),
     ),
-    h("p", { class: "job-prompt" }, isLiving(job) ? "Живое фото: снимок стоит посередине ролика, до и после него — по половине." : job.prompt),
+    h("p", { class: "job-text" }, isLiving(job) ? "Живое фото: снимок стоит посередине ролика, до и после него — по половине." : job.prompt),
     filmstrip(job),
   ];
-  if (isActive(job)) parts.push(progressBlock(job));
+  if (isActive(job)) parts.push(jobProgress(job, { onCancel: (j) => cancelJob(j.id), elapsed: fmtElapsed }));
   if (job.status === "done") {
     parts.push(
-      h("video", { class: "player", src: job.video_url, controls: true, loop: true, autoplay: true, muted: true, playsInline: true }),
+      player(job.video_url),
       h("div", { class: "job-foot" },
         h("span", { class: "muted small" }, `Сгенерировано за ${fmtElapsed(job.elapsed_s)}`),
-        h("a", { class: "link", href: job.video_url, download: `video-${job.id}.mp4` }, "Скачать mp4"),
+        h("a", { class: "btn btn--link", href: job.video_url, download: `video-${job.id}.mp4` }, "Скачать mp4"),
       ),
     );
   }
@@ -579,11 +519,11 @@ function renderHistory() {
             ? h("img", { class: "history-thumb", src: job.frames[0].url, alt: "", loading: "lazy" })
             : h("span", { class: "history-thumb text" }, "T"),
           h("span", { class: "history-text" },
-            h("span", { class: "history-prompt" }, jobTitle(job)),
+            h("span", { class: "history-title" }, jobTitle(job)),
             h("span", { class: "muted small" },
               `${new Date(job.created_at * 1000).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · ${isLiving(job) ? `${job.duration_s} с` : job.frames.length ? `кадров: ${job.frames.length}` : "без кадров"}`),
           ),
-          h("span", { class: `status ${job.status}` }, job.status === "running" ? `${Math.round(job.progress.percent)}%` : STATUS[job.status]),
+          chip(job.status === "running" ? `${Math.round(job.progress.percent)}%` : STATUS[job.status], toneOf(job.status)),
         ),
       ),
     ),
@@ -613,43 +553,42 @@ async function cancelJob(id) {
   }
 }
 
-let pollTimer = null;
+// Опрос очереди: раз в секунду, пока есть активные задачи, раз в 5 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя связи — реже). Свои действия зовут schedulePoll().
+const jobsPoll = poller({ run: (signal) => poll(signal), fast: 1000, slow: 5000, isActive: () => state.jobs.some(isActive), onError: (err) => setBanner(err.message, "error") });
 
-function schedulePoll(delay) {
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(poll, delay);
+function schedulePoll() {
+  jobsPoll.now();
 }
 
-async function poll() {
-  try {
-    const { jobs } = await api("GET", "/api/video/jobs");
-    // Список приходит без лога; лог выбранной задачи берём отдельным запросом.
-    const selected = jobs.find((j) => j.id === state.selectedId);
-    const previous = state.jobs.find((j) => j.id === state.selectedId);
-    if (selected) {
-      const needFull = isActive(selected) || !previous?.log || previous.status !== selected.status;
-      Object.assign(selected, needFull ? await api("GET", `/api/video/jobs/${selected.id}`) : { log: previous.log });
-    }
-    state.jobs = jobs;
-    if (!state.selectedId && jobs.length) return selectJob(jobs[0].id).then(() => schedulePoll(1000));
-    renderJobs();
-    setBanner(null);
-  } catch (err) {
-    setBanner(err.message, "error");
+async function poll(signal) {
+  const { jobs } = await api("GET", "/api/video/jobs", undefined, { signal });
+  // Список приходит без лога; лог выбранной задачи берём отдельным запросом.
+  const selected = jobs.find((j) => j.id === state.selectedId);
+  const previous = state.jobs.find((j) => j.id === state.selectedId);
+  if (selected) {
+    const needFull = isActive(selected) || !previous?.log || previous.status !== selected.status;
+    Object.assign(selected, needFull ? await api("GET", `/api/video/jobs/${selected.id}`, undefined, { signal }) : { log: previous.log });
   }
-  schedulePoll(state.jobs.some(isActive) ? 1000 : 5000);
+  state.jobs = jobs;
+  if (!state.selectedId && jobs.length) return selectJob(jobs[0].id);
+  renderJobs();
+  setBanner(null);
 }
 
 // ---------- запуск страницы ----------
 
 let configBanner = null;
 
+const BANNER_TONE = { warn: "warning", error: "danger" };
+
 function setBanner(text, kind) {
   const banner = $("banner");
   const shown = text ? { text, kind } : configBanner;
   banner.hidden = !shown;
   if (!shown) return;
-  banner.className = `banner ${shown.kind}`;
+  banner.className = `banner${BANNER_TONE[shown.kind] ? ` tone-${BANNER_TONE[shown.kind]}` : ""}`;
+  banner.setAttribute("role", shown.kind === "error" ? "alert" : "status"); // ошибку зачитать сразу
   banner.replaceChildren(...[].concat(shown.text));
 }
 
@@ -721,7 +660,7 @@ async function init() {
     relayout(); // частота кадров у моделей разная — позиции считаем заново
   };
   const showModelNote = () => {
-    const missing = cfg.models.filter((m) => !m.installed).map((m) => `./setup-model.sh ${m.id}`);
+    const missing = cfg.models.filter((m) => !m.installed).map((m) => `make models M=${m.id}`);
     const note = cfg.models.find((m) => m.id === $("model").value)?.note || "";
     $("model-note").textContent = [note, missing.length ? `Установить: ${missing.join(", ")}` : ""].filter(Boolean).join(". ");
   };
@@ -784,7 +723,7 @@ async function init() {
   renderLiving();
   applyModel();
   renderJobs();
-  poll();
+  jobsPoll.start();
 }
 
 init();

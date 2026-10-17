@@ -1,0 +1,73 @@
+{
+  "checked": "2026-10-16",
+  "templates": {
+    "foreign_agent_person": "{name} признан(а) Минюстом РФ иностранным агентом",
+    "foreign_agent_org": "Организация {name} признана Минюстом РФ иностранным агентом",
+    "foreign_agent_material": "ДАННОЕ СООБЩЕНИЕ (МАТЕРИАЛ) СОЗДАНО И (ИЛИ) РАСПРОСТРАНЕНО ИНОСТРАННЫМ АГЕНТОМ {name} ЛИБО КАСАЕТСЯ ДЕЯТЕЛЬНОСТИ ИНОСТРАННОГО АГЕНТА {name}"
+  },
+  "entries": [
+    {
+      "id": "meta",
+      "name": "Meta",
+      "status": "extremist",
+      "aliases": [
+        "Meta", "Meta Platforms", "Meta AI", "Мет*", "Facebook", "Фейсбук*", "Instagram", "Инстаграм*",
+        "=Threads", "Тредс*", "=Messenger", "Llama", "=Quest", "Oculus", "Окулус*"
+      ],
+      "stopwords": [
+        "мет", "мета-*", "метод*", "метр*", "метал*", "метео*", "метан*", "метил*", "метис*", "метк*",
+        "метл*", "метел*", "мети*", "метн*", "метч*", "метё*", "метам*", "метаб*", "метаверс*", "метавсел*",
+        "метагалакт*", "метадан*", "метаинформ*", "метакласс*", "метаморф*", "метаобъект*", "метаопис*",
+        "метапрограмм*", "метаст*", "метатег*", "метафиз*", "метафор*", "метаэврист*", "метаязык*"
+      ],
+      "disclaimer": "Компания Meta (продукты Facebook и Instagram) признана экстремистской организацией и запрещена на территории РФ",
+      "basis": "Перечень Минюста № 96: решение Тверского районного суда г. Москвы от 21.03.2022. На WhatsApp решение не распространяется",
+      "source": "https://minjust.gov.ru/ru/documents/7822/"
+    },
+    {
+      "id": "cyberpartisans",
+      "name": "Киберпартизаны BY",
+      "status": "extremist",
+      "aliases": ["Киберпартизан*", "Кибер-Партизан*", "Cyberpartisans", "Cyber Partisans", "Cyberpartizans"],
+      "disclaimer": "Хакерская группировка «Киберпартизаны BY» признана экстремистской организацией и запрещена на территории РФ",
+      "basis": "Перечень Минюста № 152: решение Верховного суда РФ от 21.07.2026",
+      "source": "https://minjust.gov.ru/ru/documents/7822/"
+    },
+    {
+      "id": "silent-crow",
+      "name": "Silent Crow",
+      "status": "extremist",
+      "aliases": ["Silent Crow", "Молчалив* ворон*"],
+      "disclaimer": "Хакерская группировка Silent Crow признана экстремистской организацией и запрещена на территории РФ",
+      "basis": "Перечень Минюста № 153: решение Верховного суда РФ от 21.07.2026",
+      "source": "https://minjust.gov.ru/ru/documents/7822/"
+    },
+    {
+      "id": "almaz-capital",
+      "name": "Almaz Capital Partners",
+      "status": "extremist",
+      "aliases": ["Almaz Capital*", "Алмаз Кэпитал*", "Александр* Галицк*"],
+      "disclaimer": "Объединение, в которое входят Александр Галицкий и Almaz Capital Partners, признано экстремистским и запрещено на территории РФ",
+      "basis": "Перечень Минюста № 154: решение Тверского районного суда г. Москвы от 23.03.2026",
+      "source": "https://minjust.gov.ru/ru/documents/7822/"
+    },
+    {
+      "id": "recorded-future",
+      "name": "Recorded Future",
+      "status": "undesirable",
+      "aliases": ["Recorded Future", "Рекордед Фьючер"],
+      "disclaimer": "Деятельность компании Recorded Future признана нежелательной на территории РФ",
+      "basis": "Решение Генпрокуратуры РФ, декабрь 2024",
+      "source": "https://minjust.gov.ru/ru/documents/7756/"
+    },
+    {
+      "id": "opentext",
+      "name": "OpenText",
+      "status": "undesirable",
+      "aliases": ["OpenText", "Опентекст*"],
+      "disclaimer": "Деятельность компании OpenText признана нежелательной на территории РФ",
+      "basis": "Решение Генпрокуратуры РФ, январь 2025",
+      "source": "https://minjust.gov.ru/ru/documents/7756/"
+    }
+  ]
+}

@@ -1,59 +1,16 @@
 """Сценарии целиком через HTTP: фейковые фото, TTS, LLM и новости, настоящий ffmpeg."""
 
 import json
+import logging
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from aiplatform.core import media
-from aiplatform.fakes import fake_gen
-from tests.helpers import PlatformCase
-
-ARTICLE = """Как устроен сборщик мусора в Go
-
-Сборщик мусора в Go работает параллельно с программой. Он помечает живые объекты и освобождает остальные.
-
-В новой версии паузы стали короче. Это важно для сервисов с жёсткими требованиями к задержкам.
-
-Итог: обновляйтесь и измеряйте профили. Подписывайтесь на канал."""
-
-FAST = {
-    "FAKE_GEN_STEP_DELAY": "0.005",
-    "FAKE_TTS_STEP_DELAY": "0.01",
-    "FAKE_NEWS_DELAY": "0",
-    "FAKE_LLM_FAIL": "",
-    "FAKE_LLM_GARBAGE": "",
-    "FAKE_NEWS_EMPTY": "",
-}
-NEEDS_FFMPEG = unittest.skipUnless(shutil.which("ffmpeg"), "нужен ffmpeg")
-
-
-def png_bytes() -> bytes:
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "p.png"
-        fake_gen.write_png(str(path), 64, 36, 5)
-        return path.read_bytes()
-
-
-class StudioCase(PlatformCase):
-    process_env = FAST
-    extra_env = {"AIP_RENDER_SCALE": "0.25"}
-
-    def create(self, **payload):
-        status, project = self.json("POST", "/api/studio/projects", payload)
-        self.assertEqual(status, 201, project)
-        return project
-
-    def settle(self, pid, timeout=90):
-        return self.poll(f"/api/studio/projects/{pid}", lambda p: not p["running"], timeout=timeout, interval=0.1)
-
-    @staticmethod
-    def statuses(project):
-        return {s["id"]: s["status"] for s in project["steps"]}
-
-    def folder(self, pid) -> Path:
-        return Path(self.tmp.name) / "studio" / "projects" / pid
+from aiplatform.core import http, media
+from tests.fixtures import ARTICLE, FAST, NEEDS_FFMPEG, SOURCE, png_bytes  # noqa: F401 — и для старых импортов
+from tests.helpers import StudioCase
 
 
 @NEEDS_FFMPEG
@@ -206,7 +163,7 @@ class DigestVerdictTest(StudioCase):
         self.assertTrue(any("судья: не готово" in line for line in done["log"]))
 
         status, _ = self.json("POST", f"/api/studio/projects/{project['id']}/publish", {"channels": ["download-16x9"]})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 202)
         self.assertEqual(self.statuses(self.settle(project["id"]))["publish"], "waiting")
         body = {"channels": ["download-16x9"], "ignore_verdict": True}
         self.json("POST", f"/api/studio/projects/{project['id']}/publish", body)
@@ -234,7 +191,7 @@ class LlmGarbageTest(StudioCase):
         done = self.settle(project["id"])
         plan = next(s for s in done["steps"] if s["id"] == "plan")
         self.assertEqual(plan["status"], "failed")
-        self.assertIn("не JSON", plan["error"])
+        self.assertIn("неверном формате", plan["error"])
         # Человек правит план руками — шаг готов.
         fixed = {"slides": [{"para": 0, "title": "Свой слайд"}]}
         status, view = self.json(
@@ -271,7 +228,7 @@ class TelegramWithoutTokenTest(StudioCase):
         self.addCleanup(shutil.rmtree, channels.parent)
         channels.write_text(
             json.dumps(
-                [{"id": "tg", "label": "TG", "type": "telegram", "chat_id": "@x", "token_env": "AIP_NO_SUCH_TOKEN"}]
+                [{"id": "tg", "label": "TG", "type": "telegram", "chat_id": "@x", "token_env": "AIP_TG_NO_SUCH"}]
             ),
             encoding="utf-8",
         )
@@ -280,7 +237,7 @@ class TelegramWithoutTokenTest(StudioCase):
 
     def test_config_shows_problem_and_publish_fails(self):
         _, cfg = self.json("GET", "/api/studio/config")
-        self.assertEqual(cfg["channels"][0]["problem"], "нет токена в переменной AIP_NO_SUCH_TOKEN")
+        self.assertEqual(cfg["channels"][0]["problem"], "нет токена в переменной AIP_TG_NO_SUCH")
         project = self.create(scenario="article", text=ARTICLE, settings={"channels": ["tg"], "auto_publish": True})
         folder = self.folder(project["id"])
         (folder / "video.mp4").write_bytes(b"x")
@@ -297,8 +254,8 @@ class ValidationTest(StudioCase):
             ({"scenario": "x"}, "digest, article или post"),
             ({"scenario": "article", "text": "  "}, "текст"),
             ({"scenario": "digest", "day": "2999-01-01"}, "не наступил"),
-            ({"scenario": "article", "text": "т", "settings": {"poster_mode": "x"}}, "poster_mode"),
-            ({"scenario": "article", "text": "т", "settings": {"nope": 1}}, "Неизвестная настройка"),
+            ({"scenario": "article", "text": "т", "settings": {"poster_mode": "x"}}, "Некорректный запрос"),
+            ({"scenario": "article", "text": "т", "settings": {"nope": 1}}, "Некорректный запрос"),
             ({"scenario": "article", "text": "т", "settings": {"channels": ["nope"]}}, "Нет таких каналов"),
             ({"scenario": "article", "text": "т", "settings": {"engine": "silero", "voice": "Charon"}}, "нет голоса"),
             ({"scenario": "article", "text": "т", "settings": {"image_model": "nope"}}, "модель картинок"),
@@ -308,6 +265,17 @@ class ValidationTest(StudioCase):
                 status, body = self.json("POST", "/api/studio/projects", payload)
                 self.assertEqual(status, 400, body)
                 self.assertIn(message, body["error"])
+
+    def test_malformed_settings_hide_field_name(self):
+        # TXT-008: имя поля и допустимые значения — в лог сервиса, человеку — общий текст.
+        with mock.patch.object(http.log, "event") as event:
+            status, body = self.json(
+                "POST", "/api/studio/projects", {"scenario": "article", "text": "т", "settings": {"poster_mode": "x"}}
+            )
+        self.assertEqual(status, 400, body)
+        self.assertEqual(body["error"], http.MALFORMED)
+        self.assertNotIn("poster_mode", body["error"])
+        event.assert_any_call("request.malformed", level=logging.WARNING, error="poster_mode — local или upload.")
 
     def test_files_and_unknowns(self):
         project = self.create(scenario="article", text="Один абзац.")
@@ -345,6 +313,25 @@ class ValidationTest(StudioCase):
         loaded = app.modules["studio"].studio.get(project["id"])
         self.assertFalse(loaded["running"])
         self.assertEqual(loaded["steps"]["plan"]["status"], "failed")
+
+
+class StudioErrorsTest(StudioCase):
+    """Нет проекта — 404; KeyError из бага в коде — 500, а не «Проект не найден» (BE-003)."""
+
+    def test_missing_project_is_404(self):
+        status, body = self.json("POST", "/api/studio/projects/nope/run", {})
+        self.assertEqual((status, body["error"]), (404, "Проект не найден."))
+
+    def test_bug_keyerror_is_not_404(self):
+        project = self.create(scenario="article", text=ARTICLE)
+
+        def broken(project_id):
+            return {}["steps"]
+
+        self.app.modules["studio"].view = broken
+        with self.assertLogs("aiplatform", "ERROR"):
+            status, body = self.json("GET", f"/api/studio/projects/{project['id']}")
+        self.assertEqual((status, body["code"]), (500, "internal"))
 
 
 if __name__ == "__main__":

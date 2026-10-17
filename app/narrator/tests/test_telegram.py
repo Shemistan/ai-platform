@@ -58,6 +58,7 @@ def article(tmp_path: Path, engine: str = "silero", size: int = 2048) -> tuple[P
         engine=engine,
         duration_sec=125.0,
         versions={engine: 125.0},
+        license="permission",  # право на переработку есть — полный пересказ уходит в канал
     )
     entry.save(path / "meta.json")
     (path / f"2026-09-18-triple-debt_{engine}.mp3").write_bytes(b"\0" * size)
@@ -66,13 +67,16 @@ def article(tmp_path: Path, engine: str = "silero", size: int = 2048) -> tuple[P
 
 # --- токен ---------------------------------------------------------------
 
+FAKE_TOKEN = "123456:" + "A" * 35
+
 
 def test_read_token_from_file_ignoring_markdown(tmp_path, monkeypatch):
     monkeypatch.delenv(telegram.TOKEN_ENV, raising=False)
     path = tmp_path / "bot_token.md"
-    path.write_text("# токен бота\n\n`8841726324:AAGuOLy5MV6vPP4GUkR95Tpe7fZGEqzmwf4`\n")
+    # Синтетический токен: настоящий в тестах держать нельзя (SEC-001).
+    path.write_text(f"# токен бота\n\n`{FAKE_TOKEN}`\n")
     monkeypatch.setenv(telegram.TOKEN_FILE_ENV, str(path))
-    assert telegram.read_token() == "8841726324:AAGuOLy5MV6vPP4GUkR95Tpe7fZGEqzmwf4"
+    assert telegram.read_token() == FAKE_TOKEN
 
 
 def test_read_token_prefers_env(tmp_path, monkeypatch):
@@ -94,7 +98,7 @@ def test_read_token_without_source_raises(tmp_path, monkeypatch):
 
 def test_state_roundtrip_and_unknown_fields(tmp_path):
     state = State(offset=7)
-    state.upsert(42, "Аня")
+    state.upsert(42)
     state.sent["2026-09-18-triple-debt_silero"] = "2026-09-18T10:00:00"
     path = tmp_path / "telegram.json"
     state.save(path)
@@ -102,20 +106,77 @@ def test_state_roundtrip_and_unknown_fields(tmp_path):
     assert State.load(tmp_path / "нет.json") == State()
 
 
+def test_state_save_is_owner_only(tmp_path):
+    # Подписчики — личные данные: файл 0600 и после перезаписи, временных не остаётся (SEC-010).
+    path = tmp_path / "telegram.json"
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o644)
+    State(offset=1).save(path)
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert not [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
+
 def test_upsert_returns_true_only_for_new_chat():
     state = State()
-    assert state.upsert(42, "Аня") is True
-    assert state.upsert(42, "Аня") is False
+    assert state.upsert(42) is True
+    assert state.upsert(42) is False
     assert len(state.subscribers) == 1
 
 
-def test_upsert_revives_unsubscribed():
+def test_upsert_after_remove_subscribes_again():
     state = State()
-    state.upsert(42, "Аня")
-    state.deactivate(42, "отписался")
+    state.upsert(42)
+    assert state.remove(42) is True
+    assert state.remove(42) is False
     assert state.active() == []
-    assert state.upsert(42, "Аня") is True
+    assert state.upsert(42) is True
     assert [s.chat_id for s in state.active()] == [42]
+
+
+def test_subscription_stores_no_name(tmp_path):
+    # CMP-007: в telegram.json только chat_id, дата и тема — имени нет.
+    updates = [message(1, 42, "/start", "Аня Иванова")]
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": updates}]})
+    state = State()
+    telegram.pull(Bot("t", transport), state)
+    path = tmp_path / "telegram.json"
+    state.save(path)
+    raw = path.read_text(encoding="utf-8")
+    assert "Аня" not in raw and "name" not in raw
+    assert json.loads(raw)["subscribers"] == [
+        {"chat_id": 42, "added": state.subscribers[0].added, "thread": None, "start_param": None}
+    ]
+
+
+def test_old_state_with_names_loads_and_drops_them(tmp_path):
+    # Старый формат: имя и неактивные записи. Читается; после save имени и отписавшихся нет.
+    path = tmp_path / "telegram.json"
+    old = {
+        "offset": 3,
+        "subscribers": [
+            {"chat_id": 42, "name": "Аня @anya", "added": "2026-09-01", "active": True, "note": ""},
+            {
+                "chat_id": 43,
+                "name": "Боря",
+                "added": "2026-09-02",
+                "active": False,
+                "note": "/stop",
+            },
+        ],
+        "sent": {},
+    }
+    path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+    state = State.load(path)
+    assert [s.chat_id for s in state.subscribers] == [42]
+    state.save(path)
+    raw = path.read_text(encoding="utf-8")
+    assert "Аня" not in raw and "Боря" not in raw and "name" not in raw and "43" not in raw
+
+
+def test_mask_hides_chat_id():
+    assert telegram.mask(123456789) == "chat …6789"
+    assert telegram.mask(-1002629071990) == "chat …1990"
+    assert telegram.mask(42) == "chat …"
 
 
 # --- приём подписчиков ---------------------------------------------------
@@ -126,25 +187,112 @@ def test_pull_registers_start_advances_offset_and_greets():
     state = State()
     new = telegram.pull(Bot("t", transport), state)
     assert [s.chat_id for s in new] == [42]
-    assert state.subscribers[0].name == "Аня"
     assert state.offset == 11
     assert transport.sent_to("sendMessage") == [42]
 
 
-def test_pull_stop_deactivates_but_keeps_record():
+def test_start_reply_tells_what_is_stored_and_links_policy(monkeypatch):
+    # CMP-008: в приветствии — что храним, как удалить и ссылка на политику.
+    monkeypatch.setenv(telegram.PRIVACY_URL_ENV, "https://example.test/privacy")
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": [message(1, 42, "/start")]}]})
+    telegram.pull(Bot("t", transport), State())
+    [text] = [p["text"] for m, p, _ in transport.calls if m == "sendMessage"]
+    assert "только номер этого чата" in text
+    assert "/stop" in text and "удалить" in text
+    assert "https://example.test/privacy" in text
+    monkeypatch.delenv(telegram.PRIVACY_URL_ENV)
+    assert telegram.PRIVACY_URL in telegram.welcome()
+    assert telegram.PRIVACY_URL.endswith("app/narrator/docs/privacy.md")
+
+
+def test_privacy_doc_matches_behaviour():
+    # Политика есть и обещает то, что делает код: только chat_id, удаление по /stop и forget.
+    doc = Path(__file__).parents[1] / "docs" / "privacy.md"
+    text = doc.read_text(encoding="utf-8")
+    assert "/stop" in text and "bot forget" in text and telegram.PRIVACY_URL_ENV in text
+    # Метка ссылки подписки (AN-011) — метка выпуска, не сведения о человеке; в политике названа.
+    fields = {f.name for f in telegram.fields(telegram.Subscriber)}
+    assert fields == {"chat_id", "added", "thread", "start_param"}
+    assert "Метка ссылки" in text and "7 и 30 дней" in text
+
+
+def test_pull_stop_deletes_record(tmp_path):
+    # CMP-006: /stop — отзыв согласия, запись удаляется целиком.
     updates = [message(1, 42, "/start"), message(2, 42, "/stop")]
     transport = FakeTransport({"getUpdates": [{"ok": True, "result": updates}]})
     state = State()
-    telegram.pull(Bot("t", transport), state)
-    assert state.active() == []
-    assert state.subscribers[0].active is False
+    telegram.pull(Bot("t", transport), state, limiter=telegram.ReplyLimiter(interval=0))
+    assert state.subscribers == []
+    path = tmp_path / "telegram.json"
+    state.save(path)
+    assert "42" not in json.dumps(json.loads(path.read_text(encoding="utf-8"))["subscribers"])
+    texts = [p["text"] for m, p, _ in transport.calls if m == "sendMessage"]
+    assert texts[-1] == telegram.GOODBYE and "удалил" in telegram.GOODBYE
 
 
 def test_pull_ignores_repeated_start():
     transport = FakeTransport({"getUpdates": [{"ok": True, "result": [message(1, 42, "/start")]}]})
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     assert telegram.pull(Bot("t", transport), state) == []
+
+
+@pytest.fixture(autouse=True)
+def fresh_limiter(monkeypatch):
+    """Общий лимитер ответов процесса — свой на каждый тест."""
+    monkeypatch.setattr(telegram, "_LIMITER", telegram.ReplyLimiter(interval=60))
+    for name in (telegram.INVITE_ENV, telegram.MAX_SUBSCRIBERS_ENV, telegram.REPLY_INTERVAL_ENV):
+        monkeypatch.delenv(name, raising=False)
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_pull_flood_gets_one_hint():
+    # SEC-012: 10 сообщений подряд от одного чата — не больше одного ответа.
+    updates = [message(i, 42, f"спам {i}") for i in range(1, 11)]
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": updates}]})
+    clock = FakeClock()
+    limiter = telegram.ReplyLimiter(interval=60, clock=clock)
+    telegram.pull(Bot("t", transport), State(), limiter=limiter)
+    assert transport.sent_to("sendMessage") == [42]
+    clock.now += 61  # через минуту снова можно ответить
+    transport.replies["getUpdates"] = [{"ok": True, "result": [message(11, 42, "ещё")]}]
+    telegram.pull(Bot("t", transport), State(offset=11), limiter=limiter)
+    assert transport.sent_to("sendMessage") == [42, 42]
+
+
+def test_pull_repeated_start_is_silent():
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": [message(1, 42, "/start")]}]})
+    state = State()
+    state.upsert(42)
+    telegram.pull(Bot("t", transport), state)
+    assert transport.sent_to("sendMessage") == []
+
+
+def test_pull_respects_subscriber_cap_and_invite():
+    updates = [message(1, 1, "/start"), message(2, 2, "/start"), message(3, 3, "/start")]
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": updates}]})
+    state = State()
+    telegram.pull(Bot("t", transport), state, max_subscribers=2)
+    assert [s.chat_id for s in state.active()] == [1, 2]
+
+    updates = [
+        message(4, 7, "/start"),
+        message(5, 8, "/start неверный"),
+        message(6, 9, "/start Код-1"),
+    ]
+    transport = FakeTransport({"getUpdates": [{"ok": True, "result": updates}]})
+    state = State()
+    new = telegram.pull(Bot("t", transport), state, invite="Код-1")
+    assert [s.chat_id for s in new] == [9]
+    to_7 = [p["text"] for _, p, _ in transport.calls if p.get("chat_id") == 7]
+    assert to_7 == [telegram.NEED_INVITE]
 
 
 def test_call_raises_on_api_error():
@@ -191,9 +339,9 @@ def test_broadcast_sends_audio_to_active_only(tmp_path):
     path, entry = article(tmp_path)
     transport = FakeTransport()
     state = State()
-    state.upsert(42, "Аня")
-    state.upsert(43, "Боря")
-    state.deactivate(43, "отписался")
+    state.upsert(42)
+    state.upsert(43)
+    state.remove(43)
     done = telegram.broadcast(Bot("t", transport), state, path, entry, "silero")
     assert [d.chat_id for d in done] == [42]
     assert all(d.ok for d in done)
@@ -205,23 +353,22 @@ def test_broadcast_sends_audio_to_active_only(tmp_path):
     assert "2026-09-18-triple-debt_silero" in state.sent
 
 
-def test_broadcast_deactivates_blocked_subscriber(tmp_path):
+def test_broadcast_deletes_blocked_subscriber(tmp_path):
     path, entry = article(tmp_path)
     blocked = {"ok": False, "error_code": 403, "description": "bot was blocked by the user"}
     transport = FakeTransport({"sendAudio": [blocked]})
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     done = telegram.broadcast(Bot("t", transport), state, path, entry, "silero")
     assert done[0].ok is False
-    assert state.active() == []
-    assert state.subscribers[0].note == "bot was blocked by the user"
+    assert state.subscribers == [], "бот заблокирован — запись удалена (CMP-006)"
 
 
 def test_broadcast_sends_text_when_file_too_big(tmp_path):
     path, entry = article(tmp_path, size=telegram.SIZE_LIMIT + 1)
     transport = FakeTransport()
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     done = telegram.broadcast(Bot("t", transport), state, path, entry, "silero")
     assert transport.methods() == ["sendMessage"]
     assert done[0].ok is True
@@ -232,7 +379,7 @@ def test_broadcast_without_audio_raises(tmp_path):
     path, entry = article(tmp_path)
     (path / "2026-09-18-triple-debt_silero.mp3").unlink()
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     with pytest.raises(telegram.TelegramError, match="нет файла"):
         telegram.broadcast(Bot("t", FakeTransport()), state, path, entry, "silero")
 
@@ -360,10 +507,10 @@ def test_broadcast_goes_to_channel_not_subscribers(tmp_path, monkeypatch):
     path, entry = article(tmp_path)
     transport = FakeTransport()
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     done = telegram.broadcast(Bot("t", transport), state, path, entry, "silero")
     assert transport.sent_to("sendAudio") == [-1002629071990]
-    assert done[0].ok and done[0].name == "канал"
+    assert done[0].ok
     assert transport.calls[0][1]["parse_mode"] == "HTML"
     assert "2026-09-18-triple-debt_silero" in state.sent
 
@@ -373,7 +520,7 @@ def test_broadcast_to_channel_failure_keeps_subscribers(tmp_path, monkeypatch):
     path, entry = article(tmp_path)
     kicked = {"ok": False, "error_code": 403, "description": "bot was kicked from the channel"}
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     bot = Bot("t", FakeTransport({"sendAudio": [kicked]}))
     done = telegram.broadcast(bot, state, path, entry, "silero")
     assert done[0].ok is False
@@ -416,7 +563,7 @@ def test_http_transport_uploads_file_as_multipart(tmp_path, fake_api):
     root = f"http://127.0.0.1:{fake_api.server_address[1]}"
     bot = Bot("111:AAAA", telegram.http_transport("111:AAAA", root))
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     done = telegram.broadcast(bot, state, path, entry, "silero")
 
     assert [d.ok for d in done] == [True]
@@ -472,13 +619,48 @@ def bot_env(tmp_path, monkeypatch):
 def test_cli_subscribers_syncs_and_lists(tmp_path, bot_env, capsys):
     from narrator.cli import main
 
-    bot_env.replies["getUpdates"] = [{"ok": True, "result": [message(5, 42, "/start", "Аня")]}]
+    chat = 987654321
+    updates = [message(5, chat, "/start", "Аня")]
+    bot_env.replies["getUpdates"] = [{"ok": True, "result": updates}]
     assert main(["bot", "subscribers"]) == 0
     out = capsys.readouterr().out
-    assert "Аня" in out and "42" in out
+    # CMP-007: в выводе (он уходит в лог задачи) — маска, ни имени, ни полного chat_id.
+    assert "chat …4321" in out
+    assert "Аня" not in out and str(chat) not in out
     saved = State.load(telegram.state_path(tmp_path))
-    assert [s.chat_id for s in saved.active()] == [42]
+    assert [s.chat_id for s in saved.active()] == [chat]
     assert saved.offset == 6
+
+    # --names: полный id и имя из getChat — на лету, в файл не пишется.
+    bot_env.replies["getChat"] = {"ok": True, "result": {"id": chat, "first_name": "Аня"}}
+    assert main(["bot", "subscribers", "--no-sync", "--names"]) == 0
+    out = capsys.readouterr().out
+    assert str(chat) in out and "Аня" in out
+    assert "Аня" not in telegram.state_path(tmp_path).read_text(encoding="utf-8")
+
+
+def test_cli_delivery_failure_masks_chat_id(capsys):
+    from narrator.cli import report_delivery
+
+    report_delivery([telegram.Delivery(987654321, False, "Forbidden")])
+    err = capsys.readouterr().err
+    assert "chat …4321" in err and "987654321" not in err
+
+
+def test_cli_forget_deletes_subscriber(tmp_path, bot_env, capsys):
+    # CMP-006: удаление по запросу — `bot forget <chat_id>`.
+    from narrator.cli import main
+
+    state = State()
+    state.upsert(42)
+    state.upsert(43)
+    state.save(telegram.state_path(tmp_path))
+    assert main(["bot", "forget", "42"]) == 0
+    assert "удалён" in capsys.readouterr().out
+    assert [s.chat_id for s in State.load(telegram.state_path(tmp_path)).subscribers] == [43]
+    assert main(["bot", "forget", "42"]) == 1
+    assert "нет" in capsys.readouterr().err
+    assert bot_env.calls == [], "forget работает без сети"
 
 
 def test_cli_send_delivers_and_then_skips_until_force(tmp_path, bot_env, capsys):
@@ -489,7 +671,7 @@ def test_cli_send_delivers_and_then_skips_until_force(tmp_path, bot_env, capsys)
     assert "подписчиков нет" in capsys.readouterr().out
 
     state = State.load(telegram.state_path(tmp_path))
-    state.upsert(42, "Аня")
+    state.upsert(42)
     state.save(telegram.state_path(tmp_path))
 
     assert main(["bot", "send", "2026-09-18/triple-debt"]) == 0
@@ -671,7 +853,7 @@ def test_notify_after_synth_sends_to_subscribers(tmp_path, bot_env, capsys):
 
     path, _ = article(tmp_path)
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     state.save(telegram.state_path(tmp_path))
     notify_subscribers(path, "silero")
     assert bot_env.sent_to("sendAudio") == [42]
@@ -693,7 +875,7 @@ def test_notify_survives_telegram_failure(tmp_path, bot_env, capsys):
 
     path, _ = article(tmp_path)
     state = State()
-    state.upsert(42, "Аня")
+    state.upsert(42)
     state.save(telegram.state_path(tmp_path))
     bot_env.replies["getUpdates"] = {"ok": False, "error_code": 401, "description": "Unauthorized"}
     notify_subscribers(path, "silero")
@@ -706,9 +888,13 @@ def test_notify_survives_telegram_failure(tmp_path, bot_env, capsys):
 def second_article(tmp_path: Path) -> Path:
     path = tmp_path / "2026" / "09" / "19" / "second"
     path.mkdir(parents=True)
-    Entry(title="Вторая", added="2026-09-19", engine="silero", versions={"silero": 60.0}).save(
-        path / "meta.json"
-    )
+    Entry(
+        title="Вторая",
+        added="2026-09-19",
+        engine="silero",
+        versions={"silero": 60.0},
+        license="own",
+    ).save(path / "meta.json")
     (path / "2026-09-19-second_silero.mp3").write_bytes(b"\0" * 16)
     return path
 

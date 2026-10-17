@@ -3,25 +3,73 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
+import tempfile
+import threading
+from email.utils import formatdate, parsedate_to_datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from aiplatform.core.uploads import IMAGE, MAX_AUDIO_BYTES, MAX_UPLOAD_BYTES, MIME, UploadError, UploadStore
+from aiplatform.core import log
+from aiplatform.core import uploads as uploads_module
+from aiplatform.core.uploads import IMAGE, MIME, UploadError, UploadStore
 
 MAX_JSON_BYTES = 1024 * 1024
+CHUNK = 1024 * 1024  # загрузка читается и пишется на диск кусками по 1 МБ
+UPLOAD_SLOTS = 2  # одновременных загрузок файлов; сверх — 503
+_upload_slots = threading.BoundedSemaphore(UPLOAD_SLOTS)
 _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
-class HttpError(Exception):
-    """extra — дополнительные поля ответа рядом с error (например, existing у дубликата)."""
+# Машинный код ошибки по HTTP-статусу (BE-011, docs/api.md): клиент различает ошибки по code, не по тексту.
+CODES = {
+    HTTPStatus.BAD_REQUEST: "bad_request",
+    HTTPStatus.UNAUTHORIZED: "unauthorized",
+    HTTPStatus.FORBIDDEN: "forbidden",
+    HTTPStatus.NOT_FOUND: "not_found",
+    HTTPStatus.METHOD_NOT_ALLOWED: "method_not_allowed",
+    HTTPStatus.CONFLICT: "conflict",
+    HTTPStatus.LENGTH_REQUIRED: "length_required",
+    HTTPStatus.REQUEST_ENTITY_TOO_LARGE: "too_large",
+    HTTPStatus.MISDIRECTED_REQUEST: "bad_host",
+    HTTPStatus.UNPROCESSABLE_ENTITY: "invalid",
+    HTTPStatus.TOO_MANY_REQUESTS: "rate_limited",
+    HTTPStatus.INTERNAL_SERVER_ERROR: "internal",
+    HTTPStatus.SERVICE_UNAVAILABLE: "unavailable",
+}
 
-    def __init__(self, status: HTTPStatus, message: str, extra: dict | None = None) -> None:
+
+def default_code(status: int) -> str:
+    return CODES.get(status) or f"http_{int(status)}"
+
+
+class HttpError(Exception):
+    """extra — дополнительные поля ответа рядом с error (например, existing у дубликата);
+    headers — заголовки ответа (например, Allow у 405); code — машинный код ошибки,
+    по умолчанию из статуса (docs/api.md)."""
+
+    def __init__(
+        self,
+        status: HTTPStatus,
+        message: str,
+        extra: dict | None = None,
+        headers: dict[str, str] | None = None,
+        *,
+        code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
         self.extra = extra or {}
+        self.headers = headers or {}
+        self.code = code or default_code(status)
+
+    def body(self) -> dict:
+        """Тело ответа: {"error", "code", …extra}. error — для человека, code — для программы."""
+        return {"error": self.message, "code": self.code, **self.extra}
 
 
 def not_found(message: str = "Нет такого адреса.") -> HttpError:
@@ -30,6 +78,17 @@ def not_found(message: str = "Нет такого адреса.") -> HttpError:
 
 def bad_request(message: str) -> HttpError:
     return HttpError(HTTPStatus.BAD_REQUEST, message)
+
+
+# Форма запроса не та (тип поля, значение не из списка): такое шлёт только сломанный фронт,
+# имя поля человеку не поможет — общий текст, а причина — в лог сервиса (TXT-008).
+MALFORMED = "Некорректный запрос — обнови страницу и попробуй ещё раз."
+
+
+def malformed(reason: str) -> str:
+    """Записать техническую причину в лог и вернуть общий текст для ответа."""
+    log.event("request.malformed", level=logging.WARNING, error=reason)
+    return MALFORMED
 
 
 def found(value: dict | None, message: str = "Задача не найдена.") -> dict:
@@ -55,6 +114,7 @@ class Request:
         self.sub = sub
         self.query = query
         self.head = head
+        self.started = False  # ответ уже начат: второй (об ошибке) слать нельзя
 
     @property
     def headers(self):
@@ -67,15 +127,70 @@ class Request:
     # --- ввод ---
 
     def body(self, limit: int, too_big: str = "Слишком большой запрос.") -> bytes:
+        """Тело целиком в память — только для небольших запросов (JSON); файлы — body_to_file."""
+        length = self._length(limit, too_big)
+        try:
+            data = self._h.rfile.read(length)
+        except TimeoutError:  # клиент замолчал посреди тела (Handler.timeout)
+            data = b""
+        if len(data) < length:  # обрыв: Content-Length больше, чем пришло (QA-015)
+            self._h.close_connection = True
+            raise bad_request("Запрос оборвался на середине — отправь его ещё раз.")
+        return data
+
+    def body_to_file(self, folder: Path, limit: int, too_big: str = "Слишком большой файл.") -> Path:
+        """Тело запроса — потоком во временный файл в folder, кусками по CHUNK (SEC-009).
+
+        В памяти не больше куска: загрузка на 200 МБ не раздувает процесс. Лимит
+        проверяется по Content-Length до чтения и по факту при чтении. Обрыв, лимит,
+        любая ошибка — временный файл удаляется. Одновременно — не больше
+        UPLOAD_SLOTS загрузок, сверх — 503. Вызывающий переносит файл os.replace.
+        """
+        length = self._length(limit, too_big)
+        if not _upload_slots.acquire(blocking=False):
+            self._h.close_connection = True  # тело не читали — соединение дальше не годится
+            raise HttpError(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "Сейчас идут другие загрузки — повтори через минуту.",
+                headers={"Retry-After": "10"},
+            )
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(dir=folder, prefix=".upload-", suffix=".part")
+            tmp = Path(name)
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    left = length
+                    while left > 0:
+                        try:
+                            chunk = self._h.rfile.read(min(CHUNK, left))
+                        except TimeoutError:  # клиент замолчал посреди тела (Handler.timeout, QA-015)
+                            chunk = b""
+                        if not chunk:
+                            self._h.close_connection = True
+                            raise bad_request("Загрузка оборвалась — пришло меньше, чем обещано.")
+                        fh.write(chunk)
+                        left -= len(chunk)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+            return tmp
+        finally:
+            _upload_slots.release()
+
+    def _length(self, limit: int, too_big: str) -> int:
         try:
             length = int(self.headers.get("Content-Length", ""))
         except ValueError as exc:
             self._h.close_connection = True
             raise HttpError(HTTPStatus.LENGTH_REQUIRED, "Нужен заголовок Content-Length.") from exc
+        if length < 0:  # rfile.read(-1) читал бы до EOF и вешал keep-alive
+            self._h.close_connection = True
+            raise bad_request("Неверный заголовок Content-Length.")
         if length > limit:
             self._h.close_connection = True  # тело не читаем — соединение дальше не годится
             raise HttpError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, too_big)
-        return self._h.rfile.read(length)
+        return length
 
     def json(self, limit: int = MAX_JSON_BYTES) -> object:
         raw = self.body(limit)
@@ -86,19 +201,25 @@ class Request:
 
     # --- вывод ---
 
-    def send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
+    def send_json(
+        self, payload: dict, status: HTTPStatus = HTTPStatus.OK, headers: dict[str, str] | None = None
+    ) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         h = self._h
+        self.started = True
         h.send_response(status)
         h.send_header("Content-Type", "application/json; charset=utf-8")
         h.send_header("Content-Length", str(len(data)))
         h.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            h.send_header(name, value)
         h.end_headers()
         if not self.head:
             h.wfile.write(data)
 
     def redirect(self, location: str) -> None:
         h = self._h
+        self.started = True
         h.send_response(HTTPStatus.FOUND)
         h.send_header("Location", location)
         h.send_header("Content-Length", "0")
@@ -114,9 +235,21 @@ class Request:
         ranged: bool = False,
     ) -> None:
         h = self._h
-        size = path.stat().st_size
+        stat = path.stat()
+        size = stat.st_size
         start, end, status = 0, size - 1, HTTPStatus.OK
         header = self.headers.get("Range")
+        self.started = True
+        # Валидаторы (FE-006): с ними no-cache превращается в дешёвый 304 без тела при каждом переходе.
+        etag = f'"{stat.st_mtime_ns:x}-{size:x}"'
+        modified = formatdate(stat.st_mtime, usegmt=True)
+        if not_modified(self.headers, etag, stat.st_mtime):
+            h.send_response(HTTPStatus.NOT_MODIFIED)
+            h.send_header("ETag", etag)
+            h.send_header("Last-Modified", modified)
+            h.send_header("Cache-Control", cache)
+            h.end_headers()
+            return
         if ranged and header:
             parsed = parse_range(header, size)
             if parsed is None:
@@ -131,6 +264,8 @@ class Request:
         h.send_header("Content-Type", ctype)
         h.send_header("Content-Length", str(max(end - start + 1, 0)))
         h.send_header("Cache-Control", cache)
+        h.send_header("ETag", etag)
+        h.send_header("Last-Modified", modified)
         if attachment:
             h.send_header("Content-Disposition", f'attachment; filename="{attachment}"')
         if ranged:
@@ -149,6 +284,21 @@ class Request:
                     break
                 h.wfile.write(chunk)
                 remaining -= len(chunk)
+
+
+def not_modified(headers, etag: str, mtime: float) -> bool:
+    """Условный GET: If-None-Match (главнее) или If-Modified-Since совпали с файлом → 304."""
+    match = headers.get("If-None-Match")
+    if match is not None:
+        tags = {t.strip().removeprefix("W/") for t in match.split(",")}
+        return "*" in tags or etag in tags
+    since = headers.get("If-Modified-Since")
+    if not since:
+        return False
+    try:
+        return int(mtime) <= parsedate_to_datetime(since).timestamp()
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return False
 
 
 def parse_range(header: str, size: int) -> tuple[int, int] | None:
@@ -171,15 +321,16 @@ def handle_uploads(req: Request, store: UploadStore, url_base: str, kinds: tuple
     """`POST uploads` и `GET uploads/<id>` для модуля; False — путь не про загрузки."""
     match (req.method, req.sub):
         case ("POST", ["uploads"]):
-            limit = MAX_AUDIO_BYTES if len(kinds) > 1 or IMAGE not in kinds else MAX_UPLOAD_BYTES
-            data = req.body(limit, f"Файл больше {limit // 2**20} МБ.")
+            image_only = len(kinds) == 1 and IMAGE in kinds  # лимит читается при запросе: тесты его понижают
+            limit = uploads_module.MAX_UPLOAD_BYTES if image_only else uploads_module.MAX_AUDIO_BYTES
+            tmp = req.body_to_file(store.root, limit, f"Файл больше {limit // 2**20} МБ.")
             try:
-                upload_id = store.save(data, kinds)
+                upload_id = store.save_file(tmp, kinds)
             except UploadError as exc:
                 raise bad_request(str(exc)) from exc
             width, height = store.size(upload_id) or (None, None)
             body = {"id": upload_id, "url": f"{url_base}/uploads/{upload_id}", "width": width, "height": height}
-            req.send_json(body, HTTPStatus.CREATED)
+            req.send_json(body, HTTPStatus.CREATED, {"Location": body["url"]})
             return True
         case ("GET", ["uploads", upload_id]):
             path = store.path(upload_id)

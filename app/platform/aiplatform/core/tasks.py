@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import queue
 import re
 import threading
@@ -19,13 +20,16 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from aiplatform.core import runner
+from aiplatform.core import log, runner, schema
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
 
 ACTIVE = ("queued", "running")
 LOG_TAIL = 400
 KEEP = 60  # столько завершённых задач помнит очередь
 _ID = re.compile(r"^[0-9a-f]{12}$")
+TASK_SCHEMA = 1  # схема файла задачи (core/schema.py, ADR 0009)
+_TASK_FIELDS = schema.require("id", "status", "created_at", "finished_at", types={"id": str, "status": str})
 
 
 @dataclass
@@ -40,6 +44,9 @@ class Spec:
     hint: str = runner.DEFAULT_MISSING_HINT
     progress: Callable[[str], str | None] | None = None  # строка лога → этап; None — без смены
     on_done: Callable[[dict], None] | None = None  # после успешного конца, в потоке очереди
+    limits: str | None = None  # вид для лимитов времени runner (audio, llm…); None — без лимита
+    timeout_s: float | None = None  # явный лимит на весь запуск
+    idle_timeout_s: float | None = None  # явный лимит «нет вывода»
 
 
 class Tasks:
@@ -149,17 +156,18 @@ class Tasks:
     # --- внутреннее ---
 
     def _save(self, task: dict) -> None:
-        tmp = self._folder / f"{task['id']}.json.tmp"
-        tmp.write_text(json.dumps(task, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self._folder / f"{task['id']}.json")
+        data = schema.stamp(task, TASK_SCHEMA)
+        atomic_write(self._folder / f"{task['id']}.json", json.dumps(data, ensure_ascii=False))
 
     def _load(self) -> None:
+        self.load_problems: list[str] = []
         for path in self._folder.glob("*.json"):
             if not _ID.match(path.stem):
                 continue
-            try:
-                task = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            task, _ = schema.load_record(
+                path, TASK_SCHEMA, check=_TASK_FIELDS, problems=self.load_problems, label=f"Задача {path.stem}"
+            )
+            if task is None:
                 continue
             if task.get("status") in ACTIVE:
                 task.update(status="failed", error="Сервис был перезапущен во время задачи.", stage="Ошибка")
@@ -212,16 +220,29 @@ class Tasks:
                 task["stage"] = f"Ждёт GPU (занят: {holder})"
                 self._save(task)
 
+        def execute() -> None:
+            with self._lock:
+                task["stage"] = "Идёт"
+            runner.run(
+                spec.argv,
+                on_line,
+                cancel,
+                cwd=spec.cwd,
+                env=spec.env,
+                missing_hint=spec.hint,
+                kind=spec.limits,
+                timeout_s=spec.timeout_s,
+                idle_timeout_s=spec.idle_timeout_s,
+            )
+
+        started = time.monotonic()
+        log.event("task.start", task=task["id"], kind=spec.kind, title=spec.title)
         try:
             if spec.gpu and self._gate is not None:
                 with self._gate.hold(spec.gpu, on_wait, cancel):
-                    with self._lock:
-                        task["stage"] = "Идёт"
-                    runner.run(spec.argv, on_line, cancel, cwd=spec.cwd, env=spec.env, missing_hint=spec.hint)
+                    execute()
             else:
-                with self._lock:
-                    task["stage"] = "Идёт"
-                runner.run(spec.argv, on_line, cancel, cwd=spec.cwd, env=spec.env, missing_hint=spec.hint)
+                execute()
             if spec.on_done:
                 spec.on_done(self._view(task))
         except runner.Canceled:
@@ -232,10 +253,20 @@ class Tasks:
                 self._finish(task, "failed", _error_text(str(exc), task["log"]))
         except Exception as exc:  # noqa: BLE001 — очередь не должна умереть из-за одной задачи
             with self._lock:
-                self._finish(task, "failed", f"Внутренняя ошибка: {exc!r}")
+                log.internal_error(exc, task=task["id"])
+                task["log"].append(f"✗ {type(exc).__name__}: {exc}")
+                self._finish(task, "failed", log.TASK_INTERNAL)
         else:
             with self._lock:
                 self._finish(task, "done")
+        log.event(
+            f"task.{task['status']}",
+            level=logging.WARNING if task["status"] == "failed" else logging.INFO,
+            task=task["id"],
+            kind=spec.kind,
+            duration_s=round(time.monotonic() - started, 1),
+            error=task["error"],
+        )
 
 
 def _last(task: dict) -> str:

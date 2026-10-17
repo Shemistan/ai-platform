@@ -17,6 +17,7 @@ class Engine:
     voices: tuple[str, ...]
     default_voice: str
     tunable: bool = False  # слушает --speed
+    license_nc: bool = False  # некоммерческая лицензия весов: только черновики, не публикация (CMP-018)
 
     def public(self) -> dict:
         return {
@@ -26,6 +27,7 @@ class Engine:
             "voices": list(self.voices),
             "default_voice": self.default_voice,
             "speed": self.tunable,
+            "license_nc": self.license_nc,
         }
 
 
@@ -41,6 +43,7 @@ ENGINES: dict[str, Engine] = {
             "очень быстро на CPU; лицензия CC BY-NC — для черновиков",
             ("eugene", "aidar", "baya", "kseniya", "xenia"),
             "eugene",
+            license_nc=True,
         ),
         Engine(
             "supertonic",
@@ -51,13 +54,34 @@ ENGINES: dict[str, Engine] = {
             True,
         ),
         Engine("higgs", "Higgs (MLX)", "клон голоса на Apple Silicon; движок дайджеста", CLONES, "Charon"),
-        Engine("fish", "Fish (MLX)", "клон голоса на Apple Silicon", CLONES, "Charon"),
+        # fish-audio-research: бесплатно только некоммерческое использование (карточка модели, ADR 0010).
+        Engine(
+            "fish",
+            "Fish (MLX)",
+            "клон голоса на Apple Silicon; лицензия некоммерческая — для черновиков",
+            CLONES,
+            "Charon",
+            license_nc=True,
+        ),
         Engine("moss", "MOSS (MLX)", "клон голоса на Apple Silicon", CLONES, "Charon"),
         Engine("qwen3", "Qwen3 TTS (MLX)", "клон голоса на Apple Silicon", CLONES, "Charon"),
         Engine("chatterbox", "Chatterbox (MLX)", "клон голоса на Apple Silicon", CLONES, "Charon"),
     )
 }
 DEFAULT_ENGINE = "higgs"  # голос по умолчанию у Higgs — Charon
+# Движок не задан явно — берётся первый с установленными весами в этом порядке:
+# higgs ставит `make models-mlx E=higgs`, espeech и silero — `make models`.
+FALLBACK_ORDER = ("higgs", "espeech", "silero")
+MLX_ENGINES = ("higgs", "fish", "moss", "qwen3", "chatterbox")  # веса ставит make models-mlx
+
+
+def models_command(engine_id: str) -> str:
+    """Какой командой поставить веса движка."""
+    if engine_id in MLX_ENGINES:
+        return f"cd app/narrator && make models-mlx E={engine_id}"
+    return "cd app/narrator && make models"
+
+
 SPEED_RANGE = (0.7, 2.0)  # как speed_arg в narrator/cli.py
 
 
@@ -86,4 +110,4 @@ def unknown(engine_id: object, voice: object = None) -> str:
         return f"Движок {engine.label} выключен — включи его во вкладке «Настройки»."
     if voice in engine.voices:
         return f"Голос {voice} у движка {engine.label} выключен — включи его во вкладке «Настройки»."
-    return f"У движка {engine.label} нет голоса {voice!r}."
+    return f"У движка {engine.label} нет голоса «{voice}»."

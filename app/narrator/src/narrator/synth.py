@@ -51,19 +51,22 @@ DEFAULT_VOICE = "M1"
 VOICES = [f"{g}{n}" for g in "FM" for n in range(1, 6)]
 
 SILERO_MODEL = "v5_5_ru"
+# sha256 файла v5_5_ru.pt (models.silero.ai): torch.package исполняет код из файла,
+# подменённый файл не грузим (SEC-011). Та же сумма — в tools/fetch-models.sh.
+SILERO_SHA256 = "50081637b602126ee06cb3bc8a744d25651d2da149ee8864b9a379bfdd934437"
 SILERO_VOICES = ["eugene", "aidar", "baya", "kseniya", "xenia"]
 SILERO_SR = 48000
 # Silero не берёт текст длиннее ~1000 символов за вызов: абзац режем по
 # предложениям на группы с запасом (+ удлиняют текст).
 SILERO_MAX_CHARS = 700
 
-# Образцы для клонирования: голос → имя файлов <имя>.wav и <имя>.txt в
-# voices/ пакета. M1 — из Supertonic. Charon — голос Gemini TTS, отрывок
-# дайджеста за 9 октября 2026; другой образец записывает `./narrate voice
-# charon` в <папка моделей>/voices/, он главнее. Shem — живой голос, первые
-# фразы дайджеста за 12 октября 2026, прочитанного человеком на камеру.
-# Shem-v2 — тот же голос, запись по тексту для клонирования (16 октября
-# 2026): 11,6 с ровного повествования вместо 6 с заставки.
+# Образцы для клонирования: голос → имя файлов <имя>.wav и <имя>.txt.
+# В пакете (voices/) — только синтетические: M1 из Supertonic и Charon —
+# голос Gemini TTS, отрывок дайджеста за 9 октября 2026; другой образец
+# записывает `./narrate voice charon` в <папка моделей>/voices/, он главнее.
+# Shem и Shem-v2 — живой голос человека: это личные данные, в git их нет
+# (CMP-009). Они лежат только в <папка моделей>/voices/ рядом с записью о
+# согласии `<имя>.consent.json` (consent.py); без неё клон не строится.
 CLONE_VOICES = {"M1": "m1", "Charon": "charon", "Shem": "shem", "Shem-v2": "shem-v2"}
 # Голоса, которые есть в Gemini TTS: их образец можно записать по ключу.
 GEMINI_VOICES = ("Charon",)
@@ -106,6 +109,10 @@ class ModelMissingError(RuntimeError):
     pass
 
 
+class ConsentMissingError(ModelMissingError):
+    """Образец живого голоса есть, а записи о согласии владельца нет (CMP-009)."""
+
+
 @dataclass(frozen=True)
 class Settings:
     engine: str = "supertonic"
@@ -132,13 +139,30 @@ def voices_dir() -> Path:
 
 
 def ref_sample(voice: str) -> tuple[Path, Path]:
-    """Образец голоса для клонирования: wav и его текст с «+» перед ударными."""
+    """Образец голоса для клонирования: wav и его текст с «+» перед ударными.
+
+    Живой голос — только с записью о согласии рядом (CMP-009): иначе
+    ConsentMissingError, синтез не начнётся.
+    """
+    from narrator import consent
+
     stem = CLONE_VOICES[voice]
     # Перезаписанный человеком образец главнее того, что в пакете.
     for d in (voices_dir(), VOICE_DIR):
         wav, text = d / f"{stem}.wav", d / f"{stem}.txt"
         if wav.exists() and text.exists():
+            try:
+                consent.check(stem, wav)
+            except consent.ConsentError as e:
+                raise ConsentMissingError(str(e)) from e
             return wav, text
+    if stem not in consent.SYNTHETIC:
+        raise ModelMissingError(
+            f"нет образца голоса {voice} в {voices_dir()}: живой голос в пакете не лежит "
+            f"(CMP-009) — положи туда {stem}.wav и {stem}.txt или запиши: ./narrate voice "
+            f"{stem} --from <файл> --text «…» --owner «чей голос» --form self|written "
+            f"({consent.DOC})"
+        )
     raise ModelMissingError(
         f"нет образца голоса {voice} в {voices_dir()}: запиши его один раз вне sandbox — "
         f"./narrate voice {stem}"
@@ -388,6 +412,24 @@ def silero_path() -> Path:
     return models.locate(f"{models.SILERO}/{SILERO_MODEL}.pt", legacy, "NARRATOR_SILERO_MODEL")
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def check_silero(path: Path) -> None:
+    """Сумма модели Silero до загрузки: PackageImporter исполняет код из файла."""
+    got = file_sha256(path)
+    if got != SILERO_SHA256:
+        raise ModelMissingError(
+            f"{path}: контрольная сумма не совпала ({got[:12]}… вместо {SILERO_SHA256[:12]}…) — "
+            "файл подменён или битый, удали его и скачай заново: make models"
+        )
+
+
 def sentence_groups(text: str, limit: int) -> list[str]:
     """Режет текст по предложениям на группы не длиннее limit (длинное предложение — целиком)."""
     import re
@@ -418,6 +460,7 @@ class SileroSynth(Synthesizer):
         path = silero_path()
         if not path.exists():
             raise ModelMissingError(f"нет модели Silero в {path}: {models.missing_hint()}")
+        check_silero(path)
         import torch
 
         self._model = torch.package.PackageImporter(str(path)).load_pickle("tts_models", "model")
@@ -637,13 +680,17 @@ def render(
     return total / sr
 
 
+# Синтетический голос — метка в ID3 (TXXX:AI_GENERATED, комментарий): EU AI Act ст. 50, CMP-011.
+AI_METADATA = ["-metadata", "comment=AI-generated: synthetic voice", "-metadata", "AI_GENERATED=1"]
+
+
 def encode_mp3(wav: Path, mp3: Path, title: str, bitrate: str = "64k") -> None:
     tmp = mp3.with_suffix(".tmp.mp3")
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav),
         "-ac", "1", "-codec:a", "libmp3lame", "-b:a", bitrate,
         "-metadata", f"title={title}", "-metadata", "album=Озвученные статьи",
-        "-metadata", "artist=narrator", str(tmp),
+        "-metadata", "artist=narrator", *AI_METADATA, str(tmp),
     ]  # fmt: skip
     subprocess.run(cmd, check=True)
     tmp.replace(mp3)
@@ -655,7 +702,7 @@ def retime_mp3(src: Path, dst: Path, tempo: float, bitrate: str = "64k") -> None
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
         "-filter:a", f"atempo={tempo:g}", "-ac", "1", "-codec:a", "libmp3lame",
-        "-b:a", bitrate, str(tmp),
+        "-b:a", bitrate, *AI_METADATA, str(tmp),
     ]  # fmt: skip
     subprocess.run(cmd, check=True)
     tmp.replace(dst)

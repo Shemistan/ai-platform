@@ -4,24 +4,41 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import mimetypes
+import os
 import re
 import threading
 import time
+import urllib.parse
+from dataclasses import dataclass, field
+from datetime import datetime
 from http import HTTPStatus
+from pathlib import Path
 
 from aiplatform.audio import voices
-from aiplatform.core import media
+from aiplatform.core import events, log, media, schema
 from aiplatform.core import uploads as uploads_module
-from aiplatform.core.http import HttpError, Request, bad_request, not_found
+from aiplatform.core.fsutil import atomic_write
+from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
-from aiplatform.studio import news, prompts, publish, schedule, series, slides, stats, steps
+from aiplatform.studio import history, metrics, news, prompts, publish, schedule, series, slides, stats, steps
 from aiplatform.studio.cache import MediaCache, place
-from aiplatform.studio.llm import StudioError, complete
-from aiplatform.studio.pipeline import LABELS, STEP_IDS, Conflict, Studio, attention, blockers, dependents
+from aiplatform.studio.llm import StudioError, complete, missing_cli
+from aiplatform.studio.pipeline import (
+    LABELS,
+    STEP_IDS,
+    Conflict,
+    ProjectNotFound,
+    Studio,
+    attention,
+    blockers,
+    dependents,
+)
 from aiplatform.studio.render import Renderer
+from aiplatform.studio.review import Review
 from aiplatform.updates import registry
 from aiplatform.video import models as video_models
 
@@ -29,6 +46,7 @@ PREFIX = "studio"
 URL_BASE = f"/api/{PREFIX}"
 SCENARIOS = {"digest": "Дайджест новостей", "article": "Видео по статье", "post": "Пост в канал"}
 DIGEST_CHANNEL = "tg-voice-news"  # канал дайджеста у narrator (NEWS_CHANNEL = VOICE_NEWS)
+OFFER_DAYS, OFFER_MANUAL = 3, 2  # ≥2 дайджеста руками за 3 дня — предложить расписание (PRD-003)
 MAX_TEXT = 100_000
 MAX_BODY = 4 * MAX_TEXT + 64 * 1024
 POSTER_MODES = ("local", "upload")
@@ -39,6 +57,7 @@ VOICE_MODES = ("tts", "upload")
 # Настройка → шаг, который она меняет (его и зависящие — заново).
 SETTING_STEPS = {
     "poster_mode": "poster",
+    "poster_deadline": None,  # до скольких ждать свою обложку (PRD-002): шаги не сбрасывает
     "draw_images": "images",
     "images_mode": "images",
     "image_model": ("poster", "images"),
@@ -55,6 +74,7 @@ SETTING_STEPS = {
     "auto_publish": "publish",
     "post_format": "publish",
     "disclaimers": ("render", "short"),
+    "ai_badge": ("render", "short"),  # плашка «ИИ» в углу видео (CMP-011)
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
     "slide_s": "plan",  # ориентир для LLM: сколько держится слайд
@@ -62,6 +82,13 @@ SETTING_STEPS = {
     "draft": ("images", "clips", "render", "short"),  # черновик: без картинок и роликов, половинный кадр
     "frame": "render",  # готовые картинки остаются — кадр берёт их с обрезкой; новые рисуются под кадр
     "review_text": None,
+    # «Видео по статье»: источник — в конце поста и на последнем слайде (CMP-005).
+    "source_url": ("render", "short"),
+    "source_author": ("render", "short"),
+    "source_license": None,  # право на переработку: держит только публикацию серии (CMP-021)
+    # Рекламная интеграция: без erid не публикуется, «Реклама. erid: …» — в хвосте подписи (CMP-019).
+    "ad": None,
+    "erid": None,
 }
 # Правка файла на странице → (файл, шаг, чей это результат).
 ARTIFACTS = {
@@ -78,6 +105,19 @@ _FILE = re.compile(
 )
 _SLIDE = re.compile(r"^\d{2,3}$")  # ключ слайда — f"{n:02d}": 01…99, дальше 100…
 RATES_TTL_S = 60
+AUDIENCE_TTL_S = 30  # подписчики каналов для предупреждения о пороге РКН (CMP-019)
+IDEMPOTENCY_KEEP = 200  # сколько последних Idempotency-Key помним
+IDEMPOTENCY_WAIT_S = 30  # повтор ждёт, пока первый запрос с тем же ключом создаёт выпуск
+
+
+@dataclass
+class _Once:
+    """Создание по Idempotency-Key: готово ли и какой выпуск вышел."""
+
+    done: threading.Event = field(default_factory=threading.Event)
+    project_id: str | None = None
+
+
 SUMMARY_WORDS = 900  # ~7 минут озвучки
 # Копия выпуска: что не переносится (итоги сборки и публикации) и чьи статусы переносятся.
 CLONE_SKIP = {
@@ -91,7 +131,20 @@ CLONE_SKIP = {
 }
 CLONE_STEPS = ("text", "poster_prompt", "poster", "plan", "images", "clips", "voice")
 # Группы доски «Выпуски» в порядке показа.
-BOARD_GROUPS = {"attention": "Ждут тебя", "running": "Идут", "published": "Опубликованы", "drafts": "Черновики"}
+BOARD_GROUPS = {
+    "attention": "Ждут тебя",
+    "running": "Идут",
+    "uploaded": "Выгружено, залей руками",
+    "published": "Опубликованы",
+    "drafts": "Черновики",
+}
+# Видео готово, а публикации нет — это тоже ждёт человека: выбрать каналы и опубликовать.
+READY_TO_PUBLISH = {
+    "step": "publish",
+    "label": LABELS["publish"],
+    "status": "pending",
+    "text": "Видео готово — выбери каналы и опубликуй.",
+}
 
 
 def prose(answer: str) -> str:
@@ -108,14 +161,69 @@ def source_id(scenario: str, *, day: str | None = None, text: str = "") -> str:
     return f"{scenario}:" + hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()[:16]
 
 
-def board_group(item: dict, project: dict) -> str:
-    """Куда выпуск на доске: идёт, ждёт человека, опубликован или черновик (не начат, остановлен)."""
+# Транслит латиницы в кирилицу для ключа материала: «Discord» и «Дискорд» — один ключ (PRD-004).
+# Сначала сочетания, потом буквы; кирилица затем сводится (й→и, э→е, ъ/ь — прочь).
+_TRANSLIT = (
+    ("shch", "щ"), ("sch", "щ"), ("sh", "ш"), ("ch", "ч"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"),
+    ("ya", "я"), ("yu", "ю"), ("yo", "е"), ("ph", "ф"), ("ck", "к"), ("ee", "и"), ("oo", "у"),
+    ("a", "а"), ("b", "б"), ("c", "к"), ("d", "д"), ("e", "е"), ("f", "ф"), ("g", "г"), ("h", "х"),
+    ("i", "и"), ("j", "дж"), ("k", "к"), ("l", "л"), ("m", "м"), ("n", "н"), ("o", "о"), ("p", "п"),
+    ("q", "к"), ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"), ("v", "в"), ("w", "в"), ("x", "кс"),
+    ("y", "и"), ("z", "з"),
+)  # fmt: skip
+_FOLD = str.maketrans({"ё": "е", "й": "и", "э": "е", "ъ": None, "ь": None})
+_TRANSLIT_MAP = dict(_TRANSLIT)
+_LATIN = re.compile("|".join(src for src, _ in _TRANSLIT))
+_COPY = re.compile(r"\s*\((?:копия|copy)\)\s*$", re.I)
+# Заголовки по умолчанию ничего о материале не говорят — по ним дубль не ищем.
+GENERIC_TITLES = {"пост в канал", "видео по статье"}
+
+
+def norm_title(title: str) -> str:
+    """Заголовок для сравнения: регистр, ё/е, латиница → кирилица, без пунктуации и «(копия)»."""
+    text = _COPY.sub("", title or "").lower()
+    if " ".join(text.split()) in GENERIC_TITLES:
+        return ""
+    text = _LATIN.sub(lambda m: _TRANSLIT_MAP[m.group(0)], text).translate(_FOLD)
+    return " ".join(re.sub(r"[^\w]+", " ", text).split())
+
+
+def norm_url(url: str) -> str:
+    """Адрес источника без схемы, www, якоря, utm-меток и завершающего «/»."""
+    parts = urllib.parse.urlsplit((url or "").strip())
+    host = parts.netloc.lower().removeprefix("www.")
+    if not host:
+        return ""
+    query = "&".join(q for q in parts.query.split("&") if q and not q.lower().startswith("utm_"))
+    return f"{host}{parts.path.rstrip('/')}" + (f"?{query}" if query else "")
+
+
+def material_keys(scenario: str, *, day: str | None = None, title: str = "", url: str = "") -> list[str]:
+    """Ключи материала выпуска (PRD-004), первый — главный: дайджест — день; статья и пост —
+    адрес источника и нормализованный заголовок. Совпал любой — это похожий выпуск."""
+    if scenario == "digest":
+        return [f"digest:{day}"] if day else []
+    keys = [f"url:{u}"] if (u := norm_url(url)) else []
+    return keys + ([f"title:{t}"] if (t := norm_title(title)) else [])
+
+
+def board_group(item: dict, project: dict, published: list[dict] | None = None) -> str:
+    """Куда выпуск на доске: идёт, ждёт человека, опубликован, выгружен для ручной заливки или черновик.
+
+    Опубликован — только если пост вышел: Telegram sent или пакет, залитый руками со ссылкой (uploaded).
+    Пакет без ссылки — «Выгружено, залей руками»: файл до площадки мог и не дойти (AN-003).
+    Готовое видео без публикации — «Ждут тебя»."""
+    records = published or []
     if item["running"]:
         return "running"
     if item["attention"]:
         return "attention"
-    if project.get("steps", {}).get("publish", {}).get("status") == "done":
+    if any(steps.is_live(r) for r in records):
         return "published"
+    if any(steps.publication_state(r) == steps.PACKAGED for r in records):
+        return "uploaded"
+    if project.get("steps", {}).get("render", {}).get("status") == "done":
+        return "attention"
     return "drafts"
 
 
@@ -127,9 +235,7 @@ def _read_text(path) -> str:
 
 
 def _write_json(path, data: object) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def video_seconds(project: dict) -> float | None:
@@ -141,28 +247,65 @@ def video_seconds(project: dict) -> float | None:
 
 
 def _read_json_list(path) -> list[dict]:
+    """Записи published.json: голый список (схема 0) или обёртка {"schema", "records"} (BE-008)."""
     try:
-        data = json.loads(_read_text(path) or "[]")
-    except json.JSONDecodeError:
+        data = schema.unwrap(json.loads(_read_text(path) or "[]"), "records")
+    except (json.JSONDecodeError, schema.Broken):
         return []
-    return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
+    return [r for r in data if isinstance(r, dict) and r.get("channel")]
+
+
+TOO_BIG = "Файл больше 200 МБ."
+
+
+def _too_big() -> str:
+    """Текст 413 с лимитом в МБ — лимит читается при запросе (тесты его понижают)."""
+    return f"Файл больше {uploads_module.MAX_AUDIO_BYTES // 2**20} МБ."
+
+
+def place_upload(src: Path, target: Path) -> None:
+    """Загрузка из временного файла — на место атомарно (та же ФС: папка проекта)."""
+    os.replace(src, target)
 
 
 class StudioModule:
     prefix = PREFIX
     label = "Сценарии"
 
+    def nav(self) -> list[dict]:
+        """Вкладки шапки: доска «Выпуски» со счётчиком ждущих и по вкладке на сценарий."""
+        board = {"id": "board", "label": "Выпуски", "href": "/board/", "badge": "attention"}
+        scenarios = [
+            {"id": k, "label": v, "href": f"/studio/?scenario={k}"} | ({"default": True} if k == "article" else {})
+            for k, v in SCENARIOS.items()
+        ]
+        return [board, *scenarios]
+
     def __init__(self, ctx) -> None:
         self.ctx = ctx
         self.config = studio_config.load(ctx.config)
-        self.studio = Studio(self.config.projects_dir, steps.STEPS)
+        self.events = events.EventLog(ctx.config.data_dir / events.FILE)  # журнал событий (AN-002)
+        self.studio = Studio(self.config.projects_dir, steps.STEPS, journal=self.events)
         self.studio.on_stop = self._on_stop
+        self.studio.before_delete = self._keep_history
+        ctx.notifier.telegram = self.owner_telegram
+        self.review = Review(self)  # превью и кнопки публикации в личке владельца (PRD-001)
         self.scheduler = schedule.Scheduler(self, self.config.data_dir, self.config.schedule_tick_s)
         self._rates: tuple[float, estimate_module.Rates] | None = None
+        self._audience: tuple[float, dict[str, float]] | None = None
         self._durations: dict[tuple[str, int], float] = {}
         self._stats_lock = threading.Lock()
+        self._create_lock = threading.Lock()  # проверка дубля + создание выпуска (create_unique)
+        self._idem_lock = threading.Lock()
+        self._idem: dict[str, _Once] = {}  # Idempotency-Key → создание (последние IDEMPOTENCY_KEEP)
         self._stats_thread: threading.Thread | None = None
         self.scheduler.daily["stats"] = self._daily_stats
+        self.scheduler.daily["audit"] = self._daily_audit
+
+    def _daily_audit(self) -> str | None:
+        """Ротация журнала комплаенса: записи старше года — в архив (CMP-015)."""
+        moved = self.studio.audit.rotate()
+        return f"журнал комплаенса: в архив {moved}" if moved else None
 
     def bind(self) -> None:
         """Соседние вкладки готовы — сценарии будут ставить задачи в их очереди."""
@@ -173,8 +316,86 @@ class StudioModule:
             video=self.ctx.modules["video"].jobs,
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
             cache=MediaCache(self.config.cache_dir),
+            space=self.ctx.gate.check,
         )
+        channels = self.ctx.modules.get("channels")
+        if channels is not None:  # нажатия кнопок бота приходят из `bot serve` этой вкладки
+            channels.serve.on_update = self.review.handle
+            channels.audience = self.audience  # подписчики каналов — для предупреждения о пороге РКН
         self.scheduler.start()
+        self._after_restart()
+
+    def _after_restart(self) -> None:
+        """Выпуски, прерванные остановкой сервиса: сказать человеку и (auto) один раз продолжить."""
+        interrupted, self.studio.interrupted = self.studio.interrupted, []
+        for project_id, step_id in interrupted:
+            project = self.studio.get(project_id)
+            if project is None or project.get("archived"):
+                continue
+            label = LABELS.get(step_id, step_id)
+            resumed = self.studio.resume_interrupted(project_id, step_id)
+            more = "продолжаю шаг сам" if resumed else "запусти шаг заново, когда проверишь"
+            log.event("project.interrupted", level=logging.WARNING, project=project_id, step=step_id, resumed=resumed)
+            self.notify(
+                f"Выпуск прерван перезапуском: {project['title']}",
+                f"Шаг «{label}» не закончился — {more}.",
+                important=True,
+            )
+
+    def autopilot_offer(self, now: float | None = None) -> bool:
+        """Предложить на доске расписание дайджеста и уведомления (PRD-003): расписание выключено,
+        «Не предлагать» не нажимали, а за последние OFFER_DAYS дня руками собрано ≥ OFFER_MANUAL
+        дайджестов (выпуски расписания — origin=schedule — не в счёт, архивные — в счёт)."""
+        settings = self.ctx.config.settings.load()
+        if settings["schedule"]["digest"]["enabled"] or not settings["offers"]["digest_autopilot"]:
+            return False
+        since = (now or time.time()) - OFFER_DAYS * 86400
+        manual = 0
+        for item in self.studio.list(archived=False) + self.studio.list(archived=True):
+            if item["scenario"] != "digest" or item["created_at"] < since:
+                continue
+            project = self.studio.get(item["id"]) or {}
+            if project.get("origin") != schedule.ORIGIN:
+                manual += 1
+        return manual >= OFFER_MANUAL
+
+    def poster_deadlines(self, now: datetime) -> list[str]:
+        """Шаг «Постер» ждёт свою обложку (upload), а срок poster_deadline прошёл — переключить шаг
+        на локальную модель и продолжить выпуск (PRD-002). Срок — время дня: ожидание, начатое уже
+        после сегодняшнего срока, ждёт до завтрашнего. Зовётся тиком расписания."""
+        done = []
+        for item in self.studio.list(archived=False):
+            project = self.studio.get(item["id"])
+            if project is None or project.get("running"):
+                continue
+            settings, poster = project.get("settings", {}), project["steps"].get("poster", {})
+            deadline = settings.get("poster_deadline") or ""
+            if settings.get("poster_mode") != "upload" or not deadline or poster.get("status") != "waiting":
+                continue
+            hour, minute = map(int, deadline.split(":"))
+            due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            since = poster.get("waiting_since") or project.get("updated_at") or 0
+            if now < due or datetime.fromtimestamp(since) >= due:
+                continue
+
+            def to_local(p: dict) -> set[str]:
+                p["settings"]["poster_mode"] = "local"
+                return {"poster"}
+
+            try:
+                self.studio.update(project["id"], to_local)
+                self.studio.log(project["id"], f"[Постер] свою обложку не дождались к {deadline} — рисую локально")
+                self.studio.run(project["id"])
+            except (Conflict, ProjectNotFound):
+                continue  # выпуск запустили руками в этот момент — проверим на следующем тике
+            log.event("poster.deadline", project=project["id"], deadline=deadline)
+            self.notify(
+                "Свою обложку не дождались — нарисовал локально",
+                f"{project['title']}: срок {deadline}, выпуск продолжается.",
+                important=True,
+            )
+            done.append(f"постер {project['id']}: после {deadline} — локально")
+        return done
 
     def _daily_stats(self) -> str | None:
         if not self.ctx.config.settings.load()["stats"]["auto"]:
@@ -183,10 +404,24 @@ class StudioModule:
 
     # --- уведомления ---
 
-    def notify(self, title: str, text: str, *, important: bool) -> None:
-        """В журнал уведомлений всегда; показать — если важно и уведомления включены в настройках."""
+    def notify(self, title: str, text: str, *, important: bool, telegram: bool = True) -> None:
+        """В журнал уведомлений всегда; показать — если важно и уведомления включены в настройках.
+        telegram=False — владелец уже получил в Telegram превью выпуска, второе сообщение не нужно."""
         show = important and self.ctx.config.settings.load()["notify"]["enabled"]
-        self.ctx.notifier.send(title, text, show=show)
+        self.ctx.notifier.send(title, text, show=show, telegram=telegram)
+
+    def owner_channel(self) -> publish.Channel | None:
+        """Личный чат владельца из настроек как канал Telegram: токен — тем же путём, что у каналов."""
+        chat = self.ctx.config.settings.load()["notify"]["telegram_chat"]
+        if not chat:
+            return None
+        token_file = "" if self.config.fake else str(self.config.narrator_dir / publish.NARRATOR_TOKEN_FILE)
+        return publish.Channel(id="owner", label="Владелец", type=publish.TELEGRAM, chat_id=chat, token_file=token_file)
+
+    def owner_telegram(self) -> tuple[str, dict[str, str]] | None:
+        """Для Notifier: (токен, чат) или None. В демо не шлём ничего наружу."""
+        channel = None if self.config.fake else self.owner_channel()
+        return (channel.token(), channel.target()) if channel else None
 
     def _on_stop(self, project: dict, before: dict[str, str]) -> None:
         """Запуск выпуска закончился: опубликован — сказать; ждёт тебя или упал — тоже, если это новое."""
@@ -194,50 +429,57 @@ class StudioModule:
             return
         publish_state = project["steps"]["publish"]["status"]
         if publish_state == "done" and before.get("publish") != "done":
-            self.notify("Опубликовано", project["title"], important=True)
+            records = steps.load_published(self.studio.project_dir(project["id"]))
+            if any(steps.is_live(r) for r in records):
+                self.notify("Опубликовано", project["title"], important=True)
+            else:  # только пакеты для ручной загрузки: выпуск ещё не вышел
+                self.notify("Пакет готов — залей руками", project["title"], important=True)
             return
         need = attention(project)
-        if need and before.get(need["step"]) != need["status"]:
+        if not need:
+            return
+        fresh = before.get(need["step"]) != need["status"]
+        previewed = False
+        if need["step"] == "publish" and need["status"] == "failed":
+            # Упало после «Да» в боте — новое превью с «Повторить», даже если падает не впервые (PRD-016).
+            previewed = self._preview(project, failure=need["text"])
+        elif need["step"] == "publish" and fresh and need["text"] in steps.REVIEW_NOTES:
+            previewed = self._preview(project)
+        if fresh:
             head = "Выпуск упал" if need["status"] == "failed" else "Выпуск ждёт тебя"
-            self.notify(head, f"{project['title']} — {need['label']}: {need['text']}".strip(" :"), important=True)
+            text = f"{project['title']} — {need['label']}: {need['text']}".strip(" :")
+            self.notify(head, text, important=True, telegram=not previewed)
+
+    def _preview(self, project: dict, failure: str | None = None) -> bool:
+        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление.
+        failure — публикация упала: превью с «Повторить», только если «Да» нажимали в боте."""
+        try:
+            if failure is not None:
+                return self.review.retry(project, failure)
+            return self.review.preview(project)
+        except Exception as exc:  # noqa: BLE001 — сеть, файлы выпуска: уведомление всё равно уйдёт
+            log.event(
+                "review.failed", level=logging.WARNING, project=project["id"], error=f"{type(exc).__name__}: {exc}"
+            )
+            return False
 
     # --- описание ---
 
     def channels(self) -> list[publish.Channel]:
+        """Каналы только читаем; правит их вкладка «Каналы» через ChannelStore (/api/channels)."""
         try:
             return self.config.channels()
         except ValueError:
             return []
 
-    def add_channel(self, payload: object) -> dict:
-        """Канал Telegram со страницы: список целиком записывается в channels.json."""
-        if not isinstance(payload, dict):
-            raise bad_request("Тело запроса — не объект JSON.")
-        current = self._channels_or_400()
-        try:
-            channel = publish.new_channel(
-                current,
-                str(payload.get("label") or ""),
-                str(payload.get("chat_id") or ""),
-                str(payload.get("format") or publish.LANDSCAPE),
-            )
-        except ValueError as exc:
-            raise bad_request(str(exc)) from exc
-        publish.save_channels(self.config.channels_file, [*current, channel])
-        return {"channels": [c.public() for c in self.channels()], "added": channel.id}
-
-    def delete_channel(self, channel_id: str) -> dict:
-        current = self._channels_or_400()
-        if channel_id not in {c.id for c in current}:
-            raise not_found("Нет такого канала.")
-        publish.save_channels(self.config.channels_file, [c for c in current if c.id != channel_id])
-        return {"channels": [c.public() for c in self.channels()]}
-
-    def _channels_or_400(self) -> list[publish.Channel]:
+    def channels_or_503(self) -> list[publish.Channel]:
+        """Для действий, которым каналы нужны: битый channels.json — ошибка сервера (503), не запроса."""
         try:
             return self.config.channels()
         except ValueError as exc:
-            raise bad_request(f"Каналы: {exc}") from exc
+            raise HttpError(
+                HTTPStatus.SERVICE_UNAVAILABLE, f"Каналы: файл настроек сломан — {exc}", code="config_broken"
+            ) from exc
 
     def publish_now(self, project_id: str, payload: object) -> dict:
         """Кнопка «Опубликовать», как `make news-publish`: выбранные каналы, повторно — с force."""
@@ -247,11 +489,15 @@ class StudioModule:
         ignore_verdict = payload.get("ignore_verdict", False)
         if not isinstance(chosen, list) or not chosen or not all(isinstance(c, str) for c in chosen):
             raise bad_request("Выбери хотя бы один канал.")
-        unknown = [c for c in chosen if c not in {ch.id for ch in self.channels()}]
+        unknown = [c for c in chosen if c not in {ch.id for ch in self.channels_or_503()}]
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
         if not isinstance(force, bool) or not isinstance(ignore_verdict, bool):
-            raise bad_request("force и ignore_verdict — true или false.")
+            raise bad_request(malformed("force и ignore_verdict — true или false."))
+        # Пометки выключены, а в тексте есть упоминания из реестра: публикация — с причиной (CMP-004).
+        ignore_disclaimers = payload.get("ignore_disclaimers") or ""
+        if not isinstance(ignore_disclaimers, str) or len(ignore_disclaimers) > 500:
+            raise bad_request("Причина публикации без пометок — не длиннее 500 знаков.")
 
         def apply(project: dict) -> set[str]:
             project["settings"]["channels"] = list(dict.fromkeys(chosen))
@@ -259,7 +505,49 @@ class StudioModule:
 
         self.studio.update(project_id, apply)
         state = {"approved": True, "force": force, "ignore_verdict": ignore_verdict}
+        state["ignore_disclaimers"] = " ".join(ignore_disclaimers.split())
         self.studio.run(project_id, "publish", state=state)
+        return self.view(project_id)
+
+    def resolve_publish(self, project_id: str, payload: object) -> dict:
+        """«Пост есть» / «Поста нет» по каналу, где ответа Telegram не было; затем публикация
+        продолжается: досылает только недостающее. Нажатие — и есть подтверждение публикации."""
+        if not isinstance(payload, dict) or not isinstance(payload.get("channel"), str):
+            raise bad_request("Укажи канал.")
+        posted = payload.get("posted")
+        if not isinstance(posted, bool):
+            raise bad_request(malformed("posted — true или false."))
+        folder = self.studio.project_dir(project_id)
+
+        def apply(project: dict) -> set[str]:
+            # Под замком студии и только когда выпуск не запущен: шаг публикации журнал сейчас не пишет.
+            records = steps.load_published(folder)
+            found = steps.current_record(records, payload["channel"])
+            if not steps.is_unclear(found):
+                raise bad_request("По этому каналу нечего решать: статус отправки известен.")
+            fixed = steps.resolve_record(found, posted)
+            steps.save_published(folder, [fixed if r is found else r for r in records])
+            if fixed.get("state") == steps.SENT:  # «Пост есть» — публикация состоялась, отметил человек
+                self.events.emit(
+                    "publication.sent",
+                    actor=events.actor(),
+                    project_id=project["id"],
+                    scenario=project.get("scenario"),
+                    step="publish",
+                    channel_id=fixed["channel"],
+                    publication_id=fixed.get("attempt_id"),
+                    source=publish.TELEGRAM,
+                    props={"resolved": True},
+                )
+            return set()
+
+        with steps.published_lock(folder):  # журнал не поменяется между чтением и записью в apply
+            project = self.studio.update(project_id, apply)
+        chosen = project["settings"].get("channels") or []
+        records = {r["channel"]: r for r in steps.load_published(folder)}
+        if not any(steps.is_unclear(records.get(c)) for c in chosen):
+            ignore = bool(project["steps"]["publish"].get("ignore_verdict"))
+            self.studio.run(project_id, "publish", state={"approved": True, "ignore_verdict": ignore})
         return self.view(project_id)
 
     # --- доска выпусков ---
@@ -268,45 +556,147 @@ class StudioModule:
         """Все выпуски всех сценариев по группам: ждёт тебя, идёт, опубликовано, черновики."""
         known = {c.id: c for c in self.channels()}
         channels = {c.id: c.label for c in known.values()}
+        facts = self._facts()
         items = []
+        defaults: dict[str, list[str]] = {}  # каналы по умолчанию по сценарию — один раз на доску
         for item in self.studio.list(archived=archived):
             project = self.studio.get(item["id"]) or {}
             folder = self.studio.project_dir(item["id"])
             published = _read_json_list(folder / steps.PUBLISHED)
             chosen = project.get("settings", {}).get("channels") or []
             review = _read_text(folder / steps.NARRATOR_REVIEW)
+            group = board_group(item, project, published)
+            if not chosen and item["scenario"] not in defaults:
+                defaults[item["scenario"]] = self.default_channels(item["scenario"])
+            fallback = [] if chosen else defaults[item["scenario"]]
             items.append(
                 item
                 | {
                     "scenario_label": SCENARIOS.get(item["scenario"], item["scenario"]),
-                    "group": board_group(item, project),
-                    "channels": [{"id": c, "label": channels.get(c, c)} for c in chosen],
-                    "published": [
-                        {
-                            "channel": r["channel"],
-                            "label": r.get("label") or channels.get(r["channel"], r["channel"]),
-                            "type": known[r["channel"]].type if r["channel"] in known else None,
-                            "format": known[r["channel"]].format if r["channel"] in known else None,
-                            "public": r.get("public"),
-                            "message_id": r.get("message_id"),
-                            **stats.latest(r),
-                        }
-                        for r in published
-                        if r.get("ok")
+                    "group": group,
+                    "attention": item["attention"] or (READY_TO_PUBLISH if group == "attention" else None),
+                    "channels": [
+                        {"id": c, "label": channels.get(c, c), "type": known[c].type if c in known else None}
+                        for c in chosen
                     ],
+                    # Начало подписи — показать в подтверждении публикации с доски.
+                    "caption": _read_text(folder / steps.POST).strip()[:300],
+                    "published": self._board_published(published, known, facts),
                     "video_s": video_seconds(project),
                     "verdict": steps.verdict(review) if review else None,
                     "poster": self._poster_url(item["id"], folder),
+                    # Копия — вариант оригинала (AN-009): доля переделок и сравнение вариантов.
+                    "variant_of": project.get("variant_of"),
+                    "variant": project.get("variant"),
+                    # Каналы не выбраны — доска предлагает каналы по умолчанию сценария (PRD-005).
+                    "default_channels": [
+                        {"id": c, "label": channels.get(c, c), "type": known[c].type if c in known else None}
+                        for c in fallback
+                    ],
+                    # Ключ материала (PRD-004) — по нему доска группирует копии и дубли (UX-009).
+                    "material": self.material(item, project),
                 }
             )
         counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
+        everything = items + self._response_items(not archived, known, facts)
         return {
             "groups": list(BOARD_GROUPS.items()),
+            "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
             "counts": counts,
             "projects": items,
-            "response": stats.summary(items),
+            # «Что работает» — по всем выпускам: и с другой вкладки доски, и удалённым уборкой (AN-008).
+            "response": stats.summary(everything),
+            # Покрытие сводки: учтено X из Y вышедших публикаций и почему выпали остальные (AN-007).
+            "coverage": stats.coverage(everything),
+            # Плашка недели: опубликовано, ждут, брошено, медиана до публикации — по обеим вкладкам (AN-016).
+            "week": stats.week(self._week_facts()),
+            # Доля переделок и сравнение вариантов одного оригинала (AN-019).
+            "variants": stats.variants(everything),
             "stats": {"running": self._stats_thread is not None, "at": self.scheduler.state().get("stats_at")},
+            # Баннер «включить расписание дайджеста и уведомления» (PRD-003).
+            "offers": {"digest_autopilot": self.autopilot_offer()},
         }
+
+    def _board_published(self, published: list[dict], known: dict, facts: stats.Facts) -> list[dict]:
+        """Записи публикации для доски: состояние, ссылки и отклик в окнах."""
+        return [
+            {
+                "channel": r["channel"],
+                "label": r.get("label") or (known[r["channel"]].label if r["channel"] in known else r["channel"]),
+                "type": known[r["channel"]].type if r["channel"] in known else None,
+                # Атрибуты — как записаны в момент публикации (AN-006), не из текущего конфига канала.
+                "format": r.get("format"),
+                "post_format": r.get("post_format"),
+                "media_s": r.get("media_s"),
+                "weekday": r.get("weekday"),
+                "hour": r.get("hour"),
+                "public": r.get("public"),
+                "message_id": r.get("message_id"),
+                "state": steps.publication_state(r),
+                "external_url": r.get("external_url"),
+                "published_at": stats.sent_at(r),
+                # Повтор публикации — отдельная запись канала (AN-005): доска пишет «повторно».
+                "attempt": steps.attempt_of(r),
+                "republish": bool(r.get("republish")),
+                "publication_id": r.get("publication_id"),
+                **stats.reach(r, facts),
+            }
+            for r in published
+            if r.get("ok")
+        ]
+
+    def _week_facts(self) -> list[dict]:
+        """Для плашки недели — по выпуску: когда вышел, когда готово видео, ждёт ли публикации."""
+        out = []
+        for archived in (False, True):
+            for item in self.studio.list(archived=archived):
+                project = self.studio.get(item["id"]) or {}
+                records = _read_json_list(self.studio.project_dir(item["id"]) / steps.PUBLISHED)
+                live = [t for r in records if steps.is_live(r) and (t := stats.sent_at(r)) is not None]
+                render = project.get("steps", {}).get("render", {})
+                ready = render.get("status") == "done"
+                out.append(
+                    {
+                        "published_at": min(live) if live else None,
+                        "ready_at": render.get("updated_at") if ready else None,
+                        # Ждёт: видео готово, а поста нет (пакет без «Залил» — тоже ждёт), не в архиве и не идёт.
+                        "waiting": ready and not live and not archived and not item["running"],
+                        "updated_at": item["updated_at"],
+                    }
+                )
+        return out
+
+    def _response_items(self, archived: bool, known: dict, facts: stats.Facts) -> list[dict]:
+        """Для «Что работает» сверх показанных: выпуски другой вкладки доски и удалённые уборкой."""
+        out = []
+        for item in self.studio.list(archived=archived):
+            project = self.studio.get(item["id"]) or {}
+            records = _read_json_list(self.studio.project_dir(item["id"]) / steps.PUBLISHED)
+            out.append(self._response_item(project, records, known, facts))
+        for kept in history.load(self.history_file):
+            out.append(self._response_item(kept["project"], kept["published"], known, facts))
+        return out
+
+    def _response_item(self, project: dict, records: list[dict], known: dict, facts: stats.Facts) -> dict:
+        scenario = project.get("scenario") or ""
+        return {
+            "id": project.get("id"),
+            "title": project.get("title"),
+            "scenario": scenario,
+            "variant_of": project.get("variant_of"),
+            "variant": project.get("variant"),
+            "scenario_label": SCENARIOS.get(scenario, scenario),
+            "video_s": video_seconds(project),
+            "published": self._board_published(records, known, facts),
+        }
+
+    @property
+    def history_file(self):
+        return self.ctx.config.data_dir / history.FILE
+
+    def _keep_history(self, project: dict, folder) -> None:
+        """Перед удалением выпуска уборкой: его публикации и снимки — в архив аналитики (AN-008)."""
+        history.keep(self.history_file, project, steps.load_published(folder))
 
     # --- отклик ---
 
@@ -330,36 +720,167 @@ class StudioModule:
         refresher = stats.Refresher({c.id: c for c in self.channels()})
         updated = 0
         for item in self.studio.list() + self.studio.list(archived=True):
-            if item["running"]:
-                continue
-            path = self.studio.project_dir(item["id"]) / steps.PUBLISHED
-            records = _read_json_list(path)
+            folder = self.studio.project_dir(item["id"])
+            records = _read_json_list(folder / steps.PUBLISHED)
+            # Сеть — вне замка: она бывает медленной, а публикация в это время пишет журнал.
             fresh = [refresher.record(r) if r.get("ok") else r for r in records]
-            if fresh != records:
-                _write_json(path, fresh)
+            snaps = {  # запись — (канал, попытка): у повтора публикации свой пост и свой отклик (AN-005)
+                (old["channel"], steps.attempt_of(old)): (old, new)
+                for old, new in zip(records, fresh, strict=True)
+                if len(new.get("stats") or []) > len(old.get("stats") or [])
+            }
+            if not snaps:
+                continue
+            added: list[dict] = []
+
+            def merge(current: list[dict], snaps=snaps, added=added) -> list[dict]:
+                # Под замком выпуска — свежий журнал: снимок дописывается к той же отправке, а записи,
+                # появившиеся за время похода в сеть (новый канал публикации), остаются как есть.
+                out = []
+                for r in current:
+                    old, new = snaps.get((r["channel"], steps.attempt_of(r)), (None, None))
+                    if new is not None and r.get("message_id") == old.get("message_id"):
+                        # Что узнал отклик (публичность канала и т. п.) и новый снимок — поверх свежей записи.
+                        delta = {k: v for k, v in new.items() if k != "stats" and old.get(k) != v}
+                        r = stats.with_history(r | delta, [*(r.get("stats") or []), new["stats"][-1]])
+                        added.append(r)
+                    out.append(r)
+                return out
+
+            steps.update_published(folder, merge)
+            if added:
                 updated += 1
+            for record in added:
+                self._snapshot_event(item, record, events.actor(events.SYSTEM))
         self.scheduler.note("stats_at", time.strftime("%Y-%m-%d %H:%M"))
         return f"отклик: обновлено выпусков {updated}"
 
     def manual_stats(self, project_id: str, payload: object) -> dict:
-        """Просмотры, внесённые руками: у пакетов для YouTube, TikTok и у приватных каналов."""
+        """Отклик, внесённый руками: у пакетов для YouTube, TikTok и у приватных каналов. Кроме просмотров —
+        показы, CTR обложки, % досмотра, подписки с ролика и дата замера (AN-010): возраст поста в снимке —
+        от публикации до этой даты, а не до момента ввода."""
         if not isinstance(payload, dict):
             raise bad_request("Тело запроса — не объект JSON.")
-        channel, views = payload.get("channel"), payload.get("views")
-        if isinstance(views, bool) or not isinstance(views, int) or views < 0:
-            raise bad_request("views — целое число от 0.")
+        channel = payload.get("channel")
+        try:  # формат полей — до поиска записи: ошибка ввода понятнее «не публиковался»
+            stats.manual_snapshot(payload, None)
+        except ValueError as exc:
+            raise bad_request(str(exc)) from exc
         if self.studio.get(project_id) is None:
             raise not_found("Проект не найден.")
-        path = self.studio.project_dir(project_id) / steps.PUBLISHED
-        records = _read_json_list(path)
-        if channel not in {r["channel"] for r in records}:
-            raise bad_request("В этот канал выпуск не публиковался.")
-        records = [
-            stats.add_snapshot(r, {"views": views, "members": None, "manual": True}) if r["channel"] == channel else r
-            for r in records
-        ]
-        _write_json(path, records)
+        folder = self.studio.project_dir(project_id)
+        wanted = payload.get("publication_id")
+        done: dict = {}
+
+        def add(records: list[dict]) -> list[dict]:
+            # Какая попытка: publication_id из доски, иначе текущая (последняя) запись канала (AN-005).
+            found = next((r for r in records if wanted and r.get("publication_id") == wanted), None)
+            found = found or (steps.current_record(records, channel) if isinstance(channel, str) else None)
+            if found is None:
+                raise bad_request("В этот канал выпуск не публиковался.")
+            try:
+                snapshot, at = stats.manual_snapshot(payload, stats.sent_at(found))
+            except ValueError as exc:
+                raise bad_request(str(exc)) from exc
+            done["record"] = stats.add_snapshot(found, snapshot, now=at)
+            start = stats.sent_at(found)
+            done["snapshot"] = {"at": at, **snapshot} | (
+                {"age_h": round((at - start) / stats.HOUR, 3)} if start else {}
+            )
+            return [done["record"] if r is found else r for r in records]
+
+        steps.update_published(folder, add)
+        record = done["record"]
+        project = self.studio.get(project_id) or {}
+        self._snapshot_event(project, record, events.actor(), done.get("snapshot"))
         return self.view(project_id)
+
+    def uploaded(self, project_id: str, payload: object) -> dict:
+        """«Залил»: автор сам залил пакет на площадку и дал ссылку на ролик — теперь выпуск опубликован."""
+        if not isinstance(payload, dict) or not isinstance(payload.get("channel"), str):
+            raise bad_request("Укажи канал.")
+        try:
+            link = publish.external_video(payload.get("url"))
+        except ValueError as exc:
+            raise bad_request(str(exc)) from exc
+        folder = self.studio.project_dir(project_id)
+        done: dict = {}
+
+        def apply(project: dict) -> set[str]:
+            # Под замком студии и только когда выпуск не запущен: шаг публикации журнал сейчас не пишет.
+            records = steps.load_published(folder)
+            found = steps.current_record(records, payload["channel"])
+            if found is None or steps.publication_state(found) not in (steps.PACKAGED, steps.UPLOADED):
+                raise bad_request("В этот канал не выгружался пакет для ручной загрузки.")
+            # Поправить ссылку можно; время публикации — первое «Залил».
+            published_at = found.get("published_at") or time.time()
+            # День недели и час — когда пост вышел на площадке, а не когда собран пакет (AN-006).
+            fixed = found | link | {"state": steps.UPLOADED, "published_at": published_at}
+            fixed |= steps.when_fields(published_at)
+            steps.save_published(folder, [fixed if r is found else r for r in records])
+            done.update(project=project, record=fixed, again=found.get("state") == steps.UPLOADED)
+            return set()
+
+        with steps.published_lock(folder):  # журнал не поменяется между чтением и записью в apply
+            self.studio.update(project_id, apply)
+        record = done["record"]
+        self.events.emit(
+            "publication.uploaded",
+            actor=events.actor(),
+            project_id=project_id,
+            scenario=done["project"].get("scenario"),
+            step="publish",
+            channel_id=record["channel"],
+            publication_id=record.get("attempt_id"),
+            source=publish.MANUAL,
+            props={"platform": record["platform"], "external_id": record["external_id"], "corrected": done["again"]},
+        )
+        return self.view(project_id)
+
+    def _snapshot_event(self, project: dict, record: dict, actor: str, snapshot: dict | None = None) -> None:
+        """Снимок отклика записи (по умолчанию последний) — в журнал событий, по событию на метрику."""
+        snapshot = snapshot or (record.get("stats") or [{}])[-1]
+        for metric in ("members", *stats.MANUAL_METRICS):
+            if snapshot.get(metric) is None:
+                continue
+            self.events.emit(
+                "stats.snapshot",
+                actor=actor,
+                ts=snapshot.get("at"),
+                project_id=project.get("id"),
+                scenario=project.get("scenario"),
+                channel_id=record["channel"],
+                publication_id=record.get("attempt_id"),
+                metric=metric,
+                value=snapshot[metric],
+                age_h=snapshot.get("age_h"),
+                source="manual" if snapshot.get("manual") else "telegram",
+            )
+
+    def audience(self) -> dict[str, float]:
+        """Последнее известное число подписчиков по id канала (из журналов публикаций).
+
+        Нужен view и describe на каждый опрос страницы — кэш на AUDIENCE_TTL_S."""
+        now = time.monotonic()
+        cached = self._audience
+        if cached is not None and now - cached[0] < AUDIENCE_TTL_S:
+            return cached[1]
+        facts = self._facts()
+        found = {c: v for c in facts.members if (v := facts.latest(c)) is not None}
+        self._audience = (now, found)
+        return found
+
+    def audience_warning(self, channel: publish.Channel) -> str | None:
+        return stats.rkn_warning(channel.label, self.audience().get(channel.id))
+
+    def _facts(self) -> stats.Facts:
+        """Подписчики и посты по каналам из всех выпусков, архивных тоже: прирост канала общий."""
+        records: list[dict] = []
+        for item in self.studio.list() + self.studio.list(archived=True):
+            records += _read_json_list(self.studio.project_dir(item["id"]) / steps.PUBLISHED)
+        for kept in history.load(self.history_file):  # и удалённых уборкой: подписчики канала те же
+            records += kept["published"]
+        return stats.Facts(records)
 
     def _poster_url(self, project_id: str, folder) -> str | None:
         path = steps.find(folder, "poster", steps.IMAGE_EXT)
@@ -374,7 +895,7 @@ class StudioModule:
     def archive(self, project_id: str, payload: object) -> dict:
         archived = payload.get("archived", True) if isinstance(payload, dict) else True
         if not isinstance(archived, bool):
-            raise bad_request("archived — true или false.")
+            raise bad_request(malformed("archived — true или false."))
         self.studio.archive(project_id, archived)
         return self.view(project_id)
 
@@ -402,6 +923,7 @@ class StudioModule:
         audio = self.ctx.modules["audio"].config
         return {
             "poster_mode": "local",
+            "poster_deadline": "",  # пусто — свою обложку ждать без срока
             "draw_images": True,
             "images_mode": "local",
             "image_model": self.default_image_model(),
@@ -417,6 +939,7 @@ class StudioModule:
             "review_text": False,
             "draft": False,
             "disclaimers": True,
+            "ai_badge": True,
             "branding": False,
             "tempo": 1.0,
             "slide_s": slides.TARGET_SLIDE_S,
@@ -425,21 +948,27 @@ class StudioModule:
             "auto_publish": False,
             "post_format": "video",
             "channels": [],
+            "source_url": "",
+            "source_author": "",
+            "source_license": "none",
+            "ad": False,
+            "erid": "",
         }
 
     def scenario_defaults(self, scenario: str) -> dict:
         """Чем настройки сценария отличаются от общих: их и показывает форма нового выпуска."""
+        out: dict = {}
         if scenario == "digest":
             # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
             # по промпту выпуска — постер загружает человек.
-            out: dict = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
-            usual = [c.id for c in self.channels() if c.id == DIGEST_CHANNEL]  # VOICE_NEWS narrator
-            if usual:
-                out["channels"] = usual
-            return out
-        if scenario == "post":
+            out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
+            # Не дождались своей обложки к сроку — рисуем локально (PRD-002); срок — в «Настройках».
+            deadline = self.ctx.config.settings.load().get("digest_defaults", {}).get("poster_deadline")
+            if deadline:
+                out["poster_deadline"] = deadline
+        elif scenario == "post":
             # Пост — из готового: свой постер и свой mp3, оформление канала, кадр по постеру.
-            return {
+            out = {
                 "branding": True,
                 "poster_mode": "upload",
                 "voice_mode": "upload",
@@ -448,18 +977,31 @@ class StudioModule:
                 "clips": False,
                 "shorts": False,
             }
-        return {}
+        chosen = self.default_channels(scenario)
+        if chosen:
+            out["channels"] = chosen
+        return out
+
+    def default_channels(self, scenario: str) -> list[str]:
+        """Каналы по умолчанию сценария (PRD-005): из настроек, только существующие; не заданы —
+        у дайджеста VOICE_NEWS движка, если такой канал есть, у остальных — пусто."""
+        known = [c.id for c in self.channels()]
+        chosen = self.ctx.config.settings.load().get("default_channels", {}).get(scenario)
+        if chosen is None:
+            chosen = [DIGEST_CHANNEL] if scenario == "digest" else []
+        return [c for c in chosen if c in known]
 
     def describe(self) -> dict:
         return {
             "scenario_defaults": {k: self.scenario_defaults(k) for k in SCENARIOS},
             "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
+            "upload_limits": uploads_module.limits(),
             "steps": [{"id": s, "label": LABELS[s]} for s in STEP_IDS],
             "defaults": self.defaults(),
             "engines": [e.public() for e in self.ctx.modules["audio"].config.engines().values()],
             "image_models": self.image_models(),
             "video_models": self.video_models(),
-            "channels": [c.public() for c in self.channels()],
+            "channels": [c.public() | {"audience_warning": self.audience_warning(c)} for c in self.channels()],
             "channels_file": str(self.config.channels_file),
             "llm": {
                 "cmd": self.config.llm_cmd[0] if not self.config.fake else "fake",
@@ -471,12 +1013,48 @@ class StudioModule:
     def problems(self) -> list[str]:
         out = []
         if not self.config.llm_available():
-            out.append(f"Сценарии: LLM-команда «{self.config.llm_cmd[0]}» не найдена — задай AIP_LLM_CMD.")
-        try:
-            self.config.channels()
-        except ValueError as exc:
-            out.append(f"Каналы: {exc}")
+            out.append(missing_cli(self.config.llm_cmd[0]))
+        # Битый channels.json в баннер выносит вкладка «Каналы» — владелец файла (ChannelStore).
+        out += [f"Дайджест: канал {c.label} — {c.problem()}." for c in self._digest_channels() if c.problem()]
+        out += self.studio.load_problems  # выпуски в карантине или записанные более новой версией (BE-008)
         return out
+
+    def _digest_channels(self) -> list[publish.Channel]:
+        """Каналы Telegram, куда по умолчанию публикуется дайджест."""
+        chosen = set(self.scenario_defaults("digest").get("channels") or [])
+        return [c for c in self.channels() if c.id in chosen and c.type == publish.TELEGRAM]
+
+    def health_stats(self) -> dict:
+        """«Здоровье» за 7 и 28 дней по журналу событий (REL-010): упавшие шаги, сборка, дайджест вовремя."""
+        deadline = self.ctx.config.env.get("AIP_DIGEST_DEADLINE") or metrics.DEFAULT_DEADLINE
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", deadline):
+            deadline = metrics.DEFAULT_DEADLINE
+        return metrics.report(self.events.read(), deadline=deadline) | {"file": str(self.events.path)}
+
+    def ready_checks(self) -> list[dict]:
+        """Для /api/ready: поток расписания жив, у каналов дайджеста есть токен, последний дайджест не упал."""
+        checks = []
+        tick = self.scheduler.tick_s
+        if tick <= 0:
+            checks.append(
+                {"name": "schedule", "ok": True, "detail": "поток расписания выключен (AIP_SCHEDULE_TICK_S=0)"}
+            )
+        else:
+            last = self.scheduler.state().get("last_tick_at") or "ещё не было"
+            checks.append(
+                {
+                    "name": "schedule",
+                    "ok": self.scheduler.alive(),
+                    "detail": f"последний тик: {last}, интервал {tick:g} с",
+                }
+            )
+        broken = [f"{c.label}: {c.problem()}" for c in self._digest_channels() if c.problem()]
+        checks.append({"name": "token", "ok": not broken, "detail": "; ".join(broken) or "токен каналов найден"})
+        run = self.scheduler.digest_run()
+        failed = run.get("result") == "failed" and run.get("day") == time.strftime("%Y-%m-%d")
+        detail = f"{run.get('day')}: {run.get('result')}" + (f" — {run.get('error')}" if failed else "")
+        checks.append({"name": "last_digest", "ok": not failed, "detail": detail if run else "ещё не было"})
+        return checks
 
     # --- настройки ---
 
@@ -484,41 +1062,48 @@ class StudioModule:
         if raw is None:
             return dict(base)
         if not isinstance(raw, dict):
-            raise bad_request("settings — объект.")
+            raise bad_request(malformed("settings — объект."))
         out = dict(base)
         for key, value in raw.items():
             if key not in SETTING_STEPS:
-                raise bad_request(f"Неизвестная настройка {key}.")
+                raise bad_request(malformed(f"Неизвестная настройка {key}."))
             out[key] = value
         if out["poster_mode"] not in POSTER_MODES:
-            raise bad_request("poster_mode — local или upload.")
+            raise bad_request(malformed("poster_mode — local или upload."))
+        out.setdefault("poster_deadline", "")
+        deadline = out["poster_deadline"]
+        if not isinstance(deadline, str) or (deadline and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", deadline)):
+            raise bad_request(malformed("poster_deadline — время ЧЧ:ММ или пусто."))
         if out["images_mode"] not in IMAGES_MODES:
-            raise bad_request("images_mode — local или upload.")
+            raise bad_request(malformed("images_mode — local или upload."))
         if out["clips_mode"] not in CLIPS_MODES:
-            raise bad_request("clips_mode — local или upload.")
+            raise bad_request(malformed("clips_mode — local или upload."))
         if out["voice_mode"] not in VOICE_MODES:
-            raise bad_request("voice_mode — tts или upload.")
+            raise bad_request(malformed("voice_mode — tts или upload."))
         if out["frame"] not in steps.FRAMES:
-            raise bad_request("frame — landscape, square или poster.")
+            raise bad_request(malformed("frame — landscape, square или poster."))
         if out["post_format"] not in publish.POST_FORMATS:
-            raise bad_request("post_format — video или photo.")
+            raise bad_request(malformed("post_format — video или photo."))
         if out["upscale_images"] not in UPSCALE_CHOICES:
-            raise bad_request("upscale_images — none, 2k или 4k.")
-        bools = ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding", "draft")
+            raise bad_request(malformed("upscale_images — none, 2k или 4k."))
+        bools = (
+            "draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "ai_badge", "branding",
+            "draft",
+        )  # fmt: skip
         for key in bools:
             if not isinstance(out[key], bool):
-                raise bad_request(f"{key} — true или false.")
+                raise bad_request(malformed(f"{key} — true или false."))
         tempo = out["tempo"]
         if isinstance(tempo, bool) or not isinstance(tempo, int | float) or float(tempo) not in steps.TEMPOS:
-            raise bad_request(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}.")
+            raise bad_request(malformed(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}."))
         out["tempo"] = float(tempo)
         slide_s = out.get("slide_s", slides.TARGET_SLIDE_S)
         if isinstance(slide_s, bool) or slide_s not in slides.SLIDE_SECONDS:
-            raise bad_request(f"slide_s — одно из: {', '.join(map(str, slides.SLIDE_SECONDS))}.")
+            raise bad_request(malformed(f"slide_s — одно из: {', '.join(map(str, slides.SLIDE_SECONDS))}."))
         out["slide_s"] = int(slide_s)
         out.setdefault("reading", "normal")
         if out["reading"] not in slides.READING:
-            raise bad_request(f"reading — одно из: {', '.join(slides.READING)}.")
+            raise bad_request(malformed(f"reading — одно из: {', '.join(slides.READING)}."))
         engine = self.ctx.modules["audio"].config.engines().get(out["engine"])
         if engine is None:
             raise bad_request(voices.unknown(out["engine"]))
@@ -526,7 +1111,7 @@ class StudioModule:
             raise bad_request(voices.unknown(engine.id, out["voice"]))
         speed = out["speed"]
         if speed not in (None, "") and (isinstance(speed, bool) or not isinstance(speed, int | float)):
-            raise bad_request("speed — число или null.")
+            raise bad_request(malformed("speed — число или null."))
         if speed not in (None, ""):
             low, high = voices.SPEED_RANGE
             if not low <= speed <= high:
@@ -540,9 +1125,26 @@ class StudioModule:
         video_ids = {m["id"] for m in self.video_models()}
         if out["video_model"] not in video_ids and (video_ids or out["video_model"] is not None):
             raise bad_request(video_models.unknown(out["video_model"], "Неизвестная модель видео."))
+        for key, label, limit in (("source_url", "Ссылка на источник", 500), ("source_author", "Автор источника", 200)):
+            value = out.get(key) or ""
+            if not isinstance(value, str):
+                raise bad_request(malformed(f"{key} — строка."))
+            if len(value) > limit:
+                raise bad_request(f"{label} — не длиннее {limit} знаков.")
+            out[key] = " ".join(value.split())
+        if out["source_url"] and not re.fullmatch(r"https?://\S+", out["source_url"]):
+            raise bad_request("Ссылка на источник — вида https://…")
+        if not isinstance(out.get("ad", False), bool):
+            raise bad_request("ad — true или false.")
+        erid = out.get("erid") or ""
+        if not isinstance(erid, str) or (erid.strip() and not publish.ERID.fullmatch(erid.strip())):
+            raise bad_request("erid — токен из ЕРИР: латиница и цифры, без пробелов.")
+        out["erid"] = erid.strip()
+        if out.get("source_license", "none") not in steps.LICENSES:
+            raise bad_request(f"source_license — одно из: {', '.join(steps.LICENSES)}.")
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
-            raise bad_request("channels — список id каналов.")
+            raise bad_request(malformed("channels — список id каналов."))
         unknown = [c for c in out["channels"] if c not in known]
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
@@ -564,7 +1166,7 @@ class StudioModule:
         extra: dict = {"auto_title": not title}
         force_new = payload.get("force_new", False)
         if not isinstance(force_new, bool):
-            raise bad_request("force_new — true или false.")
+            raise bad_request(malformed("force_new — true или false."))
         if scenario == "digest":
             try:
                 day = news.parse_day(payload.get("day"))
@@ -574,8 +1176,7 @@ class StudioModule:
             extra["source"] = source_id(scenario, day=extra["day"])
             title = title or f"Дайджест новостей за {day.strftime('%d.%m.%Y')}"
             extra["auto_title"] = False
-            self._no_duplicate(extra["source"], force_new)
-            project = self.studio.create(scenario, title, settings, extra)
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
         elif scenario == "post":
             post = payload.get("post")
             if not isinstance(post, str) or not post.strip():
@@ -586,12 +1187,11 @@ class StudioModule:
             first = publish.plain_text(post).splitlines()[0] if publish.plain_text(post) else ""
             title = title or first[:90] or "Пост в канал"
             extra["source"] = source_id(scenario, text=f"{post}\n{text}")
-            self._no_duplicate(extra["source"], force_new)
-            project = self.studio.create(scenario, title, settings, extra)
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
             folder = self.studio.project_dir(project["id"])
-            (folder / steps.POST).write_text(post.strip() + "\n", encoding="utf-8")
+            atomic_write(folder / steps.POST, post.strip() + "\n")
             if text.strip():
-                (folder / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
+                atomic_write(folder / steps.TEXT, text.strip() + "\n")
         else:
             text = payload.get("text")
             if not isinstance(text, str) or not text.strip():
@@ -601,24 +1201,98 @@ class StudioModule:
             paras = slides.paragraphs(text)
             title = title or (paras[0][:90] if paras else "Видео по статье")
             extra["source"] = source_id(scenario, text=text)
-            self._no_duplicate(extra["source"], force_new)
-            project = self.studio.create(scenario, title, settings, extra)
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
             (self.studio.project_dir(project["id"]) / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
         if payload.get("run"):
             self.studio.run(project["id"])
         return self.view(project["id"])
 
-    def _no_duplicate(self, source: str, force_new: bool) -> None:
-        """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый)."""
+    def create_unique(self, scenario: str, title: str, settings: dict, extra: dict, *, force_new: bool) -> dict:
+        """Проверка дубля по source и создание — под одним замком: двойной сабмит формы или
+        расписание вместе с ручным запуском не дают два выпуска на один материал (второй — 409)."""
+        keys = material_keys(scenario, day=extra.get("day"), title=title, url=settings.get("source_url") or "")
+        with self._create_lock:
+            self._no_duplicate(extra["source"], force_new, keys)
+            return self.studio.create(scenario, title, settings, extra)
+
+    def create_once(self, payload: object, key: str | None) -> dict:
+        """POST /projects с Idempotency-Key: повтор с тем же ключом отдаёт уже созданный выпуск."""
+        if not key:
+            return self.create(payload)
+        key = key.strip()[:200]
+        with self._idem_lock:
+            once = self._idem.get(key)
+            owner = once is None
+            if owner:
+                once = self._idem[key] = _Once()
+        if not owner:
+            once.done.wait(IDEMPOTENCY_WAIT_S)
+            if once.project_id and self.studio.get(once.project_id) is not None:
+                return self.view(once.project_id)
+            return self.create(payload)
+        try:
+            view = self.create(payload)
+            once.project_id = view["id"]
+            return view
+        except BaseException:
+            with self._idem_lock:
+                self._idem.pop(key, None)  # не создали — ключ свободен для нового захода
+            raise
+        finally:
+            once.done.set()
+            with self._idem_lock:
+                while len(self._idem) > IDEMPOTENCY_KEEP:
+                    self._idem.pop(next(iter(self._idem)))
+
+    def _no_duplicate(self, source: str, force_new: bool, keys: list[str] | None = None) -> None:
+        """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый).
+        keys — ключи материала (PRD-004): тот же заголовок с правками текста, Discord/Дискорд, тот же
+        адрес источника — «похожий выпуск уже есть» с выбором «Создать всё равно»."""
         if force_new:
             return
-        existing = next((p for p in self.studio.list() if self.source_of(p) == source), None)
-        if existing is not None:
-            raise HttpError(
-                HTTPStatus.CONFLICT,
-                f"Уже есть выпуск «{existing['title']}» по этому же материалу — открой его или создай новый.",
-                {"existing": {"id": existing["id"], "title": existing["title"], "scenario": existing["scenario"]}},
+        items = self.studio.list()
+        existing = next((p for p in items if self.source_of(p) == source), None)
+        similar = False
+        if existing is None and keys:
+            wanted = set(keys)
+            # Части серии и выжимка — нарочно из того же источника: похожими на новый выпуск не считаются.
+            existing = next(
+                (p for p in items if not self._derived(p) and wanted & set(self.material_of(p))),
+                None,
             )
+            similar = existing is not None
+        if existing is None:
+            return
+        found = {"id": existing["id"], "title": existing["title"], "scenario": existing["scenario"]}
+        found["url"] = f"/studio/?scenario={existing['scenario']}&project={existing['id']}"
+        if similar:
+            message = f"Похожий выпуск уже есть: «{existing['title']}» — открой его или создай всё равно."
+        else:
+            message = f"Уже есть выпуск «{existing['title']}» по этому же материалу — открой его или создай новый."
+        raise HttpError(HTTPStatus.CONFLICT, message, {"existing": found | {"similar": similar}})
+
+    def _derived(self, item: dict) -> bool:
+        project = self.studio.get(item["id"]) or item
+        return bool(project.get("series_of") or project.get("summary_of"))
+
+    def material(self, item: dict, project: dict | None = None) -> str | None:
+        """Главный ключ материала; у копии (AN-009) — ключ оригинала, чтобы вся цепочка была одной группой."""
+        root = (project or {}).get("variant_of")
+        if root and self.studio.get(root) is not None:
+            item = {"id": root}
+        keys = self.material_of(item)
+        return keys[0] if keys else f"project:{item['id']}"
+
+    def material_of(self, item: dict) -> list[str]:
+        """Ключи материала выпуска (material_keys) — по заголовку, дню и источнику из project.json."""
+        project = self.studio.get(item["id"]) or item
+        settings = project.get("settings") or {}
+        return material_keys(
+            project.get("scenario", ""),
+            day=project.get("day"),
+            title=project.get("title", ""),
+            url=settings.get("source_url") or "",
+        )
 
     def source_of(self, item: dict) -> str | None:
         """Источник выпуска; у выпусков из прошлых версий — по дню или по тексту на диске."""
@@ -634,14 +1308,23 @@ class StudioModule:
             return source_id("post", text=f"{_read_text(folder / steps.POST)}\n")
         return None
 
-    def clone(self, project_id: str) -> dict:
-        """Копия выпуска: те же настройки и готовые результаты до сборки; сборка и публикация — заново."""
+    def clone(self, project_id: str, payload: object = None) -> dict:
+        """Копия выпуска: те же настройки и готовые результаты до сборки; сборка и публикация — заново.
+
+        Копия помнит оригинал (AN-009): variant_of — корень цепочки (у копии копии — тот же),
+        variant — что меняли (обложка, заголовок, длина), если сказали."""
         source = self.studio.get(project_id)
         if source is None:
             raise not_found("Проект не найден.")
         if source["running"]:
             raise HttpError(HTTPStatus.CONFLICT, "Проект сейчас выполняется — дождись или останови его.")
+        variant = payload.get("variant") if isinstance(payload, dict) else None
+        if variant is not None and (not isinstance(variant, str) or len(variant) > 200):
+            raise bad_request("Что меняли в копии — не длиннее 200 знаков.")
         extra = {k: source[k] for k in ("day", "source", "auto_title") if k in source}
+        extra["variant_of"] = source.get("variant_of") or project_id
+        if variant and variant.strip():
+            extra["variant"] = " ".join(variant.split())
         copy = self.studio.create(source["scenario"], f"{source['title']} (копия)", source["settings"], extra)
         src, dst = self.studio.project_dir(project_id), self.studio.project_dir(copy["id"])
         for path in src.rglob("*"):
@@ -751,6 +1434,11 @@ class StudioModule:
 
         project["settings"] = self.defaults() | project["settings"]  # выпуски из версий без новых настроек
         project["scenario_label"] = SCENARIOS[project["scenario"]]
+        project["material"] = self.material({"id": project_id}, project)  # ключ материала (PRD-004)
+        # Каналы не выбраны (выпуск из старой версии) — студия предлагает каналы сценария (PRD-005).
+        project["default_channels"] = (
+            [] if project["settings"]["channels"] else self.default_channels(project["scenario"])
+        )
         raw = project["steps"]
         project["steps"] = [
             {
@@ -760,6 +1448,8 @@ class StudioModule:
                 # Чего шаг ждёт от других шагов и можно ли сейчас класть ему файлы.
                 "blocked_by": [LABELS[b] for b in blockers(project, s)],
                 "locked": any(raw[d]["status"] == "running" for d in [s, *dependents(s)]),
+                # Что сбросит перезапуск шага — для подтверждения «Перезапустить шаг».
+                "dependents": dependents(s),
             }
             for s in STEP_IDS
         ]
@@ -779,11 +1469,19 @@ class StudioModule:
             "short_voice": url(folder / "short" / "voice.mp3"),
             "short_video": url(folder / steps.SHORT_VIDEO),
         }
-        project["published"] = as_json(steps.PUBLISHED)
+        published = as_json(steps.PUBLISHED)
+        if isinstance(published, dict):  # схема 1: записи в обёртке (BE-008)
+            published = published.get("records")
+        if isinstance(published, list):  # отклик в окнах 24ч/72ч/7д — рядом с записью, не поверх её полей
+            facts = self._facts()
+            published = [r | {"reach": stats.reach(r, facts)} if isinstance(r, dict) else r for r in published]
+        project["published"] = published
         review = read(steps.NARRATOR_REVIEW)
         project["review"] = {"verdict": steps.verdict(review), "text": review} if review else None
         found = registry.mentioned(f"{project['title']}\n{read(steps.TEXT)}\n{read(steps.POST)}", self.banned())
         project["disclaimers"] = [{"name": e.name, "note": e.disclaimer + "."} for e in found]
+        # Куда ведут ссылки поста и какие из них не из исходника — видно до публикации (SEC-013).
+        project["links"] = steps.post_links(project["scenario"], project["settings"], read, read(steps.POST))
         plan = self._plan(folder) or None
         voice = steps.find(folder, "voice", steps.AUDIO_EXT)
         project["estimate"] = estimate_module.estimate(
@@ -844,8 +1542,12 @@ class StudioModule:
                     warn(f"«{channel.label}» ждёт шортс 9:16, а он выключен — включи «Шортс» или убери канал.")
             if channel.problem():
                 warn(f"«{channel.label}»: {channel.problem()}.")
+            if rkn := self.audience_warning(channel):
+                warn(rkn)
         if not settings.get("channels"):
             info("Каналы не выбраны — публикация будет ждать выбора.")
+        elif stale := steps.registry_stale(self.config):
+            warn(stale)
         if not self.config.llm_available():
             warn(f"LLM-команда «{self.config.llm_cmd[0]}» не найдена — промпты и слайды не написать.")
         draws = settings.get("draw_images") and settings.get("images_mode") == "local" and not settings.get("draft")
@@ -933,18 +1635,32 @@ class StudioModule:
             )
         return out
 
-    def upload_slide(self, project_id: str, kind: str, key: str, data: bytes) -> dict:
+    def _upload_dir(self, project_id: str) -> Path:
+        # Куда писать загрузку в проект: папка проекта, та же ФС — потом os.replace (SEC-009).
+        if self.studio.get(project_id) is None:
+            raise not_found("Проект не найден.")
+        return self.studio.project_dir(project_id)
+
+    def upload_slide(self, project_id: str, kind: str, key: str, src: Path) -> dict:
         """Картинка или видео слайда от человека. Все на месте — шаг готов, сборка заново."""
+        try:
+            return self._upload_slide(project_id, kind, key, src)
+        finally:
+            src.unlink(missing_ok=True)  # не принят — временный файл не остаётся
+
+    def _upload_slide(self, project_id: str, kind: str, key: str, src: Path) -> dict:
         if kind not in steps.MEDIA or not _SLIDE.match(key):
             raise not_found("Загружать можно images/NN или clips/NN.")
+        size = src.stat().st_size
+        first = uploads_module.head(src) if size else b""
         if kind == steps.IMAGES:
-            ext = uploads_module.sniff(data) if data else None
+            ext = uploads_module.sniff(first) if first else None
             if ext not in uploads_module.IMAGE_MIME:
                 raise bad_request(uploads_module._accepted((uploads_module.IMAGE,)))
-            if len(data) > uploads_module.MAX_UPLOAD_BYTES:
+            if size > uploads_module.MAX_UPLOAD_BYTES:
                 raise bad_request(f"Картинка больше {uploads_module.MAX_UPLOAD_BYTES // 2**20} МБ.")
         else:
-            ext = uploads_module.sniff_video(data) if data else None
+            ext = uploads_module.sniff_video(first) if first else None
             if ext is None:
                 raise bad_request("Поддерживаются только видео MP4, MOV, WebM.")
         self._guard_step(project_id, kind)
@@ -953,7 +1669,8 @@ class StudioModule:
         prompts = dict(steps.media_prompts(kind, self._plan(folder)))
         if n not in prompts:
             raise not_found(f"В плане нет слайда {n}, которому нужны {steps.MEDIA[kind][1]}.")
-        steps.save_slide_media(folder / kind, n, ext, data, prompts[n], kind)
+        with self.studio.idle(project_id, kind):  # шаг не стартует между проверкой и записью
+            steps.save_slide_media(folder / kind, n, ext, src, prompts[n], kind)
         have = sum(steps.slide_media(folder / kind, m, kind, p) is not None for m, p in prompts.items())
         note = f"Загружено вручную: {have} из {len(prompts)}."
         state = (self.studio.get(project_id) or {}).get("steps", {}).get(kind, {})
@@ -989,9 +1706,8 @@ class StudioModule:
             except (json.JSONDecodeError, StudioError) as exc:
                 raise bad_request(f"Сценарий шортса не годится: {exc}") from exc
             text = json.dumps({"beats": beats}, ensure_ascii=False, indent=2)
-        self._guard(project_id)
-        path = folder / filename
-        path.write_text(text.strip() + "\n", encoding="utf-8")
+        with self.studio.idle(project_id):  # выпуск не запустится между проверкой и записью
+            atomic_write(folder / filename, text.strip() + "\n")
         if name == "short":
 
             def keep_script(project: dict) -> set[str]:
@@ -1005,20 +1721,38 @@ class StudioModule:
             self.studio.mark_done(project_id, step, note="Поправлено вручную.")
         return self.view(project_id)
 
-    def upload(self, project_id: str, what: str, data: bytes) -> dict:
+    def upload(self, project_id: str, what: str, src: Path) -> dict:
+        """Постер или озвучка от человека; src — загрузка во временном файле (body_to_file)."""
+        try:
+            return self._upload(project_id, what, src)
+        finally:
+            src.unlink(missing_ok=True)  # не принят — временный файл не остаётся
+
+    def _upload(self, project_id: str, what: str, src: Path) -> dict:
         kinds = {"poster": (uploads_module.IMAGE,), "voice": (uploads_module.AUDIO,)}.get(what)
         if kinds is None:
             raise not_found("Загружать можно poster или voice.")
-        ext = uploads_module.sniff(data) if data else None
+        size = src.stat().st_size
+        if not size:
+            raise bad_request("Пустой файл.")
+        ext = uploads_module.sniff(uploads_module.head(src))
         if ext is None or uploads_module.kind_of(ext) not in kinds:
             raise bad_request(uploads_module._accepted(kinds))
+        if what == "poster" and size > uploads_module.MAX_UPLOAD_BYTES:  # тело ограничено 200 МБ — под голос
+            limit_mb = uploads_module.MAX_UPLOAD_BYTES // 2**20
+            raise HttpError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"Картинка больше {limit_mb} МБ.")
         self._guard_step(project_id, what)
         folder = self.studio.project_dir(project_id)
         stems = steps.IMAGE_EXT if what == "poster" else steps.AUDIO_EXT
-        for old in (folder / f"{what}{e}" for e in stems):
-            old.unlink(missing_ok=True)
-        (folder / f"{what}.{ext}").write_bytes(data)
-        (folder / f"{what}.json").unlink(missing_ok=True)  # постер больше не из задачи «Фото»
+        target = folder / f"{what}.{ext}"
+        with self.studio.idle(project_id, what):
+            # Сначала новый файл целиком, потом — прежний в другом формате: сбой между ними
+            # не оставит выпуск без постера или озвучки.
+            place_upload(src, target)
+            for old in (folder / f"{what}{e}" for e in stems):
+                if old != target:
+                    old.unlink(missing_ok=True)
+            (folder / f"{what}.json").unlink(missing_ok=True)  # постер больше не из задачи «Фото»
         self.studio.mark_done(project_id, what, note="Загружено вручную.", resume=True)
         return self.view(project_id)
 
@@ -1063,7 +1797,7 @@ class StudioModule:
         settings = payload.get("settings") if isinstance(payload, dict) else None
         if settings is not None:
             if only is None:
-                raise bad_request("settings передают вместе с шагом.")
+                raise bad_request(malformed("settings передают вместе с шагом."))
             self._guard(project_id)
             self.update_settings(project_id, settings)
         self.studio.run(project_id, only)
@@ -1076,8 +1810,12 @@ class StudioModule:
             self._route(req)
         except Conflict as exc:
             raise HttpError(HTTPStatus.CONFLICT, str(exc)) from exc
-        except KeyError as exc:
+        except ProjectNotFound as exc:
             raise not_found("Проект не найден.") from exc
+
+    @staticmethod
+    def _follow(project_id: str) -> dict[str, str]:
+        return {"Location": f"/api/studio/projects/{project_id}"}
 
     def _route(self, req: Request) -> None:
         match (req.method, req.sub):
@@ -1091,6 +1829,8 @@ class StudioModule:
                 return req.send_json(self.refresh_stats(), HTTPStatus.ACCEPTED)
             case ("POST", ["projects", pid, "stats"]):
                 return req.send_json(self.manual_stats(pid, req.json()))
+            case ("GET", ["health", "stats"]):
+                return req.send_json(self.health_stats())
             case ("GET", ["board"]):
                 return req.send_json(self.board(archived=req.arg("archived") in ("1", "true")))
             case ("POST", ["projects", pid, "split"]):
@@ -1098,18 +1838,22 @@ class StudioModule:
             case ("POST", ["projects", pid, "summary"]):
                 return req.send_json(self.summarize(pid), HTTPStatus.ACCEPTED)
             case ("POST", ["projects", pid, "clone"]):
-                return req.send_json(self.clone(pid), HTTPStatus.CREATED)
+                copy = self.clone(pid, req.json())
+                return req.send_json(copy, HTTPStatus.CREATED, self._follow(copy["id"]))
             case ("POST", ["projects", pid, "archive"]):
                 return req.send_json(self.archive(pid, req.json() or {}))
             case ("POST", ["projects"]):
-                return req.send_json(self.create(req.json(MAX_BODY)), HTTPStatus.CREATED)
+                key = req.headers.get("Idempotency-Key")
+                made = self.create_once(req.json(MAX_BODY), key)
+                return req.send_json(made, HTTPStatus.CREATED, self._follow(made["id"]))
             case ("GET", ["projects", pid]):
                 return req.send_json(self.view(pid))
             case ("POST", ["projects", pid, "settings"]):
                 return req.send_json(self.update_settings(pid, req.json()))
             case ("POST", ["projects", pid, "run"]):
                 payload = req.json() or {}
-                return req.send_json(self.rerun(pid, payload))
+                # Асинхронное действие: 202 и ссылка на выпуск, за которым следить (docs/api.md).
+                return req.send_json(self.rerun(pid, payload), HTTPStatus.ACCEPTED, self._follow(pid))
             case ("POST", ["projects", pid, "cancel"]):
                 self.studio.cancel(pid)
                 return req.send_json(self.view(pid))
@@ -1121,19 +1865,19 @@ class StudioModule:
                 self.studio.approve(pid, step)
                 return req.send_json(self.view(pid))
             case ("POST", ["projects", pid, "publish"]):
-                return req.send_json(self.publish_now(pid, req.json()))
-            case ("POST", ["channels"]):
-                return req.send_json(self.add_channel(req.json()), HTTPStatus.CREATED)
-            case ("POST", ["channels", channel_id, "delete"]):
-                return req.send_json(self.delete_channel(channel_id))
+                return req.send_json(self.publish_now(pid, req.json()), HTTPStatus.ACCEPTED, self._follow(pid))
+            case ("POST", ["projects", pid, "publish", "resolve"]):
+                return req.send_json(self.resolve_publish(pid, req.json()))
+            case ("POST", ["projects", pid, "uploaded"]):
+                return req.send_json(self.uploaded(pid, req.json()))
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):
-                data = req.body(uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
-                return req.send_json(self.upload(pid, what, data))
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, _too_big())
+                return req.send_json(self.upload(pid, what, src))
             case ("POST", ["projects", pid, "upload", kind, key]):
-                data = req.body(uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
-                return req.send_json(self.upload_slide(pid, kind, key, data))
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, _too_big())
+                return req.send_json(self.upload_slide(pid, kind, key, src))
             case ("GET", ["projects", pid, "files", *rest]):
                 return self._send_file(req, pid, "/".join(rest))
         raise not_found()

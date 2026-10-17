@@ -1,45 +1,14 @@
 // Вкладка «Фото» (перенос UI photogen): режим, промпт, исходное фото с маской или полями, запуск и результат. Без сборки и зависимостей.
 
-const $ = (id) => document.getElementById(id);
-
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (value === false || value == null) continue;
-    if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
-    else if (key === "class") el.className = value;
-    else if (key in el && key !== "list") el[key] = value;
-    else el.setAttribute(key, value === true ? "" : value);
-  }
-  for (const child of children.flat()) {
-    if (child != null && child !== false) el.append(child);
-  }
-  return el;
-}
-
-async function api(method, path, body) {
-  const init = { method };
-  if (body instanceof Blob) init.body = body;
-  else if (body !== undefined) {
-    init.body = JSON.stringify(body);
-    init.headers = { "Content-Type": "application/json" };
-  }
-  let resp;
-  try {
-    resp = await fetch(path, init);
-  } catch {
-    throw new Error("Сервис не отвечает. Проверь, что он запущен.");
-  }
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error || `Ошибка ${resp.status}`);
-  return data;
-}
+import { $, api, busyClick, chip, h, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { loadOriented } from "./exif.js";
+import { geometry as geometryOf } from "./geometry.js";
 
 const state = {
   config: null,
   mode: "txt2img",
   detail: "standard",
-  source: null, // {bitmap, width, height} — фото как его выбрал пользователь, с учётом EXIF-поворота
+  source: null, // {image, width, height, close} — фото как его выбрал пользователь, с учётом EXIF-поворота (exif.js)
   pads: { left: 25, top: 0, right: 25, bottom: 0 }, // поля outpaint, % от стороны фото
   tool: "brush",
   strengthTouched: false,
@@ -61,21 +30,16 @@ const usable = (model) => model.installed && model.modes.includes(state.mode);
 
 // ---------- геометрия: к какому размеру приводится фото ----------
 
+// Расчёт — чистая функция в geometry.js (тесты без DOM); здесь только сбор входов со страницы.
 function geometry() {
-  const { grid, max_side: maxSide } = state.config;
-  const snap = (v) => Math.round(v / grid) * grid;
-  const fit = (v) => Math.min(Math.max(snap(v), 256), maxSide);
-  const { width, height } = state.source;
-  const frac = Object.fromEntries(
-    Object.entries(state.pads).map(([side, pct]) => [side, state.mode === "outpaint" ? pct / 100 : 0]),
-  );
-  const longest = Math.max(width * (1 + frac.left + frac.right), height * (1 + frac.top + frac.bottom));
-  const scale = Math.min(1, Number($("work-side").value) / longest);
-  const sw = fit(width * scale);
-  const sh = fit(height * scale);
-  const px = (fraction, side) => (fraction > 0 ? Math.max(grid, snap(side * fraction)) : 0);
-  const pad = { left: px(frac.left, sw), right: px(frac.right, sw), top: px(frac.top, sh), bottom: px(frac.bottom, sh) };
-  return { sw, sh, pad, cw: sw + pad.left + pad.right, ch: sh + pad.top + pad.bottom };
+  return geometryOf({
+    source: state.source,
+    pads: state.pads,
+    outpaint: state.mode === "outpaint",
+    grid: state.config.grid,
+    maxSide: state.config.max_side,
+    workSide: Number($("work-side").value),
+  });
 }
 
 function renderStage() {
@@ -98,7 +62,7 @@ function renderStage() {
   if (photo.width !== g.sw || photo.height !== g.sh) {
     photo.width = g.sw;
     photo.height = g.sh;
-    photo.getContext("2d").drawImage(state.source.bitmap, 0, 0, g.sw, g.sh);
+    photo.getContext("2d").drawImage(state.source.image, 0, 0, g.sw, g.sh);
     // Маска живёт в координатах рабочего размера: при его смене переносим нарисованное.
     const old = h("canvas", { width: mask.width || 1, height: mask.height || 1 });
     if (mask.width) old.getContext("2d").drawImage(mask, 0, 0);
@@ -123,14 +87,14 @@ function renderStage() {
 
 async function setSource(file) {
   if (!file || !file.type.startsWith("image/")) return;
-  let bitmap;
+  let source;
   try {
-    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    source = await loadOriented(file);
   } catch {
     return showFormError("Не получилось открыть картинку. Поддерживаются PNG, JPEG и WebP.");
   }
-  state.source?.bitmap.close();
-  state.source = { bitmap, width: bitmap.width, height: bitmap.height };
+  state.source?.close();
+  state.source = source;
   $("photo-canvas").width = 0; // заставит renderStage перерисовать фото
   clearMask();
   showFormError(null);
@@ -257,7 +221,7 @@ function syncControls() {
   const missing = cfg.models.filter((m) => !m.installed && m.modes.includes(state.mode));
   $("model-note").textContent = [
     model ? `${model.label}: ${model.note}.` : "Для этого режима нет установленной модели.",
-    missing.length ? `Установить: ${missing.map((m) => `./setup-model.sh ${m.id}`).join(", ")}.` : "",
+    missing.length ? `Установить: ${missing.map((m) => `make models M=${m.id}`).join(", ")}.` : "",
   ].filter(Boolean).join(" ");
   $("prompt-hint").textContent = model ? promptHint(model) : "";
 
@@ -329,8 +293,9 @@ async function buildPayload() {
     if (g.cw === g.sw && g.ch === g.sh) throw new Error("Задай поле хотя бы с одной стороны.");
     payload.padding = g.pad;
   }
-  payload.source = (await api("POST", "/api/photo/uploads", await toPng($("photo-canvas")))).id;
-  if (state.mode === "inpaint") payload.mask = (await api("POST", "/api/photo/uploads", await maskBlob())).id;
+  const limit = (state.config?.upload_limits || UPLOAD_LIMITS).image;
+  payload.source = (await uploadFile("/api/photo/uploads", await toPng($("photo-canvas")), { limit, label: "Исходное фото" })).id;
+  if (state.mode === "inpaint") payload.mask = (await uploadFile("/api/photo/uploads", await maskBlob(), { limit, label: "Маска" })).id;
   return payload;
 }
 
@@ -347,7 +312,7 @@ async function submit(event) {
     upsertJob(job);
     state.selectedId = job.id;
     renderJobs();
-    schedulePoll(300);
+    schedulePoll();
   } catch (err) {
     showFormError(err.message);
   }
@@ -358,13 +323,6 @@ async function submit(event) {
 
 // ---------- задачи ----------
 
-const STATUS = {
-  queued: "В очереди",
-  running: "Генерируется",
-  done: "Готово",
-  failed: "Ошибка",
-  canceled: "Отменено",
-};
 const isActive = (job) => job.status === "queued" || job.status === "running";
 const isUpscale = (job) => job.mode === "upscale";
 const modeLabel = (id) =>
@@ -382,27 +340,6 @@ function fmtElapsed(total) {
   return `${Math.floor(s / 60)} мин ${String(s % 60).padStart(2, "0")} с`;
 }
 
-function progressBlock(job) {
-  const p = job.progress;
-  const queued = job.status === "queued";
-  const stage = queued
-    ? job.queue_position > 0 ? `Ждёт очереди: впереди ${job.queue_position}` : "Сейчас начнётся"
-    : p.stage;
-  return h("div", { class: "progress" },
-    h("div", { class: "progress-head" },
-      h("span", { class: "stage" }, stage, p.steps ? h("span", { class: "muted" }, ` · шаг ${p.step} из ${p.steps}`) : null),
-      h("span", { class: "percent" }, queued ? "" : `${Math.round(p.percent)}%`),
-    ),
-    h("div", { class: `bar${queued ? " waiting" : ""}`, role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(p.percent)) },
-      h("div", { class: "bar-fill", style: `width:${queued ? 0 : p.percent}%` }),
-    ),
-    h("div", { class: "progress-foot" },
-      h("span", { class: "muted small" }, queued ? "" : `Прошло ${fmtElapsed(job.elapsed_s)}`),
-      h("button", { type: "button", class: "link danger", onclick: () => cancelJob(job.id) }, "Отменить"),
-    ),
-  );
-}
-
 function inputsBlock(job) {
   if (!job.source_url) return null;
   const pad = job.padding;
@@ -416,7 +353,7 @@ function inputsBlock(job) {
 function logBlock(job, open) {
   if (!job.log || !job.log.length) return null;
   const pre = h("pre", { class: "log" }, job.log.join("\n"));
-  const details = h("details", { class: "log-wrap", open }, h("summary", {}, "Лог процесса"), pre);
+  const details = h("details", { class: "disclosure log-wrap", open }, h("summary", {}, "Лог процесса"), pre);
   details.addEventListener("toggle", () => (pre.scrollTop = pre.scrollHeight));
   queueMicrotask(() => (pre.scrollTop = pre.scrollHeight));
   return details;
@@ -444,7 +381,7 @@ function upscaleBlock(job) {
   return h("div", { class: "upscale" },
     h("span", { class: "muted small" }, "Увеличить с дорисовкой деталей (SeedVR2):"),
     ...targets.map((t) =>
-      h("button", { type: "button", onclick: () => upscaleJob(job.id, t.id) }, `до ${t.label}`),
+      h("button", { type: "button", class: "btn btn--secondary btn--sm", onclick: busyClick(() => upscaleJob(job.id, t.id), `upscale:${job.id}`) }, `до ${t.label}`),
     ),
     h("span", { class: "muted small" }, "2K — ~20 с, 4K — ~1,5 мин, ~18 ГБ памяти; первый запуск докачает ~7 ГБ весов."),
   );
@@ -456,7 +393,7 @@ async function upscaleJob(id, target) {
     upsertJob(job);
     state.selectedId = job.id;
     renderJobs();
-    schedulePoll(300);
+    schedulePoll();
   } catch (err) {
     showFormError(err.message);
   }
@@ -479,13 +416,13 @@ function renderJob() {
 
   const parts = [
     h("div", { class: "job-head" },
-      h("span", { class: `status ${job.status}` }, STATUS[job.status]),
-      job.backend === "fake" ? h("span", { class: "status demo" }, "Демо — не модель") : null,
+      statusChip(job.status),
+      job.backend === "fake" ? chip("Демо — не модель", "warning") : null,
       h("span", { class: "muted small" }, jobMeta(job)),
     ),
-    h("p", { class: "job-prompt" }, job.prompt),
+    h("p", { class: "job-text" }, job.prompt),
   ];
-  if (isActive(job)) parts.push(progressBlock(job));
+  if (isActive(job)) parts.push(jobProgress(job, { onCancel: (j) => cancelJob(j.id), elapsed: fmtElapsed }));
   if (job.status === "done") {
     parts.push(
       h("a", { class: "result-link", href: job.image_url, target: "_blank", title: "Открыть в полном размере" },
@@ -493,7 +430,7 @@ function renderJob() {
       ),
       h("div", { class: "job-foot" },
         h("span", { class: "took" }, `${isUpscale(job) ? "Увеличено" : "Сгенерировано"} за ${fmtElapsed(job.elapsed_s)}`),
-        h("a", { class: "download", href: `${job.image_url}?download=1`, download: `photo-${job.id}.png` }, "Скачать PNG"),
+        h("a", { class: "btn btn--primary", href: `${job.image_url}?download=1`, download: `photo-${job.id}.png` }, "Скачать PNG"),
       ),
       upscaleBlock(job),
     );
@@ -530,11 +467,11 @@ function renderHistory() {
             ? h("img", { class: "history-thumb", src: thumb, alt: "", loading: "lazy" })
             : h("span", { class: "history-thumb text" }, "T"),
           h("span", { class: "history-text" },
-            h("span", { class: "history-prompt" }, job.prompt),
+            h("span", { class: "history-title" }, job.prompt),
             h("span", { class: "muted small" },
               [when, job.model_label, modeLabel(job.mode), job.status === "done" ? fmtElapsed(job.elapsed_s) : null].filter(Boolean).join(" · ")),
           ),
-          h("span", { class: `status ${job.status}` }, job.status === "running" ? `${Math.round(job.progress.percent)}%` : STATUS[job.status]),
+          chip(job.status === "running" ? `${Math.round(job.progress.percent)}%` : STATUS[job.status], toneOf(job.status)),
         ),
       );
     }),
@@ -564,43 +501,42 @@ async function cancelJob(id) {
   }
 }
 
-let pollTimer = null;
+// Опрос очереди: раз в секунду, пока есть активные задачи, раз в 5 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя связи — реже). Свои действия зовут schedulePoll().
+const jobsPoll = poller({ run: (signal) => poll(signal), fast: 1000, slow: 5000, isActive: () => state.jobs.some(isActive), onError: (err) => setBanner(err.message, "error") });
 
-function schedulePoll(delay) {
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(poll, delay);
+function schedulePoll() {
+  jobsPoll.now();
 }
 
-async function poll() {
-  try {
-    const { jobs } = await api("GET", "/api/photo/jobs");
-    // Список приходит без лога; лог выбранной задачи берём отдельным запросом.
-    const selected = jobs.find((j) => j.id === state.selectedId);
-    const previous = state.jobs.find((j) => j.id === state.selectedId);
-    if (selected) {
-      const needFull = isActive(selected) || !previous?.log || previous.status !== selected.status;
-      Object.assign(selected, needFull ? await api("GET", `/api/photo/jobs/${selected.id}`) : { log: previous.log });
-    }
-    state.jobs = jobs;
-    if (!state.selectedId && jobs.length) return selectJob(jobs[0].id).then(() => schedulePoll(1000));
-    renderJobs();
-    setBanner(null);
-  } catch (err) {
-    setBanner(err.message, "error");
+async function poll(signal) {
+  const { jobs } = await api("GET", "/api/photo/jobs", undefined, { signal });
+  // Список приходит без лога; лог выбранной задачи берём отдельным запросом.
+  const selected = jobs.find((j) => j.id === state.selectedId);
+  const previous = state.jobs.find((j) => j.id === state.selectedId);
+  if (selected) {
+    const needFull = isActive(selected) || !previous?.log || previous.status !== selected.status;
+    Object.assign(selected, needFull ? await api("GET", `/api/photo/jobs/${selected.id}`, undefined, { signal }) : { log: previous.log });
   }
-  schedulePoll(state.jobs.some(isActive) ? 1000 : 5000);
+  state.jobs = jobs;
+  if (!state.selectedId && jobs.length) return selectJob(jobs[0].id);
+  renderJobs();
+  setBanner(null);
 }
 
 // ---------- запуск страницы ----------
 
 let configBanner = null;
 
+const BANNER_TONE = { warn: "warning", error: "danger" };
+
 function setBanner(text, kind) {
   const banner = $("banner");
   const shown = text ? { text, kind } : configBanner;
   banner.hidden = !shown;
   if (!shown) return;
-  banner.className = `banner ${shown.kind}`;
+  banner.className = `banner${BANNER_TONE[shown.kind] ? ` tone-${BANNER_TONE[shown.kind]}` : ""}`;
+  banner.setAttribute("role", shown.kind === "error" ? "alert" : "status"); // ошибку зачитать сразу
   banner.replaceChildren(...[].concat(shown.text));
 }
 
@@ -646,13 +582,13 @@ function configureBanner(cfg) {
         "Ни одна модель не установлена — или не подключён диск с весами (",
         h("code", {}, cfg.models_dir),
         "). Установка: ",
-        h("code", {}, "./setup-model.sh z-image-turbo"),
+        h("code", {}, "make models M=z-image-turbo"),
         `. Подробнее: ${cfg.install_hint}.`,
       ],
     };
   } else if (Object.values(cfg.runners).includes(false)) {
     const lost = Object.entries(cfg.runners).filter(([, ok]) => !ok).map(([name]) => name).join(", ");
-    configBanner = { kind: "warn", text: `Пайплайн ${lost} не найден — его модели не запустятся. Как установить: ${cfg.install_hint}.` };
+    configBanner = { kind: "warn", text: `Не установлен модуль для моделей ${lost}: они не запустятся. Как установить: ${cfg.install_hint}` };
   }
   setBanner(null);
 }
@@ -713,7 +649,7 @@ async function init() {
   setupDropZone();
   syncControls();
   renderJobs();
-  poll();
+  jobsPoll.start();
 }
 
 init();

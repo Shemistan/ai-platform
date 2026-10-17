@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Внешний чекер дайджеста (REL-005): раз в день, мимо процесса платформы. Шаблон для tools/agent.sh. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>@LABEL@</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@PYTHON@</string>
+		<string>@PLATFORM_DIR@/tools/digest_check.py</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>@PLATFORM_DIR@</string>
+	<!-- Токен и чат — не здесь: env при ручном запуске или Keychain (см. README «Автозапуск»). -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>@PATH@</string>
+		<key>AIP_CHECK_URL</key>
+		<string>@CHECK_URL@</string>
+	</dict>
+	<!-- Время дайджеста из настроек + 30 мин; поменял время — make install-agent заново. -->
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>@HOUR@</integer>
+		<key>Minute</key>
+		<integer>@MINUTE@</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>@LOG_DIR@/digest-check.log</string>
+	<key>StandardErrorPath</key>
+	<string>@LOG_DIR@/digest-check.log</string>
+</dict>
+</plist>

@@ -1,0 +1,79 @@
+{
+  "$comment": "ответ `narrate bridge voices`; живой голос без образца — sample и seconds null (CMP-009)",
+  "type": "object",
+  "required": [
+    "default_text",
+    "seconds_range",
+    "voices",
+    "voices_dir"
+  ],
+  "properties": {
+    "voices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "custom",
+          "record",
+          "sample",
+          "seconds",
+          "stem",
+          "text",
+          "voice"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "voice": {
+            "type": "string"
+          },
+          "seconds": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "record": {},
+          "sample": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "custom": {
+            "type": "boolean"
+          },
+          "stem": {
+            "type": "string"
+          },
+          "consent": {
+            "$comment": "CMP-009: synthetic | live | null — живой голос без согласия",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "consent_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "seconds_range": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "default_text": {
+      "type": "string"
+    },
+    "voices_dir": {
+      "type": "string"
+    }
+  }
+}

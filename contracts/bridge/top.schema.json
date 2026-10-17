@@ -1,0 +1,62 @@
+{
+  "$comment": "ответ `narrate bridge top`",
+  "type": "object",
+  "required": [
+    "day",
+    "events"
+  ],
+  "properties": {
+    "day": {
+      "type": "string"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "importance",
+          "issued",
+          "key",
+          "kind",
+          "score",
+          "sources",
+          "title",
+          "url",
+          "why"
+        ],
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "score": {
+            "type": "number"
+          },
+          "importance": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "issued": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

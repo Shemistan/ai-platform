@@ -1,6 +1,7 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, api, chip, debounce, fill, followTask, h, logBlock, modal, progressBar, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, busyClick, chip, countLabel, debounce, errorState, fill, fmtNum, followTask, h, logBlock, modal, narratorApi as api, plural, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { CONSENT_FORMS, voiceConsent } from "/core/consent.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -51,8 +52,22 @@ function fillVoices(saved = {}) {
   $("steps").placeholder = e.default_steps ? `${e.default_steps} по умолчанию` : "";
   $("voices-btn").hidden = !e.voices.includes("Charon");
   const note = $("engine-note");
-  note.textContent = e.problem ? `${e.note}. Не запустится: ${e.problem}` : e.note;
-  note.classList.toggle("warn", Boolean(e.problem));
+  note.textContent = e.note;
+  // Почему движок не запустится — понятной фразой, сырой вывод под «Подробностями».
+  let slot = $("engine-problem");
+  if (!slot) {
+    slot = h("div", { id: "engine-problem" });
+    note.after(slot);
+  }
+  const listError = state.config.engines_error;
+  fill(
+    slot,
+    e.problem
+      ? errorState({ title: `${e.label}: не запустится`, error: e.problem })
+      : listError
+        ? errorState({ title: "Движок не ответил — список движков может быть неполным", error: listError, onRetry: refreshConfig })
+        : null,
+  );
 }
 
 // --- произношение ---
@@ -73,14 +88,6 @@ const refreshPreview = debounce(async () => {
   }
 }, 600);
 
-function plural(n, one, few, many) {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
-  return many;
-}
-
 function renderPreview(data) {
   const parts = [];
   parts.push(data.changed ? `${data.changed} ${plural(data.changed, "строка переведена", "строки переведены", "строк переведено")} в произношение` : "текст уже готов к озвучке");
@@ -92,7 +99,7 @@ function renderPreview(data) {
 }
 
 function updateCount() {
-  $("text-count").textContent = `${$("text").value.length.toLocaleString("ru-RU")} знаков из ${state.config.max_text.toLocaleString("ru-RU")}`;
+  $("text-count").textContent = `${countLabel($("text").value.length, "знак", "знака", "знаков")} из ${fmtNum(state.config.max_text)}`;
 }
 
 function setText(text) {
@@ -112,7 +119,7 @@ async function openLibrary() {
   try {
     items = (await api("GET", `${API}/library`)).items;
   } catch (err) {
-    fill(list, h("p", { class: "job-error" }, err.message));
+    fill(list, errorState({ title: "Библиотека не загрузилась", error: err, onRetry: () => (close(), openLibrary()) }));
     return;
   }
   const render = () => {
@@ -133,12 +140,12 @@ async function openLibrary() {
             "button",
             {
               type: "button",
-              class: "row-btn",
-              onclick: async () => {
+              class: "list-row",
+              onclick: busyClick(async () => {
                 const data = await api("GET", `${API}/library/${encodeURIComponent(item.id)}`);
                 close();
                 setText(data.text);
-              },
+              }),
             },
             h("span", {}, item.title),
             h("span", { class: "muted small" }, shortDate(item.added)),
@@ -196,15 +203,15 @@ function renderBatch() {
     h(
       "ol",
       { class: "list" },
-      ...batch.articles.map((a, n) => h("li", { class: "row-btn", style: "cursor:default" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, `${a.words} слов`))),
+      ...batch.articles.map((a, n) => h("li", { class: "list-row list-row--static" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, countLabel(a.words, "слово", "слова", "слов")))),
     ),
-    over ? h("p", { class: "form-error" }, `За раз — не больше ${max} статей.`) : null,
+    over ? h("p", { class: "form-error" }, `За раз — не больше ${max} ${plural(max, "статьи", "статей", "статей")}.`) : null,
     h("p", { class: "hint" }, "Каждая статья встанет в очередь отдельной задачей с настройками ниже — по порядку."),
     h(
       "div",
       { class: "toolbar" },
-      h("button", { type: "button", class: "primary", disabled: over, onclick: submitBatch }, `Все в очередь (${batch.articles.length})`),
-      h("button", { type: "button", class: "small-btn", onclick: () => ((state.batch = null), renderBatch()) }, "Отмена"),
+      h("button", { type: "button", class: "btn btn--primary", disabled: over, onclick: busyClick(submitBatch, "batch") }, `Все в очередь (${batch.articles.length})`),
+      h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => ((state.batch = null), renderBatch()) }, "Отмена"),
     ),
   );
   box.hidden = false;
@@ -236,6 +243,7 @@ async function submit(event) {
     state.jobs = [state.selected, ...state.jobs];
     renderHistory();
     remember();
+    jobsPoll.later(); // задача в очереди — опрашивать чаще
   } catch (err) {
     showError(err.message);
   } finally {
@@ -255,6 +263,7 @@ async function submitBatch() {
     renderJob(state.selected);
     renderHistory();
     remember();
+    jobsPoll.later();
   } catch (err) {
     showError(err.message);
   }
@@ -287,7 +296,7 @@ function player(job, box) {
   audio.addEventListener("ratechange", () => audio.playbackRate !== state.tempo && setTempo(audio.playbackRate, box));
   const tempo = h(
     "div",
-    { class: "tempo", role: "group", "aria-label": "Скорость" },
+    { class: "segmented tempo", role: "group", "aria-label": "Скорость" },
     h("span", { class: "muted small" }, "Скорость"),
     ...TEMPOS.map((t) => h("button", { type: "button", value: String(t), "aria-pressed": String(t === state.tempo), onclick: () => setTempo(t, box) }, `×${t}`)),
   );
@@ -340,7 +349,7 @@ function renderJob(job) {
     return;
   }
   const active = job.status === "queued" || job.status === "running";
-  const meta = [job.engine_label, job.voice, job.speed ? `×${job.speed}` : "", job.steps ? `${job.steps} шагов` : "", `${job.chars} знаков`].filter(Boolean).join(" · ");
+  const meta = [job.engine_label, job.voice, job.speed ? `×${job.speed}` : "", job.steps ? countLabel(job.steps, "шаг", "шага", "шагов") : "", countLabel(job.chars, "знак", "знака", "знаков")].filter(Boolean).join(" · ");
   fill(box, 
     h(
       "div",
@@ -355,11 +364,11 @@ function renderJob(job) {
       h(
         "div",
         { class: "actions" },
-        job.audio_url ? h("a", { class: "link", href: downloadHref(job), "data-download": "" }, state.tempo === 1 ? "Скачать mp3" : `Скачать mp3 ×${state.tempo}`) : null,
+        job.audio_url ? h("a", { class: "btn btn--link", href: downloadHref(job), "data-download": "" }, state.tempo === 1 ? "Скачать mp3" : `Скачать mp3 ×${state.tempo}`) : null,
         job.duration_s ? h("span", { class: "muted small" }, `Длительность ${seconds(job.duration_s)}`) : null,
         job.elapsed_s ? h("span", { class: "muted small" }, `Озвучка заняла ${seconds(job.elapsed_s)}`) : null,
-        job.text ? h("button", { type: "button", class: "link", onclick: () => setText(job.text) }, "Текст в редактор") : null,
-        active ? h("button", { type: "button", class: "link danger", onclick: () => cancel(job.id) }, "Отменить") : null,
+        job.text ? h("button", { type: "button", class: "btn btn--link", onclick: () => setText(job.text) }, "Текст в редактор") : null,
+        active ? h("button", { type: "button", class: "btn btn--link btn--danger", onclick: busyClick(() => cancel(job.id), `cancel:${job.id}`) }, "Отменить") : null,
       ),
       checkBlock(job.check),
       logBlock(job.log),
@@ -376,7 +385,7 @@ function renderHistory() {
             {},
             h(
               "button",
-              { type: "button", class: `history-item${state.selected?.id === job.id ? " current" : ""}`, onclick: () => select(job.id) },
+              { type: "button", class: `history-item${state.selected?.id === job.id ? " current" : ""}`, onclick: safe(() => select(job.id)) },
               h(
                 "span",
                 { class: "history-text" },
@@ -402,23 +411,22 @@ async function cancel(id) {
   renderJob(state.selected);
 }
 
-async function poll() {
-  try {
-    const { jobs } = await api("GET", `${API}/jobs`);
-    state.jobs = jobs;
-    if (state.selected) {
-      const fresh = jobs.find((j) => j.id === state.selected.id);
-      if (fresh && (fresh.status !== state.selected.status || fresh.status === "running" || fresh.status === "queued")) {
-        state.selected = await api("GET", `${API}/jobs/${fresh.id}`);
-        renderJob(state.selected);
-      }
+// Опрос очереди: раз в секунду, пока есть активные задачи, раз в 5 с в простое (poller из ui.js:
+// в скрытой вкладке — раз в минуту, после сбоя связи — реже, без «Uncaught (in promise)»).
+const isRunning = (j) => j.status === "queued" || j.status === "running";
+const jobsPoll = poller({ run: poll, fast: 1000, slow: 5000, isActive: () => state.jobs.some(isRunning) });
+
+async function poll(signal) {
+  const { jobs } = await api("GET", `${API}/jobs`, undefined, { signal });
+  state.jobs = jobs;
+  if (state.selected) {
+    const fresh = jobs.find((j) => j.id === state.selected.id);
+    if (fresh && (fresh.status !== state.selected.status || isRunning(fresh))) {
+      state.selected = await api("GET", `${API}/jobs/${fresh.id}`, undefined, { signal });
+      renderJob(state.selected);
     }
-    renderHistory();
-  } catch {
-    /* сервер мог перезапуститься — следующий опрос попробует снова */
   }
-  const active = state.jobs.some((j) => j.status === "queued" || j.status === "running");
-  setTimeout(poll, active ? 1000 : 5000);
+  renderHistory();
 }
 
 // --- образцы голосов ---
@@ -436,7 +444,7 @@ async function openVoices() {
     try {
       renderVoices(await api("GET", `${API}/voices`), content, taskBox, reload);
     } catch (err) {
-      fill(content, h("p", { class: "job-error" }, err.message));
+      fill(content, errorState({ title: "Образцы не загрузились", error: err, onRetry: reload }));
     }
   };
   await reload();
@@ -456,6 +464,7 @@ function renderVoices(data, content, taskBox, reload) {
         h("div", { class: "card-head" }, h("h3", {}, v.voice), h("span", { class: "toolbar" }, v.seconds ? h("span", { class: "muted small" }, `${v.seconds} с`) : null, chip(status, tone))),
         v.sample_url ? h("audio", { controls: true, preload: "none", src: v.sample_url }) : null,
         v.text ? h("blockquote", { class: "quote" }, v.text) : null,
+        v.consent_error ? h("p", { class: "job-error" }, v.consent_error) : null, // живой голос без согласия (CMP-009)
         record,
       );
     }),
@@ -469,49 +478,70 @@ function recordControls(v, data, busy, taskBox, reload) {
     const text = h("textarea", { rows: 2, placeholder: `Свой текст образца — по желанию; иначе: «${data.default_text}»` });
     return h(
       "details",
-      { class: "inline" },
+      { class: "disclosure" },
       h("summary", {}, "Перезаписать образец"),
       h(
         "div",
-        { class: "field", style: "margin-top:8px" },
+        { class: "field mt-2" },
         h("p", { class: "hint" }, "Голос Charon есть в Gemini TTS: движок сам запишет образец по ключу GEMINI_API_KEY. Можно и своей записью — загрузи её ниже."),
         text,
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: () => startRecord(v.stem, { text: text.value }, taskBox, reload) }, "Записать из Gemini TTS")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: busyClick(() => startRecord(v.stem, { text: text.value }, taskBox, reload), `voice:${v.stem}`) }, "Записать из Gemini TTS")),
         fileRecord(v, low, high, busy, taskBox, reload),
       ),
     );
   }
-  return h("details", { class: "inline" }, h("summary", {}, "Записать свой образец"), fileRecord(v, low, high, busy, taskBox, reload));
+  return h("details", { class: "disclosure" }, h("summary", {}, "Записать свой образец"), fileRecord(v, low, high, busy, taskBox, reload));
 }
 
 function fileRecord(v, low, high, busy, taskBox, reload) {
   const file = h("input", { type: "file", accept: "audio/*,.wav,.mp3,.m4a" });
   const text = h("textarea", { rows: 2, placeholder: "Что сказано в записи — слово в слово, цифры словами" });
   const error = h("p", { class: "form-error", hidden: true });
+  // Чей голос и согласие владельца (CMP-010): без галочки кнопка выключена, сервер тоже ответит 400.
+  const owner = h("input", { type: "text", maxlength: 200, placeholder: "Чей это голос — имя владельца" });
+  const form = h("select", {}, ...Object.entries(CONSENT_FORMS).map(([value, label]) => h("option", { value }, label)));
+  const agree = h("input", { type: "checkbox" });
+  const button = h("button", { type: "button", class: "btn btn--secondary", disabled: true }, "Сохранить образец");
+  agree.addEventListener("change", () => {
+    button.disabled = busy || !agree.checked;
+  });
   const save = async () => {
     error.hidden = true;
+    const checked = voiceConsent({ confirmed: agree.checked, owner: owner.value, form: form.value });
+    if (checked.error) {
+      error.textContent = checked.error;
+      error.hidden = false;
+      return;
+    }
     if (!file.files[0] || !text.value.trim()) {
       error.textContent = "Нужны запись и её текст.";
       error.hidden = false;
       return;
     }
     try {
-      const upload = await api("POST", `${API}/uploads`, file.files[0]);
-      await startRecord(v.stem, { upload: upload.id, text: text.value }, taskBox, reload);
+      const upload = await uploadFile(`${API}/uploads`, file.files[0], { limit: (state.config?.upload_limits || UPLOAD_LIMITS).media });
+      await startRecord(v.stem, { upload: upload.id, text: text.value, consent: checked.consent }, taskBox, reload);
     } catch (err) {
+      if (err.kind === "abort") return; // отменили сами — форма как была
       error.textContent = err.message;
       error.hidden = false;
     }
   };
-  return h(
+  const box = h(
     "div",
-    { class: "field", style: "margin-top:8px" },
+    { class: "field mt-2" },
     h("span", { class: "hint" }, `Запись голоса ${v.voice}: ${low}–${high} с ровной речи, без музыки и шума.`),
     file,
     text,
+    owner,
+    form,
+    h("label", { class: "check" }, agree, h("span", {}, "Это мой голос или у меня есть письменное согласие владельца на его клонирование")),
+    h("span", { class: "hint" }, "Запись о согласии ляжет рядом с образцом, исходный файл после записи удаляется."),
     error,
-    h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: save }, "Сохранить образец")),
+    h("div", { class: "toolbar" }, button),
   );
+  button.addEventListener("click", busyClick(save, `voice:${v.stem}`));
+  return box;
 }
 
 async function startRecord(stem, payload, taskBox, reload) {
@@ -526,8 +556,15 @@ async function startRecord(stem, payload, taskBox, reload) {
 async function watchVoiceTask(task, taskBox, reload) {
   if (taskBox.dataset.watching === task.id) return;
   taskBox.dataset.watching = task.id;
-  const final = await followTask(`${API}/tasks/${task.id}`, (t) => fill(taskBox, taskCard(t, { full: true })));
-  delete taskBox.dataset.watching;
+  let final;
+  try {
+    final = await followTask(`${API}/tasks/${task.id}`, (t) => fill(taskBox, taskCard(t, { full: true })));
+  } catch (err) {
+    fill(taskBox, h("p", { class: "job-error" }, err.message));
+    return;
+  } finally {
+    delete taskBox.dataset.watching;
+  }
   if (final.status === "done") {
     await reload();
     await refreshConfig();
@@ -573,7 +610,6 @@ async function init() {
   Object.assign($("steps"), { min: sLow, max: sHigh });
   $("verify-field").hidden = !state.config.verify_available;
   $("verify").checked = saved.verify ?? true;
-  if (state.config.engines_error) $("engine-note").textContent += ` (движок не ответил: ${state.config.engines_error})`;
 
   $("engine").addEventListener("change", () => (fillVoices(), remember()));
   for (const id of ["voice", "steps", "verify"]) $(id).addEventListener("change", remember);
@@ -590,9 +626,9 @@ async function init() {
   $("composer").addEventListener("submit", submit);
   bindDrop();
   updateCount();
-  poll();
+  jobsPoll.start();
 }
 
 init().catch((err) => {
-  fill($("job"), h("p", { class: "job-error" }, `Не удалось загрузить настройки: ${err.message}`));
+  fill($("job"), errorState({ title: "Не удалось загрузить настройки озвучки", error: err, onRetry: () => location.reload() }));
 });

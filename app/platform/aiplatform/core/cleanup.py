@@ -2,19 +2,43 @@
 
 Удаляется только то, что выпуски уже скопировали к себе или что можно
 сделать заново: завершённые задачи вкладок «Фото», «Видео», «Аудио», записи
-кэша генераций, к которым давно не обращались, и выпуски из архива. Идущие
-задачи и неархивные выпуски не трогаются никогда.
+кэша генераций, к которым давно не обращались, загрузки и выпуски из архива
+(старше `days`). Загрузка (фото людей, записи голоса) удаляется, только если на неё
+не ссылается ни одна оставшаяся задача вкладки или выпуск (CMP-016). Опубликованные выпуски (шаг «Публикация» готов):
+
+- через `trim_days` после публикации — без тяжёлых промежуточных файлов
+  (картинки слайдов, исходники клипов, файлы шортса, озвучка в другом
+  темпе); `video.mp4`, `short.mp4`, `project.json`, `published.json`, тексты
+  и постер остаются;
+- через `archive_days` — в архив сами. Такой выпуск (`archived_by:
+  cleanup`) уборка потом не удаляет: в нём история публикаций.
+
+Идущие задачи и выпуски не трогаются никогда; неопубликованные неархивные — тоже,
+кроме брошенных: без движения дольше `draft_days` они уходят в архив (archive_stale,
+ежедневно, с уведомлением; PRD-004).
+Если архивный выпуск всё же удаляется (в архив его убрал человек), его
+project.json и published.json остаются в архиве аналитики (studio/history.py, AN-008).
 """
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import time
 from pathlib import Path
 
+from aiplatform.core import log
+
 DAY_S = 86400
 JOB_TABS = {"photo": "Задачи «Фото»", "video": "Задачи «Видео»", "audio": "Задачи «Аудио»"}
 ACTIVE = ("queued", "running")
+# Тяжёлые промежуточные файлы опубликованного выпуска: каталоги и шаблоны файлов (steps.py).
+TRIM_DIRS = ("images", "clips", "short")
+TRIM_GLOBS = ("voice-x*.mp3", "*.tmp")
+_UPLOAD_ID = re.compile(r"[0-9a-f]{32}")  # id загрузки (core/uploads.py) в записи задачи или выпуска
+AUTO_ARCHIVED = "cleanup"  # project["archived_by"]: выпуск убрала в архив уборка
+STALE_ARCHIVED = "stale"  # project["archived_by"]: брошенный неопубликованный выпуск (archive_stale)
 
 
 def size_of(path: Path) -> int:
@@ -65,10 +89,16 @@ class Cleaner:
         out.append({"id": "uploads", "label": "Загрузки", "bytes": size_of(data / "uploads")})
         return out
 
-    def run(self, days: int, *, dry: bool, now: float | None = None) -> dict:
-        """Удалить (или с dry — только посчитать) всё восстановимое старше days дней."""
-        cutoff = (now or time.time()) - days * DAY_S
-        found = {"jobs": 0, "cache": 0, "archived": 0, "bytes": 0}
+    def run(self, days: int, *, dry: bool, now: float | None = None, policy: dict | None = None) -> dict:
+        """Удалить (или с dry — только посчитать) всё восстановимое старше days дней.
+
+        policy — раздел cleanup настроек (trim_days, archive_days); не задан — из settings.json."""
+        now = now or time.time()
+        cutoff = now - days * DAY_S
+        if policy is None:
+            policy = self.ctx.config.settings.load()["cleanup"]
+        found = {"jobs": 0, "cache": 0, "archived": 0, "uploads": 0, "trimmed": 0, "auto_archived": 0, "bytes": 0}
+        used: set[str] = set()  # id загрузок, на которые ссылаются оставшиеся задачи и выпуски
         for tab in JOB_TABS:
             module = self.ctx.modules.get(tab)
             if module is None:
@@ -76,11 +106,22 @@ class Cleaner:
             for job in module.jobs.list():
                 stamp = job.get("finished_at") or job.get("created_at") or 0
                 if job.get("status") in ACTIVE or stamp >= cutoff:
+                    used |= upload_ids(job)
                     continue
                 found["jobs"] += 1
                 folder = self.ctx.config.data_dir / tab / "jobs" / job["id"]
                 found["bytes"] += size_of(folder) if dry else module.jobs.forget(job["id"])
+        uploads = self.ctx.config.uploads_dir
         studio = self.studio
+        if studio is not None:
+            for project in studio.studio.list(archived=False) + studio.studio.list(archived=True):
+                used |= upload_ids(studio.studio.get(project["id"]) or project)
+        for entry in uploads.iterdir() if uploads.is_dir() else []:
+            if entry.is_file() and entry.stat().st_mtime < cutoff and entry.stem not in used:
+                found["uploads"] += 1
+                found["bytes"] += entry.stat().st_size
+                if not dry:
+                    entry.unlink(missing_ok=True)
         if studio is not None:
             cache = studio.config.cache_dir
             for entry in cache.iterdir() if cache.is_dir() else []:
@@ -89,10 +130,94 @@ class Cleaner:
                     found["bytes"] += entry.stat().st_size
                     if not dry:
                         entry.unlink(missing_ok=True)
+            self._published(studio.studio, found, now, policy, dry=dry)
             for project in studio.studio.list(archived=True):
                 if project["running"] or project["updated_at"] >= cutoff:
                     continue
+                full = studio.studio.get(project["id"]) or {}
+                if full.get("archived_by") == AUTO_ARCHIVED:
+                    continue  # убран в архив уборкой: история публикаций остаётся
                 found["archived"] += 1
                 folder = studio.studio.project_dir(project["id"])
                 found["bytes"] += size_of(folder) if dry else studio.studio.delete(project["id"])
+        if not dry:
+            log.event("cleanup.done", days=days, **found)
         return found
+
+    def _published(self, studio, found: dict, now: float, policy: dict, *, dry: bool) -> None:
+        """Опубликованные выпуски: через trim_days — без промежуточных файлов, через archive_days — в архив."""
+        trim_days, archive_days = policy.get("trim_days") or 0, policy.get("archive_days") or 0
+        if not trim_days and not archive_days:
+            return
+        for item in studio.list(archived=False) + studio.list(archived=True):
+            project = studio.get(item["id"])
+            if project is None or project.get("running"):
+                continue
+            publish = project.get("steps", {}).get("publish", {})
+            if publish.get("status") != "done":
+                continue
+            age_days = (now - (publish.get("updated_at") or project.get("updated_at") or now)) / DAY_S
+            if trim_days and age_days >= trim_days:
+                freed = trim(studio.project_dir(project["id"]), dry=dry)
+                if freed:
+                    found["trimmed"] += 1
+                    found["bytes"] += freed
+                    if not dry:
+                        studio.annotate(project["id"], trimmed_at=now)
+            if archive_days and age_days >= archive_days and not project.get("archived"):
+                found["auto_archived"] += 1
+                if not dry:
+                    studio.archive(project["id"], True)
+                    studio.annotate(project["id"], archived_by=AUTO_ARCHIVED)
+
+    def archive_stale(self, draft_days: int, *, now: float | None = None) -> list[dict]:
+        """Брошенные выпуски — в архив (PRD-004): не опубликованы, не идут и без движения
+        (updated_at) дольше draft_days дней. 0 — выключено. Файлы остаются, вернуть можно из архива;
+        уборка архива удалит их позже, как любой архивный выпуск. Возвращает убранные (id, title)."""
+        studio = self.studio
+        if studio is None or not draft_days:
+            return []
+        now = now or time.time()
+        cutoff = now - draft_days * DAY_S
+        done = []
+        for item in studio.studio.list(archived=False):
+            if item["running"] or item["updated_at"] >= cutoff:
+                continue
+            project = studio.studio.get(item["id"])
+            if project is None or project.get("running") or project.get("archived"):
+                continue
+            if project.get("steps", {}).get("publish", {}).get("status") == "done":
+                continue  # опубликованные уходят в архив по archive_days
+            studio.studio.archive(item["id"], True)
+            studio.studio.annotate(item["id"], archived_by=STALE_ARCHIVED)
+            done.append({"id": item["id"], "title": item["title"]})
+        if done:
+            log.event("cleanup.stale_archived", count=len(done), days=draft_days)
+            titles = ", ".join(f"«{p['title']}»" for p in done[:5]) + (" и другие" if len(done) > 5 else "")
+            studio.notify(
+                f"В архив без движения {draft_days} дн.: {len(done)}",
+                f"{titles}. Вернуть — «Выпуски» → «Архив».",
+                important=True,
+            )
+        return done
+
+
+def upload_ids(record: dict) -> set[str]:
+    """Id загрузок, упомянутых в записи задачи или выпуска (source_url, upload_id, keyframes…)."""
+    return set(_UPLOAD_ID.findall(json.dumps(record, ensure_ascii=False, default=str)))
+
+
+def trim(folder: Path, *, dry: bool) -> int:
+    """Удалить тяжёлые промежуточные файлы выпуска (TRIM_DIRS, TRIM_GLOBS); вернуть байты."""
+    freed = 0
+    for name in TRIM_DIRS:
+        path = folder / name
+        if path.is_dir():
+            freed += size_of(path) if dry else remove_tree(path)
+    for pattern in TRIM_GLOBS:
+        for path in folder.glob(pattern):
+            if path.is_file():
+                freed += path.stat().st_size
+                if not dry:
+                    path.unlink(missing_ok=True)
+    return freed

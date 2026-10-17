@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Bash", "Edit", "Write", "Read", "Glob", "Grep",
+      "WebFetch", "WebSearch", "Agent", "Skill", "TodoWrite",
+      "NotebookEdit", "EnterWorktree", "ExitWorktree"
+    ],
+    "additionalDirectories": []
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": ["docker *", "gh *"],
+    "network": {
+      "allowedDomains": [
+        "github.com", "*.github.com", "*.githubusercontent.com",
+        "stash.msk.avito.ru",
+        "pypi.org", "files.pythonhosted.org",
+        "registry.npmjs.org",
+        "proxy.golang.org", "sum.golang.org", "storage.googleapis.com",
+        "api.anthropic.com", "statsig.anthropic.com", "sentry.io"
+      ],
+      "allowLocalBinding": true
+    }
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/preflight.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "$comment": "ответ `narrate bridge article-save`",
+  "type": "object",
+  "required": [
+    "added",
+    "audio",
+    "check",
+    "check_report",
+    "duration_sec",
+    "engine",
+    "folder",
+    "has_audio",
+    "has_script",
+    "has_source",
+    "id",
+    "kind",
+    "license",
+    "script",
+    "sent",
+    "source",
+    "source_quality",
+    "stale",
+    "summary",
+    "title",
+    "url",
+    "versions",
+    "voice"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "added": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    },
+    "source_quality": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "engine": {},
+    "voice": {},
+    "duration_sec": {},
+    "versions": {
+      "type": "object",
+      "required": [],
+      "properties": {}
+    },
+    "has_script": {
+      "type": "boolean"
+    },
+    "has_source": {
+      "type": "boolean"
+    },
+    "has_audio": {
+      "type": "boolean"
+    },
+    "stale": {
+      "type": "boolean"
+    },
+    "check": {},
+    "sent": {
+      "type": "boolean"
+    },
+    "folder": {
+      "type": "string"
+    },
+    "script": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "check_report": {
+      "type": "string"
+    },
+    "audio": {
+      "type": "object",
+      "required": [],
+      "properties": {}
+    }
+  }
+}

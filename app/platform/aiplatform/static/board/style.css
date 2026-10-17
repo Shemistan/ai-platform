@@ -1,47 +1,49 @@
-.board-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.board-bar { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); align-items: center; }
+.board-bar .new-links { display: contents; }
 .board-bar a { text-decoration: none; display: inline-flex; align-items: center; }
-.board-bar .archived-toggle { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 14px; }
-.board-group { display: grid; gap: 10px; }
-.board-group h2 { display: flex; gap: 8px; align-items: baseline; font-size: 16px; margin: 8px 0 0; }
-.board-cards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+.board-bar .archived-toggle { margin-left: auto; display: flex; gap: var(--sp-2); align-items: center; font-size: var(--fs-sm); }
+.board-group { display: grid; gap: var(--sp-2); }
+.board-group h2 { display: flex; gap: var(--sp-2); align-items: baseline; font-size: var(--fs-lg); margin: var(--sp-2) 0 0; }
+.board-cards { display: grid; gap: var(--sp-2); grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
 .board-card {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
-  gap: 12px;
-  padding: 12px;
+  gap: var(--sp-3);
+  padding: var(--pad-card);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-left: 4px solid var(--line);
-  border-radius: 12px;
+  /* Полоса и плашка «что нужно» — от .tone-* карточки (cardTone в app.js). */
+  border-left: 4px solid var(--tone-line, var(--line));
+  border-radius: var(--r-lg);
   min-width: 0;
 }
-.board-card.attention { border-left-color: var(--warn); }
-.board-card.attention.failed { border-left-color: var(--bad); }
-.board-card.running { border-left-color: var(--accent); }
-.board-card.published { border-left-color: var(--ok); }
-.board-card .thumb { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; background: var(--sunken); }
-.board-card .body { display: grid; gap: 6px; min-width: 0; }
-.board-card .title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
+.board-card .thumb { width: 72px; height: 72px; border-radius: var(--r-md); object-fit: cover; background: var(--sunken); }
+.board-card .body { display: grid; gap: var(--sp-2); min-width: 0; }
+.board-card .title { font-weight: var(--fw-semibold); color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
 .board-card .title:hover { text-decoration: underline; }
-.board-card .meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; color: var(--muted); }
-.board-card .need { font-size: 13px; padding: 6px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }
-.board-card.failed .need { background: var(--bad-bg); color: var(--bad); }
-.board-card .actions { gap: 6px 12px; }
-.board-card .error { font-size: 13px; color: var(--bad); }
+.board-card .meta { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
+.board-card .need { font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-2); border-radius: var(--r-md); background: var(--tone-bg); color: var(--tone); }
+.board-card .actions { gap: var(--sp-2) var(--sp-3); }
+.board-card .error { font-size: var(--fs-sm); color: var(--bad); }
 @media (max-width: 520px) {
   .board-card { grid-template-columns: 48px minmax(0, 1fr); }
   .board-card .thumb { width: 48px; height: 48px; }
 }
-.board-card .reach { display: grid; gap: 4px; font-size: 13px; list-style: none; padding: 0; margin: 0; }
-.board-card .reach li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
-.manual-views { display: inline-flex; gap: 6px; align-items: center; }
-.views-input { width: 110px; padding: 2px 6px; font-size: 13px; }
-.response { display: grid; gap: 12px; }
-.response-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.board-card .reach { display: grid; gap: var(--sp-1); font-size: var(--fs-sm); list-style: none; padding: 0; margin: 0; }
+.board-card .reach li { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); align-items: center; }
+.manual-views { display: inline-flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+.views-input { width: 110px; padding: 2px var(--sp-2); font-size: var(--fs-sm); }
+.views-input[type="datetime-local"] { width: auto; }
+.week-line { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
+.week-line strong { color: var(--text); }
+.variants { display: grid; gap: var(--sp-2); }
+.variants h3 { margin: 0; font-size: var(--fs-md); }
+.response { display: grid; gap: var(--sp-3); }
+.response-head { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); align-items: center; }
 .response-head h2 { margin: 0; }
-.reach-tables { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
-.reach-table { border-collapse: collapse; font-size: 13px; width: 100%; }
-.reach-table caption { text-align: left; font-weight: 600; padding-bottom: 4px; }
-.reach-table th, .reach-table td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
-.reach-table th:first-child { text-align: left; font-weight: 400; }
-.reach-table thead th { color: var(--muted); font-weight: 400; }
+.reach-tables { display: grid; gap: var(--sp-4); grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+.reach-table { border-collapse: collapse; font-size: var(--fs-sm); width: 100%; }
+.reach-table caption { text-align: left; font-weight: var(--fw-semibold); padding-bottom: var(--sp-1); }
+.reach-table th, .reach-table td { padding: var(--sp-1) var(--sp-2); border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+.reach-table th:first-child { text-align: left; font-weight: var(--fw-regular); }
+.reach-table thead th { color: var(--muted); font-weight: var(--fw-regular); }

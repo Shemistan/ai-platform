@@ -1,58 +1,23 @@
 """Сквозные тесты вкладки «Видео»: HTTP-сервер платформы + fake_ltx вместо модели."""
 
 import json
+import logging
 import tempfile
-import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from aiplatform import config as platform_config
 from aiplatform import server as server_module
-from aiplatform.video import config as config_module
+from aiplatform.core import http
 from aiplatform.video import timeline
-from aiplatform.video.service import VideoModule
-from tests.helpers import PlatformCase
+from tests.helpers import VideoServerCase, live_processes, poll, scaled, video_load, video_only
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 
 
-def video_only(ctx):
-    return [VideoModule(ctx)]
-
-
-def load(env):
-    return config_module.load(platform_config.load(env))
-
-
-class ServerCase(PlatformCase):
-    step_delay = "0.01"
-    fail_flag = ""
-    modules = staticmethod(video_only)
-    extra_env = {"AIP_MODELS_DIR": "/nonexistent-models"}  # не зависеть от весов на этой машине
-
-    def setUp(self):
-        self.process_env = {
-            "FAKE_LTX_STEP_DELAY": self.step_delay,
-            "FAKE_LTX_NO_FFMPEG": "1",
-            "FAKE_LTX_FAIL": self.fail_flag,
-        }
-        super().setUp()
-
-    def upload(self):
-        status, body = self.json("POST", "/api/video/uploads", PNG)
-        self.assertEqual(status, 201, body)
-        return body["id"]
-
-    def wait(self, job_id, statuses=("done", "failed", "canceled"), timeout=20):
-        deadline = time.time() + timeout
-        seen = []
-        while time.time() < deadline:
-            _, job = self.json("GET", f"/api/video/jobs/{job_id}")
-            seen.append(job)
-            if job["status"] in statuses:
-                return job, seen
-            time.sleep(0.02)
-        self.fail(f"задача не дошла до {statuses}: {seen[-1]}")
+ServerCase = VideoServerCase  # прежнее имя: на него ссылаются ветки
+load = video_load
 
 
 class HappyPathTest(ServerCase):
@@ -104,7 +69,7 @@ class HappyPathTest(ServerCase):
 
     def test_empty_settings_fall_back_to_defaults(self):
         # make экспортирует VIDEOGEN_LTX_CMD и VIDEOGEN_MODEL пустыми, пока нет local.mk.
-        cfg = load({"VIDEOGEN_LTX_CMD": "", "VIDEOGEN_MODEL": ""})
+        cfg = load({"VIDEOGEN_LTX_CMD": "", "VIDEOGEN_MODEL": "", "VIDEOGEN_MODELS_DIR": ""})
         self.assertEqual((cfg.ltx_cmd, cfg.model), (("ltx-2-mlx",), ""))
         self.assertEqual(str(cfg.models_dir), platform_config.DEFAULT_MODELS_DIR)
 
@@ -145,6 +110,17 @@ class WanTest(ServerCase):
 
 
 class ValidationTest(ServerCase):
+    def test_malformed_model_hides_field_name(self):
+        # TXT-008: {"model": 1} — общий текст без имени поля, причина — в лог.
+        with mock.patch.object(http.log, "event") as event:
+            status, body = self.json("POST", "/api/video/jobs", {"prompt": "кот", "model": 1})
+        self.assertEqual(status, 400, body)
+        self.assertEqual(body["error"], http.MALFORMED)
+        self.assertNotIn("model", body["error"])
+        event.assert_any_call(
+            "request.malformed", level=logging.WARNING, error="model должен быть строкой — id модели."
+        )
+
     def test_bad_requests(self):
         self.assertEqual(self.json("POST", "/api/video/uploads", b"GIF89a....")[0], 400)
         self.assertEqual(self.json("POST", "/api/video/jobs", {"prompt": ""})[0], 400)
@@ -184,11 +160,13 @@ class CancelTest(ServerCase):
 
         _, view = self.json("POST", f"/api/video/jobs/{queued['id']}/cancel")
         self.assertEqual(view["status"], "canceled")
-        started = time.time()
+        procs = poll(live_processes, bool, what="процесс модели")
         self.json("POST", f"/api/video/jobs/{running['id']}/cancel")
-        canceled, _ = self.wait(running["id"])
+        canceled, _ = self.wait(running["id"], timeout=10)
         self.assertEqual(canceled["status"], "canceled")
-        self.assertLess(time.time() - started, 5, "отмена должна убивать процесс, а не ждать его")
+        # Убит сигналом, а не доработал до конца: код возврата отрицательный (−SIGTERM/−SIGKILL).
+        codes = [p.wait(scaled(5)) for p in procs]
+        self.assertTrue(all(code < 0 for code in codes), f"отмена должна убивать процесс, а не ждать его: {codes}")
         self.assertFalse((Path(self.tmp.name) / "video" / "jobs" / running["id"] / "output.mp4").exists())
 
 
@@ -219,7 +197,8 @@ class ModelsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             old, new = Path(tmp, "ltx-2.3-mlx-q4"), Path(tmp, "ltx-2.5-mlx-q4")
             old.mkdir()
-            found = self.resolve({"VIDEOGEN_MODEL": str(old)})  # local.mk до появления выбора модели
+            # local.mk до появления выбора модели: каталога моделей нет, только VIDEOGEN_MODEL
+            found = self.resolve({"VIDEOGEN_MODEL": str(old), "VIDEOGEN_MODELS_DIR": ""})
             self.assertEqual(found["ltx-2.3-q4"], (str(old), True))
             self.assertEqual(found["ltx-2.5-q4"], ("dgrauet/ltx-2.5-mlx-q4", False))
             self.assertFalse(found["wan-2.2-t2v-q4"][1])
@@ -247,7 +226,7 @@ class ModelsTest(unittest.TestCase):
             config = platform_config.load({"AIP_DATA_DIR": tmp, "AIP_MODELS_DIR": tmp})
             app = server_module.App(config, video_only)
             self.addCleanup(app.close)
-            with self.assertRaisesRegex(timeline.ValidationError, r"setup-model\.sh ltx-2\.5-q4"):
+            with self.assertRaisesRegex(timeline.ValidationError, r"make models M=ltx-2\.5-q4"):
                 app.modules["video"].jobs.submit(timeline.build_spec({"prompt": "кот", "model": "ltx-2.5-q4"}))
 
 

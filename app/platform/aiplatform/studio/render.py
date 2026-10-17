@@ -27,6 +27,7 @@ from __future__ import annotations
 import math
 import struct
 import subprocess
+import textwrap
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -154,7 +155,7 @@ def size_of(orientation: str) -> tuple[int, int]:
     try:
         return int(w), int(h)
     except ValueError as exc:
-        raise StudioError(f"Кадр {orientation!r}: ждём landscape, vertical или ШxВ.") from exc
+        raise StudioError(f"Кадр «{orientation}»: ждём landscape, vertical или ШxВ.") from exc
 
 
 def layout(orientation: str, scale: float = 1.0) -> Layout:
@@ -272,6 +273,11 @@ def slide_filter(
     return ",".join(parts)
 
 
+def note_text(notes: list[str], chars: int) -> str:
+    """Пометки для кадра целиком, без «…»: длинная переносится на сколько угодно строк — полоса растёт."""
+    return "\n".join("\n".join(textwrap.wrap(" ".join(n.split()), width=chars)) for n in notes if n.strip())
+
+
 def note_top(lay: Layout, note_file: Path) -> int:
     """Верх тёмной полосы пометки внизу кадра."""
     lines = note_file.read_text(encoding="utf-8").count("\n") + 1
@@ -288,6 +294,22 @@ def note_parts(lay: Layout, font: str, note_file: Path) -> list[str]:
         f"drawbox=x=0:y={band}:w=iw:h=ih-{band}:color=black@0.55:t=fill",
         f"drawtext={font_arg}textfile={_quote(note_file)}:expansion=none:fontsize={size}"
         f":fontcolor=white@0.85:line_spacing={size // 4}:x={lay.margin}:y={band + size // 2}",
+    ]
+
+
+AI_BADGE = "ИИ"
+AI_METADATA = ["-metadata", "comment=AI-generated", "-metadata", "AI_GENERATED=1"]  # EU AI Act ст. 50
+
+
+def badge_parts(lay: Layout, font: str, bottom: int | None = None) -> list[str]:
+    """Плашка «ИИ» мелко в правом нижнем углу (над полосой пометки, если она есть) — CMP-011."""
+    size = max(round(min(lay.width, lay.height) * 0.028), 8)
+    margin = round(min(lay.width, lay.height) * MARGIN)
+    y = (bottom if bottom is not None else lay.height) - margin - size
+    font_arg = f"fontfile={_quote(font)}:" if font else ""
+    return [
+        f"drawtext={font_arg}text='{AI_BADGE}':expansion=none:fontsize={size}:fontcolor=white@0.9"
+        f":box=1:boxcolor=black@0.5:boxborderw={max(size // 3, 2)}:x=w-tw-{margin + size // 3}:y={y}"
     ]
 
 
@@ -331,11 +353,17 @@ class Renderer:
     ffmpeg: str
     font: str
     scale: float = 1.0  # доля от 1920×1080 — тестам хватает четверти
+    ai_badge: bool = False  # плашка «ИИ» на кадрах (настройка выпуска ai_badge, CMP-011)
+
+    def _badge(self, lay: Layout, note_file: Path | None) -> list[str]:
+        if not self.ai_badge:
+            return []
+        return badge_parts(lay, self.font, note_top(lay, note_file) if note_file is not None else None)
 
     def _run(self, argv: list[str], cancel: threading.Event, what: str) -> None:
         lines: list[str] = []
         try:
-            runner.run(argv, lines.append, cancel, missing_hint=FFMPEG_HINT)
+            runner.run(argv, lines.append, cancel, missing_hint=FFMPEG_HINT, kind="render")
         except runner.RunFailed as exc:
             tail = " ".join(x.strip() for x in lines[-3:] if x.strip())
             raise StudioError(f"ffmpeg ({what}): {exc} {tail}".strip()) from exc
@@ -351,7 +379,9 @@ class Renderer:
         orientation: str,
         cancel: threading.Event,
         branding: Branding | None = None,
+        notes: list[str] | None = None,
     ) -> Path:
+        """Постер на seconds секунд. notes — пометки о запрещённых организациях полосой внизу кадра."""
         lay = layout(orientation, self.scale)
         w, h = lay.width, lay.height
         args = ["-loop", "1", "-framerate", str(FPS), "-i", str(image)]
@@ -381,6 +411,15 @@ class Renderer:
                 ":shortest=1[branded]",
             ]
             last = "branded"
+        note_file = None
+        if notes:
+            note_file = out.with_name(f"{out.stem}-note.txt")
+            note_file.write_text(note_text(notes, lay.note_chars), encoding="utf-8")
+            graph.append(f"[{last}]{','.join(note_parts(lay, self.font, note_file))}[noted]")
+            last = "noted"
+        if self.ai_badge:
+            graph.append(f"[{last}]{','.join(self._badge(lay, note_file))}[badged]")
+            last = "badged"
         graph.append(f"[{last}]format=yuv420p[v]")
         argv = [self.ffmpeg, "-y", "-loglevel", "error", *args, "-filter_complex", ";".join(graph)]
         argv += ["-map", "[v]", *self._encode(seconds), "-an", str(out)]
@@ -391,10 +430,25 @@ class Renderer:
         """Озвучка в другом темпе, как retime_mp3 у narrator: длина делится на tempo, высота голоса та же."""
         tmp = out.with_name(out.stem + ".part.mp3")
         argv = [self.ffmpeg, "-y", "-loglevel", "error", "-i", str(audio), "-filter:a", f"atempo={tempo:g}"]
-        argv += ["-codec:a", "libmp3lame", "-b:a", "128k", str(tmp)]
+        argv += ["-codec:a", "libmp3lame", "-b:a", "128k", *AI_METADATA, str(tmp)]
         self._run(argv, cancel, f"скорость ×{tempo:g}")
         tmp.replace(out)
         return out
+
+    def tag_ai(self, audio: Path, cancel: threading.Event) -> Path:
+        """Метка ИИ в mp3 без перекодирования: ID3 TXXX:AI_GENERATED=1 и комментарий (CMP-011)."""
+        if audio.suffix.lower() != ".mp3":
+            return audio
+        tmp = audio.with_name(audio.stem + ".tag.mp3")
+        argv = [self.ffmpeg, "-y", "-loglevel", "error", "-i", str(audio), "-map", "0:a", "-c", "copy"]
+        argv += [*AI_METADATA, "-id3v2_version", "3", str(tmp)]
+        try:
+            self._run(argv, cancel, "метка ИИ в mp3")
+        except StudioError:
+            tmp.unlink(missing_ok=True)
+            raise
+        tmp.replace(audio)
+        return audio
 
     def cover_frames(self, video: Path, cover: Path, thumb: Path, cancel: threading.Event) -> None:
         """Первый кадр ролика — обложка для Telegram — и её миниатюра (до 320 px, JPEG)."""
@@ -433,7 +487,7 @@ class Renderer:
         note_file = None
         if notes:
             note_file = work / "note.txt"
-            note_file.write_text("\n".join(wrap(n, lay.note_chars, 4) for n in notes), encoding="utf-8")
+            note_file.write_text(note_text(notes, lay.note_chars), encoding="utf-8")
         frames = max(int(seconds * FPS), 1)
         # Концовка закрывает слайд плашкой — пункты и элементы сцены успевают показаться до неё.
         ending = branding is not None and outro and outro_start(seconds) >= 1.0
@@ -452,6 +506,7 @@ class Renderer:
                 bullet_files.append(path)
             args, chain = _background(image, lay, frames, clip)
             text = slide_filter(lay, self.font, title_file, bullet_files, shown, note_file)
+        text = ",".join([text, *self._badge(lay, note_file)])
         if progress is not None:
             text = ",".join([text, *progress_parts(lay, self.font, work, progress, seconds)])
         graph = f"{chain},{text},format=yuv420p[v]"
@@ -508,7 +563,7 @@ class Renderer:
         tmp = out.with_name(out.stem + ".part.mp4")
         argv = [self.ffmpeg, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(listing)]
         argv += ["-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k"]
-        argv += ["-t", f"{seconds:.3f}", "-movflags", "+faststart", str(tmp)]
+        argv += [*AI_METADATA, "-t", f"{seconds:.3f}", "-movflags", "+faststart", str(tmp)]
         self._run(argv, cancel, "склейка")
         tmp.replace(out)
         listing.unlink(missing_ok=True)
@@ -524,11 +579,13 @@ class Renderer:
         orientation: str,
         cancel: threading.Event,
         branding: Branding | None = None,
+        notes: list[str] | None = None,
     ) -> Path:
-        """Пост: постер целиком на всю длину звука; с оформлением — плей и плашка, как у обложки."""
+        """Пост: постер целиком на всю длину звука; с оформлением — плей и плашка, как у обложки.
+        notes — пометки о запрещённых организациях из текста озвучки: полосой внизу всё видео."""
         work = out.parent / f".{out.stem}-clips"
         work.mkdir(parents=True, exist_ok=True)
-        clip = self.poster_clip(poster, work / "still.mp4", audio_s, orientation, cancel, branding)
+        clip = self.poster_clip(poster, work / "still.mp4", audio_s, orientation, cancel, branding, notes)
         return self.concat([clip], audio, out, audio_s, cancel)
 
     def build(

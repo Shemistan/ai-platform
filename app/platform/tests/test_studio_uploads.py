@@ -8,7 +8,8 @@ from pathlib import Path
 
 from aiplatform.core import media, uploads
 from aiplatform.studio import slides, steps
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase, png_bytes
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG, png_bytes
+from tests.helpers import StudioCase
 
 
 def clip_bytes(seconds: float = 1.0) -> bytes:
@@ -290,7 +291,7 @@ class UpscaleImagesTest(StudioCase):
         payload = {"scenario": "article", "text": "т", "settings": {"upscale_images": "8k"}}
         status, body = self.json("POST", "/api/studio/projects", payload)
         self.assertEqual(status, 400, body)
-        self.assertIn("upscale_images", body["error"])
+        self.assertIn("Некорректный запрос", body["error"])
 
 
 class ManySlidesUploadTest(StudioCase):

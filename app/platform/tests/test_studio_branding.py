@@ -8,11 +8,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from aiplatform.core import media
+from aiplatform.core import http, media
 from aiplatform.fakes import fake_news
 from aiplatform.studio import publish, render
 from aiplatform.studio.config import ASSETS
-from tests.test_studio_flow import FAST, NEEDS_FFMPEG, StudioCase, png_bytes
+from tests.fixtures import FAST, NEEDS_FFMPEG, png_bytes
+from tests.helpers import StudioCase
 
 BRANDING = render.Branding(sticker=ASSETS / "subscribe.png", play=ASSETS / "play.png")
 
@@ -104,14 +105,14 @@ class TelegramCoverTest(unittest.TestCase):
             video, cover, thumb = folder / "v.mp4", folder / "v-cover.jpg", folder / "v-thumb.jpg"
             for path in (video, cover, thumb):
                 path.write_bytes(b"data")
-            channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@x", token_env="AIP_TEST_TG")
+            channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@x", token_env="AIP_TG_TEST")
             sent = {}
 
             def fake_post(url, body, ctype):
                 sent["body"] = body
                 return {"ok": True, "result": {"message_id": 1}}
 
-            with mock.patch.dict(os.environ, {"AIP_TEST_TG": "1:S"}):
+            with mock.patch.dict(os.environ, {"AIP_TG_TEST": "123456:" + "S" * 35}):
                 publish.publish(
                     channel, video=video, title="Т", post="П", out_dir=folder, http_post=fake_post,
                     cover=cover, thumb=thumb,
@@ -156,7 +157,7 @@ class DigestBrandingTest(StudioCase):
         self.assertEqual((self.statuses(changed)["voice"], self.statuses(changed)["render"]), ("done", "pending"))
         bad = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"tempo": 3})
         self.assertEqual(bad[0], 400)
-        self.assertIn("tempo", bad[1]["error"])
+        self.assertIn("Некорректный запрос", bad[1]["error"])
 
         # Слайды дайджеста — подлиннее; время на чтение пересобирает видео, длина слайда — план.
         self.assertEqual((done["settings"]["slide_s"], done["settings"]["reading"]), (8, "normal"))
@@ -169,7 +170,7 @@ class DigestBrandingTest(StudioCase):
         for bad_value in ({"slide_s": 7}, {"slide_s": True}, {"reading": "fast"}):
             bad = self.json("POST", f"/api/studio/projects/{project['id']}/settings", bad_value)
             self.assertEqual(bad[0], 400, bad_value)
-            self.assertIn(next(iter(bad_value)), bad[1]["error"])
+            self.assertEqual(bad[1]["error"], http.MALFORMED, bad_value)
 
     def test_article_has_no_branding_by_default(self):
         project = self.create(scenario="article", text="Заголовок\n\nПервый абзац. Второе предложение.", run=True)

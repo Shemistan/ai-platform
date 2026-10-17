@@ -9,9 +9,10 @@ from pathlib import Path
 from unittest import mock
 
 from aiplatform.studio import publish
-from tests.test_studio_flow import ARTICLE, StudioCase
-
-TOKEN = "123456:" + "A" * 35
+from aiplatform.studio.llm import StudioError
+from tests.fake_telegram import FakeTelegram
+from tests.fixtures import ARTICLE, TOKEN
+from tests.helpers import StudioCase
 
 
 class NarratorChannelsTest(unittest.TestCase):
@@ -71,12 +72,12 @@ class NarratorChannelsTest(unittest.TestCase):
         publish.save_channels(self.dir / "c.json", [*existing, channel])
         again = publish.load_channels(self.dir / "c.json")
         self.assertEqual([c.id for c in again], [*[c.id for c in existing], channel.id])
-        self.assertEqual(json.loads((self.dir / "c.json").read_text())[-1]["chat_id"], "-1003755616451_3")
+        self.assertEqual(json.loads((self.dir / "c.json").read_text())["channels"][-1]["chat_id"], "-1003755616451_3")
 
     def test_topic_goes_as_message_thread_id(self):
         video = self.dir / "v.mp4"
         video.write_bytes(b"x")
-        channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="-1003755616451_14", token_env="AIP_TEST_TG")
+        channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="-1003755616451_14", token_env="AIP_TG_TEST")
         sent = {}
 
         def fake_post(url, body, ctype):
@@ -84,10 +85,46 @@ class NarratorChannelsTest(unittest.TestCase):
                 sent["body"] = body
             return {"ok": True, "result": {"message_id": 7}}
 
-        with mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}):
+        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}):
             publish.publish(channel, video=video, title="Т", post="П", out_dir=self.dir, http_post=fake_post)
         self.assertIn(b'name="chat_id"\r\n\r\n-1003755616451\r\n', sent["body"])
         self.assertIn(b'name="message_thread_id"\r\n\r\n14\r\n', sent["body"])
+
+    def test_token_env_only_allowed_names_and_token_like(self):
+        # SEC-006: чужая переменная или не-токен — ни одного запроса в api.telegram.org.
+        video = self.dir / "v.mp4"
+        video.write_bytes(b"x")
+        audio, poster = self.dir / "a.mp3", self.dir / "p.jpg"
+        audio.write_bytes(b"x")
+        poster.write_bytes(b"x")
+        calls = []
+
+        def fake_post(url, body, ctype):
+            calls.append(url)
+            return {"ok": True, "result": 5}
+
+        cases = [
+            ("HF_TOKEN", TOKEN, "AIP_TG_"),
+            ("AIP_TG_TEST", "hf_" + "x" * 40, "не похож на токен"),
+            ("AIP_TG_TEST", "", "нет токена в переменной AIP_TG_TEST"),
+        ]
+        for env, value, problem in cases:
+            with self.subTest(env=env, value=value):
+                channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@x", token_env=env)
+                with mock.patch.dict(os.environ, {env: value}):
+                    self.assertIn(problem, channel.problem())
+                    self.assertEqual(channel.token(), "")
+                    post = {"title": "Т", "post": "П", "http_post": fake_post}
+                    with self.assertRaises(StudioError):
+                        publish.publish(channel, video=video, out_dir=self.dir, **post)
+                    with self.assertRaises(StudioError):
+                        publish.publish_photo(channel, poster=poster, audio=audio, **post)
+                    self.assertIsNone(publish.members(channel, http_post=fake_post))
+        self.assertEqual(calls, [])
+        for name in ("AIP_TG_NEWS", "AIP_TELEGRAM_TOKEN", "NARRATOR_TELEGRAM_TOKEN", "NARRATOR_TELEGRAM_TOKEN_2"):
+            self.assertTrue(publish.token_env_allowed(name), name)
+        for name in ("HF_TOKEN", "ANTHROPIC_API_KEY", "NARRATOR_TELEGRAM_TOKEN_FILE", "AIP_TG_", "PATH"):
+            self.assertFalse(publish.token_env_allowed(name), name)
 
 
 class PublishButtonTest(StudioCase):
@@ -103,7 +140,7 @@ class PublishButtonTest(StudioCase):
                         "label": "TG",
                         "type": "telegram",
                         "chat_id": "-1003755616451_3",
-                        "token_env": "AIP_TEST_TG",
+                        "token_env": "AIP_TG_TEST",
                     }
                 ]
             ),
@@ -116,24 +153,24 @@ class PublishButtonTest(StudioCase):
         project = self.create(scenario="article", text=ARTICLE)
         pid = project["id"]
         (self.folder(pid) / "video.mp4").write_bytes(b"x")
-        calls = []
-
-        def fake_post(url, body, ctype):
-            if url.endswith("/getChatMemberCount"):  # подписчики в момент публикации — для отклика
-                return {"ok": True, "result": 120}
-            calls.append(body)
-            return {"ok": True, "result": {"message_id": len(calls)}}
 
         def press(**body):
             status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", body)
-            self.assertEqual(status, 200, view)
+            self.assertEqual(status, 202, view)
             return self.settle(pid)
 
-        with mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
+        tg = FakeTelegram(members=120).start()  # подписчики в момент публикации — для отклика
+        self.addCleanup(tg.stop)
+        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN, **tg.env()}):
             done = press(channels=["tg"])
             self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
             self.assertEqual(done["settings"]["channels"], ["tg"])
-            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(tg.sent("sendVideo")), 1)
+            video = tg.sent("sendVideo")[0]
+            # Тема группы «_3» уходит отдельным полем, видео — файлом multipart.
+            self.assertEqual((video.chat, video.fields["message_thread_id"]), ("-1003755616451", "3"))
+            self.assertEqual(video.files["video"][:2], ("video.mp4", "video/mp4"))
+            self.assertEqual(video.fields["supports_streaming"], "true")
             self.assertTrue(done["published"][0]["sent"])
             record = done["published"][0]
             self.assertEqual(
@@ -141,32 +178,35 @@ class PublishButtonTest(StudioCase):
             )
 
             again = press(channels=["tg"])
-            self.assertEqual(len(calls), 1, "уже опубликовано — без «повторно» не шлём")
+            self.assertEqual(len(tg.sent("sendVideo")), 1, "уже опубликовано — без «повторно» не шлём")
             self.assertTrue(again["published"][0]["skipped"])
             self.assertIn("Опубликовать повторно", again["published"][0]["message"])
 
             forced = press(channels=["tg"], force=True)
-            self.assertEqual(len(calls), 2)
-            self.assertNotIn("skipped", forced["published"][0])
+            self.assertEqual(len(tg.sent("sendVideo")), 2)
+            self.assertNotIn("skipped", forced["published"][-1])
 
         for body in ({"channels": []}, {"channels": ["nope"]}, {"channels": ["tg"], "force": "да"}):
             self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/publish", body)[0], 400, body)
 
     def test_add_and_delete_channel(self):
+        """Каналы правит вкладка «Каналы»; сценарии видят изменения, token_env сохраняется."""
         status, body = self.json(
-            "POST", "/api/studio/channels", {"label": "Шортсы", "chat_id": "@my_shorts", "format": "vertical"}
+            "POST",
+            "/api/channels/channels",
+            {"label": "Шортсы", "chat_id": "@my_shorts", "format": "vertical", "token_env": "AIP_TG_SHORTS"},
         )
         self.assertEqual(status, 201, body)
         self.assertEqual(body["added"], "tg-my-shorts")
-        saved = json.loads(self.channels_file.read_text(encoding="utf-8"))
+        saved = json.loads(self.channels_file.read_text(encoding="utf-8"))["channels"]
         self.assertEqual([c["id"] for c in saved], ["tg", "tg-my-shorts"])
-        self.assertEqual(saved[1]["format"], "vertical")
+        self.assertEqual((saved[1]["format"], saved[1]["token_env"]), ("vertical", "AIP_TG_SHORTS"))
         _, cfg = self.json("GET", "/api/studio/config")
         self.assertIn("tg-my-shorts", [c["id"] for c in cfg["channels"]])
-        self.assertEqual(self.json("POST", "/api/studio/channels", {"label": "X", "chat_id": "плохой"})[0], 400)
-        status, body = self.json("POST", "/api/studio/channels/tg-my-shorts/delete")
+        self.assertEqual(self.json("POST", "/api/studio/channels", {"label": "X", "chat_id": "@x_chan"})[0], 404)
+        status, body = self.json("POST", "/api/channels/channels/tg-my-shorts/delete")
         self.assertEqual((status, [c["id"] for c in body["channels"]]), (200, ["tg"]))
-        self.assertEqual(self.json("POST", "/api/studio/channels/tg-my-shorts/delete")[0], 404)
+        self.assertEqual(self.json("POST", "/api/channels/channels/tg-my-shorts/delete")[0], 404)
 
 
 if __name__ == "__main__":

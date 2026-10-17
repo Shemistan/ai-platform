@@ -18,8 +18,8 @@ from aiplatform.audio import voices
 from aiplatform.config import Config
 from aiplatform.core import narrator as narrator_module
 from aiplatform.core import tasks as tasks_module
-from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
-from aiplatform.core.narrator import INSTALL_HINT, NarratorError
+from aiplatform.core.http import HttpError, Request, bad_request, found, malformed, not_found
+from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 
 PREFIX = "library"
 URL_BASE = f"/api/{PREFIX}"
@@ -56,7 +56,8 @@ class LibraryModule:
         return {}
 
     def problems(self) -> list[str]:
-        return []
+        problem = self.narrator.check()  # кеш общий: одинаковый текст App.problems склеит
+        return [problem] if problem else []
 
     # --- маршруты ---
 
@@ -65,7 +66,9 @@ class LibraryModule:
             case ("GET", ["state"]):
                 return req.send_json(self.state())
             case ("POST", ["articles"]):
-                return req.send_json(self.add(req.json(MAX_BODY)), HTTPStatus.CREATED)
+                card = self.add(req.json(MAX_BODY))
+                location = f"{URL_BASE}/articles/{quote(str(card.get('id', '')))}"
+                return req.send_json(card, HTTPStatus.CREATED, {"Location": location})
             case ("GET", ["articles", article_id]):
                 return req.send_json(self.article(_checked(article_id)))
             case ("POST", ["articles", article_id]):
@@ -92,9 +95,7 @@ class LibraryModule:
         try:
             return self.narrator.bridge(*args, stdin=stdin, timeout=timeout)
         except NarratorError as exc:
-            message = str(exc)
-            status = HTTPStatus.NOT_FOUND if "нет в библиотеке" in message else HTTPStatus.BAD_REQUEST
-            raise HttpError(status, message) from exc
+            raise http_error(exc) from exc
 
     def state(self) -> dict:
         data = self._bridge("library")
@@ -144,9 +145,10 @@ class LibraryModule:
     def save(self, article_id: str, payload: object) -> dict:
         if not isinstance(payload, dict):
             raise bad_request("Тело запроса — не объект JSON.")
-        changes = {k: payload[k] for k in ("title", "summary", "script") if isinstance(payload.get(k), str)}
+        keys = ("title", "summary", "script", "license")  # license — право на переработку (CMP-005)
+        changes = {k: payload[k] for k in keys if isinstance(payload.get(k), str)}
         if not changes:
-            raise bad_request("Нечего сохранять: title, summary или script.")
+            raise bad_request("Нечего сохранять: title, summary, script или license.")
         self._bridge("article-save", article_id, stdin=changes)
         return self.article(article_id)
 
@@ -186,14 +188,26 @@ class LibraryModule:
             case "send":
                 if not card.get("has_audio"):
                     raise bad_request("Сначала озвучь статью.")
-                argv = self.narrator.argv("bot", "send", article_id, "--force")
+                # Повтор в канал — только явным «Отправить ещё раз» (force): второй клик или ретрай
+                # после таймаута не дублирует пост, narrator сам не шлёт уже отправленное.
+                force = payload.get("force", False)
+                if not isinstance(force, bool):
+                    raise bad_request(malformed("force — true или false."))
                 channel = str(payload.get("channel") or "").strip()
+                if card.get("sent") and not force and not channel:
+                    raise HttpError(
+                        HTTPStatus.CONFLICT,
+                        "Статья уже в канале. Повторить — «Отправить ещё раз».",
+                        {"sent": True},
+                    )
+                argv = self.narrator.argv("bot", "send", article_id, *(["--force"] if force else []))
                 if channel:
                     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*|-?\d+(?:_\d+)?|@\w+", channel):
                         raise bad_request("Канал — имя из telegram_tems.md или id.")
                     argv += ["--channel", channel]
                 where = f" в {channel}" if channel else ""
-                return self._start("send", f"Отправка{where}: {name}", argv, target=article_id)
+                again = "Повторная отправка" if force else "Отправка"
+                return self._start("send", f"{again}{where}: {name}", argv, target=article_id)
             case "prepare":
                 if not card.get("has_source"):
                     raise bad_request("У статьи нет исходного текста — агенту не из чего готовить.")

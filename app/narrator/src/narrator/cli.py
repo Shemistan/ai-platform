@@ -61,7 +61,7 @@ def cmd_voice(args) -> int:
     """Записывает образец голоса для клонирования: из Gemini TTS или из готового файла."""
     import soundfile as sf
 
-    from narrator import gemini, models, synth
+    from narrator import consent, gemini, models, synth
     from narrator.stress import strip_marks
 
     # M1 — образец из Supertonic, его не перезаписывают.
@@ -70,6 +70,19 @@ def cmd_voice(args) -> int:
     if stem not in stems:
         return fail(f"голос {args.name!r} не записывается, есть: {', '.join(stems)}")
     voice = stems[stem]
+    # Живой голос — только с согласием владельца: запись о нём ляжет рядом с образцом (CMP-009).
+    record = None
+    if stem not in consent.SYNTHETIC:
+        if not args.owner or not args.form:
+            return fail(
+                f"голос {voice} — живой: только из своей записи и с согласием владельца — "
+                f"./narrate voice {stem} --from <файл> --text «…» --owner «чей голос» "
+                "--form self (мой голос) или written (письменное согласие)"
+            )
+        try:
+            record = consent.make(args.owner, args.form, expires=args.expires)
+        except consent.ConsentError as e:
+            return fail(str(e))
     if args.text:
         # Свой текст образца (отрывок готовой озвучки): ударения ставит RUAccent.
         from narrator.stress import Accentor
@@ -117,12 +130,48 @@ def cmd_voice(args) -> int:
         out.mkdir(parents=True, exist_ok=True)
         sf.write(out / f"{stem}.wav", audio, sr, subtype="PCM_16")
         (out / f"{stem}.txt").write_text(marked + "\n", encoding="utf-8")
+        if record is not None:
+            consent.write(out / f"{stem}.wav", record)
     except OSError as e:
         hint = "" if models.models_root().exists() else f": {models.missing_hint()}"
         return fail(f"образец не записан в {out} ({e}){hint}", 3)
     engines = ", ".join(synth.CLONE_ENGINES)
     print(f"{out / f'{stem}.wav'}  {seconds:.1f} с")
     print(f"голос {voice} готов для {engines}: --voice {voice}")
+    return 0
+
+
+def add_consent_args(s: argparse.ArgumentParser, required: bool) -> None:
+    from narrator import consent
+
+    s.add_argument("--owner", required=required, help="чей это голос (имя владельца)")
+    s.add_argument(
+        "--form",
+        choices=consent.FORMS,
+        required=required,
+        help="self — мой голос; written — есть письменное согласие владельца",
+    )
+    s.add_argument("--expires", help="до какого дня согласие действует, ГГГГ-ММ-ДД")
+
+
+def cmd_voice_consent(args) -> int:
+    """Запись о согласии для образца, который положили в папку голосов руками (CMP-009)."""
+    from narrator import consent, synth
+
+    stem = args.name.lower()
+    if stem not in synth.CLONE_VOICES.values() or stem in consent.SYNTHETIC:
+        live = sorted(set(synth.CLONE_VOICES.values()) - consent.SYNTHETIC)
+        return fail(f"согласие пишут для живых голосов: {', '.join(live)}")
+    wav = synth.voices_dir() / f"{stem}.wav"
+    if not wav.exists():
+        return fail(f"нет образца {wav}: положи туда {stem}.wav и {stem}.txt")
+    try:
+        path = consent.write(wav, consent.make(args.owner, args.form, expires=args.expires))
+    except consent.ConsentError as e:
+        return fail(str(e))
+    except OSError as e:
+        return fail(f"не записать согласие рядом с {wav}: {e}", 3)
+    print(f"согласие записано: {path}")
     return 0
 
 
@@ -135,9 +184,10 @@ def cmd_setup(args) -> int:
     if args.verify:
         from faster_whisper import download_model as download_whisper
 
-        from narrator.verify import WHISPER_MODEL, whisper_dir
+        from narrator.verify import WHISPER_MODEL, WHISPER_REVISION, whisper_dir
 
-        print(f"модель распознавания: {download_whisper(WHISPER_MODEL, str(whisper_dir()))}")
+        path = download_whisper(WHISPER_MODEL, str(whisper_dir()), revision=WHISPER_REVISION)
+        print(f"модель распознавания: {path}")
     return 0
 
 
@@ -427,11 +477,13 @@ def cmd_index(args) -> int:
 
 
 def report_delivery(done: list) -> None:
+    from narrator.telegram import mask
+
     ok = [d for d in done if d.ok]
     print(f"телеграм: озвучка отправлена {len(ok)} из {len(done)}")
     for d in done:
-        if not d.ok:
-            print(f"  не дошло {d.chat_id} {d.name}: {d.error}", file=sys.stderr)
+        if not d.ok:  # chat_id маской: вывод уходит в лог задачи платформы (CMP-007)
+            print(f"  не дошло {mask(d.chat_id)}: {d.error}", file=sys.stderr)
 
 
 def save_state(state, path: Path) -> int:
@@ -485,17 +537,69 @@ def cmd_bot_subscribers(args) -> int:
     try:
         if not args.no_sync:
             for sub in telegram.pull(bot, state):
-                print(f"новый подписчик: {sub.chat_id} {sub.name}")
+                print(f"новый подписчик: {telegram.mask(sub.chat_id)}")
     except telegram.TelegramError as e:
         print(f"телеграм: {e}", file=sys.stderr)
     if save_state(state, path):
         return 4
-    live = state.active()
-    print(f"подписчиков {len(live)}, отписалось {len(state.subscribers) - len(live)}")
+    print(f"подписчиков {len(state.subscribers)}")
     for s in state.subscribers:
-        note = f"с {s.added}" if s.active else f"неактивен: {s.note}"
-        print(f"  {s.chat_id:<12} {s.name:<28} {note}")
+        # Полный chat_id и имя — только по --names: нужен человеку для `bot forget`.
+        who = str(s.chat_id) if args.names else telegram.mask(s.chat_id)
+        name = f" {chat_title(bot, s.chat_id)}" if args.names else ""
+        print(f"  {who:<14} с {s.added}{name}")
     print(f"список: {path}")
+    return 0
+
+
+def cmd_bot_audience(args) -> int:
+    """Аудитория бота агрегатами (AN-011): подписки по источнику, retention D7/D30 по когортам.
+    Ни chat_id, ни имён — только числа; сеть не нужна."""
+    import json
+
+    from narrator import telegram
+
+    report = telegram.audience(telegram.State.load(telegram.state_path()))
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    print(f"подписано сейчас: {report['active']}")
+    print("подписки по источнику (метка /start):")
+    for source, row in report["by_source"].items():
+        print(f"  {source:<32} подписалось {row['subscribed']:>4}, осталось {row['active']:>4}")
+    print("retention по недельным когортам (доля оставшихся; n — кому исполнилось 7/30 дней):")
+
+    def share(row: dict, days: int) -> str:
+        value = row[f"d{days}"]
+        return "—" if value is None else f"{value:.0%} (n={row[f'd{days}_n']})"
+
+    for row in report["cohorts"]:
+        week = f"неделя с {row['cohort']}: {row['n']:>4}"
+        print(f"  {week}  D7 {share(row, 7):<14} D30 {share(row, 30)}")
+    return 0
+
+
+def chat_title(bot, chat_id: int) -> str:
+    """Имя чата из getChat на лету — в файл не пишется (CMP-007)."""
+    from narrator import telegram
+
+    try:
+        return telegram.chat_name(bot.call("getChat", {"chat_id": chat_id}) or {})
+    except telegram.TelegramError as e:
+        return f"(имя не узнать: {e})"
+
+
+def cmd_bot_forget(args) -> int:
+    """Удаляет подписчика по chat_id — по просьбе человека (CMP-006)."""
+    from narrator import telegram
+
+    path = telegram.state_path()
+    state = telegram.State.load(path)
+    if not state.remove(args.chat_id):
+        return fail(f"подписчика {telegram.mask(args.chat_id)} нет в {path}")
+    if save_state(state, path):
+        return 4
+    print(f"удалён {telegram.mask(args.chat_id)}: в {path} его больше нет")
     return 0
 
 
@@ -538,7 +642,10 @@ def send_article(bot, state, args, d: Path, meta: Entry, engine: str) -> int:
     if not args.force and not telegram.is_fresh(state, d, engine, tag):
         print(f"телеграм: {library.article_id(d)} ({engine}) уже отправлена, повтор — --force")
         return 0
-    report_delivery(telegram.broadcast(bot, state, d, meta, engine, targets, args.channel))
+    annotation = getattr(args, "annotation", False)
+    report_delivery(
+        telegram.broadcast(bot, state, d, meta, engine, targets, args.channel, annotation)
+    )
     return 0
 
 
@@ -548,7 +655,7 @@ def send_folder(args, d: Path) -> int:
     Как дайджест новостей: mp3 и картинка склеиваются в видео, пост — подпись
     под ним. --as photo — картинка с постом, затем аудио.
     """
-    from narrator import telegram
+    from narrator import registry, telegram
     from narrator.news.cli import audio_seconds
     from narrator.news.video import VideoError, make_frames, make_video
 
@@ -570,7 +677,8 @@ def send_folder(args, d: Path) -> int:
     video = covers = None
     if args.as_ != "photo" and parcel.audio and parcel.image:
         try:
-            poster, thumb, frame = make_frames(parcel.image)
+            notes = registry.notes(parcel.text(), registry.load())  # пометки — в кадре
+            poster, thumb, frame = make_frames(parcel.image, notes)
             video = make_video(poster, frame, parcel.audio, d / f"{d.name}.mp4", seconds)
         except VideoError as e:
             return fail(str(e), 5)
@@ -638,6 +746,9 @@ def cmd_bot_unsent(args) -> int:
             if not telegram.recipients(state, meta):
                 print(f"телеграм: {library.article_id(d)} — рассылать некому")
                 continue
+            if meta.kind == "article" and meta.license not in library.PUBLISHABLE:
+                print(f"телеграм: {library.article_id(d)} — license={meta.license}, пропущена")
+                continue  # без права на переработку — только локально или аннотацией вручную
             print(f"{k}/{len(todo)} {library.article_id(d)}", flush=True)
             done = telegram.broadcast(bot, state, d, meta, engine)
             report_delivery(done)
@@ -659,12 +770,32 @@ def cmd_bot_serve(args) -> int:
         me = bot.call("getMe") or {}
     except telegram.TelegramError as e:
         return fail(str(e), 4)
-    print(f"бот @{me.get('username', '?')} слушает подписки, выход — Ctrl+C")
+    # getUpdates — у одного процесса: второй serve выходит, остальные команды pull пропускают.
+    try:
+        with telegram.serving():
+            print(f"бот @{me.get('username', '?')} слушает подписки, выход — Ctrl+C")
+            return _serve(bot, state, path, args)
+    except telegram.TelegramError as e:  # _serve свои ошибки ловит сам — это занятый serve
+        return fail(str(e), 4)
+
+
+def _serve(bot, state, path: Path, args) -> int:
+    from narrator import telegram
+
     code = 0
+    on_update = None
+    if getattr(args, "updates", False):
+        import json
+
+        def on_update(update: dict) -> None:
+            # Платформа читает вывод serve построчно: JSON без переводов строк.
+            print("update " + json.dumps(update, ensure_ascii=False), flush=True)
+
     try:
         while True:
-            for sub in telegram.pull(bot, state, timeout=0 if args.once else telegram.POLL_TIMEOUT):
-                print(f"подписался: {sub.chat_id} {sub.name}", flush=True)
+            timeout = 0 if args.once else telegram.POLL_TIMEOUT
+            for sub in telegram.pull(bot, state, timeout=timeout, on_update=on_update):
+                print(f"подписался: {telegram.mask(sub.chat_id)}", flush=True)
             if save_state(state, path):
                 return 4
             if args.once:
@@ -740,7 +871,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--text",
         help="что сказано в образце, слово в слово, цифры словами; по умолчанию — фраза образца M1",
     )
+    add_consent_args(s, required=False)
     s.set_defaults(func=cmd_voice)
+
+    s = sub.add_parser(
+        "voice-consent",
+        help="записать согласие владельца живого голоса рядом с образцом (<имя>.consent.json)",
+    )
+    s.add_argument("name", help="shem или shem-v2")
+    add_consent_args(s, required=True)
+    s.set_defaults(func=cmd_voice_consent)
 
     s = sub.add_parser("fetch", help="скачать статью: каталог в библиотеке + source.md")
     s.add_argument("url")
@@ -815,10 +955,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = bot.add_parser("subscribers", help="кто подписан на бота")
     b.add_argument("--no-sync", action="store_true", help="не забирать новые сообщения")
+    b.add_argument(
+        "--names", action="store_true", help="полный chat_id и имя из Telegram (не сохраняется)"
+    )
     b.set_defaults(func=cmd_bot_subscribers)
+
+    b = bot.add_parser(
+        "audience", help="подписки по источнику и retention D7/D30 — агрегаты без ПДн"
+    )
+    b.add_argument("--json", action="store_true", help="отчёт в JSON")
+    b.set_defaults(func=cmd_bot_audience)
+
+    b = bot.add_parser("forget", help="удалить подписчика по chat_id (запрос на удаление)")
+    b.add_argument("chat_id", type=int)
+    b.set_defaults(func=cmd_bot_forget)
 
     b = bot.add_parser("send", help="отправить озвучку статьи в канал (или подписчикам)")
     b.add_argument("dir")
+    b.add_argument(
+        "--annotation",
+        action="store_true",
+        help="вместо озвучки — аннотация со ссылкой (статья без права на переработку)",
+    )
     b.add_argument("--engine", help="какую версию слать; по умолчанию последняя озвученная")
     where = b.add_mutually_exclusive_group()
     where.add_argument(
@@ -849,6 +1007,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = bot.add_parser("serve", help="принимать подписки: /start и /stop")
     b.add_argument("--once", action="store_true", help="один заход вместо долгого опроса")
+    b.add_argument(
+        "--updates",
+        action="store_true",
+        help="нажатия кнопок и ответы боту — строкой `update {json}` (для платформы)",
+    )
     b.set_defaults(func=cmd_bot_serve)
     return p
 

@@ -2,12 +2,14 @@
 
 import json
 import shutil
+import time
 import unittest
 from pathlib import Path
 
 from aiplatform import config as platform_config
 from aiplatform.audio import config as audio_config
 from aiplatform.audio import jobs as audio_jobs
+from aiplatform.audio import voices as audio_voices
 from aiplatform.audio.jobs import AudioSpec, Progress, ValidationError, build_spec, parse_tempo
 from aiplatform.audio.service import AudioModule
 from aiplatform.core import media
@@ -213,7 +215,13 @@ class AudioEngineFeaturesTest(AudioServerCase):
         self.assertEqual(status, 201, raw)
         upload = json.loads(raw)["id"]
         self.assertEqual(self.json("POST", "/api/audio/voices/shem", {"upload": upload})[0], 400)
-        status, task = self.json("POST", "/api/audio/voices/shem", {"upload": upload, "text": "Мой голос."})
+        # CMP-010: без подтверждения согласия — 400, задача не стартует.
+        body = {"upload": upload, "text": "Мой голос."}
+        for consent in (None, {"owner": "Аня"}, {"confirmed": True}, {"confirmed": True, "owner": "Аня", "form": "x"}):
+            status, err = self.json("POST", "/api/audio/voices/shem", body | ({"consent": consent} if consent else {}))
+            self.assertEqual(status, 400, (consent, err))
+        consent = {"confirmed": True, "owner": "Аня", "form": "self"}
+        status, task = self.json("POST", "/api/audio/voices/shem", body | {"consent": consent})
         self.assertEqual(status, 202, task)
         done = self.poll(f"/api/audio/tasks/{task['id']}", lambda t: t["status"] not in ("queued", "running"))
         self.assertEqual(done["status"], "done", done)
@@ -221,6 +229,13 @@ class AudioEngineFeaturesTest(AudioServerCase):
         shem = next(v for v in data["voices"] if v["stem"] == "shem")
         self.assertTrue(shem["custom"])
         self.assertEqual(shem["text"], "Мой голос.")
+        self.assertEqual(shem["consent"], "live")
+        # Образец и запись о согласии есть, исходной загрузки в uploads/ нет.
+        voices = self.config.data_dir / "fake-narrator" / "voices"
+        record = json.loads((voices / "shem.consent.json").read_text(encoding="utf-8"))
+        self.assertEqual((record["kind"], record["owner"], record["form"]), ("live", "Аня", "self"))
+        self.assertIsNone(self.app.ctx.uploads.path(upload))
+        self.assertEqual(self.call("GET", f"/api/audio/uploads/{upload}")[0], 404)
 
     def test_gemini_record_needs_key(self):
         _, task = self.json("POST", "/api/audio/voices/charon", {})
@@ -237,6 +252,59 @@ class AudioCancelTest(AudioServerCase):
         self.poll(f"/api/audio/jobs/{job['id']}", lambda j: j["status"] == "running")
         self.json("POST", f"/api/audio/jobs/{job['id']}/cancel")
         self.assertEqual(self.wait(job["id"])["status"], "canceled")
+
+
+def live_engines(ready: set[str], models_dir_exists: bool = True) -> dict:
+    """Ответ моста engines: у движков вне ready — проблема «нет весов»."""
+    return {
+        "engines": [{"id": e, "problem": None if e in ready else "нет модели"} for e in audio_voices.ENGINES],
+        "models_dir_exists": models_dir_exists,
+        "models_hint": "папки моделей /nowhere нет — подключи диск или задай $NARRATOR_MODELS_DIR",
+    }
+
+
+class DefaultEngineTest(AudioServerCase):
+    """DX-004: движок по умолчанию — тот, чьи веса стоят; нет весов — баннер с командой."""
+
+    def given(self, info: dict) -> AudioModule:
+        module = self.app.modules["audio"]
+        module._engines = (time.time(), info)
+        return module
+
+    def test_after_make_models_default_is_espeech(self):
+        module = self.given(live_engines({"espeech", "silero", "supertonic"}))
+        self.assertEqual(module.config.default_engine, "espeech")
+        self.assertEqual(module.problems(), [])
+        self.assertEqual(build_spec({"text": "т"}, module.config.default_engine).engine, "espeech")
+
+    def test_higgs_first_when_installed(self):
+        module = self.given(live_engines({"higgs", "espeech", "silero"}))
+        self.assertEqual(module.config.default_engine, "higgs")
+
+    def test_no_weights_banner_names_command(self):
+        module = self.given(live_engines(set(), models_dir_exists=False))
+        self.assertEqual(module.config.default_engine, "higgs")
+        [problem] = module.problems()
+        self.assertIn("Higgs", problem)
+        self.assertIn("make models-mlx E=higgs", problem)
+        self.assertIn("NARRATOR_MODELS_DIR", problem)
+
+    def test_bridge_error_keeps_builtin_default(self):
+        module = self.given({"error": "мост упал"})
+        self.assertEqual(module.config.default_engine, "higgs")
+        self.assertEqual(module.problems(), [])
+
+
+class ExplicitEngineTest(AudioServerCase):
+    extra_env = {"AIP_AUDIO_ENGINE": "supertonic"}
+
+    def test_explicit_engine_wins_and_reports_missing_weights(self):
+        module = self.app.modules["audio"]
+        module._engines = (time.time(), live_engines({"espeech"}))
+        self.assertEqual(module.config.default_engine, "supertonic")
+        [problem] = module.problems()
+        self.assertIn("Supertonic", problem)
+        self.assertIn("cd app/narrator && make models", problem)
 
 
 if __name__ == "__main__":

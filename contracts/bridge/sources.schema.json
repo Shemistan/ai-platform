@@ -1,0 +1,81 @@
+{
+  "$comment": "ответ `narrate bridge sources`",
+  "type": "object",
+  "required": [
+    "sources",
+    "useless_after"
+  ],
+  "properties": {
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "authority",
+          "enabled",
+          "failed",
+          "id",
+          "important",
+          "issued",
+          "kind",
+          "last",
+          "name",
+          "note",
+          "processed",
+          "secondary",
+          "total",
+          "url",
+          "useless"
+        ],
+        "properties": {
+          "last": {},
+          "important": {
+            "type": "number"
+          },
+          "useless": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "issued": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "boolean"
+          },
+          "total": {
+            "type": "number"
+          },
+          "authority": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "secondary": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "processed": {
+            "type": "number"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "useless_after": {
+      "type": "number"
+    }
+  }
+}

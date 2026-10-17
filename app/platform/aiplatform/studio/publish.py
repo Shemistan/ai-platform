@@ -15,25 +15,33 @@ mp4 + заголовок + описание в папке.
 
 from __future__ import annotations
 
+import contextlib
 import html
 import json
 import os
+import random
 import re
 import shutil
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from aiplatform.core import log, perms, schema
+from aiplatform.core.notify import TELEGRAM_API, telegram_api  # noqa: F401 — TELEGRAM_API для старых импортов
 from aiplatform.studio.llm import StudioError
 
 TELEGRAM, MANUAL = "telegram", "manual"
 LANDSCAPE, VERTICAL = "landscape", "vertical"
 CAPTION_LIMIT = 1024
 BOT_VIDEO_LIMIT = 50 * 2**20  # Bot API принимает файлы до 50 МБ
-TELEGRAM_API = "https://api.telegram.org"
+# Тексты для автора (TXT-003): что случилось и что сделать, без имён классов и «Bot API».
+TELEGRAM_DOWN = "Нет связи с Telegram. Проверь интернет или VPN и повтори публикацию."
+TOO_BIG = "Telegram не принимает файлы больше 50 МБ. Сократи текст или включи ускорение озвучки."
 DEFAULT_CHANNELS = (
     {"id": "download-16x9", "label": "Файл для YouTube / VK (16:9)", "type": MANUAL, "format": LANDSCAPE},
     {"id": "download-9x16", "label": "Файл для Shorts / TikTok / Reels (9:16)", "type": MANUAL, "format": VERTICAL},
@@ -44,6 +52,11 @@ _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _CHAT = re.compile(r"-?\d+(?:_\d+)?|@\w+")  # как resolve_channel у narrator: канал, тема в группе, @username
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 _TOKEN = re.compile(r"\d{6,}:[A-Za-z0-9_-]{30,}")
+# Переменная токена канала — только из «своих» имён: иначе через API можно указать
+# ANTHROPIC_API_KEY или HF_TOKEN, и значение уйдёт в URL api.telegram.org (SEC-006).
+_TOKEN_ENV = re.compile(r"AIP_TG_[A-Z0-9_]+|(?:AIP_TELEGRAM_TOKEN|NARRATOR_TELEGRAM_TOKEN)(?:_[A-Z0-9_]+)?")
+TOKEN_ENV_NAMES = "AIP_TG_<ИМЯ>, AIP_TELEGRAM_TOKEN или NARRATOR_TELEGRAM_TOKEN[_<ИМЯ>]"
+TOKEN_ENV_HINT = f"Переменная токена — {TOKEN_ENV_NAMES}."
 NARRATOR_CHANNELS = "telegram_tems.md"
 NARRATOR_TOKEN_ENV = "NARRATOR_TELEGRAM_TOKEN"
 NARRATOR_TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"
@@ -74,11 +87,13 @@ class Channel:
         return data | {"format": self.format}
 
     def token(self) -> str:
-        """Токен бота; пусто — не найден."""
+        """Токен бота; пусто — не найден, имя переменной не из разрешённых или значение не токен."""
         if self.token_env:
-            return os.environ.get(self.token_env, "").strip()
+            value = os.environ.get(self.token_env, "").strip() if token_env_allowed(self.token_env) else ""
+            return value if _TOKEN.fullmatch(value) else ""
         if os.environ.get(NARRATOR_TOKEN_ENV, "").strip():
-            return os.environ[NARRATOR_TOKEN_ENV].strip()
+            value = os.environ[NARRATOR_TOKEN_ENV].strip()
+            return value if _TOKEN.fullmatch(value) else ""
         path = os.environ.get(NARRATOR_TOKEN_FILE_ENV) or self.token_file
         try:
             found = _TOKEN.search(Path(path).read_text(encoding="utf-8")) if path else None
@@ -100,10 +115,19 @@ class Channel:
             if not _CHAT.fullmatch(self.chat_id):
                 return "chat_id — вида -1001234567890, -1001234567890_3 (тема) или @username"
             if not self.token():
+                if self.token_env and not token_env_allowed(self.token_env):
+                    return f"переменная токена — только {TOKEN_ENV_NAMES}"
+                env = self.token_env or (NARRATOR_TOKEN_ENV if os.environ.get(NARRATOR_TOKEN_ENV, "").strip() else "")
+                if env and os.environ.get(env, "").strip():
+                    return f"токен в переменной {env} не похож на токен бота"
                 if self.token_env:
                     return f"нет токена в переменной {self.token_env}"
                 return f"нет токена бота: ${NARRATOR_TOKEN_ENV} или {NARRATOR_TOKEN_FILE} в narrator"
         return None
+
+
+def token_env_allowed(name: str) -> bool:
+    return bool(_TOKEN_ENV.fullmatch(name)) and not name.endswith("_FILE")
 
 
 def narrator_channels(narrator_dir: Path) -> list[dict]:
@@ -135,6 +159,8 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"{path}: не читается как JSON ({exc})") from exc
     token_file = str(narrator_dir / NARRATOR_TOKEN_FILE) if narrator_dir else ""
+    if isinstance(raw, dict) and isinstance(raw.get("channels"), list):  # схема 1: {"schema", "channels"}
+        raw = raw["channels"]
     if not isinstance(raw, list):
         raise ValueError(f"{path}: ожидается список каналов")
     out = []
@@ -164,11 +190,22 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
     return out
 
 
+# Схема channels.json (core/schema.py, ADR 0009): 0 — голый список, 1 — {"schema": 1, "channels": [...]}.
+CHANNELS_SCHEMA = 1
+
+
 def save_channels(path: Path, channels: list[Channel]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps([c.stored() for c in channels], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    """Записать список целиком: атомарно и только для владельца (0600, SEC-010).
+    Зовёт только ChannelStore — под своим замком (channels/store.py).
+    Файл, записанный более новой версией, не перезаписываем: schema.TooNew (ADR 0009)."""
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        current = None
+    with contextlib.suppress(schema.Broken):
+        schema.upgrade(current, CHANNELS_SCHEMA, where=path.name)
+    payload = schema.wrap([c.stored() for c in channels], "channels", CHANNELS_SCHEMA)
+    perms.write_private(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def new_channel(existing: list[Channel], label: str, chat_id: str, fmt: str) -> Channel:
@@ -205,8 +242,8 @@ def edit_channel(existing: list[Channel], channel_id: str, changes: dict) -> lis
             raise ValueError("Назови канал.")
         if fmt not in (LANDSCAPE, VERTICAL):
             raise ValueError("Формат — landscape или vertical.")
-        if token_env and not re.fullmatch(r"[A-Z_][A-Z0-9_]*", token_env):
-            raise ValueError("Переменная токена — латиницей заглавными, вида AIP_TELEGRAM_TOKEN.")
+        if token_env and not token_env_allowed(token_env):
+            raise ValueError(TOKEN_ENV_HINT)
         out.append(Channel(c.id, label, c.type, fmt, c.chat_id, token_env, c.token_file))
     if not found:
         raise LookupError("Нет такого канала.")
@@ -239,6 +276,27 @@ def post_html(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
 
 
+# --- домены ссылок: что увидит читатель и откуда они взялись (SEC-013) ---
+
+_URL = re.compile(r"https?://[^\s)\]>\"'<]+", re.IGNORECASE)
+
+
+def link_domains(text: str) -> list[str]:
+    """Домены всех ссылок текста — и [текст](url), и голых URL (Telegram делает их ссылками)."""
+    out = set()
+    for m in _URL.finditer(text or ""):
+        host = (urllib.parse.urlsplit(m.group(0)).hostname or "").lower().rstrip(".")
+        if host:
+            out.add(host.removeprefix("www."))
+    return sorted(out)
+
+
+def foreign_domains(post: str, sources: list[str]) -> list[str]:
+    """Домены ссылок поста, которых нет в исходном материале (поддомен известного — свой)."""
+    known = {d for text in sources for d in link_domains(text)}
+    return [d for d in link_domains(post) if not any(d == k or d.endswith("." + k) for k in known)]
+
+
 def _bold(escaped: str) -> str:
     return _BOLD.sub(r"<b>\1</b>", escaped)
 
@@ -248,13 +306,122 @@ def plain_text(text: str) -> str:
     return _LINK.sub(r"\1 (\2)", text).replace("**", "").strip()
 
 
+# Неудаляемый хвост подписи: сноски реестра («* Компания … признана …»), строки об источнике
+# и строка об ИИ-контенте (CMP-011).
+AI_PREFIX = "ИИ-контент"
+_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор|ИИ-контент|Реклама)\b)")
+# Токен рекламы из ЕРИР (38-ФЗ ст. 18.1): латиница, цифры, без пробелов (CMP-019).
+ERID = re.compile(r"[0-9A-Za-z_-]{1,100}")
+SYNTHETIC_FLAG = (
+    "Синтетический контент: да — при загрузке включи раскрытие ИИ («изменённый или синтетический контент»)."
+)
+
+
+def ai_line(*, voice: bool = False, images: bool = False, video: bool = False) -> str:
+    """Строка об ИИ по фактически использованным генераторам; ничего не генерировали — пусто."""
+    parts = [
+        text
+        for used, text in (
+            (voice, "озвучено ИИ-голосом"),
+            (images, "иллюстрации сгенерированы нейросетью"),
+            (video, "видео сгенерировано нейросетью"),
+        )
+        if used
+    ]
+    return f"{AI_PREFIX}: {'; '.join(parts)}." if parts else ""
+
+
+def with_ai_line(post: str, line: str) -> str:
+    """Пост со строкой об ИИ в неудаляемом хвосте (после сносок и источника)."""
+    if not line or line in post:
+        return post
+    return f"{post.rstrip()}\n\n{line}\n" if post.strip() else f"{line}\n"
+
+
+def ad_line(erid: str) -> str:
+    """Пометка рекламы с токеном ЕРИР: «Реклама. erid: …» (38-ФЗ ст. 18.1)."""
+    return f"Реклама. erid: {erid}"
+
+
+def with_ad(post: str, erid: str) -> str:
+    """Пост с пометкой «Реклама» и erid в неудаляемом хвосте: при обрезке подписи не теряется."""
+    line = ad_line(erid)
+    if line in post:
+        return post
+    return f"{post.rstrip()}\n\n{line}\n" if post.strip() else f"{line}\n"
+
+
+# Где можно резать тело: после конца предложения или абзаца; запасной вариант — по пробелу.
+_SENTENCE_END = re.compile(r"[.!?…»)](?=\s)|\n")
+_SPACE = re.compile(r"\s+")
+
+
+def split_tail(post: str) -> tuple[str, str]:
+    """(тело, хвост): хвост — последние абзацы из сносок и строк «Источник/Оригинал/Автор»."""
+    paras = re.split(r"\n\s*\n", post.strip())
+    cut = len(paras)
+    while cut > 0 and all(_TAIL_LINE.match(line.strip()) for line in paras[cut - 1].splitlines() if line.strip()):
+        cut -= 1
+    return "\n\n".join(paras[:cut]).strip(), "\n\n".join(paras[cut:]).strip()
+
+
+def visible_len(body: str) -> int:
+    """Сколько знаков подписи видит Telegram: без тегов, с раскрытыми сущностями."""
+    return len(html.unescape(re.sub(r"<[^>]+>", "", body)))
+
+
+def _spans(text: str) -> list[tuple[int, int]]:
+    """Где в тексте разметка: **жирный** и [ссылка](url) — внутри неё резать нельзя."""
+    return [(m.start(), m.end()) for rx in (_LINK, _BOLD) for m in rx.finditer(text)]
+
+
+def _cut_points(text: str) -> tuple[list[int], list[int]]:
+    """Позиции, где можно оборвать текст, не разрезав **жирный** или [ссылку](url): концы предложений и пробелы."""
+    inside = _spans(text)
+
+    def free(pos: int) -> bool:
+        return not any(a < pos < b for a, b in inside)
+
+    sentences = [m.end() for m in _SENTENCE_END.finditer(text) if free(m.end())]
+    words = [m.start() for m in _SPACE.finditer(text) if free(m.start())]
+    return sentences, words
+
+
 def caption(post: str, title: str) -> str:
-    """Подпись не длиннее лимита Telegram; не влезает — заголовок вместо поста."""
-    body = post_html(post) if post.strip() else f"<b>{html.escape(title)}</b>"
-    visible = len(html.unescape(re.sub(r"<[^>]+>", "", body)))
-    if visible <= CAPTION_LIMIT:
-        return body
-    return f"<b>{html.escape(title[: CAPTION_LIMIT - 10])}</b>"
+    """Подпись не длиннее лимита Telegram. Длинный пост режется по предложению, хвост (сноски
+    о запрещённых организациях, источник) остаётся целиком; не влезает и он — StudioError."""
+    if not post.strip():
+        return f"<b>{html.escape(title)}</b>"
+    full = post_html(post)
+    if visible_len(full) <= CAPTION_LIMIT:
+        return full
+    body, tail = split_tail(post)
+    tail_html = post_html(tail) if tail else ""
+    budget = CAPTION_LIMIT - (visible_len(tail_html) + 2 if tail_html else 0)
+    sentences, words = _cut_points(body)
+    spans = _spans(body)
+    hard = [n for n in range(min(len(body), budget), 0, -1) if n not in words]  # одно слово длиннее лимита
+    candidates = [(n, "") for n in sorted(sentences, reverse=True)]
+    candidates += [(n, "…") for n in sorted(words, reverse=True)] + [(n, "…") for n in hard]
+    for n, mark in candidates:
+        head = body[:n].rstrip()
+        if not head or any(a < n < b for a, b in spans):
+            continue
+        head_html = post_html(head) + mark
+        if visible_len(head_html) <= budget:
+            return f"{head_html}\n\n{tail_html}" if tail_html else head_html
+    raise StudioError(
+        f"Подпись не влезает в {CAPTION_LIMIT} знаков Telegram: сноски о запрещённых организациях "
+        "и источник занимают весь лимит — сократи пост или их текст."
+    )
+
+
+def audio_caption(post: str, title: str) -> str:
+    """Короткая подпись к аудио: заголовок и неудаляемый хвост поста (сноски, источник)."""
+    name = title.replace("*", "").strip()
+    tail = split_tail(post)[1]
+    head = f"**{name}**" if name else ""
+    return caption(f"{head}\n\n{tail}".strip(), title)
 
 
 # --- отправка ---
@@ -274,18 +441,79 @@ PHOTO_LIMIT = 10 * 2**20  # sendPhoto принимает картинки до 1
 POST_FORMATS = ("video", "photo")  # видео одним постом или картинка с подписью, затем аудио
 
 
+class Unknown(StudioError):  # noqa: N818 — не отказ, а «неизвестно, ушёл ли пост»
+    """Запрос ушёл, а ответа нет (таймаут, обрыв): Telegram мог опубликовать пост.
+    Повторять сам нельзя — решает человек, проверив канал."""
+
+
 def _http_post(url: str, body: bytes, content_type: str) -> dict:
     req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": content_type})
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
-            return json.loads(resp.read() or b"{}")
+            raw = resp.read()
     except urllib.error.HTTPError as exc:
         try:
             return json.loads(exc.read() or b"{}")
         except json.JSONDecodeError:
-            return {"ok": False, "description": f"HTTP {exc.code}"}
-    except (urllib.error.URLError, OSError) as exc:
-        raise StudioError(f"Telegram недоступен: {exc.__class__.__name__}") from exc
+            return {"ok": False, "error_code": exc.code, "description": f"HTTP {exc.code}"}
+    except urllib.error.URLError as exc:
+        # urllib заворачивает в URLError сбои соединения и отправки запроса: целиком он не дошёл.
+        log.event("telegram.unreachable", error=exc.__class__.__name__)  # класс сбоя — в лог, не в UI (TXT-003)
+        raise StudioError(TELEGRAM_DOWN) from exc
+    except OSError as exc:
+        # Запрос отправлен, ответа нет (таймаут чтения, обрыв) — пост мог уйти.
+        raise Unknown(f"Telegram не ответил ({exc.__class__.__name__}) — пост мог уйти") from exc
+    try:
+        return json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        # Ответ 200 принят, но не разобран: пост ушёл, id сообщения неизвестен.
+        return {"ok": True, "result": {}}
+
+
+# Повторы запросов к Bot API. Методы о канале (getChat, getChatMemberCount) повторяем на сетевые
+# сбои, 5xx и 429; отправку — только на 429 и на сбой до отправки тела (StudioError): после
+# таймаута ответа (Unknown) пост мог уйти, повтор дал бы дубль — решает человек (BE-001).
+ATTEMPTS = 3
+BACKOFF_S = 1.0  # пауза перед вторым заходом; дальше вдвое больше, с разбросом
+MAX_RETRY_AFTER_S = 120  # Telegram просит ждать дольше — не ждём, отдаём ошибку
+_sleep = time.sleep  # тесты подменяют, чтобы паузы были мгновенными
+
+
+def backoff(attempt: int) -> float:
+    """1, 2, 4… с, с разбросом ±50% — повторы разных выпусков не бьют разом."""
+    return BACKOFF_S * 2 ** (attempt - 1) * (0.5 + random.random())
+
+
+def call_api(url: str, body: bytes, ctype: str, http_post: HttpPost | None, *, safe: bool) -> dict:
+    """Запрос к Bot API с безопасными повторами; safe — метод только читает (повтор не создаёт пост)."""
+    post = http_post or _http_post
+    for attempt in range(1, ATTEMPTS + 1):
+        last = attempt == ATTEMPTS
+        try:
+            answer = post(url, body, ctype)
+        except Unknown:
+            if not safe or last:
+                raise
+            _sleep(backoff(attempt))
+            continue
+        except StudioError:  # запрос не ушёл целиком — повтор безопасен и для отправки
+            if last:
+                raise
+            _sleep(backoff(attempt))
+            continue
+        if answer.get("ok") or last:
+            return answer
+        code = answer.get("error_code")
+        params = answer.get("parameters") if isinstance(answer.get("parameters"), dict) else {}
+        wait = params.get("retry_after") or 0
+        if code == 429 and isinstance(wait, int | float) and wait <= MAX_RETRY_AFTER_S:
+            _sleep(wait or backoff(attempt))
+            continue
+        if safe and isinstance(code, int) and code >= 500:
+            _sleep(backoff(attempt))
+            continue
+        return answer
+    raise AssertionError("недостижимо")
 
 
 def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, str]:
@@ -306,8 +534,10 @@ def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, st
 
 def _send(channel: Channel, method: str, fields: dict, files: dict[str, Path], http_post: HttpPost | None) -> dict:
     token = channel.token()
+    if not token:  # без годного токена — ни одного запроса в сеть
+        raise StudioError(f"{channel.label}: {channel.problem() or 'нет токена бота'}.")
     body, ctype = multipart({**channel.target(), **fields}, files)
-    answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype)
+    answer = call_api(f"{telegram_api()}/bot{token}/{method}", body, ctype, http_post, safe=False)
     if not answer.get("ok"):
         description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
         raise StudioError(f"{channel.label}: Telegram ответил «{description}».")
@@ -321,7 +551,7 @@ def chat_call(channel: Channel, method: str, http_post: HttpPost | None = None) 
         return None
     body, ctype = multipart({"chat_id": channel.target()["chat_id"]}, {})
     try:
-        answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype)
+        answer = call_api(f"{telegram_api()}/bot{token}/{method}", body, ctype, http_post, safe=True)
     except StudioError:
         return None
     return answer.get("result") if answer.get("ok") else None
@@ -330,6 +560,53 @@ def chat_call(channel: Channel, method: str, http_post: HttpPost | None = None) 
 def members(channel: Channel, http_post: HttpPost | None = None) -> int | None:
     found = chat_call(channel, "getChatMemberCount", http_post)
     return found if isinstance(found, int) else None
+
+
+PHOTO_PARTS = ("photo", "audio")  # пост «картинка и аудио» — два сообщения, отправляются по очереди
+
+
+def photo_problem(channel: Channel, poster: Path, audio: Path) -> str | None:
+    """Почему пост «картинка и аудио» не уйдёт — до отправки первой части."""
+    problem = channel.problem()
+    if problem:
+        return f"{channel.label}: {problem}."
+    if poster.stat().st_size > PHOTO_LIMIT:
+        return f"{channel.label}: картинка больше 10 МБ — Telegram не примет её фото."
+    if audio.stat().st_size > BOT_VIDEO_LIMIT:
+        return f"{channel.label}: {TOO_BIG}"
+    return None
+
+
+def send_photo_part(
+    channel: Channel,
+    part: str,
+    *,
+    poster: Path,
+    audio: Path,
+    title: str,
+    post: str,
+    seconds: float = 0.0,
+    http_post: HttpPost | None = None,
+) -> int | None:
+    """Одна часть поста «картинка и аудио»; возвращает id сообщения."""
+    if part == "photo":
+        fields = {"caption": caption(post, title), "parse_mode": "HTML"}
+        return _send(channel, "sendPhoto", fields, {"photo": poster}, http_post).get("message_id")
+    # Аудио могут переслать отдельно от картинки — сноски реестра и источник идут и в его подписи.
+    fields = {"title": title[:64], "caption": audio_caption(post, title), "parse_mode": "HTML"}
+    if seconds:
+        fields["duration"] = str(int(round(seconds)))
+    return _send(channel, "sendAudio", fields, {"audio": audio}, http_post).get("message_id")
+
+
+def photo_result(channel: Channel, ids: dict[str, int | None]) -> dict:
+    return {
+        "channel": channel.id,
+        "ok": True,
+        "message": f"Отправлено двумя постами: картинка и аудио, сообщения {ids.get('photo')} и {ids.get('audio')}.",
+        "message_id": ids.get("photo"),
+        "chat_id": channel.target()["chat_id"],
+    }
 
 
 def publish_photo(
@@ -343,28 +620,52 @@ def publish_photo(
     http_post: HttpPost | None = None,
 ) -> dict:
     """Двумя постами, как NEWS_POST=photo у narrator: картинка с подписью, затем аудио."""
-    problem = channel.problem()
+    problem = photo_problem(channel, poster, audio)
     if problem:
-        raise StudioError(f"{channel.label}: {problem}.")
-    if poster.stat().st_size > PHOTO_LIMIT:
-        raise StudioError(f"{channel.label}: картинка больше 10 МБ — Telegram не примет её фото.")
-    if audio.stat().st_size > BOT_VIDEO_LIMIT:
-        raise StudioError(f"{channel.label}: аудио больше 50 МБ — Bot API такое не примет.")
-    photo = _send(
-        channel, "sendPhoto", {"caption": caption(post, title), "parse_mode": "HTML"}, {"photo": poster}, http_post
-    )
-    fields = {"title": title[:64]}
-    if seconds:
-        fields["duration"] = str(int(round(seconds)))
-    sound = _send(channel, "sendAudio", fields, {"audio": audio}, http_post)
-    ids = f"{photo.get('message_id')} и {sound.get('message_id')}"
-    return {
-        "channel": channel.id,
-        "ok": True,
-        "message": f"Отправлено двумя постами: картинка и аудио, сообщения {ids}.",
-        "message_id": photo.get("message_id"),
-        "chat_id": channel.target()["chat_id"],
+        raise StudioError(problem)
+    ids = {
+        part: send_photo_part(
+            channel, part, poster=poster, audio=audio, title=title, post=post, seconds=seconds, http_post=http_post
+        )
+        for part in PHOTO_PARTS
     }
+    return photo_result(channel, ids)
+
+
+_YOUTUBE_HOSTS = ("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be")
+_TIKTOK_HOSTS = ("tiktok.com", "www.tiktok.com", "vm.tiktok.com", "vt.tiktok.com", "m.tiktok.com")
+_YOUTUBE_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def external_video(url: object) -> dict:
+    """Ссылка на залитый руками ролик: {external_url, platform, external_id}. Неверная — ValueError.
+
+    YouTube (watch?v=, youtu.be/, /shorts/) и TikTok (/video/<id>) — с id ролика, прочие http(s) —
+    без него: площадок много, ссылку автор знает лучше нас."""
+    if not isinstance(url, str) or not url.strip() or len(url) > 2000:
+        raise ValueError("Вставь ссылку на ролик.")
+    url = url.strip()
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname or "." not in parts.hostname:
+        raise ValueError("Ссылка на ролик — адрес http(s)://…")
+    host = parts.hostname.lower()
+    path = [p for p in parts.path.split("/") if p]
+    if host in _YOUTUBE_HOSTS:
+        if host == "youtu.be":
+            video_id = path[0] if path else ""
+        elif path[:1] in (["shorts"], ["live"], ["embed"]):
+            video_id = path[1] if len(path) > 1 else ""
+        else:
+            video_id = (urllib.parse.parse_qs(parts.query).get("v") or [""])[0]
+        if not _YOUTUBE_ID.match(video_id):
+            raise ValueError("Не вижу id ролика YouTube в ссылке — скопируй ссылку на сам ролик.")
+        return {"external_url": url, "platform": "youtube", "external_id": video_id}
+    if host in _TIKTOK_HOSTS:
+        video_id = path[path.index("video") + 1] if "video" in path[:-1] else None
+        if video_id is not None and not video_id.isdigit():
+            raise ValueError("Не вижу id ролика TikTok в ссылке.")
+        return {"external_url": url, "platform": "tiktok", "external_id": video_id}
+    return {"external_url": url, "platform": "other", "external_id": None}
 
 
 def publish(
@@ -380,8 +681,12 @@ def publish(
     seconds: float = 0.0,
     cover: Path | None = None,
     thumb: Path | None = None,
+    synthetic: bool = False,
 ) -> dict:
     """Отправить видео в канал; результат — {channel, ok, message, files?}.
+
+    synthetic — в выпуске есть сгенерированное ИИ: ручному каналу в описание
+    идёт флаг для раскрытия на площадке (YouTube, TikTok, VK его требуют).
 
     cover и thumb — обложка видео (первый кадр с плеем и плашкой) и её миниатюра:
     без них Telegram сам берёт случайный кадр.
@@ -391,7 +696,8 @@ def publish(
         target.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(video, target / "video.mp4")
         (target / "title.txt").write_text(title.strip() + "\n", encoding="utf-8")
-        (target / "description.txt").write_text(plain_text(post) + "\n", encoding="utf-8")
+        flag = f"\n\n{SYNTHETIC_FLAG}" if synthetic else ""
+        (target / "description.txt").write_text(plain_text(post) + flag + "\n", encoding="utf-8")
         return {
             "channel": channel.id,
             "ok": True,
@@ -402,7 +708,7 @@ def publish(
     if problem:
         raise StudioError(f"{channel.label}: {problem}.")
     if video.stat().st_size > BOT_VIDEO_LIMIT:
-        raise StudioError(f"{channel.label}: видео больше 50 МБ — Bot API такое не примет.")
+        raise StudioError(f"{channel.label}: {TOO_BIG}")
     token = channel.token()
     fields = {
         **channel.target(),
@@ -421,7 +727,7 @@ def publish(
     if thumb is not None:
         files["thumbnail"] = thumb
     body, ctype = multipart(fields, files)
-    answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/sendVideo", body, ctype)
+    answer = call_api(f"{telegram_api()}/bot{token}/sendVideo", body, ctype, http_post, safe=False)
     if not answer.get("ok"):
         description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
         raise StudioError(f"{channel.label}: Telegram ответил «{description}».")

@@ -29,6 +29,12 @@ SUMMARY_LIMIT = 600
 SANDBOX_BLOCK = "Tunnel connection failed: 403"
 
 
+def is_web(url: str) -> bool:
+    """Ссылка http(s) с хостом: иначе (javascript:, data:, file:) в базу её не пускаем."""
+    parts = urlsplit(url.strip())
+    return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
+
+
 class FetchError(RuntimeError):
     """Источник не отдал материалы: сеть, HTTP или непонятный формат."""
 
@@ -41,13 +47,19 @@ class Item:
     summary: str = ""
 
 
+MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # больше лента или страница не бывает — читать не будем
+
+
 def http_get(url: str, attempts: int = 2) -> str:
     """Тело ответа; оборванный ответ (IncompleteRead) — ещё одна попытка."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
             charset = response.headers.get_content_charset() or "utf-8"
-            return response.read().decode(charset, errors="replace")
+            body = response.read(MAX_RESPONSE_BYTES + 1)  # лента не раздует процесс (SEC-009)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise FetchError(f"{url}: ответ больше {MAX_RESPONSE_BYTES // 2**20} МБ")
+            return body.decode(charset, errors="replace")
     except urllib.error.HTTPError as e:
         raise FetchError(f"{url}: HTTP {e.code}") from e
     except http.client.IncompleteRead as e:
@@ -142,7 +154,10 @@ def parse_feed(text: str, base: str = "") -> list[Item]:
         title = clean(_text(el, "title"), 300)
         if not url or not title:
             continue
-        items.append(Item(urljoin(base, url.strip()), title, to_iso(date), clean(summary)))
+        url = urljoin(base, url.strip())
+        if not is_web(url):  # javascript:… из чужой ленты не должен стать ссылкой на странице
+            continue
+        items.append(Item(url, title, to_iso(date), clean(summary)))
     if not items and _local(root.tag) not in ("rss", "feed", "RDF"):
         raise FetchError(f"это не лента: корневой тег <{_local(root.tag)}>")
     return items
@@ -183,6 +198,8 @@ def page_links(html: str, base: str, match: str) -> list[Item]:
         if not href:
             continue
         url = urljoin(base, href).split("#")[0]
+        if not is_web(url):
+            continue
         parts = urlsplit(url)
         path = parts.path
         if parts.netloc != host or not path.startswith(match):

@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Аудио — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/common.css">
   <link rel="stylesheet" href="/ui.css">
 </head>
@@ -20,15 +22,15 @@
         <div class="field-head">
           <label class="field-label" for="text">Текст</label>
           <div class="toolbar">
-            <button type="button" class="small-btn" id="from-library">Из библиотеки…</button>
-            <button type="button" class="small-btn" id="from-files">Из файлов…</button>
+            <button type="button" class="btn btn--ghost btn--sm" id="from-library">Из библиотеки…</button>
+            <button type="button" class="btn btn--ghost btn--sm" id="from-files">Из файлов…</button>
             <input type="file" id="files" accept=".md,.markdown,.txt,text/markdown,text/plain" multiple hidden>
           </div>
         </div>
         <textarea id="text" rows="14" placeholder="Вставь текст как есть или перетащи сюда md-файлы. Файл с несколькими статьями (# Заголовок или ---) встанет в очередь по статье."></textarea>
         <span class="hint" id="text-count">0 знаков</span>
         <div id="pronunciation" hidden>
-          <details class="inline" id="pron-details">
+          <details class="disclosure" id="pron-details">
             <summary id="pron-summary">Как прочитает модель</summary>
             <pre class="preview-text" id="pron-text"></pre>
             <ul class="remarks" id="pron-remarks"></ul>
@@ -36,7 +38,7 @@
         </div>
       </div>
 
-      <section class="card" id="batch" hidden aria-live="polite"></section>
+      <section class="card" id="batch" hidden></section>
 
       <div class="settings">
         <label class="field">
@@ -65,15 +67,15 @@
           <input type="checkbox" id="verify">
           <span>Проверить распознаванием<span class="hint">после озвучки каждый абзац распознаётся обратно и сверяется с текстом</span></span>
         </label>
-        <button type="button" class="link" id="voices-btn">Образцы голосов…</button>
+        <button type="button" class="btn btn--link" id="voices-btn">Образцы голосов…</button>
       </div>
 
       <p class="form-error" id="form-error" role="alert" hidden></p>
-      <button type="submit" class="primary" id="submit">Озвучить</button>
+      <button type="submit" class="btn btn--primary" id="submit">Озвучить</button>
     </form>
 
     <div class="side">
-      <section class="panel" aria-live="polite">
+      <section class="panel">
         <h2>Результат</h2>
         <div id="job"><p class="muted">Здесь появится озвучка.</p></div>
       </section>

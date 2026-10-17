@@ -22,6 +22,10 @@ from pathlib import Path
 from narrator import library, script
 from narrator.library import META_NAME, Entry
 
+# Версия контракта моста. Платформа сверяет её (`bridge version`) и при
+# несовпадении показывает баннер вместо мёртвых страниц. Меняй вместе с
+# EXPECTED_BRIDGE_API в app/platform/aiplatform/core/narrator.py.
+BRIDGE_API = 1
 SCRIPT = "script.txt"
 SOURCE = "source.md"
 CHECK = "check.md"
@@ -38,7 +42,16 @@ _RULE = re.compile(r"^\s*(-{3,}|\*{3,}|_{3,})\s*$")
 
 
 class BridgeError(Exception):
-    """Ошибка для человека: уходит полем error."""
+    """Ошибка для человека: уходит полем error, тип — полем kind.
+
+    kind: invalid — неверный запрос (по умолчанию), not_found — нет такого объекта,
+    unavailable — движку не хватает зависимости (команда упала, нет сети/модели).
+    Платформа выбирает HTTP-код по kind, а не по тексту.
+    """
+
+    def __init__(self, message: str, kind: str = "invalid") -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 # --- текст ---------------------------------------------------------------
@@ -190,6 +203,7 @@ def voices() -> dict:
     """Образцы голосов-клонов: какой записан, где, сколько секунд, что сказано."""
     import soundfile as sf
 
+    from narrator import consent
     from narrator import synth as s
     from narrator.stress import strip_marks
 
@@ -204,12 +218,19 @@ def voices() -> dict:
             "seconds": None,
             "text": "",
             "custom": False,
+            # CMP-009: synthetic — ничей голос; live — есть согласие владельца; None — нет.
+            "consent": "synthetic" if stem in consent.SYNTHETIC else None,
+            "consent_error": None,
         }
         try:
             wav, text = s.ref_sample(voice)
+        except s.ConsentMissingError as e:
+            out.append(item | {"consent_error": str(e)})  # образец есть, клон без согласия нельзя
+            continue
         except s.ModelMissingError:
             out.append(item)
             continue
+        item["consent"] = consent.check(stem, wav).get("kind")
         try:
             seconds = round(sf.info(str(wav)).duration, 1)
         except RuntimeError:
@@ -308,6 +329,7 @@ def _entry_view(path: Path, entry: Entry, unsent: set[str]) -> dict:
         "summary": entry.summary,
         "url": entry.url,
         "source_quality": entry.source_quality,
+        "license": entry.license,  # право на переработку: без него в канал — только аннотация
         "engine": engine,
         "voice": entry.voice,
         "duration_sec": entry.duration_sec,
@@ -344,7 +366,7 @@ def find_entry(article_id: str) -> tuple[Path, Entry]:
     for path, entry in library.entries(root) if root.exists() else []:
         if library.article_id(path) == article_id:
             return path, entry
-    raise BridgeError(f"Статьи {article_id} нет в библиотеке.")
+    raise BridgeError(f"Статьи {article_id} нет в библиотеке.", kind="not_found")
 
 
 def _read(path: Path) -> str:
@@ -378,6 +400,10 @@ def article_save(article_id: str, data: dict) -> dict:
         entry.title = title
     if "summary" in data:
         entry.summary = str(data["summary"] or "").strip()
+    if "license" in data:
+        if data["license"] not in library.LICENSES:
+            raise BridgeError(f"license — одно из: {', '.join(library.LICENSES)}.")
+        entry.license = data["license"]
     if "script" in data:
         (path / SCRIPT).write_text(str(data["script"] or "").strip() + "\n", encoding="utf-8")
     entry.save(path / META_NAME)
@@ -650,6 +676,8 @@ def _stdin_json() -> dict:
 
 def run(args) -> dict:
     match args.bridge_cmd:
+        case "version":
+            return {"bridge_api": BRIDGE_API}
         case "engines":
             return engines()
         case "voices":
@@ -695,9 +723,13 @@ def cmd_bridge(args) -> int:
     try:
         payload, code = run(args), 0
     except BridgeError as e:
-        payload, code = {"error": str(e)}, 1
+        payload, code = {"error": str(e), "kind": e.kind}, 1
     except SystemExit as e:  # команды news падают через fail() → SystemExit с текстом в stderr
-        payload, code = {"error": "команда движка завершилась с ошибкой — подробности в логе"}, 1
+        payload = {
+            "error": "команда движка завершилась с ошибкой — подробности в логе",
+            "kind": "unavailable",
+        }
+        code = 1
         if isinstance(e.code, str):
             payload["error"] = e.code
     sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -708,6 +740,7 @@ def add_parser(sub) -> None:
     s = sub.add_parser("bridge", help="данные для страниц платформы: JSON в stdout")
     b = s.add_subparsers(dest="bridge_cmd", required=True)
     for name, help_ in (
+        ("version", "версия контракта моста: bridge_api"),
         ("engines", "движки: голоса, параметры, почему не запустится"),
         ("voices", "образцы голосов-клонов"),
         ("models", "модели озвучки на диске"),

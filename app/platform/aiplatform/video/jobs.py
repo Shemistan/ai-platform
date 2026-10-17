@@ -13,8 +13,12 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
-from aiplatform.core import cleanup, runner
+from aiplatform.core import cleanup, log, runner, schema
+from aiplatform.core import jobs as core_jobs
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
+from aiplatform.core.http import malformed
+from aiplatform.core.schema import JOB_FIELDS, JOB_SCHEMA
 from aiplatform.core.uploads import UploadStore
 from aiplatform.video import living, ltx, models, timeline, wan
 from aiplatform.video.config import VideoConfig
@@ -29,7 +33,7 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*m")  # цвета терминала в выв
 
 GPU_OWNER = "Видео"
 WAIT_POLL_S = 0.2
-INSTALL_HINT = "Поставь модель видео: ./setup-model.sh в 10_video_generator/app/videogen (см. README платформы)."
+INSTALL_HINT = "Поставь модель видео: make models M=ltx-2.3-q4 в app/platform (README, «Установка моделей»)."
 
 
 class JobManager:
@@ -65,9 +69,10 @@ class JobManager:
             del self._jobs[job_id]
         return cleanup.remove_tree(self._dir(job_id))
 
-    def list(self) -> list[dict]:
+    def list(self, limit: int | None = None, since: float | None = None) -> list[dict]:
+        """Задачи, новые сверху; limit/since — выборка для опроса (core/jobs.select, BE-007)."""
         with self._lock:
-            jobs = sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)
+            jobs = core_jobs.select(self._jobs.values(), limit, since)
             # Лог отдаётся только в карточке одной задачи: список опрашивается раз в секунду.
             return [{k: v for k, v in self._view(j).items() if k != "log"} for j in jobs]
 
@@ -110,7 +115,7 @@ class JobManager:
     def pick(self, model_id: object) -> models.Available:
         """Модель по id из запроса; пусто — модель по умолчанию."""
         if model_id is not None and not isinstance(model_id, str):
-            raise ValidationError("model должен быть строкой — id модели.")
+            raise ValidationError(malformed("model должен быть строкой — id модели."))
         available = self._config.models()
         if not model_id:
             model = models.default(available)
@@ -121,7 +126,7 @@ class JobManager:
             if model is None:
                 raise ValidationError(models.unknown(model_id))
         if not model.installed:
-            raise ValidationError(f"Модель {model.label} не установлена: запусти ./setup-model.sh {model.id}.")
+            raise ValidationError(f"Модель {model.label} не установлена: запусти make models M={model.id}.")
         return model
 
     def create(self, payload: object) -> dict:
@@ -213,17 +218,17 @@ class JobManager:
     def _save(self, job: dict) -> None:
         folder = self._dir(job["id"])
         folder.mkdir(parents=True, exist_ok=True)
-        tmp = folder / "job.json.tmp"
-        tmp.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(folder / "job.json")
+        atomic_write(folder / "job.json", json.dumps(schema.stamp(job, JOB_SCHEMA), ensure_ascii=False, indent=2))
 
     def _load(self) -> None:
+        # Битая задача — в карантин (job.json.bad) и в problems вкладки; остальные грузятся (BE-008).
+        self.load_problems: list[str] = []
         for path in self._config.jobs_dir.glob("*/job.json"):
             if not _ID.match(path.parent.name):
                 continue
-            try:
-                job = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            label = f"Задача {path.parent.name}"
+            job, _ = schema.load_record(path, JOB_SCHEMA, check=JOB_FIELDS, problems=self.load_problems, label=label)
+            if job is None:
                 continue
             if job.get("status") in ACTIVE:
                 self._finish(job, "failed", error="Сервис был перезапущен во время генерации.")
@@ -242,11 +247,12 @@ class JobManager:
     def _work(self) -> None:
         while (job_id := self._queue.get()) is not None:
             with self._lock:
-                job = self._jobs[job_id]
-                spec = self._specs.pop(job_id)
-                model = self._models.pop(job_id)
-                cancel = self._cancels[job_id]
-                if job["status"] != "queued":  # отменили, пока ждала в очереди
+                job = self._jobs.get(job_id)
+                spec = self._specs.pop(job_id, None)
+                model = self._models.pop(job_id, None)
+                cancel = self._cancels.get(job_id)
+                # Отменили, пока ждала в очереди, — или уже и забыли (уборка): пропустить, воркер жив (BE-007).
+                if job is None or spec is None or cancel is None or job["status"] != "queued":
                     self._cancels.pop(job_id, None)
                     continue
                 job["status"] = "running"
@@ -294,7 +300,7 @@ class JobManager:
                 with self._lock:
                     job["progress"]["stage"] = "Запуск"
                     job["started_at"] = time.time()  # время генерации — без ожидания GPU
-                runner.run(argv, on_line, cancel, missing_hint=INSTALL_HINT)
+                runner.run(argv, on_line, cancel, missing_hint=INSTALL_HINT, kind="video")
             if not output.is_file() or output.stat().st_size == 0:
                 raise runner.RunFailed("Генерация завершилась без ошибки, но файл видео не появился.")
         except runner.Canceled:
@@ -306,7 +312,9 @@ class JobManager:
                 self._finish(job, "failed", error=_error_text(str(exc), job["log"]))
         except Exception as exc:  # noqa: BLE001 — воркер не должен умереть из-за одной задачи
             with self._lock:
-                self._finish(job, "failed", error=f"Внутренняя ошибка сервиса: {exc!r}")
+                log.internal_error(exc, task=job["id"])
+                job["log"].append(f"✗ {type(exc).__name__}: {exc}")
+                self._finish(job, "failed", error=log.TASK_INTERNAL)
         else:
             with self._lock:
                 self._finish(job, "done")

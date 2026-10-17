@@ -2,22 +2,37 @@
 # Проектные проверки: зовутся pre-commit'ом и вручную (./check).
 set -e
 cd "$(dirname "$0")" || exit 1
-# --- скелет: тесты guard, commit_msg и docs_gate (в скопированных проектах их нет) ---
-if [ -f global/hooks/test_guard.py ]; then
-  python3 global/hooks/test_guard.py
-  python3 .githooks/test_commit_msg.py
-  python3 tools/test_docs_gate.py
-  # Установленный guard мог протухнуть относительно репозиторного.
-  if [ -f "$HOME/.claude/hooks/guard.py" ] && \
-     ! cmp -s global/hooks/guard.py "$HOME/.claude/hooks/guard.py"; then
-    echo "⚠ ~/.claude/hooks/guard.py отличается от global/hooks/guard.py —" >&2
-    echo "  запусти ./install-global.sh, иначе правила guard'а не активны." >&2
-  fi
+# PreToolUse-guard агента живёт вне репо (~/.claude/hooks) и здесь не проверяется.
+
+# Тесты тулинга: зелёные — одна строка итога, красные — весь вывод и выход.
+# (`… | tail -1` глотал код возврата: упавший тест проходил молча.)
+# GIT_INDEX_FILE и др. от pre-commit тестам не отдаём: свои временные репозитории они бы ломали.
+quiet_test() {
+  out=$(env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE python3 "$1" 2>&1) || { printf '%s\n' "$out"; exit 1; }
+  printf '%s\n' "$out" | tail -1
+}
+
+# --- секреты: токены ботов в отслеживаемых файлах (SEC-001) ---
+if [ -f tools/secret_scan.py ]; then
+  quiet_test tools/test_secret_scan.py
+  python3 tools/secret_scan.py
 fi
 
 # --- документация: шапки спек/планов/ADR, связи, автоиндексы ---
 if [ -f tools/docs_gate.py ]; then
   python3 tools/docs_gate.py
+fi
+
+# --- README платформы ≤200 строк, подробности — в docs/ (DX-015) ---
+if [ -f tools/readme_gate.py ]; then
+  quiet_test tools/test_readme_gate.py
+  python3 tools/readme_gate.py
+fi
+
+# --- справочник HTTP API (docs/api-routes.md) не отстал от маршрутов в коде (DX-005) ---
+if [ -f tools/api_routes.py ]; then
+  quiet_test tools/test_api_routes.py
+  python3 tools/api_routes.py --check
 fi
 
 # --- бэклог (backlog/ главного checkout, вне git): шапки задач, связи, индекс и журнал ---
@@ -26,9 +41,19 @@ if [ -f tools/tasks_gate.py ]; then
   python3 tools/tasks_gate.py
 fi
 
+# --- сдвиг staging только fast-forward с compare-and-swap (грабли 3) ---
+if [ -f tools/advance-staging.sh ]; then
+  quiet_test tools/test_advance_staging.py
+fi
+
+# --- версия: одна во всех pyproject, __version__ и uv.lock; release-скрипт (DX-009) ---
+if [ -f tools/release.py ]; then
+  quiet_test tools/test_release.py
+fi
+
 # --- код: `make check` в каждом сервисе app/<svc>/ с Makefile ---
 # В pre-commit — только сервисы с файлами в индексе; вручную и в ./finish — все.
-# Новый Go-сервис: mkdir -p app && cp -R templates/go-service app/<svc> (см. его README).
+# Новый сервис: каталог app/<svc>/ с Makefile и целью check.
 if [ -d app ]; then
   if [ -n "$GIT_INDEX_FILE" ]; then
     svcs=$(git diff --cached --name-only --diff-filter=ACMR -- app/ | \

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from aiplatform.core.http import malformed
 from aiplatform.video import models, timeline
 from aiplatform.video.timeline import GenerationSpec, Keyframe, ValidationError
 
@@ -45,12 +46,12 @@ def suitable(available: list[models.Available]) -> list[models.Available]:
 def pick_model(available: list[models.Available], model_id: object = None) -> models.Available:
     """Модель по id из запроса; пусто — первая установленная из подходящих."""
     if model_id is not None and not isinstance(model_id, str):
-        raise ValidationError("model должен быть строкой — id модели.")
+        raise ValidationError(malformed("model должен быть строкой — id модели."))
     fitting = suitable(available)
     if not model_id:
         model = models.default(fitting) if any(m.installed for m in fitting) else None
         if model is None:
-            raise ValidationError("Живому фото нужна модель LTX: запусти ./setup-model.sh ltx-2.3-q4.")
+            raise ValidationError("Живому фото нужна модель LTX: запусти make models M=ltx-2.3-q4.")
         return model
     model = next((m for m in available if m.id == model_id), None)
     if model is None:
@@ -58,7 +59,7 @@ def pick_model(available: list[models.Available], model_id: object = None) -> mo
     if model not in fitting:
         raise ValidationError(f"Модель {model.label} не умеет оживлять фото: выбери LTX.")
     if not model.installed:
-        raise ValidationError(f"Модель {model.label} не установлена: запусти ./setup-model.sh {model.id}.")
+        raise ValidationError(f"Модель {model.label} не установлена: запусти make models M={model.id}.")
     return model
 
 

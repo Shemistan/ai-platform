@@ -11,10 +11,10 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from narrator import library
+from narrator import library, registry
 from narrator.library import META_NAME, Entry
 from narrator.news import designs, digest, feeds, sources
-from narrator.news.store import Store, db_path, now_utc
+from narrator.news.store import RETENTION_DAYS, Store, db_path, now_utc
 
 EVENTS = "events.md"
 POST = "post.md"
@@ -86,6 +86,13 @@ def recent_vendors(store: Store, srcs: dict, day: date) -> set[str]:
     return out
 
 
+def agent_of(src: sources.Source, entries: list[registry.Entry]) -> str | None:
+    """id иноагента из реестра, если источник — его канал (CMP-012)."""
+    places = [src.url, src.feed or "", src.channel or "", src.handle or ""]
+    found = registry.source_agent(places, src.name, entries)
+    return found.id if found else None
+
+
 def load_sources() -> list[sources.Source]:
     try:
         return sources.load()
@@ -104,6 +111,7 @@ def cmd_collect(args) -> int:
             return fail(f"нет таких включённых источников: {sorted(unknown)}")
         srcs = [s for s in srcs if s.id in args.only]
     total_new, failed, blocked = 0, [], []
+    agents = registry.load()
     with open_store() as store:
         memo = store.memo()
         for src in srcs:
@@ -119,11 +127,14 @@ def cmd_collect(args) -> int:
                 failed.append(src.id)
                 print(f"  сбой  {src.id:<26} {e}", flush=True)
                 continue
-            fresh = store.add(src, items, now, args.days)
+            fresh = store.add(src, items, now, args.days, agent=agent_of(src, agents))
             store.log_run(src.id, now, ok=True, found=len(items), new=fresh)
             total_new += fresh
             print(f"  ок    {src.id:<26} материалов {len(items):>3}, новых {fresh}", flush=True)
         store.save_memo(memo)
+        pruned = store.prune(now_utc())  # ретенция в ежедневном сборе (CMP-016)
+    if pruned:
+        print(f"  в архив старше {RETENTION_DAYS} дней: {pruned}")
     if blocked:
         print(
             f"  закрыто sandbox {len(blocked)} — в журнал не пишется, чтобы не затереть"
@@ -224,10 +235,12 @@ def cmd_add(args) -> int:
     checked = [c for c in checked if c in srcs and c not in found]
     now = now_utc()
     total = 0
+    agents = registry.load()
     with open_store() as store:
         failed = store.failed()
         for key, items in found.items():
-            fresh = store.add(srcs[key], items, now, args.days, baseline=False)
+            agent = agent_of(srcs[key], agents)
+            fresh = store.add(srcs[key], items, now, args.days, baseline=False, agent=agent)
             error = failed.get(key, {}).get("error", "")
             store.log_rescue(key, now, error, found=len(items), new=fresh)
             total += fresh
@@ -751,7 +764,9 @@ def cmd_publish(args) -> int:
         from narrator.news.video import VideoError, make_frames, make_video
 
         try:
-            poster, thumb, frame = make_frames(cover)
+            # Видео могут переслать без подписи — пометки реестра и в кадре.
+            notes = registry.notes(telegram.spoken_text(d, meta), registry.load())
+            poster, thumb, frame = make_frames(cover, notes)
             out = d / audio.name.replace("_gemini.mp3", ".mp4")
             video = make_video(poster, frame, audio, out, meta.duration_sec)
         except VideoError as e:
@@ -819,6 +834,7 @@ def cmd_check(args) -> int:
         problems.append(f"нет {PROMPT} — промпта для картинки в ChatGPT")
     if post.exists():
         problems += digest.check_post(post.read_text(encoding="utf-8"))
+        problems += check_footnotes(post.read_text(encoding="utf-8"))
     else:
         problems.append(f"нет {POST}")
     narration = d / NARRATION
@@ -866,6 +882,15 @@ def cmd_check(args) -> int:
     return 1 if problems else 0
 
 
+def check_footnotes(post: str) -> list[str]:
+    """Упоминание из реестра запрещённых организаций без пометки в post.md — ошибка."""
+
+    return [
+        f"{POST}: упоминание без пометки реестра — допиши в конец строку «* {n}»"
+        for n in registry.missing(post, post, registry.load())
+    ]
+
+
 def check_video(d: Path, meta: Entry) -> int:
     """Обзор недели или месяца: текст для суфлёра и пост, сколько идёт видео.
 
@@ -877,6 +902,7 @@ def check_video(d: Path, meta: Entry) -> int:
     post = d / POST
     if post.exists():
         problems += digest.check_post(post.read_text(encoding="utf-8"))
+        problems += check_footnotes(post.read_text(encoding="utf-8"))
     else:
         problems.append(f"нет {POST}")
     prompter = d / TELEPROMPTER
@@ -900,6 +926,14 @@ def check_video(d: Path, meta: Entry) -> int:
     return 1 if problems else 0
 
 
+def cmd_prune(args) -> int:
+    """Ретенция: материалы старше --days — в архив, база сжимается (CMP-016)."""
+    with open_store() as store:
+        n = store.prune(now_utc(), args.days)
+    print(f"в архив старше {args.days:g} дней: {n}")
+    return 0
+
+
 def add_parser(sub) -> None:
     s = sub.add_parser("news", help="дайджест новостей: сбор, разбор, отбор, публикация")
     news = s.add_subparsers(dest="news_cmd", required=True)
@@ -911,6 +945,12 @@ def add_parser(sub) -> None:
     )
     n.add_argument("--date", help="нужен выпуск за этот день: окно архива дотянется до него")
     n.set_defaults(func=cmd_collect)
+
+    n = news.add_parser("prune", help="старые материалы — в архив, сжать базу (зовёт и collect)")
+    n.add_argument(
+        "--days", type=float, default=RETENTION_DAYS, help=f"старше — в архив ({RETENTION_DAYS})"
+    )
+    n.set_defaults(func=cmd_prune)
 
     n = news.add_parser("where", help="пути к выпуску дня: что читать и что озвучить")
     n.add_argument("--date", help="ГГГГ-ММ-ДД, today или yesterday; по умолчанию сегодня")

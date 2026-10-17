@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from narrator.news.feeds import Item
+from narrator.news.feeds import Item, is_web
 from narrator.news.sources import Source
 
 DB_NAME = "news.db"
@@ -25,6 +25,8 @@ ISSUES = ("digest", "weekly", "monthly")
 RESCUED = "· добрал агент"
 # Параметры-метки рекламы и шаринга: от них ссылка не становится другой.
 _TRACKING = {"fbclid", "gclid", "ref", "ref_src", "mc_cid", "mc_eid"}
+
+RETENTION_DAYS = 180  # `news prune`: старше — в архив (CMP-016)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -48,7 +50,8 @@ CREATE TABLE IF NOT EXISTS items (
     assessed     TEXT,
     digest       TEXT,                   -- id дайджеста дня, куда попал материал
     weekly       TEXT                    -- id недельного обзора, куда попал материал
-    monthly      TEXT                    -- id месячного обзора, куда попал материал
+    monthly      TEXT,                   -- id месячного обзора, куда попал материал
+    foreign_agent TEXT                   -- id записи реестра: источник — канал иноагента
 );
 CREATE INDEX IF NOT EXISTS items_status ON items(status);
 CREATE INDEX IF NOT EXISTS items_event ON items(event);
@@ -96,7 +99,7 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         columns = {r["name"] for r in self.db.execute("PRAGMA table_info(items)")}
-        for column in ISSUES[1:]:  # база до недельного и месячного обзоров
+        for column in (*ISSUES[1:], "foreign_agent"):  # база до обзоров и до иноагентов
             if column not in columns:
                 self.db.execute(f"ALTER TABLE items ADD COLUMN {column} TEXT")
         self._rescale()
@@ -144,19 +147,23 @@ class Store:
         now: datetime,
         days: float,
         baseline: bool | None = None,
+        agent: str | None = None,
     ) -> int:
         """Кладёт новые материалы источника; возвращает, сколько из них ждут разбора.
 
         Материал старше `days` сразу `old`. У материала без даты свежесть не
         проверить, поэтому при первом заходе по источнику он тоже `old`:
         первый заход только запоминает, что уже было на странице. baseline=False
-        — материалы отобрал агент, и без даты они свежие.
+        — материалы отобрал агент, и без даты они свежие. agent — id записи
+        реестра, если источник — канал иноагента: материал маркируется при публикации.
         """
         cutoff = iso(now - timedelta(days=days))
         if baseline is None:
             baseline = not self.ever_collected(src.id)
         fresh = 0
         for item in items:
+            if not is_web(item.url):  # только http(s): ссылку покажет страница новостей
+                continue
             key = item_id(item.url)
             if self.db.execute("SELECT 1 FROM items WHERE id = ?", (key,)).fetchone():
                 continue
@@ -165,9 +172,19 @@ class Store:
             else:
                 status = "old" if baseline else "new"
             self.db.execute(
-                "INSERT INTO items (id, source, title, url, published, summary, collected, status)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (key, src.id, item.title, item.url, item.published, item.summary, iso(now), status),
+                "INSERT INTO items (id, source, title, url, published, summary, collected, status,"
+                " foreign_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    key,
+                    src.id,
+                    item.title,
+                    item.url,
+                    item.published,
+                    item.summary,
+                    iso(now),
+                    status,
+                    agent,
+                ),
             )
             fresh += status == "new"
         return fresh
@@ -239,6 +256,25 @@ class Store:
 
     def commit(self) -> None:
         self.db.commit()
+
+    # --- ретенция ---------------------------------------------------------
+
+    def prune(self, now: datetime, days: float = RETENTION_DAYS) -> int:
+        """Материалы старше days — в архив (`old`), база сжимается VACUUM (CMP-016).
+
+        Записи не удаляются: по id сбор узнаёт уже виденную ссылку и не
+        приносит её снова. Сжатие — только если что-то ушло в архив.
+        """
+        cutoff = iso(now - timedelta(days=days))
+        cur = self.db.execute(
+            "UPDATE items SET status = 'old'"
+            " WHERE status != 'old' AND coalesce(published, collected) < ?",
+            (cutoff,),
+        )
+        self.db.commit()
+        if cur.rowcount:
+            self.db.execute("VACUUM")
+        return cur.rowcount
 
     # --- отбор ------------------------------------------------------------
 
@@ -329,6 +365,31 @@ class Store:
 def _check_column(column: str) -> None:
     if column not in ISSUES:  # имя колонки идёт в SQL — только известные
         raise ValueError(f"нет такого выпуска: {column}")
+
+
+def issue_agents(db: Path, mark: str, column: str = "digest") -> list[str]:
+    """id иноагентов из реестра, чьи материалы попали в выпуск mark (CMP-012).
+
+    Только чтение: публикация не трогает базу (и не мигрирует её), нет базы
+    или колонки — пусто."""
+    _check_column(column)
+    if not db.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return []
+    try:
+        rows = conn.execute(
+            f"SELECT DISTINCT foreign_agent FROM items WHERE {column} = ?"
+            " AND foreign_agent IS NOT NULL",
+            (mark,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    return sorted(r[0] for r in rows)
 
 
 def db_path(root: Path) -> Path:

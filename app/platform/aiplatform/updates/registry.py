@@ -1,4 +1,5 @@
-"""Реестр организаций, признанных в РФ экстремистскими, террористическими или нежелательными.
+"""Реестр организаций, признанных в РФ экстремистскими, террористическими или нежелательными,
+и иностранных агентов (организаций и физлиц).
 
 Если такая организация упоминается в выпуске, на кадре мелким текстом идёт
 стандартная пометка, а в подпись к посту она дописывается в конце. Список
@@ -7,18 +8,33 @@
 ложатся в data/registry.json и действуют со следующей сборки видео.
 
 Псевдоним — слово или фраза; `*` в конце слова — любое окончание
-(«Фейсбук*» найдёт «Фейсбуке»). Короткие псевдонимы без `*` (до 4 букв,
-например «Meta») ищутся с учётом регистра, чтобы не ловить обычные слова.
+(«Фейсбук*» найдёт «Фейсбуке»). Регистр не важен («META», «meta»); короткий
+псевдоним без `*` (до 4 букв) не ищется внутри слова с дефисом («мета-анализ»).
+`=` в начале — точный регистр: «=Threads» найдёт продукт Meta, но не «threads»
+в тексте про потоки. stopwords записи — слова, которые псевдоним с `*` ловить
+не должен («Мет*» → «Метой», но не «метод»): слово целиком, с дефисными
+частями, сверяется с ними так же, с `*` на конце.
+
+Иностранный агент (status foreign_agent, CMP-012; спека —
+docs/superpowers/specs/2026-10-17-foreign-agents-registry.md): kind — person
+или org, пометка об упоминании (disclaimer) и маркировка материала (material)
+по умолчанию собираются из шаблонов TEMPLATES (свои — ключ templates в
+registry.json). channels — адреса и @-имена его каналов: материал из
+такого источника дайджест маркирует целиком. Тексты шаблонов сверяет юрист.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import threading
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
+
+from aiplatform.core.fsutil import atomic_write
 
 DEFAULT_FILE = Path(__file__).with_name("registry.json")
 FILE_NAME = "registry.json"  # свой реестр платформы — в корне data: его читают сценарии
@@ -26,10 +42,25 @@ STATUSES = {
     "extremist": "экстремистская",
     "terrorist": "террористическая",
     "undesirable": "нежелательная",
+    "foreign_agent": "иностранный агент",
+}
+FOREIGN_AGENT = "foreign_agent"
+KINDS = ("org", "person")
+# Шаблоны пометок иноагента (255-ФЗ ст. 9, 11). Тексты — до сверки юристом: свои — ключ
+# templates в registry.json. {name} — name записи.
+TEMPLATES = {
+    "foreign_agent_person": "{name} признан(а) Минюстом РФ иностранным агентом",
+    "foreign_agent_org": "Организация {name} признана Минюстом РФ иностранным агентом",
+    "foreign_agent_material": (
+        "ДАННОЕ СООБЩЕНИЕ (МАТЕРИАЛ) СОЗДАНО И (ИЛИ) РАСПРОСТРАНЕНО ИНОСТРАННЫМ АГЕНТОМ {name} "
+        "ЛИБО КАСАЕТСЯ ДЕЯТЕЛЬНОСТИ ИНОСТРАННОГО АГЕНТА {name}"
+    ),
 }
 MAX_ENTRIES = 200
+MAX_STOPWORDS = 80
+MAX_AGE_DAYS = 14  # порог свежести по умолчанию; свой — settings.json, registry.max_age_days
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-_CASE_SENSITIVE_MAX = 4
+_SHORT = 4
 
 
 @dataclass(frozen=True)
@@ -41,22 +72,70 @@ class Entry:
     disclaimer: str
     basis: str = ""
     source: str = ""
+    stopwords: tuple[str, ...] = ()
+    ref: str = ""  # номер в официальном перечне
+    archive_url: str = ""  # снимок первоисточника (web.archive.org и т. п.)
+    kind: str = "org"  # org | person — для шаблона пометки иноагента
+    channels: tuple[str, ...] = ()  # каналы иноагента: адреса и @-имена
+    material: str = ""  # маркировка материала иноагента (только foreign_agent)
+
+    @property
+    def confirmed(self) -> bool:
+        """Основание проверяемо: есть номер в перечне и снимок первоисточника."""
+        return bool(self.ref and self.archive_url)
 
     def public(self) -> dict:
-        return asdict(self) | {"aliases": list(self.aliases), "status_label": STATUSES[self.status]}
+        return self.stored() | {"status_label": STATUSES[self.status], "confirmed": self.confirmed}
+
+    def stored(self) -> dict:
+        """Запись для JSON: кортежи — списками."""
+        lists = {"aliases": list(self.aliases), "stopwords": list(self.stopwords), "channels": list(self.channels)}
+        return asdict(self) | lists
 
     def mentioned_in(self, text: str) -> bool:
-        return any(alias_pattern(a).search(text) for a in self.aliases)
+        return alias_found(text, self.aliases, self.stopwords)
 
 
-def alias_pattern(alias: str) -> re.Pattern[str]:
+def _body(alias: str) -> str:
     words = alias.split()
     parts = [re.escape(w[:-1]) + r"\w*" if w.endswith("*") else re.escape(w) for w in words]
-    body = r"[\s -]+".join(parts)
-    if "*" not in alias and len(alias) <= _CASE_SENSITIVE_MAX:
-        # «Meta», но не «мета» и не «Мета-анализ».
-        return re.compile(rf"(?<![\w-]){body}(?![\w-])")
-    return re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
+    return r"[\s -]+".join(parts)
+
+
+@functools.lru_cache(maxsize=1024)
+def alias_pattern(alias: str) -> re.Pattern[str]:
+    flags = 0 if alias.startswith("=") else re.IGNORECASE
+    alias = alias.lstrip("=")
+    body = _body(alias)
+    if "*" not in alias and len(alias) <= _SHORT:
+        # «Meta» и «META», но не «Мета-анализ».
+        return re.compile(rf"(?<![\w-]){body}(?![\w-])", flags)
+    return re.compile(rf"(?<!\w){body}(?!\w)", flags)
+
+
+@functools.lru_cache(maxsize=1024)
+def stop_pattern(word: str) -> re.Pattern[str]:
+    return re.compile(_body(word), re.IGNORECASE)
+
+
+def _whole_word(text: str, start: int, end: int) -> str:
+    """Найденное с остатком слова и частями через дефис: «мета» в «мета-анализ» → «мета-анализ»."""
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] in "-_"):
+        start -= 1
+    while end < len(text) and (text[end].isalnum() or text[end] in "-_"):
+        end += 1
+    return text[start:end]
+
+
+def alias_found(text: str, aliases: tuple[str, ...], stopwords: tuple[str, ...] = ()) -> bool:
+    """Есть ли в тексте хоть один псевдоним, кроме совпадений со стоп-словами."""
+    stops = [stop_pattern(w) for w in stopwords]
+    for alias in aliases:
+        for m in alias_pattern(alias).finditer(text):
+            whole = _whole_word(text, m.start(), m.end())
+            if not any(s.fullmatch(whole) for s in stops):
+                return True
+    return False
 
 
 def _text(item: dict, key: str, limit: int, *, required: bool = True) -> str:
@@ -66,8 +145,29 @@ def _text(item: dict, key: str, limit: int, *, required: bool = True) -> str:
     return value[:limit]
 
 
+def _web(url: str) -> str:
+    """Источник — только http(s)-ссылка: вкладка «Обновления» ставит его в href."""
+    parts = urlsplit(url)
+    return url if parts.scheme.lower() in ("http", "https") and parts.netloc else ""
+
+
+def _words(items: list) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(" ".join(str(a).split()) for a in items if str(a or "").strip()))
+
+
+def templates(obj: object) -> dict[str, str]:
+    """Шаблоны пометок иноагента: свои из {templates: …} поверх TEMPLATES."""
+    own = obj.get("templates") if isinstance(obj, dict) else None
+    out = dict(TEMPLATES)
+    for key, value in (own or {}).items() if isinstance(own, dict) else ():
+        if key in TEMPLATES and isinstance(value, str) and "{name}" in value:
+            out[key] = " ".join(value.split())
+    return out
+
+
 def parse(obj: object) -> list[Entry]:
     """Записи из JSON ({entries: [...]} или список). Ошибка в записи — ValueError с её именем."""
+    texts = templates(obj)
     raw = obj.get("entries") if isinstance(obj, dict) else obj
     if not isinstance(raw, list):
         raise ValueError("нужен список entries")
@@ -87,19 +187,41 @@ def parse(obj: object) -> list[Entry]:
         aliases = item.get("aliases")
         if not isinstance(aliases, list):
             raise ValueError(f"у записи {entry_id} aliases — список")
-        names = tuple(dict.fromkeys(" ".join(str(a).split()) for a in aliases if str(a or "").strip()))
-        if not names or any(a.strip("*") == "" for a in names):
+        names = _words(aliases)
+        if not names or any(a.strip("=*") == "" for a in names):
             raise ValueError(f"у записи {entry_id} нет псевдонимов для поиска")
+        stopwords = item.get("stopwords") or []
+        if not isinstance(stopwords, list):
+            raise ValueError(f"у записи {entry_id} stopwords — список")
+        kind = item.get("kind") or "org"
+        if kind not in KINDS:
+            raise ValueError(f"у записи {entry_id} kind — org или person")
+        channels = item.get("channels") or []
+        if not isinstance(channels, list):
+            raise ValueError(f"у записи {entry_id} channels — список")
+        name = _text(item, "name", 120)
+        agent = status == FOREIGN_AGENT
+        disclaimer = _text(item, "disclaimer", 400, required=not agent).rstrip(".")
+        material = _text(item, "material", 400, required=False).rstrip(".") if agent else ""
+        if agent:
+            disclaimer = disclaimer or texts[f"foreign_agent_{kind}"].format(name=name)
+            material = material or texts["foreign_agent_material"].format(name=name)
         seen.add(entry_id)
         out.append(
             Entry(
                 id=entry_id,
-                name=_text(item, "name", 120),
+                name=name,
                 status=status,
                 aliases=names[:30],
-                disclaimer=_text(item, "disclaimer", 400).rstrip("."),
+                disclaimer=disclaimer,
                 basis=_text(item, "basis", 400, required=False),
-                source=_text(item, "source", 400, required=False),
+                source=_web(_text(item, "source", 400, required=False)),
+                stopwords=tuple(w for w in _words(stopwords) if w.strip("*"))[:MAX_STOPWORDS],
+                ref=_text(item, "ref", 60, required=False),
+                archive_url=_web(_text(item, "archive_url", 400, required=False)),
+                kind=kind,
+                channels=_words(channels)[:20],
+                material=material,
             )
         )
     return out
@@ -122,6 +244,27 @@ def with_footnotes(post: str, text: str, entries: list[Entry]) -> str:
         return post
     lines = "\n".join(f"* {n}" for n in missing)
     return f"{post.rstrip()}\n\n{lines}\n" if post.strip() else f"{lines}\n"
+
+
+def age_days(checked: str, today: date | None = None) -> int | None:
+    """Сколько дней назад сверяли реестр; None — дата не задана или битая."""
+    try:
+        return ((today or date.today()) - date.fromisoformat(checked)).days
+    except (TypeError, ValueError):
+        return None
+
+
+def stale_note(checked: str, max_days: int = MAX_AGE_DAYS, today: date | None = None) -> str:
+    """Предупреждение о несверенном реестре (пусто — свежий): вкладка «Обновления» и публикация."""
+    age = age_days(checked, today)
+    if age is None:
+        return "Реестр запрещённых организаций не сверяли — запусти сверку на вкладке «Обновления»."
+    if age <= max_days:
+        return ""
+    return (
+        f"Реестр запрещённых организаций сверяли {age} дн. назад ({checked}), порог — {max_days} дн.: "
+        "сверь его на вкладке «Обновления», иначе пометки могут быть неполными."
+    )
 
 
 def diff(old: list[Entry], new: list[Entry]) -> dict:
@@ -160,13 +303,21 @@ class Registry:
     def save(self, entries: list[Entry], checked: str | None = None) -> None:
         data = {
             "checked": checked or date.today().isoformat(),
-            "entries": [asdict(e) | {"aliases": list(e.aliases)} for e in entries],
+            "entries": [e.stored() for e in entries],
         }
+        own = self._templates()
+        if own:  # свои шаблоны пометок иноагента переживают сверку и правку
+            data["templates"] = own
         with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(self.path.name + ".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            tmp.replace(self.path)
+            atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+    def _templates(self) -> dict:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        own = data.get("templates") if isinstance(data, dict) else None
+        return own if isinstance(own, dict) else {}
 
     def reset(self) -> None:
         with self._lock:

@@ -1,0 +1,44 @@
+{
+  "$comment": "ответ `narrate bridge subscribers`; о подписчике — только chat_id, дата и тема (CMP-007), отписавшихся нет (CMP-006)",
+  "type": "object",
+  "required": [
+    "active",
+    "error",
+    "file",
+    "new",
+    "subscribers"
+  ],
+  "properties": {
+    "subscribers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "added",
+          "chat_id",
+          "thread"
+        ],
+        "properties": {
+          "thread": {},
+          "chat_id": {
+            "type": "number"
+          },
+          "added": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "active": {
+      "type": "number"
+    },
+    "new": {
+      "type": "array",
+      "items": {}
+    },
+    "error": {},
+    "file": {
+      "type": "string"
+    }
+  }
+}
