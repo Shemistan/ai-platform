@@ -23,7 +23,7 @@ class PostFlowTest(StudioCase):
         folder = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, folder)
         channels = [
-            {"id": "tg", "label": "TG", "type": "telegram", "chat_id": "-1001234567890", "token_env": "AIP_TEST_TG"},
+            {"id": "tg", "label": "TG", "type": "telegram", "chat_id": "-1001234567890", "token_env": "AIP_TG_TEST"},
             {"id": "file", "label": "Файл", "type": "manual", "format": "landscape"},
         ]
         (folder / "channels.json").write_text(json.dumps(channels), encoding="utf-8")
@@ -77,7 +77,7 @@ class PostFlowTest(StudioCase):
             calls.append((url.rsplit("/", 1)[-1], body))
             return {"ok": True, "result": {"message_id": len(calls)}}
 
-        with mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
+        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
             self.json("POST", f"/api/studio/projects/{pid}/run", {})
             self.settle(pid)
             self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["tg"]})
