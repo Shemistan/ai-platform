@@ -15,7 +15,7 @@ from pathlib import Path
 
 from aiplatform.audio import voices
 from aiplatform.audio.config import AudioConfig
-from aiplatform.core import cleanup, media, runner, schema
+from aiplatform.core import cleanup, log, media, runner, schema
 from aiplatform.core import jobs as core_jobs
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
@@ -56,10 +56,11 @@ def parse_tempo(raw: str | None) -> float:
     try:
         tempo = round(float(raw.replace(",", ".")), 2)
     except ValueError:
-        raise ValidationError("Скорость — число.") from None
+        raise ValidationError("Ускорение mp3 — число.") from None
     low, high = TEMPO_RANGE
     if not low <= tempo <= high:
-        raise ValidationError(f"Скорость скачивания — от {low:g} до {high:g}.")
+        ru = lambda x: f"{x:g}".replace(".", ",")  # noqa: E731 — дробь по-русски: 0,5
+        raise ValidationError(f"Ускорение mp3 — от {ru(low)} до {ru(high)}.")
     return tempo
 
 
@@ -422,7 +423,9 @@ class AudioJobs:
                 self._finish(job, "failed", error=_error_text(str(exc), job["log"]))
         except Exception as exc:  # noqa: BLE001 — воркер не должен умереть из-за одной задачи
             with self._lock:
-                self._finish(job, "failed", error=f"Внутренняя ошибка сервиса: {exc!r}")
+                log.internal_error(exc, task=job["id"])
+                job["log"].append(f"✗ {type(exc).__name__}: {exc}")
+                self._finish(job, "failed", error=log.TASK_INTERNAL)
         else:
             check = _read_check(folder / CHECK) if spec.verify else None
             with self._lock:

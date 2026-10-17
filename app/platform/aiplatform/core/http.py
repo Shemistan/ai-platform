@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import tempfile
@@ -12,6 +13,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
+from aiplatform.core import log
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.uploads import IMAGE, MIME, UploadError, UploadStore
 
@@ -76,6 +78,17 @@ def not_found(message: str = "Нет такого адреса.") -> HttpError:
 
 def bad_request(message: str) -> HttpError:
     return HttpError(HTTPStatus.BAD_REQUEST, message)
+
+
+# Форма запроса не та (тип поля, значение не из списка): такое шлёт только сломанный фронт,
+# имя поля человеку не поможет — общий текст, а причина — в лог сервиса (TXT-008).
+MALFORMED = "Некорректный запрос — обнови страницу и попробуй ещё раз."
+
+
+def malformed(reason: str) -> str:
+    """Записать техническую причину в лог и вернуть общий текст для ответа."""
+    log.event("request.malformed", level=logging.WARNING, error=reason)
+    return MALFORMED
 
 
 def found(value: dict | None, message: str = "Задача не найдена.") -> dict:

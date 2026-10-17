@@ -1,12 +1,15 @@
 """Сквозные тесты вкладки «Видео»: HTTP-сервер платформы + fake_ltx вместо модели."""
 
 import json
+import logging
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from aiplatform import config as platform_config
 from aiplatform import server as server_module
+from aiplatform.core import http
 from aiplatform.video import timeline
 from tests.helpers import VideoServerCase, live_processes, poll, scaled, video_load, video_only
 
@@ -107,6 +110,17 @@ class WanTest(ServerCase):
 
 
 class ValidationTest(ServerCase):
+    def test_malformed_model_hides_field_name(self):
+        # TXT-008: {"model": 1} — общий текст без имени поля, причина — в лог.
+        with mock.patch.object(http.log, "event") as event:
+            status, body = self.json("POST", "/api/video/jobs", {"prompt": "кот", "model": 1})
+        self.assertEqual(status, 400, body)
+        self.assertEqual(body["error"], http.MALFORMED)
+        self.assertNotIn("model", body["error"])
+        event.assert_any_call(
+            "request.malformed", level=logging.WARNING, error="model должен быть строкой — id модели."
+        )
+
     def test_bad_requests(self):
         self.assertEqual(self.json("POST", "/api/video/uploads", b"GIF89a....")[0], 400)
         self.assertEqual(self.json("POST", "/api/video/jobs", {"prompt": ""})[0], 400)

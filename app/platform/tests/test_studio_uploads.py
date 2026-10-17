@@ -291,7 +291,7 @@ class UpscaleImagesTest(StudioCase):
         payload = {"scenario": "article", "text": "т", "settings": {"upscale_images": "8k"}}
         status, body = self.json("POST", "/api/studio/projects", payload)
         self.assertEqual(status, 400, body)
-        self.assertIn("upscale_images", body["error"])
+        self.assertIn("Некорректный запрос", body["error"])
 
 
 class ManySlidesUploadTest(StudioCase):

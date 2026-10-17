@@ -104,7 +104,7 @@ function pollGpu(gpu) {
     fast: 3000,
     slow: 6000,
     isActive: () => busy,
-    onError: () => (gpu.textContent = "GPU: нет связи"),
+    onError: () => (gpu.textContent = "Нет связи с сервисом"),
   }).start();
 }
 
