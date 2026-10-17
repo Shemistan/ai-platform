@@ -360,7 +360,8 @@ function card(p) {
     h(
       "div",
       { class: "body" },
-      h("div", { class: "meta" }, statusChip(p.status)),
+      // «Ждут тебя» с готовым видео — «ждёт вас», а не статус проекта «не начат» (UX-027).
+      h("div", { class: "meta" }, statusChip(p.group === "attention" ? (p.attention?.status === "failed" ? "failed" : "waiting") : p.status)),
       h("a", { class: "title", href: href(p) }, p.title),
       h("div", { class: "meta" }, ...meta),
       need ? h("div", { class: "need" }, h("strong", {}, `${need.label}: `), need.text || (need.status === "failed" ? "ошибка" : "ждёт тебя")) : null,

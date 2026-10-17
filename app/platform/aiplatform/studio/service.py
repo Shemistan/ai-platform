@@ -889,8 +889,15 @@ class StudioModule:
         return f"{URL_BASE}/projects/{project_id}/files/{path.name}?v={path.stat().st_mtime_ns}"
 
     def badges(self) -> dict:
-        """Для шапки: сколько выпусков ждут человека."""
-        return {"studio_attention": sum(1 for p in self.studio.list() if p["attention"])}
+        """Для шапки: сколько выпусков ждут человека — по той же группировке, что доска (UX-026)."""
+        count = 0
+        for item in self.studio.list():
+            # /api/status опрашивается часто: published.json читаем, только если без него ответа нет.
+            project = {} if item["running"] or item["attention"] else self.studio.get(item["id"]) or {}
+            done = project.get("steps", {}).get("render", {}).get("status") == "done"
+            published = _read_json_list(self.studio.project_dir(item["id"]) / steps.PUBLISHED) if done else []
+            count += board_group(item, project, published) == "attention"
+        return {"studio_attention": count}
 
     def archive(self, project_id: str, payload: object) -> dict:
         archived = payload.get("archived", True) if isinstance(payload, dict) else True

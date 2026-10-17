@@ -1,6 +1,6 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
-import { $, api, chip, h, icon, iconButton, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { $, api, chip, h, icon, iconButton, jobProgress, poller, seconds as fmtElapsed, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 import { frameAt, frameCount, frameProblems as problemsOf, keyframeLimit, spread } from "./frames.js";
 
 const state = {
@@ -418,11 +418,6 @@ function upsertJob(job) {
   else state.jobs.unshift(job);
 }
 
-function fmtElapsed(total) {
-  const s = Math.floor(total);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
 function filmstrip(job) {
   if (!job.frames.length) return h("p", { class: "muted small" }, "Без кадров — только по промпту");
   const items = [];
@@ -479,7 +474,7 @@ function renderJob() {
     h("p", { class: "job-text" }, isLiving(job) ? "Живое фото: снимок стоит посередине ролика, до и после него — по половине." : job.prompt),
     filmstrip(job),
   ];
-  if (isActive(job)) parts.push(jobProgress(job, { onCancel: (j) => cancelJob(j.id), elapsed: fmtElapsed }));
+  if (isActive(job)) parts.push(jobProgress(job, { onCancel: (j) => cancelJob(j.id) }));
   if (job.status === "done") {
     parts.push(
       player(job.video_url),

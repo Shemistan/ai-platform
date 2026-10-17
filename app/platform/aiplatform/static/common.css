@@ -14,7 +14,9 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
   border-bottom: 1px solid var(--line);
 }
 .platform-nav .brand { font-weight: var(--fw-bold); letter-spacing: .02em; margin-right: var(--sp-2); }
-.platform-nav .tabs { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
+/* Вкладки делят строку с брендом и GPU и переносятся внутри себя: на 1000–1500px шапка —
+   две строки вместо трёх (UX-027). */
+.platform-nav .tabs { display: flex; flex: 1 1 0; min-width: 0; gap: var(--sp-1); flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
 .platform-nav .tabs a {
   display: block;
   padding: var(--sp-2) var(--sp-3);
