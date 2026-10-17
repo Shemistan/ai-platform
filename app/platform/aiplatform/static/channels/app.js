@@ -1,5 +1,5 @@
 // Вкладка «Каналы»: каналы публикации, бот движка, подписчики и приём подписок.
-import { $, busy, busyClick, chip, errorState, fill, h, modal, narratorApi as api, poller, reportError, safe, shortDate } from "/ui.js";
+import { $, busy, busyClick, chip, errorState, fill, h, modal, narratorApi as api, poller, reportError, safe, shortDate, toast } from "/ui.js";
 
 const API = "/api/channels";
 const FORMATS = { landscape: "Видео 16:9", vertical: "Шортс 9:16" };
@@ -64,6 +64,7 @@ function editChannel(channel) {
       state.data = { ...state.data, ...(await api("POST", `${API}/channels/${channel.id}`, { label: label.value, format, token_env: token.value })) };
       renderChannels();
       close();
+      toast(`Канал «${label.value}» сохранён`);
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
@@ -90,11 +91,12 @@ async function removeChannel(channel) {
         "button",
         {
           type: "button",
-          class: "btn btn--primary",
+          class: "btn btn--primary btn--danger",
           onclick: busyClick(async () => {
             state.data = { ...state.data, ...(await api("POST", `${API}/channels/${channel.id}/delete`)) };
             renderChannels();
             close();
+            toast(`Канал «${channel.label}» убран`);
           }, `delete:${channel.id}`),
         },
         "Убрать",
@@ -107,6 +109,7 @@ async function removeChannel(channel) {
 async function importNarrator() {
   await api("POST", `${API}/channels/import`);
   await load();
+  toast("Каналы движка добавлены");
 }
 
 async function addChannel(event) {

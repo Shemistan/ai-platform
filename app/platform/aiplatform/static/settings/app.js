@@ -1,5 +1,5 @@
 // Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены; расписание, уведомления, уборка.
-import { $, api, chip, fill, h } from "/ui.js";
+import { $, api, chip, fill, h, toast } from "/ui.js";
 
 const API = "/api/settings";
 
@@ -15,6 +15,7 @@ async function toggle(body) {
   try {
     render(await api("POST", `${API}/toggle`, body));
     showError("");
+    toast("Сохранено");
     if (focused) $(focused)?.focus();
   } catch (err) {
     showError(err.message);
@@ -85,6 +86,7 @@ async function section(name, body) {
   try {
     render(await api("POST", `${API}/section/${name}`, body));
     showError("");
+    toast("Настройки сохранены");
   } catch (err) {
     showError(err.message);
     load();
@@ -167,6 +169,7 @@ async function runCleanup() {
     cleanupState.data = await api("POST", `${API}/cleanup/run`);
     cleanupState.result = cleanupState.data.found;
     cleanupState.data = await api("GET", `${API}/cleanup`);
+    toast("Уборка выполнена");
   } catch (err) {
     showError(`Уборка: ${err.message}`);
   }

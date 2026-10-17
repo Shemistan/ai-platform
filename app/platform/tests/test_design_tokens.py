@@ -70,3 +70,18 @@ class TokensTest(unittest.TestCase):
             if "font-size:" in line
         ]
         self.assertEqual(found, [])
+
+
+class ToastTest(unittest.TestCase):
+    """DS-009: подтверждение фоновых действий — общий toast() из ui.js."""
+
+    def test_toast_used_in_settings_studio_channels(self):
+        for tab in ("settings", "studio", "channels"):
+            js = (STATIC / tab / "app.js").read_text(encoding="utf-8")
+            with self.subTest(tab=tab):
+                self.assertRegex(js, r"import \{[^}]*\btoast\b[^}]*\} from \"/ui.js\"")
+                self.assertIn("toast(", js.split('from "/ui.js"', 1)[1])
+
+    def test_toast_layer_from_tokens(self):
+        ui = (STATIC / "ui.css").read_text(encoding="utf-8")
+        self.assertRegex(ui, r"\.toasts \{[^}]*z-index: var\(--z-toast\)")

@@ -247,10 +247,11 @@ export function copyButton(getText, label = "Скопировать") {
     try {
       await navigator.clipboard.writeText(typeof getText === "function" ? getText() : getText);
       btn.textContent = "Скопировано";
+      toast("Скопировано");
     } catch {
       btn.textContent = "Не вышло";
+      toast("Не удалось скопировать: браузер не дал доступ к буферу обмена", "danger");
     }
-    announce(btn.textContent);
     setTimeout(() => (btn.textContent = label), 1500);
   });
   return btn;
@@ -330,6 +331,28 @@ export function announce(text) {
   // Сначала очистить: тот же текст подряд иначе не зачитается.
   box.textContent = "";
   setTimeout(() => (box.textContent = text), 50);
+}
+
+export const TOAST_MS = 4000;
+
+// Подтверждение фонового действия («Сохранено», «Скопировано», «Запущено»): тост в правом нижнем углу.
+// tone — success | info | warning | danger. Ошибка (danger) висит до закрытия, остальные гаснут через TOAST_MS.
+// Скринридеру — через общую область announce(); сам стек не живая область, чтобы не читать дважды.
+export function toast(text, tone = "success") {
+  if (!text) return null;
+  let stack = document.getElementById("toasts");
+  if (!stack) {
+    stack = h("div", { id: "toasts", class: "toasts" });
+    document.body.append(stack);
+  }
+  const close = h("button", { type: "button", class: "icon-btn", "aria-label": "Скрыть" }, "×");
+  const item = h("div", { class: `toast tone-${tone}` }, h("span", {}, text), close);
+  const remove = () => item.remove();
+  close.addEventListener("click", remove);
+  stack.append(item);
+  announce(text);
+  if (tone !== "danger") setTimeout(remove, TOAST_MS);
+  return item;
 }
 
 // Карточка фоновой задачи вкладки: статус, этап, сколько идёт, последняя строка или лог.
