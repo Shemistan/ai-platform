@@ -1,13 +1,15 @@
 """Вкладка «Настройки»: общие настройки платформы, API под /api/settings/.
 
-Пока — что включено: модели фото и видео, движки озвучки и их голоса.
-Хранятся в <data>/settings.json (core/settings.py); выключенное пропадает из
-выбора во вкладках и сценариях сразу, без перезапуска.
+Что включено (модели фото и видео, движки озвучки и их голоса), расписание
+дайджеста, уведомления, отклик каналов и уборка. Хранятся в
+<data>/settings.json (core/settings.py) и действуют сразу, без перезапуска.
 """
 
 from __future__ import annotations
 
 from aiplatform.audio import voices
+from aiplatform.core import settings as settings_module
+from aiplatform.core.cleanup import Cleaner
 from aiplatform.core.http import Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.video import models as video_models
@@ -19,6 +21,8 @@ CATALOGS = {
     "audio": {e.id: e.label for e in voices.ENGINES.values()},
 }
 KIND_LABELS = {"photo": "модели фото", "video": "модели видео", "audio": "движки озвучки"}
+# Разделы настроек вне «что выключено»: имя → путь к словарю в settings.json.
+SECTIONS = {"schedule": ("schedule", "digest"), "notify": ("notify",), "stats": ("stats",), "cleanup": ("cleanup",)}
 
 
 class SettingsModule:
@@ -28,6 +32,25 @@ class SettingsModule:
     def __init__(self, ctx) -> None:
         self.ctx = ctx
         self.settings = ctx.config.settings
+        self.cleaner = Cleaner(ctx)
+
+    def bind(self) -> None:
+        """Уборка по флажку — ежедневной работой расписания сценариев."""
+        studio = self.ctx.modules.get("studio")
+        if studio is not None:
+            studio.scheduler.daily["cleanup"] = self._daily_cleanup
+
+    def _daily_cleanup(self) -> str | None:
+        plan = self.settings.load()["cleanup"]
+        if not plan["auto"]:
+            return None
+        found = self.cleaner.run(plan["days"], dry=False)
+        return f"уборка: освобождено {found['bytes'] // 2**20} МБ"
+
+    def cleanup(self, run: bool) -> dict:
+        days = self.settings.load()["cleanup"]["days"]
+        found = self.cleaner.run(days, dry=not run)
+        return {"days": days, "done": run, "found": found, "usage": self.cleaner.usage()}
 
     def describe(self) -> dict:
         return {"file": str(self.settings.path)}
@@ -80,7 +103,18 @@ class SettingsModule:
             }
             for e in voices.ENGINES.values()
         ]
-        return {"sections": sections, "file": str(self.settings.path)}
+        full = self.settings.load()
+        studio = self.ctx.modules.get("studio")
+        return {
+            "sections": sections,
+            "file": str(self.settings.path),
+            "schedule": full["schedule"]["digest"],
+            "notify": full["notify"],
+            "stats": full["stats"],
+            "cleanup": full["cleanup"] | {"choices": list(settings_module.CLEANUP_DAYS)},
+            "last_runs": studio.scheduler.state() if studio else {},
+            "notifications": self.ctx.notifier.recent(10),
+        }
 
     # --- маршруты ---
 
@@ -90,7 +124,38 @@ class SettingsModule:
                 return req.send_json(self.state())
             case ("POST", ["toggle"]):
                 return req.send_json(self.toggle(req.json()))
+            case ("POST", ["section", name]) if name in SECTIONS:
+                return req.send_json(self.update_section(name, req.json()))
+            case ("GET", ["cleanup"]):
+                return req.send_json(self.cleanup(run=False))
+            case ("POST", ["cleanup", "run"]):
+                return req.send_json(self.cleanup(run=True))
+            case ("POST", ["notify-test"]):
+                self.ctx.notifier.send("Проверка уведомлений", "Так будет выглядеть уведомление о выпуске.", show=True)
+                return req.send_json(self.state())
         raise not_found()
+
+    def update_section(self, name: str, payload: object) -> dict:
+        """Часть раздела: {enabled, time, day} расписания, {enabled} уведомлений и т.п. Мусор — 400."""
+        if not isinstance(payload, dict) or not payload:
+            raise bad_request("Тело запроса — непустой объект JSON.")
+        path = SECTIONS[name]
+
+        def section(data: dict) -> dict:
+            for part in path:
+                data = data[part]
+            return data
+
+        current = section(self.settings.load())
+        unknown = [k for k in payload if k not in current]
+        if unknown:
+            raise bad_request(f"Нет такой настройки: {', '.join(unknown)}.")
+        checked = section(settings_module.normalize(self.settings.load() | _nest(path, current | payload)))
+        wrong = [k for k in payload if checked[k] != payload[k]]
+        if wrong:
+            raise bad_request(f"Неверное значение: {', '.join(wrong)}.")
+        self.settings.change(lambda data: section(data).update(payload))
+        return self.state()
 
     def toggle(self, payload: object) -> dict:
         """{kind: photo|video|audio, id, enabled} или {kind: voice, engine, id, enabled}."""
@@ -126,3 +191,10 @@ class SettingsModule:
 
     def close(self) -> None:
         pass
+
+
+def _nest(path: tuple[str, ...], value: dict) -> dict:
+    """("schedule", "digest"), {…} → {"schedule": {"digest": {…}}}."""
+    for part in reversed(path):
+        value = {part: value}
+    return value

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import re
@@ -23,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import runner
+from aiplatform.core import cleanup, runner
 from aiplatform.studio.llm import StudioError
 
 PENDING, RUNNING, DONE, FAILED, WAITING, SKIPPED = "pending", "running", "done", "failed", "waiting", "skipped"
@@ -145,6 +146,9 @@ class Studio:
         self.root = root
         self.steps = steps
         self.services = services  # то, чем шаги пользуются: вкладки, LLM, рендер — см. steps.Services
+        # Запуск закончился: (проект, статусы шагов на старте) — для уведомлений; зовётся вне замка.
+        self.on_stop: Callable[[dict, dict[str, str]], None] | None = None
+        self._before: dict[str, dict[str, str]] = {}
         self._lock = threading.Lock()
         self._projects: dict[str, dict] = {}
         self._threads: dict[str, threading.Thread] = {}
@@ -197,9 +201,14 @@ class Studio:
             project = self._projects.get(project_id)
             return copy.deepcopy(project) if project else None
 
-    def list(self, scenario: str | None = None) -> list[dict]:
+    def list(self, scenario: str | None = None, *, archived: bool = False) -> list[dict]:
+        """Выпуски, новые сверху; архивные — только с archived=True (и только они)."""
         with self._lock:
-            items = [p for p in self._projects.values() if scenario in (None, p["scenario"])]
+            items = [
+                p
+                for p in self._projects.values()
+                if scenario in (None, p["scenario"]) and bool(p.get("archived")) == archived
+            ]
             items.sort(key=lambda p: p["created_at"], reverse=True)
             return [
                 {
@@ -207,11 +216,36 @@ class Studio:
                     "scenario": p["scenario"],
                     "title": p["title"],
                     "created_at": p["created_at"],
+                    "updated_at": p.get("updated_at") or p["created_at"],
                     "running": p["running"],
+                    "current": LABELS.get(p.get("current") or ""),
                     "status": summary(p),
+                    "attention": attention(p),
+                    "archived": bool(p.get("archived")),
+                    "source": p.get("source"),
                 }
                 for p in items
             ]
+
+    def delete(self, project_id: str) -> int:
+        """Уборка: удалить выпуск из архива целиком. Возвращает, сколько байт освободилось."""
+        with self._lock:
+            project = self._require(project_id)
+            if project["running"] or not project.get("archived"):
+                return 0
+            del self._projects[project_id]
+        return cleanup.remove_tree(self.project_dir(project_id))
+
+    def archive(self, project_id: str, archived: bool) -> dict:
+        """Убрать выпуск с доски и из списков (файлы остаются) или вернуть его."""
+
+        def apply(project: dict) -> set[str]:
+            project["archived"] = archived
+            if archived:
+                project["auto"] = False  # архивный выпуск сам не продолжается
+            return set()
+
+        return self.update(project_id, apply)
 
     # --- запись ---
 
@@ -299,7 +333,8 @@ class Studio:
                 raise Conflict("Проект уже выполняется.")
             if only is not None:
                 self._reset(project, only, include_self=True)
-                project["steps"][only].update(state or {})
+                # Шаг перезапустили руками — нужен новый вариант, а не готовый из кэша.
+                project["steps"][only].update({"fresh": True} | (state or {}))
             else:
                 project["auto"] = True
                 # «Запустить всё» ещё раз пробует шаги, которые ждали человека или упали.
@@ -351,6 +386,7 @@ class Studio:
         """Под замком: поднять поток выпуска."""
         project_id = project["id"]
         project["running"] = True
+        self._before[project_id] = {s: st["status"] for s, st in project["steps"].items()}
         self._save(project)
         cancel = threading.Event()
         self._cancels[project_id] = cancel
@@ -402,6 +438,20 @@ class Studio:
             project["steps"][step_id].update(values)
             self._save(project)
 
+    def annotate(self, project_id: str, **fields) -> None:
+        """Поля проекта вне шагов (например, ход выжимки) — можно и во время запуска."""
+        with self._lock:
+            project = self._require(project_id)
+            project.update(fields)
+            self._save(project)
+
+    def log(self, project_id: str, message: str) -> None:
+        with self._lock:
+            self._require(project_id)
+        self._log(project_id, message)
+        with self._lock:
+            self._save(self._projects[project_id])
+
     def _set_title(self, project_id: str, title: str) -> None:
         with self._lock:
             project = self._projects[project_id]
@@ -439,6 +489,11 @@ class Studio:
                 project = self._projects[project_id]
                 if project["running"]:
                     self._stop(project)
+                done = copy.deepcopy(project)
+                before = self._before.pop(project_id, {})
+            if self.on_stop is not None and not done["running"]:
+                with contextlib.suppress(Exception):  # уведомление не должно ронять поток выпуска
+                    self.on_stop(done, before)
 
     def _stop(self, project: dict) -> None:
         project["running"] = False
@@ -448,7 +503,9 @@ class Studio:
 
     def _run_step(self, project_id: str, step: Step, cancel: threading.Event) -> bool:
         """True — можно идти дальше."""
-        project = self._set(project_id, step.id, status=RUNNING, error=None, note=None, progress=None)
+        project = self._set(
+            project_id, step.id, status=RUNNING, error=None, note=None, progress=None, started_at=time.time()
+        )
         ctx = StepContext(self, project, step.id, cancel)
         self._log(project_id, f"▶ {step.label}")
         try:
@@ -483,6 +540,18 @@ class Studio:
 
 def _fresh_state() -> dict:
     return {"status": PENDING, "error": None, "note": None, "progress": None, "updated_at": None}
+
+
+def attention(project: dict) -> dict | None:
+    """Первый шаг, которому нужен человек: ждёт или упал. None — ничего не нужно."""
+    if project.get("running"):
+        return None
+    for step in STEPS:
+        state = project["steps"][step.id]
+        if state["status"] in (WAITING, FAILED):
+            text = state.get("error") if state["status"] == FAILED else state.get("note")
+            return {"step": step.id, "label": step.label, "status": state["status"], "text": text or ""}
+    return None
 
 
 def summary(project: dict) -> str:

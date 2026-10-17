@@ -12,7 +12,7 @@ export async function api(method, path, body) {
   }
   const res = await fetch(path, init);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Ошибка ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `Ошибка ${res.status}`), { status: res.status, data });
   return data;
 }
 

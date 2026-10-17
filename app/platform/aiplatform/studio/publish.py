@@ -314,6 +314,24 @@ def _send(channel: Channel, method: str, fields: dict, files: dict[str, Path], h
     return answer.get("result") or {}
 
 
+def chat_call(channel: Channel, method: str, http_post: HttpPost | None = None) -> dict | int | None:
+    """Метод Bot API о самом канале (getChat, getChatMemberCount); сбой — None, публикацию он не держит."""
+    token = channel.token()
+    if not token:
+        return None
+    body, ctype = multipart({"chat_id": channel.target()["chat_id"]}, {})
+    try:
+        answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype)
+    except StudioError:
+        return None
+    return answer.get("result") if answer.get("ok") else None
+
+
+def members(channel: Channel, http_post: HttpPost | None = None) -> int | None:
+    found = chat_call(channel, "getChatMemberCount", http_post)
+    return found if isinstance(found, int) else None
+
+
 def publish_photo(
     channel: Channel,
     *,
@@ -344,6 +362,8 @@ def publish_photo(
         "channel": channel.id,
         "ok": True,
         "message": f"Отправлено двумя постами: картинка и аудио, сообщения {ids}.",
+        "message_id": photo.get("message_id"),
+        "chat_id": channel.target()["chat_id"],
     }
 
 
@@ -406,4 +426,11 @@ def publish(
         description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
         raise StudioError(f"{channel.label}: Telegram ответил «{description}».")
     message_id = (answer.get("result") or {}).get("message_id")
-    return {"channel": channel.id, "ok": True, "message": f"Отправлено, сообщение {message_id}."}
+    # id сообщения — чтобы потом подтянуть просмотры.
+    return {
+        "channel": channel.id,
+        "ok": True,
+        "message": f"Отправлено, сообщение {message_id}.",
+        "message_id": message_id,
+        "chat_id": channel.target()["chat_id"],
+    }

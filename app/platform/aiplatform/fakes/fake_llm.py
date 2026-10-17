@@ -1,8 +1,9 @@
 """Имитация LLM-CLI (`claude -p`) для демо и тестов: промпт со stdin, ответ в stdout.
 
-Задачу узнаёт по первой строке промпта (`### task: poster|plan|short|registry`)
+Задачу узнаёт по первой строке промпта (`### task: poster|plan|short|summary|registry`)
 и отвечает детерминированно по тексту: промпт постера, план слайдов на
-каждую фразу (картинки вперемешку с динамическими сценами), сценарий шортса из первых фраз, реестр организаций —
+каждую фразу (картинки вперемешку с динамическими сценами), сценарий шортса из первых фраз, выжимку из
+первых фраз абзацев, реестр организаций —
 текущий список плюс одна демо-запись.
 
 Окружение: FAKE_LLM_FAIL=1 — упасть; FAKE_LLM_GARBAGE=1 — ответить не JSON.
@@ -97,6 +98,10 @@ def answer(prompt: str) -> str:
         ]
         beats.append({"title": "Подписывайся", "text": "Подписывайся, чтобы не пропустить следующий выпуск."})
         return json.dumps({"beats": beats}, ensure_ascii=False)
+    if task == "summary":
+        paras = [p.strip() for p in _body(prompt).split("\n\n") if p.strip() and not p.startswith("#")]
+        firsts = [re.split(r"(?<=[.!?])\s+", p)[0] for p in paras[:8]] or ["Коротко о главном."]
+        return "Выжимка. " + "\n\n".join(firsts) + "\n\nИтог: главное — в этих абзацах."
     if task == "registry":
         current = json.loads(prompt.rsplit("```json", 1)[1].split("```", 1)[0])
         entries = [e for e in current["entries"] if e.get("id") != DEMO_ENTRY["id"]] + [DEMO_ENTRY]

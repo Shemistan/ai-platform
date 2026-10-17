@@ -1,4 +1,4 @@
-.PHONY: run demo test lint check
+.PHONY: run demo smoke test lint check
 
 PYTHON ?= python3
 
@@ -14,6 +14,10 @@ run:
 # Демо без моделей и сети: фейковые генераторы, TTS, LLM и новости — те же страницы и статусы.
 demo:
 	AIP_BACKEND=fake AIP_DATA_DIR=data-demo $(PYTHON) -m aiplatform.server
+
+# Короткий прогон на настоящих моделях с замером времени: картинка, фраза озвучки, черновик статьи.
+smoke:
+	$(PYTHON) -m aiplatform.smoke
 
 test:
 	$(PYTHON) -W error::ResourceWarning -m unittest discover -s tests -t .

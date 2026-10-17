@@ -1,4 +1,4 @@
-// Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены.
+// Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены; расписание, уведомления, уборка.
 import { $, api, chip, fill, h } from "/ui.js";
 
 const API = "/api/settings";
@@ -16,6 +16,7 @@ async function toggle(body) {
   } catch (err) {
     showError(err.message);
     load();
+loadCleanup();
   }
 }
 
@@ -72,7 +73,139 @@ function voiceButtons(engine) {
   );
 }
 
+async function section(name, body) {
+  try {
+    render(await api("POST", `${API}/section/${name}`, body));
+    showError("");
+  } catch (err) {
+    showError(err.message);
+    load();
+loadCleanup();
+  }
+}
+
+function checkRow(label, hint, checked, onchange) {
+  return h(
+    "label",
+    { class: "check" },
+    h("input", { type: "checkbox", checked, onchange: (e) => onchange(e.target.checked) }),
+    h("span", {}, label, hint ? h("span", { class: "hint" }, hint) : null),
+  );
+}
+
+function renderSchedule(data) {
+  const plan = data.schedule;
+  const last = data.last_runs?.digest;
+  fill(
+    $("schedule"),
+    h(
+      "div",
+      { class: "settings-stack" },
+      checkRow("Собирать дайджест сам", "Выпуск создаётся и запускается в это время; дальше — как обычно: постер, проверка, публикация.", plan.enabled, (v) => section("schedule", { enabled: v })),
+      h(
+        "div",
+        { class: "inline-fields" },
+        h("label", { class: "field" }, h("span", { class: "hint" }, "Время"), h("input", { type: "time", value: plan.time, onchange: (e) => section("schedule", { time: e.target.value }) })),
+        h(
+          "label",
+          { class: "field" },
+          h("span", { class: "hint" }, "Новости"),
+          h(
+            "select",
+            { onchange: (e) => section("schedule", { day: e.target.value }) },
+            h("option", { value: "yesterday", selected: plan.day === "yesterday" }, "за вчера"),
+            h("option", { value: "today", selected: plan.day === "today" }, "за сегодня"),
+          ),
+        ),
+      ),
+      last ? h("p", { class: "hint" }, `Последний запуск по расписанию: ${last}. Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день.`) : h("p", { class: "hint" }, "Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день."),
+      checkRow("Уведомлять меня", "Когда выпуск ждёт тебя, упал или опубликован. На Mac — системное уведомление; своя команда — AIP_NOTIFY_CMD.", data.notify.enabled, (v) => section("notify", { enabled: v })),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "small-btn", onclick: () => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)) }, "Проверить уведомление")),
+      data.notifications.length
+        ? h("details", {}, h("summary", { class: "link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
+        : null,
+    ),
+  );
+}
+
+const mb = (bytes) => (bytes >= 2 ** 30 ? `${(bytes / 2 ** 30).toFixed(1)} ГБ` : `${Math.round(bytes / 2 ** 20)} МБ`);
+const cleanupState = { data: null, confirm: false, busy: false };
+
+async function loadCleanup() {
+  try {
+    cleanupState.data = await api("GET", `${API}/cleanup`);
+  } catch (err) {
+    showError(`Уборка: ${err.message}`);
+  }
+  if (state.data) renderUpkeep(state.data);
+}
+
+async function runCleanup() {
+  if (!cleanupState.confirm) {
+    cleanupState.confirm = true;
+    return renderUpkeep(state.data);
+  }
+  cleanupState.busy = true;
+  renderUpkeep(state.data);
+  try {
+    cleanupState.data = await api("POST", `${API}/cleanup/run`);
+    cleanupState.result = cleanupState.data.found;
+    cleanupState.data = await api("GET", `${API}/cleanup`);
+  } catch (err) {
+    showError(`Уборка: ${err.message}`);
+  }
+  Object.assign(cleanupState, { confirm: false, busy: false });
+  renderUpkeep(state.data);
+}
+
+function renderUpkeep(data) {
+  const c = cleanupState.data;
+  const found = c?.found;
+  const what = found ? [found.jobs && `задач вкладок: ${found.jobs}`, found.cache && `записей кэша: ${found.cache}`, found.archived && `выпусков из архива: ${found.archived}`].filter(Boolean) : [];
+  const done = cleanupState.result;
+  fill(
+    $("upkeep"),
+    h(
+      "div",
+      { class: "settings-stack" },
+      checkRow("Обновлять отклик каналов раз в сутки", "Подписчики и просмотры публичных каналов Telegram — на доске «Выпуски», в «Что работает».", data.stats.auto, (v) => section("stats", { auto: v })),
+      c
+        ? h(
+            "table",
+            { class: "usage" },
+            h("tbody", {}, ...c.usage.map((u) => h("tr", {}, h("th", {}, u.label), h("td", {}, mb(u.bytes))))),
+          )
+        : h("p", { class: "muted" }, "Считаю место…"),
+      h(
+        "div",
+        { class: "inline-fields" },
+        h(
+          "label",
+          { class: "field" },
+          h("span", { class: "hint" }, "Удалять старше"),
+          h("select", { onchange: (e) => section("cleanup", { days: Number(e.target.value) }).then(loadCleanup) }, ...data.cleanup.choices.map((d) => h("option", { value: d, selected: d === data.cleanup.days }, `${d} дней`))),
+        ),
+      ),
+      checkRow("Убирать раз в сутки сам", null, data.cleanup.auto, (v) => section("cleanup", { auto: v })),
+      h("p", { class: "hint" }, "Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша и выпуски из архива. Неархивные выпуски и идущие задачи не трогаются."),
+      found ? h("p", {}, what.length ? `Сейчас под уборку: ${what.join(", ")} — ${mb(found.bytes)}.` : "Сейчас убирать нечего.") : null,
+      h(
+        "div",
+        { class: "actions" },
+        h("button", { type: "button", class: cleanupState.confirm ? "small-btn danger" : "small-btn", disabled: cleanupState.busy || !what.length, onclick: runCleanup }, cleanupState.busy ? "Убираю…" : cleanupState.confirm ? `Да, удалить ${found ? mb(found.bytes) : ""}` : "Убрать сейчас"),
+        cleanupState.confirm ? h("button", { type: "button", class: "link", onclick: () => ((cleanupState.confirm = false), renderUpkeep(state.data)) }, "Отмена") : null,
+        done ? h("span", { class: "hint" }, `Освобождено ${mb(done.bytes)}.`) : null,
+      ),
+    ),
+  );
+}
+
+const state = { data: null };
+
 function render(data) {
+  state.data = data;
+  renderSchedule(data);
+  renderUpkeep(data);
   const { photo, video, audio } = data.sections;
   fill($("photo"), h("div", { class: "toggle-list" }, ...photo.map((m) => row(m, "photo", m.note))));
   fill($("video"), h("div", { class: "toggle-list" }, ...video.map((m) => row(m, "video", m.note))));
@@ -93,3 +226,4 @@ async function load() {
 }
 
 load();
+loadCleanup();

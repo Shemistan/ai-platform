@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, api, h, logBlock, progressBar, seconds, statusChip } from "/ui.js";
+import { $, api, debounce, h, logBlock, progressBar, seconds, statusChip } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -153,6 +153,13 @@ function fieldsOf(values, prefix) {
         ]),
       ),
     review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
+    draft: () =>
+      check(
+        "draft",
+        "Черновик: без картинок и роликов, кадр вполовину",
+        "Быстро посмотреть структуру и ритм. «Сделать чистовик» дорисует картинки и соберёт видео в полном кадре.",
+        values.draft,
+      ),
   };
 }
 
@@ -197,6 +204,7 @@ function settingsForm(values, prefix) {
   return h(
     "div",
     { class: "settings-form" },
+    f.draft(),
     group("Постер — первый кадр", f.poster_mode()),
     group("Картинки слайдов", f.draw_images(), f.images_mode(), f.image_model(), f.upscale_images()),
     group("Ролики", f.clips(), f.clips_mode(), f.video_model()),
@@ -211,7 +219,7 @@ function settingsForm(values, prefix) {
 const SETTING_NAMES = [
   "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
   "voice_mode", "engine", "shorts", "review_text", "disclaimers", "branding", "tempo", "frame", "auto_publish", "channels",
-  "post_format",
+  "post_format", "draft",
 ]; // prettier-ignore
 // Поля формы поста: остальные настройки у него не меняются.
 const POST_SETTINGS = [
@@ -247,6 +255,44 @@ function readSettings(prefix, names = scenario === "post" ? POST_SETTINGS : SETT
   return out;
 }
 
+// --- оценка времени и проверка до запуска ---
+
+function duration(s) {
+  if (!s) return "меньше минуты";
+  const m = Math.round(s / 60);
+  if (m < 1) return "меньше минуты";
+  return m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`;
+}
+
+// «≈ 1 ч 40 мин: картинки 18 шт. — 36 мин, озвучка — 50 мин…» и предупреждения: что сломается или будет ждать.
+function checkBox(data, { done = false } = {}) {
+  if (!data) return null;
+  const { estimate: est, preflight = [] } = data;
+  const parts = (est?.parts || []).map((p) => `${p.label}${p.count ? ` (${p.count})` : ""} — ${duration(p.seconds)}`);
+  const head = done || !est?.parts?.length ? null : h("p", {}, h("strong", {}, `≈ ${duration(est.total_s)}`), h("span", { class: "muted" }, ` до готового видео${est.video_s ? `, ролик ~${duration(est.video_s)}` : ""}`));
+  const items = preflight.map((x) => h("li", { class: x.level }, x.text));
+  if (!head && !items.length) return null;
+  return h(
+    "div",
+    { class: "check-box" },
+    head,
+    parts.length && !done ? h("details", {}, h("summary", { class: "link" }, "Из чего складывается"), h("ul", { class: "small" }, ...parts.map((t) => h("li", {}, t))), h("p", { class: "hint" }, est.from_history ? `По истории задач этой машины (${est.from_history}).` : "Истории задач ещё нет — оценка по умолчанию.")) : null,
+    items.length ? h("ul", { class: "preflight" }, ...items) : null,
+  );
+}
+
+const refreshCreateCheck = debounce(async () => {
+  const box = $("create-check");
+  if (!box) return;
+  const payload = { scenario, settings: readSettings("new") };
+  if (scenario !== "digest") Object.assign(payload, { text: $("text")?.value || "", post: $("post")?.value || "" });
+  try {
+    box.replaceChildren(checkBox(await api("POST", `${API}/preflight`, payload)) || "");
+  } catch {
+    box.replaceChildren();
+  }
+}, 400);
+
 // --- создание ---
 
 function renderCreate() {
@@ -276,6 +322,7 @@ function renderCreate() {
   );
   const defaults = { ...state.config.defaults, ...(state.config.scenario_defaults?.[scenario] || {}) };
   $("create-settings").replaceChildren(settingsForm(defaults, "new"));
+  refreshCreateCheck();
 }
 
 // Подпись поста со счётчиком: Telegram берёт под видео до 1024 знаков.
@@ -306,11 +353,11 @@ function postFields() {
   ];
 }
 
-async function create(event) {
-  event.preventDefault();
+async function create(event, forceNew = false) {
+  event?.preventDefault();
   const error = $("create-error");
   error.hidden = true;
-  const payload = { scenario, settings: readSettings("new"), run: true };
+  const payload = { scenario, settings: readSettings("new"), run: true, force_new: forceNew };
   if (scenario === "digest") payload.day = $("day").value;
   else if (scenario === "post") Object.assign(payload, { title: $("title").value, post: $("post").value, text: $("text").value });
   else Object.assign(payload, { title: $("title").value, text: $("text").value });
@@ -321,10 +368,60 @@ async function create(event) {
     await loadProjects();
     show(project);
   } catch (err) {
-    error.textContent = err.message;
+    const existing = err.data?.existing;
+    // Тот же день или тот же текст: открыть готовый выпуск вместо новой генерации — или всё же создать новый.
+    error.replaceChildren(
+      err.message,
+      ...(existing
+        ? [
+            " ",
+            h("button", { type: "button", class: "link", onclick: () => (existing.scenario === scenario ? open(existing.id) : (location.href = `?scenario=${existing.scenario}&project=${existing.id}`)) }, "Открыть"),
+            " · ",
+            h("button", { type: "button", class: "link", onclick: () => create(null, true) }, "Создать новый"),
+          ]
+        : []),
+    );
     error.hidden = false;
   } finally {
     $("create-btn").disabled = false;
+  }
+}
+
+async function makeFinal() {
+  if (await act("settings", { draft: false })) await act("run", {});
+}
+
+// Длинная статья: серия выпусков по главам или выжимка на 5–8 минут — отдельным выпуском.
+function longTextActions(project) {
+  if (project.scenario !== "article" || !project.preflight?.some((x) => x.text.includes("серии"))) return null;
+  const summary = project.summary || {};
+  return h(
+    "div",
+    { class: "actions" },
+    h("button", { type: "button", class: "secondary", disabled: project.running, onclick: splitProject }, "Разбить на серию"),
+    h("button", { type: "button", class: "secondary", disabled: summary.status === "running", onclick: () => act("summary") }, summary.status === "running" ? "Выжимка пишется…" : "Сделать выжимку"),
+    summary.status === "done" ? h("a", { class: "link", href: `?scenario=article&project=${summary.project}` }, "Открыть выжимку") : null,
+    summary.status === "failed" ? h("span", { class: "job-error" }, summary.error) : null,
+  );
+}
+
+async function splitProject() {
+  try {
+    const { projects } = await api("POST", `${API}/projects/${state.project.id}/split`, {});
+    await loadProjects();
+    await open(projects[0].id);
+  } catch (err) {
+    alertBox(err.message);
+  }
+}
+
+async function cloneProject() {
+  try {
+    const copy = await api("POST", `${API}/projects/${state.project.id}/clone`);
+    await loadProjects();
+    await open(copy.id);
+  } catch (err) {
+    alertBox(err.message);
   }
 }
 
@@ -421,7 +518,7 @@ const STEP_FIELDS = {
   images: ["draw_images", "images_mode", "image_model", "upscale_images"],
   clips: ["clips", "clips_mode", "video_model"],
   voice: ["voice_mode", "engine"],
-  render: ["frame", "tempo", "branding", "disclaimers"],
+  render: ["draft", "frame", "tempo", "branding", "disclaimers"],
   short: ["shorts", "tempo", "branding", "disclaimers"],
 };
 
@@ -831,6 +928,7 @@ function show(project) {
   if (signature === state.signature) return schedule();
   state.signature = signature;
   const running = project.running;
+  const check = checkBox(project, { done: !project.estimate?.parts?.length });
   $("project").replaceChildren(
     h(
       "div",
@@ -840,6 +938,21 @@ function show(project) {
       running
         ? h("button", { type: "button", class: "secondary", onclick: () => act("cancel") }, "Остановить")
         : h("button", { type: "button", class: "primary", onclick: () => act("run", {}) }, "Запустить всё"),
+      project.settings.draft ? h("span", { class: "status waiting" }, "черновик") : null,
+      project.settings.draft && !running
+        ? h("button", { type: "button", class: "secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: makeFinal }, "Сделать чистовик")
+        : null,
+      project.archived ? h("span", { class: "status skipped" }, "в архиве") : null,
+      running
+        ? null
+        : h("button", { type: "button", class: "link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: cloneProject }, "Копия выпуска"),
+      running
+        ? null
+        : h(
+            "button",
+            { type: "button", class: "link", onclick: async () => (await act("archive", { archived: !project.archived })) && loadProjects() },
+            project.archived ? "Вернуть из архива" : "В архив",
+          ),
       h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
     ),
     h(
@@ -863,6 +976,7 @@ function show(project) {
         h("span", { class: "hint" }, "Изменённые настройки сбросят только затронутые шаги."),
       ),
     ),
+    check ? h("div", { class: "panel" }, check, longTextActions(project)) : null,
     h("div", { class: "steps" }, ...project.steps.filter((s) => !HIDDEN_STEPS[project.scenario]?.has(s.id)).map(renderStep)),
     h("div", { class: "panel" }, logBlock(project.log, "Журнал выпуска") || h("p", { class: "muted small" }, "Журнал пуст.")),
   );
@@ -899,6 +1013,8 @@ async function init() {
   state.config = await api("GET", `${API}/config`);
   renderCreate();
   $("create").addEventListener("submit", create);
+  $("create").addEventListener("input", refreshCreateCheck);
+  $("create").addEventListener("change", refreshCreateCheck);
   await loadProjects();
   const wanted = new URLSearchParams(location.search).get("project");
   const first = wanted || state.projects[0]?.id;

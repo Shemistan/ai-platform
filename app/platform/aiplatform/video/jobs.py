@@ -13,7 +13,7 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
-from aiplatform.core import runner
+from aiplatform.core import cleanup, runner
 from aiplatform.core.gate import Gate
 from aiplatform.core.uploads import UploadStore
 from aiplatform.video import living, ltx, models, timeline, wan
@@ -55,6 +55,15 @@ class JobManager:
         with self._lock:
             job = self._jobs.get(job_id)
             return self._view(job) if job else None
+
+    def forget(self, job_id: str) -> int:
+        """Уборка: удалить завершённую задачу из истории и с диска; идущую — нельзя. Возвращает байты."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] in ACTIVE:
+                return 0
+            del self._jobs[job_id]
+        return cleanup.remove_tree(self._dir(job_id))
 
     def list(self) -> list[dict]:
         with self._lock:

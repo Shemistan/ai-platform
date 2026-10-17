@@ -1,8 +1,9 @@
 """Общие настройки платформы: <data>/settings.json, правятся во вкладке «Настройки».
 
-Пока в них одно — что выключено: модели фото и видео, движки озвучки и
-отдельные голоса. Выключенное пропадает из выбора во всех вкладках и
-сценариях и не принимается в запросах. Файл читается при каждом обращении
+В них: что выключено (модели фото и видео, движки озвучки и отдельные
+голоса — выключенное пропадает из выбора во всех вкладках и сценариях и не
+принимается в запросах), расписание дайджеста, уведомления, обновление
+отклика каналов и уборка старых данных. Файл читается при каждом обращении
 (с кэшем по mtime), поэтому ручная правка подхватывается без перезапуска.
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -29,8 +31,28 @@ def at(data_dir: Path) -> Settings:
         return store
 
 
+DIGEST_DAYS = ("yesterday", "today")  # дайджест по расписанию — за вчера или за сегодня
+_TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+CLEANUP_DAYS = (7, 14, 30, 60, 90)
+
+
 def _empty() -> dict:
-    return {"disabled": {**{kind: [] for kind in KINDS}, "voices": {}}}
+    return {
+        "disabled": {**{kind: [] for kind in KINDS}, "voices": {}},
+        "schedule": {"digest": {"enabled": False, "time": "07:00", "day": "yesterday"}},
+        "notify": {"enabled": False},
+        "stats": {"auto": True},
+        "cleanup": {"auto": False, "days": 30},
+    }
+
+
+def _flag(value: object, default: bool) -> bool:
+    return value if isinstance(value, bool) else default
+
+
+def _section(raw: object, name: str) -> dict:
+    value = raw.get(name) if isinstance(raw, dict) else None
+    return value if isinstance(value, dict) else {}
 
 
 def _strings(value: object) -> list[str]:
@@ -40,6 +62,19 @@ def _strings(value: object) -> list[str]:
 def normalize(raw: object) -> dict:
     """Чужие ключи и мусор отбрасываются: битый файл не роняет платформу."""
     out = _empty()
+    digest = _section(_section(raw, "schedule"), "digest")
+    plan = out["schedule"]["digest"]
+    plan["enabled"] = _flag(digest.get("enabled"), False)
+    if isinstance(digest.get("time"), str) and _TIME.match(digest["time"]):
+        plan["time"] = digest["time"]
+    if digest.get("day") in DIGEST_DAYS:
+        plan["day"] = digest["day"]
+    out["notify"]["enabled"] = _flag(_section(raw, "notify").get("enabled"), False)
+    out["stats"]["auto"] = _flag(_section(raw, "stats").get("auto"), True)
+    cleanup = _section(raw, "cleanup")
+    out["cleanup"]["auto"] = _flag(cleanup.get("auto"), False)
+    if cleanup.get("days") in CLEANUP_DAYS:
+        out["cleanup"]["days"] = cleanup["days"]
     disabled = raw.get("disabled") if isinstance(raw, dict) else None
     if not isinstance(disabled, dict):
         return out

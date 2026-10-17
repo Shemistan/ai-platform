@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import shutil
@@ -34,7 +35,7 @@ from pathlib import Path
 
 from aiplatform.core import media
 from aiplatform.core.runner import Canceled
-from aiplatform.studio import news, prompts, publish, render, slides
+from aiplatform.studio import cache, news, prompts, publish, render, slides
 from aiplatform.studio.config import StudioConfig
 from aiplatform.studio.llm import StudioError, complete, extract_json, plain
 from aiplatform.studio.pipeline import Skip, StepContext, Waiting
@@ -67,6 +68,7 @@ MAX_CLIPS = 3  # роликов на выпуск: ключевые момент
 UPSCALE_TARGETS = ("2k", "4k")
 TEMPOS = (0.75, 1.0, 1.25, 1.5, 1.75, 2.0)  # скорость озвучки в видео, как DOWNLOAD_TEMPOS у narrator
 SHORT_WORDS = 140
+DRAFT_SCALE = 0.5  # черновик — половина кадра
 POLL_S = 0.3
 
 
@@ -77,6 +79,7 @@ class Services:
     audio: object  # audio.jobs.AudioJobs: create / wait / audio_path
     video: object  # video.jobs.JobManager: create / get / cancel / video_path
     renderer: Renderer
+    cache: cache.MediaCache  # готовые картинки, ролики и озвучка по входам генерации
 
 
 def services(ctx: StepContext) -> Services:
@@ -126,16 +129,30 @@ def wait_job(ctx: StepContext, tab: str, jobs: object, job: dict, what: str) -> 
     return current
 
 
-def generate_image(ctx: StepContext, prompt: str, target: Path, what: str, size: str = IMAGE_SIZE) -> str:
-    """Картинка во вкладке «Фото» (и увеличение, если включено). Возвращает id исходной задачи."""
+def from_cache(ctx: StepContext, entry: str, target: Path, what: str) -> bool:
+    """Готовый файл с теми же входами — из кэша. «Перезапустить шаг» кэш не читает: просят новый вариант."""
+    if ctx.state.get("fresh") or not services(ctx).cache.take(entry, target):
+        return False
+    ctx.log(f"{what}: из кэша")
+    return True
+
+
+def generate_image(ctx: StepContext, prompt: str, target: Path, what: str, size: str = IMAGE_SIZE) -> str | None:
+    """Картинка во вкладке «Фото» (и увеличение, если включено). Возвращает id исходной задачи;
+    None — картинка из кэша, задачи не было."""
     svc = services(ctx)
-    payload = {"mode": "txt2img", "prompt": prompt, "size": size, "model": ctx.settings["image_model"]}
+    model, upscale = ctx.settings["image_model"], ctx.settings.get("upscale_images") or "none"
+    entry = cache.entry_id("image", prompt=prompt, model=model, size=size, upscale=upscale)
+    if from_cache(ctx, entry, target, what):
+        return None
+    payload = {"mode": "txt2img", "prompt": prompt, "size": size, "model": model}
     try:
         job = svc.photo.create(payload)
     except ValueError as exc:
         raise StudioError(f"{what}: {exc}") from exc
     done = wait_job(ctx, "photo", svc.photo, job, what)
     finish_image(ctx, done["id"], target, what)
+    svc.cache.put(entry, target)
     return done["id"]
 
 
@@ -167,6 +184,9 @@ def generate_clip(ctx: StepContext, prompt: str, target: Path, what: str) -> Pat
         "model": ctx.settings["video_model"],
         "audio": False,  # звук ролика всё равно не идёт в видео: под слайдом — озвучка
     }
+    entry = cache.entry_id("clip", **{k: payload[k] for k in ("prompt", "duration_s", "preset", "model")})
+    if from_cache(ctx, entry, target, what):
+        return target
     try:
         job = svc.video.create(payload)
     except ValueError as exc:
@@ -177,6 +197,7 @@ def generate_clip(ctx: StepContext, prompt: str, target: Path, what: str) -> Pat
         raise StudioError(f"{what}: mp4 не найден.")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
+    svc.cache.put(entry, target)
     return target
 
 
@@ -186,6 +207,9 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
     payload = {"text": text, "engine": settings["engine"], "voice": settings.get("voice") or None}
     if settings.get("speed"):
         payload["speed"] = settings["speed"]
+    entry = cache.entry_id("voice", **payload)
+    if from_cache(ctx, entry, target, what):
+        return target
     try:
         job = svc.audio.create(payload)
     except ValueError as exc:
@@ -196,6 +220,7 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
         raise StudioError(f"{what}: mp3 не найден.")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
+    svc.cache.put(entry, target)
     return target
 
 
@@ -490,6 +515,8 @@ def step_images(ctx: StepContext) -> None:
     no_slides(ctx)
     if not ctx.settings["draw_images"]:
         raise Skip("Картинки выключены: фон слайдов — градиент.")
+    if ctx.settings.get("draft"):
+        raise Skip("Черновик: без картинок — «Сделать чистовик» нарисует их.")
     _, plan = load_plan(ctx)
     todo = media_prompts(IMAGES, plan)
     folder = ctx.path(IMAGES)
@@ -546,6 +573,8 @@ def step_clips(ctx: StepContext) -> None:
     no_slides(ctx)
     if not ctx.settings.get("clips"):
         raise Skip("Ролики выключены: фон слайдов — картинки с медленным наездом.")
+    if ctx.settings.get("draft"):
+        raise Skip("Черновик: без роликов — «Сделать чистовик» сделает их.")
     _, plan = load_plan(ctx)
     todo = media_prompts(CLIPS, plan)
     folder = ctx.path(CLIPS)
@@ -651,15 +680,22 @@ def render_video(
     marked = [n for n, found in enumerate(notes or [], start=1) if found]
     if marked:
         ctx.log(f"пометки о запрещённых организациях: слайды {', '.join(map(str, marked))}")
+    draft = bool(settings.get("draft"))
     scene_list = scenes(
-        ctx.dir, plan, durations, cycle, images=settings["draw_images"], clips=bool(settings.get("clips")), notes=notes
+        ctx.dir,
+        plan,
+        durations,
+        cycle,
+        images=settings["draw_images"] and not draft,
+        clips=bool(settings.get("clips")) and not draft,
+        notes=notes,
     )
 
     def on_progress(done: int, total: int) -> None:
         ctx.progress(f"Кадры: {done} из {total}", 90.0 * done / total)
 
     ctx.progress("Рисую кадры…", 0.0)
-    svc.renderer.build(
+    renderer(ctx).build(
         poster=poster if intro else None,
         scenes=scene_list,
         audio=audio,
@@ -678,6 +714,13 @@ def render_video(
         thumb.unlink(missing_ok=True)
     size = "×".join(map(str, render.size_of(orientation)))
     ctx.log(f"{out.name}: {audio_s:.0f} с, {len(scene_list)} слайдов, кадр {size}")
+    ctx.remember(media_s=round(audio_s, 1))  # для оценки времени следующих сборок
+
+
+def renderer(ctx: StepContext) -> Renderer:
+    """Черновик собирается в половинном кадре: быстро посмотреть структуру и ритм."""
+    base = services(ctx).renderer
+    return dataclasses.replace(base, scale=base.scale * DRAFT_SCALE) if ctx.settings.get("draft") else base
 
 
 def paced(ctx: StepContext, audio: Path) -> Path:
@@ -722,7 +765,7 @@ def render_still(ctx: StepContext) -> None:
     out = ctx.path(VIDEO)
     ctx.progress("Собираю видео: постер под звук…", 10.0)
     orientation = video_frame(ctx, poster)
-    svc.renderer.still(
+    renderer(ctx).still(
         poster=poster, audio=audio, audio_s=audio_s, out=out, orientation=orientation, cancel=ctx.cancel, branding=brand
     )
     cover, thumb = covers(out)
@@ -807,6 +850,23 @@ def step_publish(ctx: StepContext) -> None:
     post = ctx.read(POST)
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
+    # Сначала все каналы: что не уйдёт — видно сразу, и ни один канал не получит выпуск наполовину.
+    problems = []
+    photo_post = ctx.settings.get("post_format") == "photo"
+    for channel_id in chosen:
+        channel = channels.get(channel_id)
+        if channel is None:
+            problems.append(f"канала {channel_id} нет в {svc.config.channels_file.name}")
+            continue
+        if channel.type == publish.TELEGRAM and channel.problem():
+            problems.append(f"{channel.label}: {channel.problem()}")
+        elif not (channel.type == publish.TELEGRAM and photo_post):
+            video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
+            if not video.is_file():
+                hint = "включи «Шортс» и собери его" if channel.format == VERTICAL else "собери видео"
+                problems.append(f"{channel.label}: нет видео — {hint}")
+    if problems:
+        raise StudioError("Ничего не отправлено: " + "; ".join(problems) + ".")
     results = []
     for n, channel_id in enumerate(chosen, start=1):
         channel = channels.get(channel_id)
@@ -819,7 +879,8 @@ def step_publish(ctx: StepContext) -> None:
             continue
         if channel.type == publish.TELEGRAM and ctx.settings.get("post_format") == "photo":
             ctx.progress(f"{channel.label} ({n} из {len(chosen)})", 100.0 * (n - 1) / len(chosen))
-            results.append(publish_photo(ctx, channel, title, post) | {"label": channel.label, "sent": time.time()})
+            result = publish_photo(ctx, channel, title, post)
+            results.append(result | {"label": channel.label, "sent": time.time(), **audience(channel)})
             ctx.log(f"{channel.label}: {results[-1]['message']}")
             continue
         video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
@@ -842,11 +903,16 @@ def step_publish(ctx: StepContext) -> None:
             thumb=thumb if thumb.is_file() else None,
         )
         ctx.log(f"{channel.label}: {result['message']}")
-        sent = {"sent": time.time()} if channel.type == publish.TELEGRAM else {}
+        sent = {"sent": time.time(), **audience(channel)} if channel.type == publish.TELEGRAM else {}
         results.append(result | {"label": channel.label} | sent)
     done = {r["channel"] for r in results}
     kept = [r for r in read_published(ctx) if r["channel"] not in done]  # прошлые отправки в другие каналы
     ctx.write(PUBLISHED, json.dumps(results + kept, ensure_ascii=False, indent=2) + "\n")
+
+
+def audience(channel: publish.Channel) -> dict:
+    """Подписчики канала в момент публикации — от них считается прирост в «Что работает»."""
+    return {"members_at_publish": publish.members(channel)}
 
 
 def publish_photo(ctx: StepContext, channel: publish.Channel, title: str, post: str) -> dict:

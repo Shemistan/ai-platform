@@ -15,10 +15,13 @@ _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
 class HttpError(Exception):
-    def __init__(self, status: HTTPStatus, message: str) -> None:
+    """extra — дополнительные поля ответа рядом с error (например, existing у дубликата)."""
+
+    def __init__(self, status: HTTPStatus, message: str, extra: dict | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
+        self.extra = extra or {}
 
 
 def not_found(message: str = "Нет такого адреса.") -> HttpError:

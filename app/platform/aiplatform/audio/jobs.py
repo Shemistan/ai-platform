@@ -15,7 +15,7 @@ from pathlib import Path
 
 from aiplatform.audio import voices
 from aiplatform.audio.config import AudioConfig
-from aiplatform.core import media, runner
+from aiplatform.core import cleanup, media, runner
 from aiplatform.core.gate import Gate
 from aiplatform.core.narrator import INSTALL_HINT
 
@@ -177,6 +177,15 @@ class AudioJobs:
         with self._lock:
             job = self._jobs.get(job_id)
             return self._view(job) if job else None
+
+    def forget(self, job_id: str) -> int:
+        """Уборка: удалить завершённую задачу из истории и с диска; идущую — нельзя. Возвращает байты."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] in ACTIVE:
+                return 0
+            del self._jobs[job_id]
+        return cleanup.remove_tree(self._dir(job_id))
 
     def list(self) -> list[dict]:
         with self._lock:

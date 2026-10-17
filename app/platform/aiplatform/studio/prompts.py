@@ -5,7 +5,7 @@ from __future__ import annotations
 from aiplatform.studio import slides
 
 TASK = "### task: "
-POSTER, PLAN, SHORT = "poster", "plan", "short"
+POSTER, PLAN, SHORT, SUMMARY = "poster", "plan", "short", "summary"
 MAX_TEXT_CHARS = 60_000  # длиннее — обрезаем: модели хватит, а CLI не захлебнётся
 
 
@@ -135,6 +135,22 @@ Reels) по тексту ниже: 3–5 смысловых частей, все
 ```json
 {{"beats": [{{"title": "…", "text": "…"}}]}}
 ```
+
+Название: {title}
+
+Текст:
+{_clip(text)}
+"""
+
+
+def summary(text: str, title: str, words: int) -> str:
+    """Выжимка длинной статьи для отдельного видео на 5–8 минут."""
+    return f"""{TASK}{SUMMARY}
+Сделай выжимку статьи для отдельного видео на 5–8 минут: около {words} слов
+текста для озвучки по-русски. Сохрани главную мысль, ключевые факты, цифры и
+выводы, порядок изложения — как в статье. Пиши разговорно, абзацами по 2–4
+фразы, без списков, ссылок, кода и markdown; начни с того, почему тема важна,
+закончи выводом. Ответь только текстом выжимки.
 
 Название: {title}
 

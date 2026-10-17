@@ -13,7 +13,7 @@ import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from aiplatform.core import runner
+from aiplatform.core import cleanup, runner
 from aiplatform.core.gate import Gate
 from aiplatform.core.uploads import UploadStore
 from aiplatform.photo import flux2, mflux, models, params, upscale
@@ -62,6 +62,15 @@ class JobManager:
             jobs = sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)
             # Лог отдаётся только в карточке одной задачи: список опрашивается раз в секунду.
             return [{k: v for k, v in self._view(j).items() if k != "log"} for j in jobs]
+
+    def forget(self, job_id: str) -> int:
+        """Уборка: удалить завершённую задачу из истории и с диска; идущую — нельзя. Возвращает байты."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] in ACTIVE:
+                return 0
+            del self._jobs[job_id]
+        return cleanup.remove_tree(self._dir(job_id))
 
     def image_path(self, job_id: str) -> Path | None:
         with self._lock:
