@@ -14,7 +14,10 @@
   --bg: light-dark(#f4f3ef, #131416);
   --panel: light-dark(#ffffff, #1c1e21);
   --sunken: light-dark(#eceae4, #25282c);
-  --line: light-dark(#d9d6cd, #34383d);
+  --line: light-dark(#d9d6cd, #34383d);           /* только разделители и рамки панелей */
+  /* Рамка полей ввода и кнопок-контуров (WCAG 1.4.11, ≥3:1):
+     светлая 3.86 к --panel, 3.48 к --bg; тёмная 3.71 к --panel, 4.09 к --bg. */
+  --border-strong: light-dark(#86817a, #72777f);
   --text: light-dark(#1c1b18, #ecebe7);
   --muted: light-dark(#6b675e, #9b9a94);
 

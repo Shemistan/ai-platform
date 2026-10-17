@@ -19,7 +19,7 @@ async function toggle(body) {
   } catch (err) {
     showError(err.message);
     load();
-loadCleanup();
+    loadCleanup();
   }
 }
 
@@ -88,7 +88,7 @@ async function section(name, body) {
   } catch (err) {
     showError(err.message);
     load();
-loadCleanup();
+    loadCleanup();
   }
 }
 

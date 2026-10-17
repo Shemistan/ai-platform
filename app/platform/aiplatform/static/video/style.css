@@ -101,7 +101,7 @@
   height: 26px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: var(--panel);
   cursor: pointer;

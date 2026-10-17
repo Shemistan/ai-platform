@@ -130,7 +130,7 @@
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--panel);
   color: var(--text);
