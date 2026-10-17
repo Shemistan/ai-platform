@@ -1,0 +1,166 @@
+# mflux-generate-ideogram4: --help через tools/stub_mlx_help.py: mlx без GPU не импортируется; снято 2026-10-17 (make contracts)
+usage: mflux-generate-ideogram4 [-h] [--verbose]
+                                [--battery-percentage-stop-limit BATTERY_PERCENTAGE_STOP_LIMIT]
+                                [--low-ram]
+                                [--mlx-cache-limit-gb MLX_CACHE_LIMIT_GB]
+                                [--vae-tiling] [--vae-tile-size VAE_TILE_SIZE]
+                                [--model MODEL] [--base-model MODEL]
+                                [--quantize {3,5,4,6,8}]
+                                [--lora-style {couple,font,home,identity,illustration,portrait,ppt,sandstorm,sparklers,storyboard}]
+                                [--lora PATH [SCALE ...]]
+                                [--lora-paths [LORA_PATHS ...]]
+                                [--lora-scales [LORA_SCALES ...]]
+                                [--bake-lora | --no-bake-lora]
+                                [--prompt PROMPT | --prompt-file PROMPT_FILE]
+                                [--negative-prompt NEGATIVE_PROMPT]
+                                [--seed SEED [SEED ...]]
+                                [--auto-seeds AUTO_SEEDS]
+                                [--scheduler SCHEDULER] [--height HEIGHT]
+                                [--width WIDTH] [--steps STEPS]
+                                [--guidance GUIDANCE]
+                                [--config-from-conf CONFIG_FROM_METADATA]
+                                [--pid-decode | --no-pid-decode]
+                                [--pid-degrade-sigma PID_DEGRADE_SIGMA]
+                                [--make-conf] [--no-exif] [--output OUTPUT]
+                                [--stepwise-image-output-dir STEPWISE_IMAGE_OUTPUT_DIR]
+                                [--preset {V4_DEFAULT_20,V4_QUALITY_48,V4_TURBO_12}]
+                                [--strict-caption-validation]
+                                [--cfg-end CFG_END]
+
+Generate an image using Ideogram 4.
+
+options:
+  -h, --help            show this help message and exit
+  --verbose, -v         Enable verbose (debug-level) logging.
+  --battery-percentage-stop-limit BATTERY_PERCENTAGE_STOP_LIMIT, -B BATTERY_PERCENTAGE_STOP_LIMIT
+                        On Macs powered by battery, stop image generation when
+                        battery reaches this percentage. Default: 5
+  --low-ram             Enable low-RAM mode to reduce memory usage (may impact
+                        performance).
+  --mlx-cache-limit-gb MLX_CACHE_LIMIT_GB
+                        Limit MLX cache size in GB without enabling full low-
+                        RAM mode (e.g. 8 or 16).
+  --vae-tiling          Decode the image in overlapping tiles to reduce peak
+                        memory during the VAE decode phase, without enabling
+                        full low-RAM mode. Implied by --low-ram.
+  --vae-tile-size VAE_TILE_SIZE
+                        Tile size in pixels for tiled VAE decoding (default:
+                        512, minimum: 128, multiple of 16). Smaller tiles
+                        (e.g. 256) further reduce peak memory. Implies --vae-
+                        tiling.
+  --model MODEL, -m MODEL
+                        The model to use: a built-in model name (krea-2,
+                        krea-2-raw, dev, schnell, dev-kontext, dev-fill, dev-
+                        redux, dev-depth, dev-controlnet-canny, schnell-
+                        controlnet-canny, dev-controlnet-upscaler, dev-fill-
+                        catvton, krea-dev, flux2-klein-4b, flux2-klein-9b,
+                        flux2-klein-9b-kv, flux2-klein-base-4b, flux2-klein-
+                        base-9b, qwen-image, qwen-image-edit, qwen-image-
+                        edit-2511, fibo, fibo-lite, fibo-edit, fibo-edit-rmbg,
+                        z-image, ming-image-design, lens-turbo, z-image-turbo-
+                        controlnet-union-2.1, z-image-turbo, seedvr2-3b,
+                        ernie-image, ernie-image-turbo, seedvr2-7b,
+                        ideogram-4-fp8, boogu-image-turbo, qwen-image-2.1,
+                        qwen-image-2.1-controlnet-union) or any of its
+                        aliases, a HuggingFace repo org/model, or a local
+                        path.
+  --base-model MODEL    When using a third-party HuggingFace model or local
+                        path, explicitly name the built-in model it is based
+                        on (e.g. dev, schnell, qwen-image).
+  --quantize {3,5,4,6,8}, -q {3,5,4,6,8}
+                        Quantize the model (3 or 5 or 4 or 6 or 8, Default is
+                        None)
+  --lora-paths [LORA_PATHS ...]
+                        [DEPRECATED: use --lora] LoRA paths: local files,
+                        HuggingFace repos (org/model), or collection format
+                        (repo:filename.safetensors). Pass it with no values to
+                        run without the LoRAs a --config-from-conf sidecar
+                        would otherwise restore.
+  --lora-scales [LORA_SCALES ...]
+                        [DEPRECATED: use --lora] Scaling factor to adjust the
+                        impact of LoRA weights on the model. A value of 1.0
+                        applies the LoRA weights as they are.
+  --prompt PROMPT       The textual description of the image to generate.
+  --prompt-file PROMPT_FILE
+                        Path to a file containing the prompt text. The file
+                        will be re-read before each generation, allowing you
+                        to edit the prompt between iterations when using
+                        multiple seeds without restarting the program.
+  --negative-prompt NEGATIVE_PROMPT
+                        The negative prompt to guide what the model should not
+                        generate.
+  --seed SEED [SEED ...]
+                        Specify 1+ Entropy Seeds (Default is 1 time-based
+                        random-seed)
+  --auto-seeds AUTO_SEEDS
+                        Auto generate N Entropy Seeds (random ints between 0
+                        and 1 billion
+  --scheduler SCHEDULER
+                        Choose from implemented schedulers (linear only for
+                        now). Or bring your own:
+                        'your_package.some_module.FooScheduler'
+  --height HEIGHT       Image height (Default is 1024)
+  --width WIDTH         Image width (Default is 1024)
+  --steps STEPS         Inference Steps
+  --guidance GUIDANCE   Guidance Scale (Default varies by tool: 3.5 for most,
+                        30 for fill tools, 10 for depth)
+  --config-from-conf CONFIG_FROM_METADATA, --config-from-metadata CONFIG_FROM_METADATA, -C CONFIG_FROM_METADATA
+                        Use the parameters from a JSON sidecar that --make-
+                        conf wrote. Arguments that you give on the command
+                        line override the sidecar values.
+  --pid-decode, --no-pid-decode
+                        Decode with NVIDIA PiD's pixel-diffusion super-
+                        resolving decoder instead of the standard VAE. First
+                        run downloads two separate Hugging Face checkpoints
+                        (~8GB total); google/gemma-2-2b-it is gated and
+                        requires accepting its license + `hf auth login`.
+  --pid-degrade-sigma PID_DEGRADE_SIGMA
+                        With --pid-decode, deliberately noise the latent to
+                        this flow-matching sigma before decoding (0.0-0.8).
+                        PiD's LQ gate was distilled on latents noised at
+                        sigma~U[0.0, 0.8]; a fully clean latent (the default,
+                        sigma=0.0) is the input it saw least during training,
+                        which can show up as over-textured detail invented on
+                        smooth areas like skin. Try 0.2 if you see that.
+                        Ignored without --pid-decode.
+  --make-conf, --metadata
+                        Write the generation parameters to a JSON sidecar
+                        (<output>.metadata.json). Use it again with --config-
+                        from-conf/-C.
+  --no-exif, --no-metadata
+                        Do not embed generation metadata (EXIF UserComment and
+                        friends) in the output image. Independent of --make-
+                        conf, which writes the JSON sidecar.
+  --output OUTPUT       The filename for the output image. Default is
+                        "image.png".
+  --stepwise-image-output-dir STEPWISE_IMAGE_OUTPUT_DIR
+                        [EXPERIMENTAL] Output dir to write step-wise images
+                        and their final composite image to. This feature may
+                        change in future versions.
+  --preset {V4_DEFAULT_20,V4_QUALITY_48,V4_TURBO_12}
+                        Ideogram 4 sampler preset (step count, guidance
+                        schedule, and noise schedule). Default is
+                        V4_DEFAULT_20.
+  --strict-caption-validation
+                        Fail when an Ideogram 4 JSON caption has schema
+                        warnings.
+  --cfg-end CFG_END     Fraction of steps (0-1) that run CFG; the remaining
+                        steps run cond-only (guidance 1.0, skipping the
+                        unconditional forward). Lower = faster. Default: full
+                        CFG.
+
+LoRA configuration:
+  --lora-style {couple,font,home,identity,illustration,portrait,ppt,sandstorm,sparklers,storyboard}
+                        Style of the LoRA to use (e.g., 'storyboard' for film
+                        storyboard style)
+  --lora PATH [SCALE ...]
+                        Add a LoRA as an atomic PATH with optional SCALE
+                        (default 1.0). Repeatable: --lora A.safetensors 0.7
+                        --lora B.safetensors. PATH accepts local files,
+                        HuggingFace repos (org/model), or collection format
+                        (repo:filename.safetensors). Preferred over --lora-
+                        paths/--lora-scales.
+  --bake-lora, --no-bake-lora
+                        Merge LoRA/LoKr deltas into base weights after load
+                        (default: on). Use --no-bake-lora to keep runtime
+                        adapters.

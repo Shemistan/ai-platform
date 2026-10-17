@@ -1,0 +1,67 @@
+# flux2-i2i: --help; снято 2026-10-17 (make contracts)
+OVERVIEW: Transform an image using a text prompt (image-to-image)
+
+USAGE: flux2 i2i [<options>] <prompt> --images <images> ...
+
+ARGUMENTS:
+  <prompt>                Text prompt describing the desired output
+
+OPTIONS:
+  -i, --images <images>   Reference image for visual conditioning
+  --interpret <interpret> Image to analyze with VLM and inject description into
+                          prompt (not used as visual reference)
+  -o, --output <output>   Output file path (default: output.png)
+  -s, --steps <steps>     Number of effective denoising steps (default: 28 for
+                          Dev, 4 for Klein)
+  -g, --guidance <guidance>
+                          Guidance scale (default: 4.0 for Dev, 1.0 for Klein)
+  --seed <seed>           Random seed for reproducibility
+  -w, --width <width>     Output image width (default: from first reference
+                          image)
+  -h, --height <height>   Output image height (default: from first reference
+                          image)
+  --max-reference-megapixels <max-reference-megapixels>
+                          Max VAE encode budget per reference image, in
+                          megapixels (1 MP = 1024×1024; default 1.0). Raise for
+                          higher-fidelity conditioning at the cost of memory;
+                          e.g. 4.0 ≈ 2048².
+  --upsample-prompt       Enhance prompt with visual details using Mistral
+                          before encoding
+  --checkpoint <checkpoint>
+                          Save checkpoint image every N steps
+  --profile               Show detailed performance profiling
+  --beacon                Advertise activity to external monitors (writes a
+                          transient manifest in ~/Library/Application
+                          Support/ai-runtime-beacons/)
+  --verbose               Show detailed logs (model loading, config, VLM
+                          interpretation)
+  --model <model>         Model variant: dev (32B), klein-4b (4B, Apache 2.0),
+                          klein-9b (9B), klein-9b-kv (9B, KV-cached I2I)
+                          (default: dev)
+  --text-quant <text-quant>
+                          Text encoder quantization: bf16, 8bit, 6bit, 4bit
+                          (default: 8bit)
+  --transformer-quant <transformer-quant>
+                          Transformer quantization: bf16, qint8, int4, mxfp8,
+                          mxfp4, nvfp4 (default: qint8)
+  --lora <lora>           LoRA adapter file (.safetensors) for style or
+                          capability adaptation
+  --lora-scale <lora-scale>
+                          LoRA scale factor (default: 1.0) (default: 1.0)
+  --lora-config-path <lora-config-path>
+                          LoRA config JSON file (alternative to --lora,
+                          includes scheduler overrides)
+  --vae-variant <vae-variant>
+                          VAE variant: small-decoder (default, distilled, ~1.4x
+                          faster), standard (default: small-decoder)
+  --memory-profile <memory-profile>
+                          Memory profile: auto (default), conservative,
+                          balanced, performance (default: auto)
+  --hf-token <hf-token>   HuggingFace token for gated models (or set HF_TOKEN
+                          env var)
+  --models-dir <models-dir>
+                          Custom models directory (for sandboxed apps or custom
+                          storage)
+  --version               Show the version.
+  -h, --help              Show help information.
+
