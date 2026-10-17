@@ -248,7 +248,7 @@ class ModelsTest(unittest.TestCase):
             config = platform_config.load({"AIP_DATA_DIR": tmp, "AIP_MODELS_DIR": tmp})
             app = server_module.App(config, video_only)
             self.addCleanup(app.close)
-            with self.assertRaisesRegex(timeline.ValidationError, r"setup-model\.sh ltx-2\.5-q4"):
+            with self.assertRaisesRegex(timeline.ValidationError, r"make models M=ltx-2\.5-q4"):
                 app.modules["video"].jobs.submit(timeline.build_spec({"prompt": "кот", "model": "ltx-2.5-q4"}))
 
 

@@ -50,7 +50,7 @@ class SpecTest(unittest.TestCase):
         without_25 = [m for m in available if m.id != "ltx-2.5-q4"]
         self.assertEqual(living.pick_model(without_25).id, "ltx-2.3-q4", "нет 2.5 — первая установленная LTX")
         wan_only = [m for m in available if m.pipeline == "wan"]
-        with self.assertRaisesRegex(ValidationError, r"setup-model\.sh"):
+        with self.assertRaisesRegex(ValidationError, r"make models M="):
             living.pick_model(wan_only)
         self.assertIsNone(living.describe(wan_only)["default_model"])
         nothing = load({"AIP_MODELS_DIR": "/nonexistent-models"}).models()
@@ -62,7 +62,7 @@ class SpecTest(unittest.TestCase):
         for model_id, reason in (("нет такой", "Неизвестная"), ("wan-2.2-t2v-q4", "не умеет"), (5, "строкой")):
             with self.assertRaisesRegex(ValidationError, reason):
                 living.pick_model(available, model_id)
-        with self.assertRaisesRegex(ValidationError, r"setup-model\.sh ltx-2\.5-q4"):
+        with self.assertRaisesRegex(ValidationError, r"make models M=ltx-2\.5-q4"):
             living.pick_model(load({"AIP_MODELS_DIR": "/nonexistent-models"}).models(), "ltx-2.5-q4")
 
 
