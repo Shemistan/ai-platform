@@ -63,8 +63,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 /* --- Кнопка: один компонент .btn — вариант (--primary/--secondary/--ghost/--danger/--link)
    и размер (--sm/--md/--lg, по умолчанию md). Высота — от --control-h-*, а не от паддингов,
    поэтому кнопки одного размера одной высоты на всех вкладках.
-   .primary/.secondary/.link — старые имена тех же вариантов: ими ещё пользуются Студия и Выпуски. */
-.btn, .primary, .secondary {
+   .btn--link без .btn — ссылка внутри текста и <summary>: строчная, переносится как текст. */
+.btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -83,25 +83,25 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
   white-space: nowrap;
   cursor: pointer;
 }
-.btn--sm, .primary.small, .secondary.small { min-height: var(--control-h-sm); padding: 0 var(--sp-3); font-size: var(--fs-sm); }
+.btn--sm { min-height: var(--control-h-sm); padding: 0 var(--sp-3); font-size: var(--fs-sm); }
 .btn--lg { min-height: var(--control-h-lg); padding: 0 var(--sp-5); }
-.btn--primary, .primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.btn--primary:hover:not(:disabled), .primary:hover:not(:disabled) {
+.btn--primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn--primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 85%, var(--text));
   border-color: color-mix(in srgb, var(--accent) 85%, var(--text));
 }
-.btn--secondary, .secondary { background: var(--panel); border-color: var(--accent); color: var(--accent); }
-.btn--secondary:hover:not(:disabled), .secondary:hover:not(:disabled) { background: var(--info-bg); }
+.btn--secondary { background: var(--panel); border-color: var(--accent); color: var(--accent); }
+.btn--secondary:hover:not(:disabled) { background: var(--info-bg); }
 .btn--ghost { background: var(--panel); border-color: var(--border-strong); color: var(--text); font-weight: var(--fw-regular); }
 .btn--ghost:hover:not(:disabled) { background: var(--sunken); }
 .btn--danger { background: var(--panel); border-color: var(--danger); color: var(--danger); }
 .btn--danger:hover:not(:disabled) { background: var(--danger-bg); }
 /* Главная кнопка необратимого действия (подтверждение): сплошная красная. */
-:is(.btn--primary, .primary):is(.btn--danger, .danger) { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
-:is(.btn--primary, .primary):is(.btn--danger, .danger):hover:not(:disabled) {
+.btn--primary.btn--danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
+.btn--primary.btn--danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--danger) 85%, var(--text));
 }
-.btn--link, .link {
+.btn--link {
   min-height: 0;
   padding: 0;
   border: 0;
@@ -113,10 +113,10 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.btn--link:hover:not(:disabled), .link:hover:not(:disabled) { text-decoration-thickness: 2px; }
-:is(.btn--link, .link):is(.btn--danger, .danger) { color: var(--danger); }
-:is(.btn, .primary, .secondary, .link):disabled { opacity: 0.5; cursor: default; }
-:is(.btn, .primary, .secondary, .link):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn--link:hover:not(:disabled) { text-decoration-thickness: 2px; }
+.btn--link.btn--danger { color: var(--danger); }
+:is(.btn, .btn--link):disabled { opacity: 0.5; cursor: default; }
+:is(.btn, .btn--link):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* --- Переключатель-группа: один .segmented на aria-pressed (кнопки), aria-selected (вкладки)
    или радиокнопках (.segmented--radio). «Нажато» — один вид: заливка акцентом. */
