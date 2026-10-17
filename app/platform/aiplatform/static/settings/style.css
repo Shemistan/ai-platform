@@ -7,13 +7,6 @@
 .toggle-title { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; font-weight: var(--fw-semibold); }
 .toggle-name { cursor: pointer; }
 .toggle-row.off .toggle-name { color: var(--muted); }
-.voices { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
-.voices button {
-  font: inherit; font-size: var(--fs-sm); padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); cursor: pointer;
-  border: 1px solid var(--border-strong); background: transparent; color: var(--muted);
-}
-.voices button[aria-pressed="true"] { background: var(--info-bg); border-color: transparent; color: var(--accent); }
-.voices button:disabled { cursor: default; opacity: 0.5; }
 
 .settings-stack { display: grid; gap: var(--sp-3); }
 .inline-fields { display: flex; flex-wrap: wrap; gap: var(--sp-3); }

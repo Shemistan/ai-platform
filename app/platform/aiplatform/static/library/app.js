@@ -52,10 +52,10 @@ function renderStats() {
   const running = state.data.tasks.some((t) => isActive(t) && (t.kind === "render" || t.kind === "unsent"));
   fill(
     $("bulk"),
-    h("button", { type: "button", class: "primary", disabled: !waiting || running, onclick: busyClick(() => render(false), "bulk") }, waiting ? `Озвучить новые (${waiting})` : "Новых нет"),
-    h("button", { type: "button", class: "small-btn", disabled: running || !list.length, onclick: busyClick(() => render(true), "bulk") }, "Переозвучить все"),
-    h("button", { type: "button", class: "small-btn accent", disabled: !state.data.unsent || running, onclick: busyClick(() => bulkUnsent("send"), "bulk") }, `Отправить неотправленные (${state.data.unsent})`),
-    h("button", { type: "button", class: "small-btn", disabled: !state.data.unsent || running, onclick: busyClick(() => bulkUnsent("mark"), "bulk") }, "Считать отправленными"),
+    h("button", { type: "button", class: "btn btn--primary", disabled: !waiting || running, onclick: busyClick(() => render(false), "bulk") }, waiting ? `Озвучить новые (${waiting})` : "Новых нет"),
+    h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: running || !list.length, onclick: busyClick(() => render(true), "bulk") }, "Переозвучить все"),
+    h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: !state.data.unsent || running, onclick: busyClick(() => bulkUnsent("send"), "bulk") }, `Отправить неотправленные (${state.data.unsent})`),
+    h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: !state.data.unsent || running, onclick: busyClick(() => bulkUnsent("mark"), "bulk") }, "Считать отправленными"),
     h("span", { class: "hint" }, `Озвучка — движком «Аудио» по умолчанию (${defaultEngineLabel()}), с проверкой распознаванием и отправкой в канал статей.`),
   );
   const recent = state.data.tasks.filter((t) => isActive(t) || Date.now() / 1000 - (t.finished_at || 0) < 600).slice(0, 4);
@@ -231,7 +231,7 @@ function renderCard() {
   const send = h("input", { type: "checkbox" });
   const channel = h("select", { "aria-label": "Канал" }, h("option", { value: "" }, "канал статей (обычный)"), ...state.data.channels.map((name) => h("option", { value: name }, name)));
   const players = Object.entries(c.audio_urls || {}).map(([engine, url]) =>
-    h("div", { class: "field" }, h("div", { class: "field-head" }, h("span", { class: "field-label" }, engineLabel(engine)),h("a", { class: "link", href: `${url}?download=1` }, "Скачать mp3")), h("audio", { controls: true, preload: "none", src: url })),
+    h("div", { class: "field" }, h("div", { class: "field-head" }, h("span", { class: "field-label" }, engineLabel(engine)),h("a", { class: "btn btn--link", href: `${url}?download=1` }, "Скачать mp3")), h("audio", { controls: true, preload: "none", src: url })),
   );
 
   fill(
@@ -245,7 +245,7 @@ function renderCard() {
         { class: "toolbar" },
         h("span", { class: "muted small" }, shortDate(c.added)),
         chip(QUALITY[c.source_quality] || c.source_quality),
-        c.url ? h("a", { class: "link", href: c.url, target: "_blank", rel: "noopener" }, "оригинал ↗") : null,
+        c.url ? h("a", { class: "btn btn--link", href: c.url, target: "_blank", rel: "noopener" }, "оригинал ↗") : null,
       ),
       ...busy.map((t) => taskCard(t, { onCancel: cancelTask })),
       error,
@@ -258,9 +258,9 @@ function renderCard() {
         h(
           "div",
           { class: "toolbar" },
-          h("button", { type: "button", class: "secondary", disabled: locked, onclick: busyClick(save, `save:${c.id}`) }, "Сохранить"),
-          c.source ? h("button", { type: "button", class: "small-btn", disabled: locked, onclick: fromSource }, "Взять исходный текст") : null,
-          c.has_source ? h("button", { type: "button", class: "small-btn accent", disabled: locked, onclick: busyClick(run("prepare"), `act:${c.id}`) }, "Подготовить агентом") : null,
+          h("button", { type: "button", class: "btn btn--secondary", disabled: locked, onclick: busyClick(save, `save:${c.id}`) }, "Сохранить"),
+          c.source ? h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: locked, onclick: fromSource }, "Взять исходный текст") : null,
+          c.has_source ? h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: locked, onclick: busyClick(run("prepare"), `act:${c.id}`) }, "Подготовить агентом") : null,
         ),
         h("p", { class: "hint" }, "Агент пишет полный пересказ для уха по правилам озвучки и заполняет описание. Цифры и латиницу движок и так переведёт в произношение."),
         c.source ? h("details", { class: "inline" }, h("summary", {}, "Исходный текст (source.md)"), h("pre", { class: "preview-text" }, c.source)) : null,
@@ -275,7 +275,7 @@ function renderCard() {
         h(
           "div",
           { class: "toolbar" },
-          h("button", { type: "button", class: "primary", disabled: locked || !c.has_script || !summary.value.trim(), onclick: busyClick(() => run("synth", { ...value(), send: send.checked })(), `act:${c.id}`) }, c.has_audio ? "Переозвучить" : "Озвучить"),
+          h("button", { type: "button", class: "btn btn--primary", disabled: locked || !c.has_script || !summary.value.trim(), onclick: busyClick(() => run("synth", { ...value(), send: send.checked })(), `act:${c.id}`) }, c.has_audio ? "Переозвучить" : "Озвучить"),
           !summary.value.trim() && c.has_script ? h("span", { class: "hint warn" }, "Нужно описание — сохрани его выше.") : null,
         ),
       ),
@@ -286,7 +286,7 @@ function renderCard() {
           ? h("div", { class: "check-head" }, h("span", { class: `score ${c.check >= 85 ? "ok" : "warn"}` }, `${c.check}%`), h("span", { class: "muted" }, "совпадение по словам"))
           : h("p", { class: "hint" }, "Озвучка распознаётся обратно в текст: так видно, где модель исказила слова."),
         c.check_report ? h("details", { class: "inline" }, h("summary", {}, "Отчёт проверки"), h("pre", { class: "preview-text" }, c.check_report)) : null,
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: busyClick(run("verify"), `act:${c.id}`) }, "Проверить")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary", disabled: locked || !c.has_audio, onclick: busyClick(run("verify"), `act:${c.id}`) }, "Проверить")),
       ),
       section(
         4,
@@ -296,11 +296,11 @@ function renderCard() {
           "div",
           { class: "toolbar" },
           channel,
-          h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: busyClick(() => run("send", { channel: channel.value })(), `act:${c.id}`) }, "Отправить"),
-          c.sent ? h("button", { type: "button", class: "small-btn", disabled: locked, onclick: busyClick(sendAgain, `act:${c.id}`) }, "Отправить ещё раз") : null,
+          h("button", { type: "button", class: "btn btn--secondary", disabled: locked || !c.has_audio, onclick: busyClick(() => run("send", { channel: channel.value })(), `act:${c.id}`) }, "Отправить"),
+          c.sent ? h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: locked, onclick: busyClick(sendAgain, `act:${c.id}`) }, "Отправить ещё раз") : null,
         ),
         h("p", { class: "hint" }, "Уходит mp3 с описанием статьи. Уже отправленное «Отправить» не повторяет — для повтора есть «Отправить ещё раз»."),
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "small-btn accent", disabled: !c.has_script, onclick: busyClick(() => makeVideo(c, script.value)) }, "Сделать видео по статье →")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: !c.has_script, onclick: busyClick(() => makeVideo(c, script.value)) }, "Сделать видео по статье →")),
       ),
     ),
   );
