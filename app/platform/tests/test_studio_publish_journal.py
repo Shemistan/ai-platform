@@ -239,7 +239,9 @@ class HttpPostTest(unittest.TestCase):
             self.assertNotIsInstance(caught.exception, publish.Unknown)
         for exc in (TimeoutError("read timed out"), ConnectionResetError("reset")):
             with (
-                self.subTest(exc=exc),
+                # Имя, не объект: pytest-xdist пересылает параметры subTest между
+                # процессами, а TimeoutError не сериализуется (QA-028, CI).
+                self.subTest(exc=type(exc).__name__),
                 mock.patch("urllib.request.urlopen", side_effect=exc),
                 self.assertRaises(publish.Unknown),
             ):

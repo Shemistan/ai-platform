@@ -419,7 +419,7 @@ const KNOWN_ERRORS = [
     test: (err, text) => err?.data?.kind === "unavailable" || ENGINE_TEXT.test(text),
     engine: true,
     reason: "Движок narrator недоступен или устарел.",
-    help: "Что именно не так — в баннере вверху страницы; путь к движку — в «Настройках».",
+    help: "Что именно не так — в баннере вверху страницы. Путь к движку — AIP_NARRATOR_DIR в app/platform/local.mk (по умолчанию app/narrator); после правки перезапусти платформу.",
   },
   {
     test: (_err, text) => /unauthorized|invalid token|bot token|токен (не принят|неверный)|\b401\b/i.test(text),
@@ -459,7 +459,7 @@ export function errorState({ title = "Не удалось загрузить", e
     h("strong", { class: "error-title" }, title),
     note ? h("p", { class: "hint" }, note) : null,
     why ? h("p", {}, why) : null,
-    what || auto.engine ? h("p", { class: "hint" }, what || "", auto.engine ? [" ", h("a", { class: "btn btn--link", href: "/settings/" }, "Открыть «Настройки»")] : null) : null,
+    what ? h("p", { class: "hint" }, what) : null,
     onRetry ? h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: busyClick(onRetry) }, "Повторить")) : null,
     raw && raw !== why ? h("details", { class: "disclosure" }, h("summary", {}, "Подробности"), h("pre", { class: "log" }, raw)) : null,
   );
