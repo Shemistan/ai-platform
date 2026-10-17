@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import mimetypes
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, urlsplit
 
+from aiplatform import __version__
 from aiplatform import config as config_module
 from aiplatform.config import Config
 from aiplatform.core import media
@@ -83,6 +85,7 @@ def default_modules(ctx: Context) -> list[Module]:
 class App:
     def __init__(self, config: Config, modules: ModulesFactory = default_modules) -> None:
         self.config = config
+        self.started = time.monotonic()
         notifier = Notifier(config.data_dir, config_module.pick(config.env, "AIP_NOTIFY_CMD"), fake=config.fake)
         self.ctx = Context(config=config, gate=Gate(), uploads=UploadStore(config.uploads_dir), notifier=notifier)
         for module in modules(self.ctx):
@@ -104,7 +107,7 @@ class App:
             out.append("Не найден шрифт с кириллицей для слайдов — задай AIP_FONT=/путь/к/шрифту.ttf.")
         for module in self.modules.values():
             out.extend(module.problems())
-        return out
+        return list(dict.fromkeys(out))  # общий движок (narrator) жалуется из нескольких вкладок
 
     def describe(self) -> dict:
         return {
@@ -112,6 +115,15 @@ class App:
             "tabs": [{"id": m.prefix, "label": m.label} for m in self.modules.values()],
             "problems": self.problems(),
         }
+
+    def health(self) -> dict:
+        """Живость для launchd и внешнего чекера: без ffmpeg, narrator и сети — только память и диск."""
+        out = {"ok": True, "version": __version__, "uptime_s": int(time.monotonic() - self.started)}
+        scheduler = getattr(self.modules.get("studio"), "scheduler", None)
+        if scheduler is not None:  # чекеру: включено ли расписание и чем кончился последний запуск
+            plan = self.config.settings.load()["schedule"]["digest"]
+            out["schedule"] = {**plan, "last": scheduler.digest_run()}
+        return out
 
     def status(self) -> dict:
         out = {"gpu": self.ctx.gate.holder(), "waiting": self.ctx.gate.waiting()}
@@ -161,6 +173,8 @@ class Handler(BaseHTTPRequestHandler):
                     return req.send_json(self.app.describe())
                 case ("GET", ["status"]):
                     return req.send_json(self.app.status())
+                case ("GET", ["health"]):
+                    return req.send_json(self.app.health())
                 case (_, [prefix, *rest]) if prefix in self.app.modules:
                     req.sub = rest
                     return self.app.modules[prefix].handle(req)

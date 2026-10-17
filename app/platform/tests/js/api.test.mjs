@@ -25,7 +25,7 @@ test("сбой сети — kind network и «Сервис не отвечает
   const err = await api("GET", "/api/x").catch((e) => e);
   assert.ok(err instanceof ApiError);
   assert.equal(err.kind, "network");
-  assert.equal(err.message, "Сервис не отвечает.");
+  assert.match(err.message, /^Сервис не отвечает/);
 });
 
 test("зависший запрос — kind timeout через заданное время", async () => {

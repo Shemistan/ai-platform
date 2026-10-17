@@ -50,6 +50,64 @@ class NarratorTest(unittest.TestCase):
         self.assertFalse(broken.available())
         with self.assertRaisesRegex(narrator.NarratorError, "не найдена"):
             broken.bridge("engines")
+        narrator.reset_checks()
+        self.assertIn("не найдена", broken.check())
+
+
+def _script(folder: Path, body: str) -> Path:
+    path = folder / "narrate"
+    path.write_text("#!/bin/sh\n" + body)
+    path.chmod(0o755)
+    return path
+
+
+class CheckTest(unittest.TestCase):
+    """check(): старый движок без bridge, без bridge version, чужая версия моста."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        narrator.reset_checks()
+        self.addCleanup(narrator.reset_checks)
+
+    def engine(self, body: str) -> narrator.Narrator:
+        return narrator.Narrator((str(_script(self.dir, body)),), self.dir)
+
+    def test_old_engine_without_bridge(self):
+        old = self.engine(
+            'echo "usage: narrate [-h] {say,synth} ..." >&2\n'
+            "echo \"narrate: error: argument cmd: invalid choice: 'bridge' (choose from 'say', 'synth')\" >&2\n"
+            "exit 2\n"
+        )
+        problem = old.check()
+        self.assertIn("нет команды bridge", problem)
+        self.assertIn(str(self.dir), problem)
+        self.assertIn("AIP_NARRATOR_DIR", problem)
+
+    def test_bridge_without_version(self):
+        old = self.engine(
+            "echo \"narrate bridge: error: invalid choice: 'version' (choose from 'engines')\" >&2\nexit 2\n"
+        )
+        self.assertIn("нет bridge version", old.check())
+
+    def test_version_mismatch_and_ok(self):
+        self.assertIn("версия моста 99, нужна", self.engine("echo '{\"bridge_api\": 99}'\n").check())
+        narrator.reset_checks()
+        ok = f"echo '{{\"bridge_api\": {narrator.EXPECTED_BRIDGE_API}}}'\n"
+        self.assertIsNone(self.engine(ok).check())
+
+    def test_result_is_cached(self):
+        calls = self.dir / "calls"
+        engine = self.engine(f'echo x >> "{calls}"\necho \'{{"bridge_api": {narrator.EXPECTED_BRIDGE_API}}}\'\n')
+        self.assertIsNone(engine.check())
+        self.assertIsNone(narrator.Narrator(engine.cmd, engine.home).check())  # другой экземпляр — тот же кеш
+        self.assertEqual(calls.read_text().count("x"), 1)
+
+    def test_fake_engine_is_compatible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = platform_config.load({"AIP_BACKEND": "fake", "AIP_DATA_DIR": tmp})
+            self.assertIsNone(narrator.load(config).check())
 
 
 if __name__ == "__main__":
