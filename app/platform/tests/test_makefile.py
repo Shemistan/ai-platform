@@ -29,7 +29,7 @@ class PythonCheckTest(unittest.TestCase):
             fake = Path(tmp) / "python3"
             fake.write_text(OLD_PYTHON)
             fake.chmod(0o755)
-            for target in ("demo", "run", "smoke", "test", "check"):
+            for target in ("demo", "run", "smoke", "test", "cov", "check"):
                 with self.subTest(target=target):
                     proc = self.make(target, f"PYTHON={fake}")
                     self.assertNotEqual(proc.returncode, 0)

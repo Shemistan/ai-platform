@@ -64,3 +64,20 @@ make run                                  # http://127.0.0.1:8780 — насто
 - Публикация в Telegram — [«Каналы публикации»](app/platform/README.md#каналы-публикации).
 - Все переменные окружения — [«Настройка»](app/platform/README.md#настройка).
 - Не запускается — [«Если не работает при установке»](app/platform/README.md#если-не-работает-при-установке).
+
+## Проверки и CI
+
+Локально — `./check` (его же зовёт `pre-commit`): гейты документации и
+бэклога, `make check` в каждом сервисе `app/<svc>/`. Покрытие без порога —
+`make cov` в `app/platform` и `app/narrator` (html — в их `tmp/cov/html`).
+
+Независимо от машины тот же `./check` гоняет GitHub Actions
+(`.github/workflows/check.yml`): на каждый PR в `main` и push в `staging`,
+раннер `macos-14` с ffmpeg, Python 3.12 и uv, затем покрытие в лог джобы.
+Экстры narrator с моделями (torch) в CI не ставятся — `NARRATOR_CHECK_EXTRAS=`.
+
+Сделать проверку обязательной — один раз, вручную, в настройках репозитория
+на GitHub: Settings → Branches (или Rules → Rulesets) → правило для `main` →
+Require status checks to pass → добавить `check` (появится в списке после
+первого прогона workflow). Тогда PR `staging → main` не сольётся с красным
+статусом.

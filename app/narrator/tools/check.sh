@@ -7,6 +7,9 @@ if ! (mkdir -p "$HOME/.cache/uv" && : > "$HOME/.cache/uv/.check-probe") 2>/dev/n
   export UV_CACHE_DIR="${TMPDIR:-/tmp}/uv-cache"
 fi
 rm -f "$HOME/.cache/uv/.check-probe" 2>/dev/null
-uv run --quiet --all-extras ruff check src tests
-uv run --quiet --all-extras ruff format --check src tests
-uv run --quiet --all-extras pytest -q
+# Экстры с моделями (espeech тянет torch): по умолчанию все, как на машине автора.
+# CI ставит NARRATOR_CHECK_EXTRAS= (пусто) — тесты их не импортируют.
+X=${NARRATOR_CHECK_EXTRAS---all-extras}
+uv run --quiet $X ruff check src tests
+uv run --quiet $X ruff format --check src tests
+uv run --quiet $X pytest -q
