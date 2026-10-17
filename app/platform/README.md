@@ -23,7 +23,8 @@ make run    # на настоящих моделях
 
 Открыть: http://127.0.0.1:8780. Браузеры: поддерживаются последние версии Chrome, Safari и
 Firefox (страницы — ES-модули без сборки; фото с EXIF-поворотом открываются и в Safari до 17).
-Нужны Python 3.11+ и ffmpeg (`brew install ffmpeg`).
+Нужны Python 3.11+ и ffmpeg с drawtext: `brew install ffmpeg-full` и её `bin` в PATH
+(или `AIP_FFMPEG=$(brew --prefix ffmpeg-full)/bin/ffmpeg`) — формула `ffmpeg` собрана без freetype.
 Системный `python3` на Mac — 3.9 из Xcode CLT: Makefile сам возьмёт `python3.13`,
 `python3.12` или `python3.11` из PATH, а если их нет — остановится с подсказкой
 (`brew install python@3.12` или `uv python install 3.12`, затем `make PYTHON=python3.12 …`).
@@ -121,7 +122,7 @@ Tailscale, не открытый порт ([«Доступ и защита»](..
 
 Фото и видео ставит `tools/setup-model.sh` из этого репозитория — соседние
 репозитории photogen и videogen не нужны. Нужны Mac на Apple Silicon, сеть,
-`uv` и ffmpeg (`brew install uv ffmpeg`), Python 3.11+ (см. «Запуск»). Из
+`uv` и ffmpeg (`brew install uv ffmpeg-full`), Python 3.11+ (см. «Запуск»). Из
 `app/platform`:
 
 ```sh

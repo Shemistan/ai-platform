@@ -44,15 +44,21 @@ jobs:
           enable-cache: true
           cache-dependency-glob: app/narrator/uv.lock
 
+      # Формула ffmpeg в Homebrew — без freetype, а постер и слайды рисуются drawtext:
+      # нужна ffmpeg-full (QA-028). Она keg-only — кладём её bin первой в PATH.
       - name: ffmpeg и линтеры
         run: |
-          brew install ffmpeg
+          brew install ffmpeg-full
+          echo "$(brew --prefix ffmpeg-full)/bin" >> "$GITHUB_PATH"
           python3.12 -m pip install ruff coverage
 
-      # Студийные тесты без ffmpeg тихо пропускаются (skipUnless) — здесь его наличие обязательно.
+      # Студийные тесты без ffmpeg тихо пропускаются (skipUnless) — здесь его наличие обязательно,
+      # и с drawtext: без него падают десятки тестов сборки с невнятным «Filter not found».
       - name: окружение
         run: |
+          which ffmpeg
           ffmpeg -hide_banner -version | head -1
+          ffmpeg -hide_banner -filters | grep -q ' drawtext ' || { echo "в ffmpeg нет drawtext" >&2; exit 1; }
           python3.12 --version
           uv --version
           ruff --version
