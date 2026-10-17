@@ -15,6 +15,18 @@ code { font: var(--fs-sm) var(--mono); }
 
 .page-head { max-width: var(--container); margin: 0 auto; padding: var(--sp-4) var(--sp-6) var(--sp-1); display: grid; gap: var(--sp-1); }
 .page-head h1 { font-size: var(--fs-xl); letter-spacing: -0.01em; }
+/* Заголовок со слотом для мета-чипа (модель на Фото и Видео): <div class="page-title"><h1>…</h1><span class="chip">…</span></div>. */
+.page-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
+/* Баннер состояния под шапкой страницы (готовность модели на Фото и Видео): ширина — как у содержимого. */
+.banner {
+  width: min(100% - 2 * var(--sp-6), var(--container) - 2 * var(--sp-6));
+  margin: var(--sp-2) auto 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--info-bg);
+}
+.banner:is(.tone-warning, .tone-danger) { background: var(--tone-bg); color: var(--tone); }
+.banner code { user-select: all; overflow-wrap: anywhere; }
 
 .layout {
   display: grid;
@@ -28,6 +40,7 @@ code { font: var(--fs-sm) var(--mono); }
 @media (max-width: 960px) {
   .layout { grid-template-columns: minmax(0, 1fr); padding-inline: var(--sp-4); }
   .page-head { padding-inline: var(--sp-4); }
+  .banner { width: calc(100% - 2 * var(--sp-4)); }
 }
 .side { display: grid; gap: var(--sp-5); min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-xl); padding: var(--pad-panel); min-width: 0; }
@@ -133,6 +146,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 .segmented button, .segmented--radio .seg span {
   display: inline-flex;
   align-items: center;
+  gap: var(--sp-1);
   min-height: var(--control-h-sm);
   padding: 0 var(--sp-3);
   border: 0;
@@ -194,7 +208,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 .stage .muted { font-weight: var(--fw-regular); }
 audio, video { width: 100%; border-radius: var(--r-md); background: var(--media-bg); }
 audio { background: transparent; }
-.log-wrap summary { cursor: pointer; color: var(--muted); font-size: var(--fs-sm); }
 .log {
   margin: var(--sp-2) 0 0;
   padding: var(--sp-2);
@@ -258,7 +271,42 @@ mark { background: var(--warn-bg); color: var(--warn); border-radius: var(--r-sm
   border-radius: var(--r-md);
 }
 .remarks { display: grid; gap: 2px; margin-top: var(--sp-2); font-size: var(--fs-sm); }
-details.inline summary { cursor: pointer; color: var(--accent); font-size: var(--fs-sm); }
+
+/* --- Раскрывающийся блок: один details.disclosure на всю платформу (DS-016). ---
+   Заголовок — маленькая акцентная ссылка с шевроном; --title — заголовок раздела (Настройки
+   выпуска, Добавить канал); --rule — отделить от того, что выше, линией. Фокус — общий для summary. */
+details.disclosure { min-width: 0; }
+details.disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  list-style: none;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+details.disclosure > summary::-webkit-details-marker { display: none; }
+details.disclosure > summary::before {
+  content: "";
+  flex: none;
+  width: 0.4em;
+  height: 0.4em;
+  margin-inline: 0.15em;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  rotate: -45deg;
+  transition: rotate 0.15s ease;
+}
+details.disclosure[open] > summary::before { rotate: 45deg; }
+details.disclosure > summary:hover { text-decoration: underline; text-underline-offset: 2px; }
+details.disclosure[open] > summary { margin-bottom: var(--sp-2); }
+details.disclosure--title > summary { color: var(--text); font-size: var(--fs-md); }
+details.disclosure--title > summary:hover { text-decoration: none; color: var(--accent); }
+details.disclosure--title[open] > summary { margin-bottom: var(--sp-3); }
+details.disclosure--rule { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+@media (prefers-reduced-motion: reduce) { details.disclosure > summary::before { transition: none; } }
 
 dialog.modal {
   width: min(760px, calc(100vw - 32px));
@@ -281,8 +329,33 @@ dialog.modal::backdrop { background: var(--overlay); }
 }
 .modal-head h2 { font-size: var(--fs-lg); }
 .modal-body { display: grid; gap: var(--sp-3); padding: var(--sp-4) var(--sp-5) var(--sp-5); max-height: calc(100vh - 140px); overflow: auto; }
-.icon-btn { background: none; border: 0; font-size: var(--fs-xl); line-height: 1; cursor: pointer; color: var(--muted); padding: 2px var(--sp-2); }
-.icon-btn:hover { color: var(--text); }
+/* --- Иконки (DS-014): SVG из icon() в ui.js, цвет — currentColor. --- */
+.icon-svg { flex: none; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon-svg--solid { fill: currentColor; }
+/* Внутри строки текста (звезда в подсказке, «оригинал» со стрелкой) — по базовой линии. */
+:is(p, span, a, button:not(.btn-icon)) > .icon-svg { display: inline-block; vertical-align: -0.15em; }
+/* Кнопка-иконка: iconButton() в ui.js. Цель нажатия 32×32 (--control-h-sm + запас), имя — aria-label.
+   --outline — с рамкой (порядок кадров), --overlay — поверх картинки (убрать кадр/фото). */
+.btn-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.btn-icon:hover:not(:disabled) { color: var(--text); background: var(--sunken); }
+.btn-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-icon:disabled { opacity: 0.35; cursor: default; }
+.btn-icon--outline { border-color: var(--border-strong); background: var(--panel); color: var(--text); }
+.btn-icon--outline:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--panel); }
+.btn-icon--overlay { background: var(--panel); color: var(--text); border-color: var(--line); }
+.btn-icon--overlay:hover:not(:disabled) { background: var(--panel); border-color: var(--accent); color: var(--accent); }
 
 .list { display: grid; gap: var(--sp-2); }
 /* Строка списка-кнопка (выбор пакета в Аудио): не кнопка-компонент, а пункт списка. */
@@ -301,6 +374,9 @@ dialog.modal::backdrop { background: var(--overlay); }
   cursor: pointer;
 }
 .list-row:hover { background: var(--sunken); }
+/* Строка-пункт без действия (состав пакета): тот же вид, но не кликается. */
+.list-row--static { cursor: default; }
+.list-row--static:hover { background: var(--panel); }
 .group-title { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-top: var(--sp-1); }
 .card { display: grid; gap: var(--sp-2); padding: var(--pad-card); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
@@ -316,6 +392,8 @@ blockquote.quote { margin: 0; padding: var(--sp-2) var(--sp-3); border-left: 3px
 
 .wide { max-width: var(--container); margin: 0 auto; padding: var(--sp-4) var(--sp-6) var(--sp-12); display: grid; gap: var(--sp-5); }
 .cols-2 { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--sp-5); align-items: start; }
+/* Узкая левая колонка (Статьи: список слева, карточка справа шире); на узком экране — одна колонка. */
+.cols-2--reverse { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
 @media (max-width: 960px) {
   .cols-2 { grid-template-columns: minmax(0, 1fr); }
   .wide { padding-inline: var(--sp-4); }
@@ -360,13 +438,44 @@ blockquote.quote { margin: 0; padding: var(--sp-2) var(--sp-3); border-left: 3px
 .task-title { font-weight: var(--fw-semibold); flex: 1; min-width: 0; }
 .task-last { font: var(--fs-xs)/var(--lh-code) var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty { padding: var(--sp-5); text-align: center; color: var(--muted); }
+/* --- Переключатель: один компонент на <input type="checkbox" role="switch"> (DS-013). ---
+   Свой вид вместо растянутого флажка: дорожка и бегунок одинаковы в Safari и Chrome, скринридер
+   слышит «переключатель», пробел переключает (это обычный checkbox). Тон «включено» — --switch-on
+   (по умолчанию акцент; необратимое, как автопубликация Студии, ставит --warning).
+   .switch — подпись рядом: <label class="switch"><input type="checkbox" role="switch"> Текст</label>. */
 .switch { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: pointer; font-weight: var(--fw-semibold); }
-.switch input { width: 34px; height: 20px; accent-color: var(--accent); }
-
-/* Раскрывающийся блок настроек: те же, что у сценариев. */
-.wide details.settings-box { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
-.wide details.settings-box summary { cursor: pointer; font-weight: var(--fw-semibold); font-size: var(--fs-md); }
-.wide details.settings-box[open] summary { margin-bottom: var(--sp-3); }
+input[type="checkbox"][role="switch"] {
+  --switch-on: var(--accent);
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: var(--sunken);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+input[type="checkbox"][role="switch"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--border-strong);
+  transition: translate 0.15s;
+}
+input[type="checkbox"][role="switch"]:checked { background: var(--switch-on); border-color: var(--switch-on); }
+input[type="checkbox"][role="switch"]:checked::after { translate: 14px 0; background: var(--switch-thumb); }
+input[type="checkbox"][role="switch"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="checkbox"][role="switch"]:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  input[type="checkbox"][role="switch"], input[type="checkbox"][role="switch"]::after { transition: none; }
+}
 form.field { gap: var(--sp-3); }
 
 /* Видно только скринридеру: общая область объявлений #sr-status и подписи без места на экране. */
@@ -424,7 +533,7 @@ button[aria-busy="true"] { pointer-events: none; opacity: 0.55; cursor: progress
   box-shadow: 0 6px 24px rgb(0 0 0 / 0.15);
   overflow-wrap: anywhere;
 }
-.platform-toast .icon-btn { color: inherit; font-size: var(--fs-lg); }
+.platform-toast .btn-icon { color: inherit; }
 
 /* Тосты (toast в ui.js): стек в правом нижнем углу — не над шапкой; модалка (<dialog>, верхний слой) их перекрывает. */
 .toasts {
@@ -453,10 +562,25 @@ button[aria-busy="true"] { pointer-events: none; opacity: 0.55; cursor: progress
   pointer-events: auto;
   animation: toast-in 0.15s ease-out;
 }
-.toast > span { padding-block: 2px; }
-.toast .icon-btn { font-size: var(--fs-lg); }
+.toast > span, .platform-toast > span { align-self: center; }
 @keyframes toast-in { from { opacity: 0; translate: 0 8px; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+/* --- Утилиты вместо статических inline-стилей (DS-012): отступы — только ступени --sp-*. ---
+   Динамику (ширина полосы, позиция маркера) задаёт JS через style, остальное — эти классы. */
+.mt-1 { margin-top: var(--sp-1); }
+.mt-2 { margin-top: var(--sp-2); }
+.mt-3 { margin-top: var(--sp-3); }
+.mt-4 { margin-top: var(--sp-4); }
+.mb-3 { margin-bottom: var(--sp-3); }
+.my-2 { margin-block: var(--sp-2); }
+.my-3 { margin-block: var(--sp-3); }
+.stack-1 { display: grid; gap: var(--sp-1); }
+.grow { flex: 1; min-width: 0; }
+.toolbar--nowrap { flex-wrap: nowrap; }
+.toolbar--end { justify-content: flex-end; }
+/* Поле даты или месяца шириной по содержимому, а не во всю строку. */
+input.input-auto { width: auto; }
 
 /* Загрузки файлов (uploadFile в ui.js, FE-003): лоток внизу слева — тосты справа его не закрывают. */
 .upload-tray {
@@ -476,3 +600,4 @@ button[aria-busy="true"] { pointer-events: none; opacity: 0.55; cursor: progress
   box-shadow: 0 6px 24px rgb(0 0 0 / 0.15);
 }
 .upload-row .stage { overflow-wrap: anywhere; }
+.upload-row .bar-fill { width: 0; }
