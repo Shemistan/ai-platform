@@ -679,9 +679,18 @@ def _serve(bot, state, path: Path, args) -> int:
     from narrator import telegram
 
     code = 0
+    on_update = None
+    if getattr(args, "updates", False):
+        import json
+
+        def on_update(update: dict) -> None:
+            # Платформа читает вывод serve построчно: JSON без переводов строк.
+            print("update " + json.dumps(update, ensure_ascii=False), flush=True)
+
     try:
         while True:
-            for sub in telegram.pull(bot, state, timeout=0 if args.once else telegram.POLL_TIMEOUT):
+            timeout = 0 if args.once else telegram.POLL_TIMEOUT
+            for sub in telegram.pull(bot, state, timeout=timeout, on_update=on_update):
                 print(f"подписался: {sub.chat_id} {sub.name}", flush=True)
             if save_state(state, path):
                 return 4
@@ -872,6 +881,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = bot.add_parser("serve", help="принимать подписки: /start и /stop")
     b.add_argument("--once", action="store_true", help="один заход вместо долгого опроса")
+    b.add_argument(
+        "--updates",
+        action="store_true",
+        help="нажатия кнопок и ответы боту — строкой `update {json}` (для платформы)",
+    )
     b.set_defaults(func=cmd_bot_serve)
     return p
 

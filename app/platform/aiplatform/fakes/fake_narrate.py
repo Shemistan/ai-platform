@@ -973,7 +973,9 @@ def parser() -> argparse.ArgumentParser:
     unsent.add_argument("--mark", action="store_true")
     unsent.add_argument("--list", action="store_true")
     bot.add_parser("subscribers").add_argument("--no-sync", action="store_true")
-    bot.add_parser("serve").add_argument("--once", action="store_true")
+    serve = bot.add_parser("serve")
+    serve.add_argument("--once", action="store_true")
+    serve.add_argument("--updates", action="store_true")
 
     news = sub.add_parser("news").add_subparsers(dest="news_cmd", required=True)
     collect = news.add_parser("collect")

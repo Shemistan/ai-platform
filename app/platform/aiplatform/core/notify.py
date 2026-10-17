@@ -80,10 +80,11 @@ class Notifier:
         self.telegram_post = telegram_post or _telegram_post
         self._lock = threading.Lock()
 
-    def send(self, title: str, text: str, *, show: bool) -> list[dict]:
+    def send(self, title: str, text: str, *, show: bool, telegram: bool = True) -> list[dict]:
         """Записать в журнал и, если show, показать. Вернуть итоги доставок: [{via, ok, error}].
 
-        Сбой показа не мешает работе, но пишется в лог процесса."""
+        telegram=False — в Telegram не слать: владелец уже получил там своё сообщение (превью
+        выпуска с кнопками, PRD-001). Сбой показа не мешает работе, но пишется в лог процесса."""
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
         with self._lock, contextlib.suppress(OSError):
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +94,7 @@ class Notifier:
         if not show:
             return []
         results = []
-        target = self._telegram_target()
+        target = self._telegram_target() if telegram else None
         if target is not None:
             results.append(self._send_telegram(target, title, text))
         if not self.fake:
