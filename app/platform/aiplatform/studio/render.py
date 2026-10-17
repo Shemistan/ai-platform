@@ -351,7 +351,9 @@ class Renderer:
         orientation: str,
         cancel: threading.Event,
         branding: Branding | None = None,
+        notes: list[str] | None = None,
     ) -> Path:
+        """Постер на seconds секунд. notes — пометки о запрещённых организациях полосой внизу кадра."""
         lay = layout(orientation, self.scale)
         w, h = lay.width, lay.height
         args = ["-loop", "1", "-framerate", str(FPS), "-i", str(image)]
@@ -381,6 +383,11 @@ class Renderer:
                 ":shortest=1[branded]",
             ]
             last = "branded"
+        if notes:
+            note_file = out.with_name(f"{out.stem}-note.txt")
+            note_file.write_text("\n".join(wrap(n, lay.note_chars, 4) for n in notes), encoding="utf-8")
+            graph.append(f"[{last}]{','.join(note_parts(lay, self.font, note_file))}[noted]")
+            last = "noted"
         graph.append(f"[{last}]format=yuv420p[v]")
         argv = [self.ffmpeg, "-y", "-loglevel", "error", *args, "-filter_complex", ";".join(graph)]
         argv += ["-map", "[v]", *self._encode(seconds), "-an", str(out)]
@@ -524,11 +531,13 @@ class Renderer:
         orientation: str,
         cancel: threading.Event,
         branding: Branding | None = None,
+        notes: list[str] | None = None,
     ) -> Path:
-        """Пост: постер целиком на всю длину звука; с оформлением — плей и плашка, как у обложки."""
+        """Пост: постер целиком на всю длину звука; с оформлением — плей и плашка, как у обложки.
+        notes — пометки о запрещённых организациях из текста озвучки: полосой внизу всё видео."""
         work = out.parent / f".{out.stem}-clips"
         work.mkdir(parents=True, exist_ok=True)
-        clip = self.poster_clip(poster, work / "still.mp4", audio_s, orientation, cancel, branding)
+        clip = self.poster_clip(poster, work / "still.mp4", audio_s, orientation, cancel, branding, notes)
         return self.concat([clip], audio, out, audio_s, cancel)
 
     def build(
