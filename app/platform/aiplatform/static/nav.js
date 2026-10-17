@@ -90,6 +90,10 @@ async function showProblems(nav) {
   try {
     const res = await fetch("/api/config");
     const data = await res.json();
+    if (data.version) {
+      // Что сейчас запущено — справа в шапке, после GPU (docs/README.md «Версии»).
+      nav.append(el("span", { class: "version", title: "Версия платформы" }, `v${data.version}`));
+    }
     if (!data.problems || !data.problems.length) return;
     const box = el("div", { class: "platform-problems", role: "status" });
     box.append(el("strong", {}, data.backend === "fake" ? "Демо-режим. " : "Не всё настроено:"));

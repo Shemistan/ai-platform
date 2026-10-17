@@ -1,4 +1,4 @@
-.PHONY: run demo smoke test cov lint check python-check models install-agent uninstall-agent agent-status digest-check
+.PHONY: run demo smoke test cov lint check release-prep release-tag python-check models install-agent uninstall-agent agent-status digest-check
 
 # Нужен Python 3.11+. Не задан (make PYTHON=… или окружение) — берём первый подходящий
 # из PATH: на чистом Mac python3 — это 3.9 из Xcode CLT, а python3.12 из brew лежит рядом.
@@ -52,6 +52,15 @@ test: python-check
 # Покрытие тестами без порога: отчёт по модулям и html в tmp/cov/html (coverage — свой или через uv).
 cov: python-check
 	PYTHON=$(PYTHON) sh tools/cov.sh
+
+# Релиз (docs/README.md «Версии»): версия = дата релиза, тег v<версия>.
+# release-prep — в ветке задачи: версия во всех файлах и заголовок в docs/CHANGELOG.md, дальше PR.
+# release-tag — человек в main после слияния PR: тег на HEAD, если версия совпадает.
+release-prep: python-check
+	$(PYTHON) ../../tools/release.py prep $(if $(DATE),--date $(DATE),)
+
+release-tag: python-check
+	$(PYTHON) ../../tools/release.py tag
 
 # ruff и node не обязательны для работы сервиса — проверяем, если установлены.
 lint:
