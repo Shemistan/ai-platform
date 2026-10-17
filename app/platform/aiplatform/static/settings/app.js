@@ -1,5 +1,5 @@
 // Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены; расписание, уведомления, уборка.
-import { $, api, busyClick, chip, fill, h } from "/ui.js";
+import { $, api, busyClick, chip, fill, h, toast } from "/ui.js";
 
 const API = "/api/settings";
 
@@ -15,6 +15,7 @@ async function toggle(body) {
   try {
     render(await api("POST", `${API}/toggle`, body));
     showError("");
+    toast("Сохранено");
     if (focused) $(focused)?.focus();
   } catch (err) {
     showError(err.message);
@@ -63,7 +64,7 @@ function row(item, kind, note, extra = null) {
 function voiceButtons(engine) {
   return h(
     "div",
-    { class: "voices", role: "group", "aria-label": `Голоса ${engine.label}` },
+    { class: "segmented voices", role: "group", "aria-label": `Голоса ${engine.label}` },
     ...engine.voices.map((v) =>
       h(
         "button",
@@ -85,6 +86,7 @@ async function section(name, body) {
   try {
     render(await api("POST", `${API}/section/${name}`, body));
     showError("");
+    toast("Настройки сохранены");
   } catch (err) {
     showError(err.message);
     load();
@@ -136,9 +138,9 @@ function renderSchedule(data) {
         h("span", { class: "hint" }, "Мой чат в Telegram (id или @username) — бот каналов пишет туда; сначала напиши боту /start"),
         h("input", { type: "text", value: data.notify.telegram_chat || "", placeholder: "123456789", onchange: (e) => section("notify", { telegram_chat: e.target.value.trim() }) }),
       ),
-      h("div", { class: "actions" }, h("button", { type: "button", class: "small-btn", onclick: busyClick(() => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)), "notify-test") }, "Проверить уведомление")),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: busyClick(() => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)), "notify-test") }, "Проверить уведомление")),
       data.notifications.length
-        ? h("details", {}, h("summary", { class: "link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
+        ? h("details", {}, h("summary", { class: "btn btn--link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
         : null,
     ),
   );
@@ -167,6 +169,7 @@ async function runCleanup() {
     cleanupState.data = await api("POST", `${API}/cleanup/run`);
     cleanupState.result = cleanupState.data.found;
     cleanupState.data = await api("GET", `${API}/cleanup`);
+    toast("Уборка выполнена");
   } catch (err) {
     showError(`Уборка: ${err.message}`);
   }
@@ -177,7 +180,7 @@ async function runCleanup() {
 function renderUpkeep(data) {
   const c = cleanupState.data;
   const found = c?.found;
-  const what = found ? [found.jobs && `задач вкладок: ${found.jobs}`, found.cache && `записей кэша: ${found.cache}`, found.archived && `выпусков из архива: ${found.archived}`].filter(Boolean) : [];
+  const what = found ? [found.jobs && `задач вкладок: ${found.jobs}`, found.cache && `записей кэша: ${found.cache}`, found.archived && `выпусков из архива: ${found.archived}`, found.uploads && `загрузок: ${found.uploads}`, found.trimmed && `опубликованных без промежуточных файлов: ${found.trimmed}`, found.auto_archived && `в архив: ${found.auto_archived}`].filter(Boolean) : [];
   const done = cleanupState.result;
   fill(
     $("upkeep"),
@@ -203,13 +206,13 @@ function renderUpkeep(data) {
         ),
       ),
       checkRow("Убирать раз в сутки сам", null, data.cleanup.auto, (v) => section("cleanup", { auto: v })),
-      h("p", { class: "hint" }, "Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша и выпуски из архива. Неархивные выпуски и идущие задачи не трогаются."),
+      h("p", { class: "hint" }, `Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша, загрузки и выпуски из архива. У опубликованных через ${data.cleanup.trim_days ?? 14} дн. убираются картинки слайдов и исходники клипов (видео и журнал публикаций остаются), через ${data.cleanup.archive_days ?? 60} дн. выпуск уходит в архив сам. Неопубликованные выпуски и идущие задачи не трогаются.`),
       found ? h("p", {}, what.length ? `Сейчас под уборку: ${what.join(", ")} — ${mb(found.bytes)}.` : "Сейчас убирать нечего.") : null,
       h(
         "div",
         { class: "actions" },
-        h("button", { type: "button", class: cleanupState.confirm ? "small-btn danger" : "small-btn", disabled: cleanupState.busy || !what.length, onclick: runCleanup }, cleanupState.busy ? "Убираю…" : cleanupState.confirm ? `Да, удалить ${found ? mb(found.bytes) : ""}` : "Убрать сейчас"),
-        cleanupState.confirm ? h("button", { type: "button", class: "link", onclick: () => ((cleanupState.confirm = false), renderUpkeep(state.data)) }, "Отмена") : null,
+        h("button", { type: "button", class: cleanupState.confirm ? "btn btn--danger btn--sm" : "btn btn--ghost btn--sm", disabled: cleanupState.busy || !what.length, onclick: runCleanup }, cleanupState.busy ? "Убираю…" : cleanupState.confirm ? `Да, удалить ${found ? mb(found.bytes) : ""}` : "Убрать сейчас"),
+        cleanupState.confirm ? h("button", { type: "button", class: "btn btn--link", onclick: () => ((cleanupState.confirm = false), renderUpkeep(state.data)) }, "Отмена") : null,
         done ? h("span", { class: "hint" }, `Освобождено ${mb(done.bytes)}.`) : null,
       ),
     ),
@@ -241,5 +244,43 @@ async function load() {
   }
 }
 
+// «Здоровье» (REL-010): доля упавших шагов, p90 сборки и дайджест вовремя за 7 и 28 дней — по журналу событий.
+const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+const secs = (v) => (v == null ? "—" : v >= 90 ? `${(v / 60).toFixed(1)} мин` : `${Math.round(v)} с`);
+
+async function loadHealth() {
+  let data;
+  try {
+    data = await api("GET", "/api/studio/health/stats");
+  } catch (err) {
+    fill($("health"), h("p", { class: "muted" }, `Не загрузилось: ${err.message}`));
+    return;
+  }
+  const w = [data.windows["7"], data.windows["28"]];
+  const line = (label, f) => h("tr", {}, h("th", {}, label), ...w.map((x) => h("td", {}, f(x))));
+  fill(
+    $("health"),
+    h(
+      "div",
+      { class: "settings-stack" },
+      h(
+        "table",
+        { class: "usage" },
+        h("thead", {}, h("tr", {}, h("th", {}, ""), h("td", {}, "7 дней"), h("td", {}, "28 дней"))),
+        h(
+          "tbody",
+          {},
+          line("Упавшие шаги", (x) => `${pct(x.failed_share)} (${x.failed_steps} из ${x.steps})`),
+          line("Упавшие публикации", (x) => `${pct(x.publish_failed_share)} из ${x.publish_steps}`),
+          line("Сборка видео p50 / p90", (x) => `${secs(x.render_p50_s)} / ${secs(x.render_p90_s)}`),
+          line(`Дайджест до ${data.deadline}`, (x) => `${pct(x.digest_on_time_share)} (${x.digest_on_time_days} из ${x.digest_days} дн.)`),
+        ),
+      ),
+      h("p", { class: "hint" }, `Считается по журналу событий ${data.file}. Время дедлайна дайджеста — AIP_DIGEST_DEADLINE.`),
+    ),
+  );
+}
+
 load();
 loadCleanup();
+loadHealth();

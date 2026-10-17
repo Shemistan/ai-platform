@@ -384,7 +384,7 @@ function upscaleBlock(job) {
   return h("div", { class: "upscale" },
     h("span", { class: "muted small" }, "Увеличить с дорисовкой деталей (SeedVR2):"),
     ...targets.map((t) =>
-      h("button", { type: "button", onclick: busyClick(() => upscaleJob(job.id, t.id), `upscale:${job.id}`) }, `до ${t.label}`),
+      h("button", { type: "button", class: "btn btn--secondary btn--sm", onclick: busyClick(() => upscaleJob(job.id, t.id), `upscale:${job.id}`) }, `до ${t.label}`),
     ),
     h("span", { class: "muted small" }, "2K — ~20 с, 4K — ~1,5 мин, ~18 ГБ памяти; первый запуск докачает ~7 ГБ весов."),
   );
@@ -433,7 +433,7 @@ function renderJob() {
       ),
       h("div", { class: "job-foot" },
         h("span", { class: "took" }, `${isUpscale(job) ? "Увеличено" : "Сгенерировано"} за ${fmtElapsed(job.elapsed_s)}`),
-        h("a", { class: "download", href: `${job.image_url}?download=1`, download: `photo-${job.id}.png` }, "Скачать PNG"),
+        h("a", { class: "btn btn--primary", href: `${job.image_url}?download=1`, download: `photo-${job.id}.png` }, "Скачать PNG"),
       ),
       upscaleBlock(job),
     );

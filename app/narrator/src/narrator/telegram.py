@@ -523,19 +523,28 @@ def chat_name(chat: dict) -> str:
     return name or str(chat.get("id", "?"))
 
 
-def pull(bot: Bot, state: State, timeout: int = 0) -> list[Subscriber]:
+def pull(
+    bot: Bot,
+    state: State,
+    timeout: int = 0,
+    on_update: Callable[[dict], None] | None = None,
+) -> list[Subscriber]:
     """Забирает накопившиеся сообщения и ведёт по ним список подписчиков.
 
     /start — подписка, /stop — отписка, остальное — подсказка. Возвращает тех,
     кто подписался в этот заход. Курсор getUpdates хранится в state.offset,
     поэтому одно и то же сообщение не обрабатывается дважды.
 
+    on_update — кому отдать нажатия кнопок (callback_query) и ответы на сообщения
+    бота: ревью выпуска платформы (PRD-001). Без него кнопки не запрашиваются.
+
     Пока работает `bot serve` в другом процессе, getUpdates не зовём: два опроса
     дают 409 и роняют serve. Подписки тогда забирает он.
     """
     if serve_running():
         return []
-    params = {"offset": state.offset, "allowed_updates": ["message"]}
+    kinds = ["message", "callback_query"] if on_update else ["message"]
+    params = {"offset": state.offset, "allowed_updates": kinds}
     if timeout:
         params["timeout"] = timeout
     updates = bot.call("getUpdates", params) or []
@@ -543,6 +552,9 @@ def pull(bot: Bot, state: State, timeout: int = 0) -> list[Subscriber]:
     for update in updates:
         state.offset = max(state.offset, int(update["update_id"]) + 1)
         msg = update.get("message") or {}
+        if on_update is not None and (update.get("callback_query") or msg.get("reply_to_message")):
+            on_update(update)  # кто нажал и можно ли — решает платформа
+            continue
         chat = msg.get("chat") or {}
         chat_id = chat.get("id")
         if chat_id is None:

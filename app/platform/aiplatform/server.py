@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from aiplatform import __version__
 from aiplatform import config as config_module
 from aiplatform.config import Config
-from aiplatform.core import log, media, runner
+from aiplatform.core import disk, log, media, runner
 from aiplatform.core.gate import Gate
 from aiplatform.core.http import HttpError, Request, not_found
 from aiplatform.core.notify import Notifier
@@ -182,7 +182,8 @@ class App:
         self.orphans = runner.reap_orphans(self.run_dir)
         runner.configure(self.run_dir, lambda: config.settings.load()["timeouts"])
         notifier = Notifier(config.data_dir, config_module.pick(config.env, "AIP_NOTIFY_CMD"), fake=config.fake)
-        self.ctx = Context(config=config, gate=Gate(), uploads=UploadStore(config.uploads_dir), notifier=notifier)
+        gate = Gate(guard=disk.guard_for(config, notifier))  # мало места — GPU-задача не стартует
+        self.ctx = Context(config=config, gate=gate, uploads=UploadStore(config.uploads_dir), notifier=notifier)
         for module in modules(self.ctx):
             self.ctx.modules[module.prefix] = module
         for module in self.ctx.modules.values():  # модулю нужны соседи — они уже созданы

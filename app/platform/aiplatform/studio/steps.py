@@ -36,7 +36,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import log, media
+from aiplatform.core import disk, log, media
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.runner import Canceled
 from aiplatform.studio import cache, news, prompts, publish, render, slides
@@ -84,10 +84,22 @@ class Services:
     video: object  # video.jobs.JobManager: create / get / cancel / video_path
     renderer: Renderer
     cache: cache.MediaCache  # готовые картинки, ролики и озвучка по входам генерации
+    space: Callable[[str], None] | None = None  # проверка места до сборки (GPU-замок: Gate.check)
 
 
 def services(ctx: StepContext) -> Services:
     return ctx.studio.services
+
+
+def ensure_space(ctx: StepContext, what: str) -> None:
+    """Мало места на диске данных — сборка не стартует: обрезанный ffmpeg-ом файл хуже ошибки."""
+    check = services(ctx).space
+    if check is None:
+        return
+    try:
+        check(what)
+    except disk.NoSpace as exc:
+        raise StudioError(str(exc)) from exc
 
 
 def find(folder: Path, stem: str, exts: tuple[str, ...]) -> Path | None:
@@ -681,6 +693,7 @@ def render_video(
 ) -> None:
     """source — строка «Источник: …» для последнего слайда (видео по чужой статье)."""
     svc = services(ctx)
+    ensure_space(ctx, "Сборка видео")
     audio = paced(ctx, audio)
     audio_s = media.duration(audio, svc.config.ffmpeg)
     if audio_s <= 0:
@@ -783,6 +796,7 @@ def render_still(ctx: StepContext) -> None:
     audio = find(ctx.dir, "voice", AUDIO_EXT)
     if audio is None:
         raise StudioError("Нет озвучки — выполни шаг «Озвучка».")
+    ensure_space(ctx, "Сборка видео")
     audio = paced(ctx, audio)
     audio_s = media.duration(audio, svc.config.ffmpeg)
     if audio_s <= 0:
@@ -882,6 +896,10 @@ def step_short(ctx: StepContext) -> None:
 SENDING, SENT, UNKNOWN, SEND_FAILED = "sending", "sent", "unknown", "failed"
 UNCLEAR = (SENDING, UNKNOWN)  # ушёл ли пост — неизвестно: решает человек
 UNCLEAR_NOTE = "Статус неизвестен — проверь канал"
+# Публикация ждёт решения человека — на эти ожидания бот шлёт владельцу превью с кнопками (PRD-001).
+CHOOSE_NOTE = "Выбери каналы и нажми «Опубликовать»."
+APPROVE_NOTE = "Посмотри видео, выбери каналы и нажми «Опубликовать»."
+REVIEW_NOTES = (CHOOSE_NOTE, APPROVE_NOTE)
 
 
 # Пакет для ручной загрузки (YouTube, TikTok…): packaged — файлы готовы, uploaded — автор залил и
@@ -973,9 +991,9 @@ def step_publish(ctx: StepContext) -> None:
     svc = services(ctx)
     chosen = ctx.settings.get("channels") or []
     if not chosen:
-        raise Waiting("Выбери каналы и нажми «Опубликовать».")
+        raise Waiting(CHOOSE_NOTE)
     if not ctx.settings.get("auto_publish") and not ctx.state.get("approved"):
-        raise Waiting("Посмотри видео, выбери каналы и нажми «Опубликовать».")
+        raise Waiting(APPROVE_NOTE)
     if verdict(ctx.read(NARRATOR_REVIEW)) == NOT_READY and not ctx.state.get("ignore_verdict"):
         raise Waiting(
             "Судья сказал «не готово» — см. его отчёт в шаге «Текст». Поправь выпуск или включи "

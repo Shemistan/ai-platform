@@ -147,7 +147,7 @@ async function openLibrary() {
             "button",
             {
               type: "button",
-              class: "row-btn",
+              class: "list-row",
               onclick: busyClick(async () => {
                 const data = await api("GET", `${API}/library/${encodeURIComponent(item.id)}`);
                 close();
@@ -210,15 +210,15 @@ function renderBatch() {
     h(
       "ol",
       { class: "list" },
-      ...batch.articles.map((a, n) => h("li", { class: "row-btn", style: "cursor:default" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, `${a.words} слов`))),
+      ...batch.articles.map((a, n) => h("li", { class: "list-row", style: "cursor:default" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, `${a.words} слов`))),
     ),
     over ? h("p", { class: "form-error" }, `За раз — не больше ${max} статей.`) : null,
     h("p", { class: "hint" }, "Каждая статья встанет в очередь отдельной задачей с настройками ниже — по порядку."),
     h(
       "div",
       { class: "toolbar" },
-      h("button", { type: "button", class: "primary", disabled: over, onclick: busyClick(submitBatch, "batch") }, `Все в очередь (${batch.articles.length})`),
-      h("button", { type: "button", class: "small-btn", onclick: () => ((state.batch = null), renderBatch()) }, "Отмена"),
+      h("button", { type: "button", class: "btn btn--primary", disabled: over, onclick: busyClick(submitBatch, "batch") }, `Все в очередь (${batch.articles.length})`),
+      h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => ((state.batch = null), renderBatch()) }, "Отмена"),
     ),
   );
   box.hidden = false;
@@ -303,7 +303,7 @@ function player(job, box) {
   audio.addEventListener("ratechange", () => audio.playbackRate !== state.tempo && setTempo(audio.playbackRate, box));
   const tempo = h(
     "div",
-    { class: "tempo", role: "group", "aria-label": "Скорость" },
+    { class: "segmented tempo", role: "group", "aria-label": "Скорость" },
     h("span", { class: "muted small" }, "Скорость"),
     ...TEMPOS.map((t) => h("button", { type: "button", value: String(t), "aria-pressed": String(t === state.tempo), onclick: () => setTempo(t, box) }, `×${t}`)),
   );
@@ -371,11 +371,11 @@ function renderJob(job) {
       h(
         "div",
         { class: "actions" },
-        job.audio_url ? h("a", { class: "link", href: downloadHref(job), "data-download": "" }, state.tempo === 1 ? "Скачать mp3" : `Скачать mp3 ×${state.tempo}`) : null,
+        job.audio_url ? h("a", { class: "btn btn--link", href: downloadHref(job), "data-download": "" }, state.tempo === 1 ? "Скачать mp3" : `Скачать mp3 ×${state.tempo}`) : null,
         job.duration_s ? h("span", { class: "muted small" }, `Длительность ${seconds(job.duration_s)}`) : null,
         job.elapsed_s ? h("span", { class: "muted small" }, `Озвучка заняла ${seconds(job.elapsed_s)}`) : null,
-        job.text ? h("button", { type: "button", class: "link", onclick: () => setText(job.text) }, "Текст в редактор") : null,
-        active ? h("button", { type: "button", class: "link danger", onclick: busyClick(() => cancel(job.id), `cancel:${job.id}`) }, "Отменить") : null,
+        job.text ? h("button", { type: "button", class: "btn btn--link", onclick: () => setText(job.text) }, "Текст в редактор") : null,
+        active ? h("button", { type: "button", class: "btn btn--link btn--danger", onclick: busyClick(() => cancel(job.id), `cancel:${job.id}`) }, "Отменить") : null,
       ),
       checkBlock(job.check),
       logBlock(job.log),
@@ -491,7 +491,7 @@ function recordControls(v, data, busy, taskBox, reload) {
         { class: "field", style: "margin-top:var(--sp-2)" },
         h("p", { class: "hint" }, "Голос Charon есть в Gemini TTS: движок сам запишет образец по ключу GEMINI_API_KEY. Можно и своей записью — загрузи её ниже."),
         text,
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: busyClick(() => startRecord(v.stem, { text: text.value }, taskBox, reload), `voice:${v.stem}`) }, "Записать из Gemini TTS")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: busyClick(() => startRecord(v.stem, { text: text.value }, taskBox, reload), `voice:${v.stem}`) }, "Записать из Gemini TTS")),
         fileRecord(v, low, high, busy, taskBox, reload),
       ),
     );
@@ -525,7 +525,7 @@ function fileRecord(v, low, high, busy, taskBox, reload) {
     file,
     text,
     error,
-    h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: busyClick(save, `voice:${v.stem}`) }, "Сохранить образец")),
+    h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: busyClick(save, `voice:${v.stem}`) }, "Сохранить образец")),
   );
 }
 

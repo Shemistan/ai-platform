@@ -30,7 +30,7 @@
       <section class="field" id="source-section" aria-labelledby="source-title" hidden>
         <div class="field-head">
           <span class="field-label" id="source-title">Исходное фото</span>
-          <button type="button" class="link" id="replace-btn" hidden>Заменить фото</button>
+          <button type="button" class="btn btn--link" id="replace-btn" hidden>Заменить фото</button>
         </div>
         <button type="button" class="drop" id="drop">
           <span class="plus" aria-hidden="true">+</span>
@@ -47,10 +47,12 @@
           <span class="muted small" id="stage-info"></span>
         </div>
         <div class="tools" id="mask-tools" hidden>
-          <button type="button" class="tool" id="tool-brush" aria-pressed="true">Кисть</button>
-          <button type="button" class="tool" id="tool-eraser" aria-pressed="false">Ластик</button>
+          <div class="segmented" role="group" aria-label="Инструмент маски">
+            <button type="button" id="tool-brush" aria-pressed="true">Кисть</button>
+            <button type="button" id="tool-eraser" aria-pressed="false">Ластик</button>
+          </div>
           <label>Размер <input type="range" id="brush-size" min="8" max="200" value="60"></label>
-          <button type="button" class="link" id="mask-clear">Очистить</button>
+          <button type="button" class="btn btn--link" id="mask-clear">Очистить</button>
         </div>
         <div class="pads" id="pads" hidden></div>
         <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp" hidden>
@@ -118,7 +120,7 @@
       </details>
 
       <p class="form-error" id="form-error" role="alert" hidden></p>
-      <button type="submit" class="primary" id="submit">Сгенерировать</button>
+      <button type="submit" class="btn btn--primary" id="submit">Сгенерировать</button>
     </form>
 
     <div class="side">

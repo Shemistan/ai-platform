@@ -3,15 +3,17 @@
 # Зовут цели make install-agent / uninstall-agent / agent-status (они же
 # экспортируют AIP_* из local.mk). Ставит два LaunchAgent в ~/Library/LaunchAgents:
 #   com.aiplatform.server       — сервис (make run), поднимается при входе и после падения;
-#   com.aiplatform.digest-check — внешний чекер дайджеста раз в день (tools/digest_check.py).
+#   com.aiplatform.digest-check — внешний чекер дайджеста раз в день (tools/digest_check.py);
+#   com.aiplatform.backup       — make backup раз в день (AIP_BACKUP_AT, 03:30), если задан AIP_BACKUP_DIR.
 # Переопределения (для тестов и нестандартных машин): AIP_AGENTS_DIR, AIP_LOG_DIR,
-# AIP_AGENT_LABEL, AIP_CHECK_LABEL, AIP_CHECK_AT=ЧЧ:ММ, LAUNCHCTL.
+# AIP_AGENT_LABEL, AIP_CHECK_LABEL, AIP_BACKUP_LABEL, AIP_CHECK_AT=ЧЧ:ММ, AIP_BACKUP_AT=ЧЧ:ММ, LAUNCHCTL.
 set -eu
 
 cd "$(dirname "$0")/.."
 PLATFORM_DIR=$(pwd -P)
 LABEL=${AIP_AGENT_LABEL:-com.aiplatform.server}
 CHECK_LABEL=${AIP_CHECK_LABEL:-com.aiplatform.digest-check}
+BACKUP_LABEL=${AIP_BACKUP_LABEL:-com.aiplatform.backup}
 AGENTS=${AIP_AGENTS_DIR:-$HOME/Library/LaunchAgents}
 LOG_DIR=${AIP_LOG_DIR:-$HOME/Library/Logs/aiplatform}
 LAUNCHCTL=${LAUNCHCTL:-launchctl}
@@ -85,16 +87,28 @@ install)
 	render digest-check.plist.in "$CHECK_LABEL"
 	load "$LABEL"
 	load "$CHECK_LABEL"
+	if [ -n "${AIP_BACKUP_DIR:-}" ]; then
+		at_backup=${AIP_BACKUP_AT:-03:30}
+		HOUR=$(echo "$at_backup" | cut -d: -f1 | sed 's/^0\(.\)/\1/')
+		MINUTE=$(echo "$at_backup" | cut -d: -f2 | sed 's/^0\(.\)/\1/')
+		render backup.plist.in "$BACKUP_LABEL"
+		load "$BACKUP_LABEL"
+		echo "бэкап $BACKUP_LABEL — ежедневно в $at_backup в $AIP_BACKUP_DIR"
+	else
+		unload "$BACKUP_LABEL"
+		echo "бэкап по расписанию не ставлю: не задан AIP_BACKUP_DIR (README «Бэкап»)"
+	fi
 	echo "агент $LABEL запущен: $CHECK_URL, логи — $LOG_DIR/"
 	echo "чекер $CHECK_LABEL — ежедневно в $at (токен и чат — в Keychain, см. README «Автозапуск»)"
 	;;
 uninstall)
 	unload "$LABEL"
 	unload "$CHECK_LABEL"
-	echo "агенты $LABEL и $CHECK_LABEL удалены"
+	unload "$BACKUP_LABEL"
+	echo "агенты $LABEL, $CHECK_LABEL и $BACKUP_LABEL удалены"
 	;;
 status)
-	for label in "$LABEL" "$CHECK_LABEL"; do
+	for label in "$LABEL" "$CHECK_LABEL" "$BACKUP_LABEL"; do
 		if [ -f "$AGENTS/$label.plist" ]; then
 			echo "== $label"
 			"$LAUNCHCTL" print "$DOMAIN/$label" 2>/dev/null | grep -E '^\s*(state|pid|last exit code|runs) =' || echo "  не загружен"

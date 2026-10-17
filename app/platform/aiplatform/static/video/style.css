@@ -27,19 +27,6 @@
 
 .main-col { display: grid; gap: var(--sp-5); min-width: 0; }
 
-/* Переключатель режима формы (не путать с общей навигацией .platform-nav .tabs). */
-.mode-tabs { display: flex; gap: var(--sp-1); padding: var(--sp-1); border-radius: var(--r-lg); background: var(--sunken); justify-self: start; }
-.mode-tab {
-  padding: var(--sp-2) var(--sp-4);
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: var(--muted);
-  font-weight: var(--fw-semibold);
-  cursor: pointer;
-}
-.mode-tab[aria-selected="true"] { background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
-
 .field-label .muted { font-weight: var(--fw-regular); }
 
 /* --- лента кадров --- */
@@ -121,7 +108,7 @@ input.time-input:disabled { background: var(--sunken); color: var(--muted); }
 .card-error { padding: 0 var(--sp-2) var(--sp-2); font-size: var(--fs-xs); color: var(--bad); }
 
 .add { flex: 0 0 132px; display: flex; }
-.add-btn {
+.add-tile {
   flex: 1;
   min-height: 120px;
   display: grid;
@@ -135,7 +122,7 @@ input.time-input:disabled { background: var(--sunken); color: var(--muted); }
   background: transparent;
   cursor: pointer;
 }
-.add-btn:hover { border-color: var(--accent); color: var(--accent); }
+.add-tile:hover { border-color: var(--accent); color: var(--accent); }
 .plus { font-size: var(--fs-2xl); line-height: 1; }
 
 /* --- живое фото --- */
@@ -147,7 +134,7 @@ input.time-input:disabled { background: var(--sunken); color: var(--muted); }
   background: var(--sunken);
 }
 .photo.drop { border-color: var(--accent); background: var(--info-bg); }
-.photo .add-btn { min-height: 220px; border: 0; }
+.photo .add-tile { min-height: 220px; border: 0; }
 .photo-frame { position: relative; justify-self: center; margin: var(--sp-2); }
 .photo-frame img { display: block; max-width: 100%; max-height: 420px; border-radius: var(--r-md); }
 .photo-frame.busy img { opacity: 0.45; }

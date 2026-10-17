@@ -46,12 +46,12 @@ function actions(p) {
     out.unshift(
       h(
         "button",
-        { type: "button", class: "small-btn accent", disabled: busy, title: names, onclick: () => publish(p) },
+        { type: "button", class: "btn btn--secondary btn--sm", disabled: busy, title: names, onclick: () => publish(p) },
         p.channels.length === 1 ? `Опубликовать: ${names}…` : `Опубликовать в ${p.channels.length} канала…`,
       ),
     );
   } else if (p.group === "drafts" || need?.status === "failed") {
-    out.unshift(h("button", { type: "button", class: "small-btn", disabled: busy, onclick: () => act(p, "run", {}) }, "Запустить всё"));
+    out.unshift(h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: busy, onclick: () => act(p, "run", {}) }, "Запустить всё"));
   }
   if (p.running) out.push(h("button", { type: "button", class: "link", disabled: state.busy.has(p.id), onclick: () => act(p, "cancel") }, "Остановить"));
   else
@@ -102,7 +102,7 @@ function reachRow(p, r) {
         "span",
         { class: "manual-views" },
         link,
-        h("button", { type: "button", class: "small-btn", onclick: () => link.value.trim() && submitField(p, "uploaded", id, { channel: r.channel, url: link.value.trim() }) }, "Залил"),
+        h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => link.value.trim() && submitField(p, "uploaded", id, { channel: r.channel, url: link.value.trim() }) }, "Залил"),
       ),
     );
   }
@@ -120,7 +120,7 @@ function reachRow(p, r) {
           "span",
           { class: "manual-views" },
           input,
-          h("button", { type: "button", class: "small-btn", onclick: () => input.value !== "" && submitField(p, "stats", id, { channel: r.channel, views: Number(input.value) }) }, "Сохранить"),
+          h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => input.value !== "" && submitField(p, "stats", id, { channel: r.channel, views: Number(input.value) }) }, "Сохранить"),
         )
       : null,
   );
@@ -134,7 +134,7 @@ function responsePanel(data) {
     "button",
     {
       type: "button",
-      class: "small-btn",
+      class: "btn btn--ghost btn--sm",
       disabled: s.running,
       onclick: busyClick(async () => {
         try {
@@ -217,7 +217,7 @@ const cardSig = (p) => JSON.stringify([p, state.busy.has(p.id), state.errors[p.i
 function renderNewLinks(data) {
   const box = $("new-links");
   if (box.childElementCount || !data.scenarios) return;
-  fill(box, ...data.scenarios.map((s, i) => h("a", { class: i ? "secondary" : "primary", href: `/studio/?scenario=${s.id}` }, s.label)));
+  fill(box, ...data.scenarios.map((s, i) => h("a", { class: i ? "btn btn--secondary" : "btn btn--primary", href: `/studio/?scenario=${s.id}` }, s.label)));
 }
 
 function render(data) {
