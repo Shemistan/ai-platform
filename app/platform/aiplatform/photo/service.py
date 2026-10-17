@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from http import HTTPStatus
 
+from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import Request, bad_request, found, handle_uploads, not_found
 from aiplatform.photo import config as photo_config
 from aiplatform.photo import models, params, upscale
@@ -32,6 +33,7 @@ class PhotoModule:
             "runners": {b: self.config.runner_available(b) for b in backends},
             "models_dir": str(self.config.models_dir),
             "install_hint": INSTALL_HINT,
+            "upload_limits": uploads_module.limits(),
             "modes": [{"id": key, "label": label} for key, label in params.MODE_LABELS.items()],
             "sizes": [
                 {"id": key, "width": w, "height": h, "label": label} for key, (w, h, label) in params.SIZES.items()
