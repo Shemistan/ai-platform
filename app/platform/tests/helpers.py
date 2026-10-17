@@ -329,7 +329,7 @@ class JournalCase(StudioCase):
 
     def press(self, pid, **body):
         status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", body)
-        self.assertEqual(status, 200, view)
+        self.assertEqual(status, 202, view)
         return self.settle(pid)
 
     def resolve(self, pid, channel, posted):

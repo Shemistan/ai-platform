@@ -60,7 +60,7 @@ class PostFlowTest(StudioCase):
         self.assertTrue((self.folder(pid) / "video-cover.jpg").is_file(), "с оформлением — обложка для Telegram")
 
         status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["file"]})
-        self.assertEqual(status, 200, view)
+        self.assertEqual(status, 202, view)
         done = self.settle(pid)
         self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
         description = (self.folder(pid) / "publish" / "file" / "description.txt").read_text(encoding="utf-8")

@@ -114,7 +114,7 @@ class UnknownStateTest(JournalCase):
         self.assertEqual(self.statuses(failed)["publish"], "failed")
         self.tg.refuse.clear()
 
-        self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/run", {})[0], 200)
+        self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/run", {})[0], 202)
         after = self.settle(pid)
         self.assertEqual(self.statuses(after)["publish"], "waiting", after["log"])
         self.assertEqual(self.tg.count("tg-a", "sendVideo"), 1, "«Запустить всё» не публикует без подтверждения")
