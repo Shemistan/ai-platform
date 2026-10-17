@@ -1096,6 +1096,8 @@ class StudioModule:
         project["review"] = {"verdict": steps.verdict(review), "text": review} if review else None
         found = registry.mentioned(f"{project['title']}\n{read(steps.TEXT)}\n{read(steps.POST)}", self.banned())
         project["disclaimers"] = [{"name": e.name, "note": e.disclaimer + "."} for e in found]
+        # Куда ведут ссылки поста и какие из них не из исходника — видно до публикации (SEC-013).
+        project["links"] = steps.post_links(project["scenario"], project["settings"], read, read(steps.POST))
         plan = self._plan(folder) or None
         voice = steps.find(folder, "voice", steps.AUDIO_EXT)
         project["estimate"] = estimate_module.estimate(
