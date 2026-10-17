@@ -1,5 +1,5 @@
 // Вкладка «Каналы»: каналы публикации, бот движка, подписчики и приём подписок.
-import { $, api, chip, fill, h, modal, shortDate } from "/ui.js";
+import { $, narratorApi as api, chip, fill, h, modal, shortDate } from "/ui.js";
 
 const API = "/api/channels";
 const FORMATS = { landscape: "Видео 16:9", vertical: "Шортс 9:16" };
