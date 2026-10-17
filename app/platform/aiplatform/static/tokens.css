@@ -1,0 +1,69 @@
+/* Токены платформы — единственное место, где живут цвета, тени, слои и ширины.
+   Подключается первым на каждой странице; остальные CSS берут значения отсюда.
+
+   Тема: каждый цвет задан парой light-dark(светлый, тёмный), а выбирает её
+   color-scheme. Сейчас тема системная (color-scheme: light dark). Ручной
+   переключатель, когда появится, ставит атрибут — и ничего не копирует:
+     :root[data-theme="light"] { color-scheme: light; }
+     :root[data-theme="dark"]  { color-scheme: dark; }
+   (эти два правила уже ниже, атрибут пока никто не ставит). */
+:root {
+  color-scheme: light dark;
+
+  /* --- поверхности и текст --- */
+  --bg: light-dark(#f4f3ef, #131416);
+  --panel: light-dark(#ffffff, #1c1e21);
+  --sunken: light-dark(#eceae4, #25282c);
+  --line: light-dark(#d9d6cd, #34383d);           /* только разделители и рамки панелей */
+  /* Рамка полей ввода и кнопок-контуров (WCAG 1.4.11, ≥3:1):
+     светлая 3.86 к --panel, 3.48 к --bg; тёмная 3.71 к --panel, 4.09 к --bg. */
+  --border-strong: light-dark(#86817a, #72777f);
+  --text: light-dark(#1c1b18, #ecebe7);
+  --muted: light-dark(#6b675e, #9b9a94);
+
+  /* --- акцент и тона статуса --- */
+  --accent: light-dark(#2f5bd8, #7ea2ff);
+  --on-accent: light-dark(#ffffff, #0d1220);
+  --success: light-dark(#1d7a46, #6fd39a);
+  --success-bg: light-dark(#e2f3e8, #173324);
+  --warning: light-dark(#9a5b00, #f0bd6a);
+  --warning-bg: light-dark(#fbeed3, #3a2c12);
+  --danger: light-dark(#b3261e, #ff8e85);
+  --danger-bg: light-dark(#fbe4e2, #3d1c1a);
+  --on-danger: light-dark(#ffffff, #1c1e21);
+  --info: var(--accent);
+  --info-bg: light-dark(#e3eafb, #1b2744);
+
+  /* --- медиа, подложки, тени --- */
+  --media-bg: #000000;                          /* фон под видео и плеерами в обеих темах */
+  --switch-thumb: #ffffff;                      /* бегунок тумблера */
+  --overlay: rgb(0 0 0 / 0.35);                 /* подложка под модальным окном */
+  --shadow-modal: 0 20px 60px rgb(0 0 0 / 0.25);
+
+  /* --- слои --- */
+  --z-sticky: 10;   /* липкие полосы внутри страницы (степпер Студии) */
+  --z-nav: 50;      /* шапка платформы */
+  --z-modal: 100;
+  --z-toast: 200;
+
+  /* --- ширины контейнеров --- */
+  --container: 1280px;
+  --container-wide: 1440px;
+
+  /* --- форма --- */
+  --radius: 10px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* --- старые имена: алиасы, чтобы не ломать правила, ещё не переведённые на новые --- */
+  --ok: var(--success);
+  --ok-bg: var(--success-bg);
+  --warn: var(--warning);
+  --warn-bg: var(--warning-bg);
+  --bad: var(--danger);
+  --bad-bg: var(--danger-bg);
+  --accent-text: var(--on-accent);
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }

@@ -31,7 +31,7 @@ def complete(prompt: str, *, cmd: tuple[str, ...], cancel: threading.Event, on_l
             on_line(line)
 
     try:
-        runner.run(list(cmd), collect, cancel, stdin=prompt.encode("utf-8"), missing_hint=INSTALL_HINT)
+        runner.run(list(cmd), collect, cancel, stdin=prompt.encode("utf-8"), missing_hint=INSTALL_HINT, kind="llm")
     except runner.RunFailed as exc:
         tail = " ".join(x.strip() for x in lines[-3:] if x.strip())
         raise StudioError(f"LLM: {exc}{' — ' + tail if tail else ''}") from exc
