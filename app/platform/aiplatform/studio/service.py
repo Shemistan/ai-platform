@@ -15,7 +15,7 @@ from http import HTTPStatus
 from pathlib import Path
 
 from aiplatform.audio import voices
-from aiplatform.core import events, log, media
+from aiplatform.core import events, log, media, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
@@ -70,6 +70,7 @@ SETTING_STEPS = {
     "auto_publish": "publish",
     "post_format": "publish",
     "disclaimers": ("render", "short"),
+    "ai_badge": ("render", "short"),  # плашка «ИИ» в углу видео (CMP-011)
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
     "slide_s": "plan",  # ориентир для LLM: сколько держится слайд
@@ -191,11 +192,12 @@ def video_seconds(project: dict) -> float | None:
 
 
 def _read_json_list(path) -> list[dict]:
+    """Записи published.json: голый список (схема 0) или обёртка {"schema", "records"} (BE-008)."""
     try:
-        data = json.loads(_read_text(path) or "[]")
-    except json.JSONDecodeError:
+        data = schema.unwrap(json.loads(_read_text(path) or "[]"), "records")
+    except (json.JSONDecodeError, schema.Broken):
         return []
-    return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
+    return [r for r in data if isinstance(r, dict) and r.get("channel")]
 
 
 TOO_BIG = "Файл больше 200 МБ."
@@ -237,6 +239,12 @@ class StudioModule:
         self._idem: dict[str, _Once] = {}  # Idempotency-Key → создание (последние IDEMPOTENCY_KEEP)
         self._stats_thread: threading.Thread | None = None
         self.scheduler.daily["stats"] = self._daily_stats
+        self.scheduler.daily["audit"] = self._daily_audit
+
+    def _daily_audit(self) -> str | None:
+        """Ротация журнала комплаенса: записи старше года — в архив (CMP-015)."""
+        moved = self.studio.audit.rotate()
+        return f"журнал комплаенса: в архив {moved}" if moved else None
 
     def bind(self) -> None:
         """Соседние вкладки готовы — сценарии будут ставить задачи в их очереди."""
@@ -311,15 +319,26 @@ class StudioModule:
                 self.notify("Пакет готов — залей руками", project["title"], important=True)
             return
         need = attention(project)
-        if need and before.get(need["step"]) != need["status"]:
+        if not need:
+            return
+        fresh = before.get(need["step"]) != need["status"]
+        previewed = False
+        if need["step"] == "publish" and need["status"] == "failed":
+            # Упало после «Да» в боте — новое превью с «Повторить», даже если падает не впервые (PRD-016).
+            previewed = self._preview(project, failure=need["text"])
+        elif need["step"] == "publish" and fresh and need["text"] in steps.REVIEW_NOTES:
+            previewed = self._preview(project)
+        if fresh:
             head = "Выпуск упал" if need["status"] == "failed" else "Выпуск ждёт тебя"
-            previewed = need["step"] == "publish" and need["text"] in steps.REVIEW_NOTES and self._preview(project)
             text = f"{project['title']} — {need['label']}: {need['text']}".strip(" :")
             self.notify(head, text, important=True, telegram=not previewed)
 
-    def _preview(self, project: dict) -> bool:
-        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление."""
+    def _preview(self, project: dict, failure: str | None = None) -> bool:
+        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление.
+        failure — публикация упала: превью с «Повторить», только если «Да» нажимали в боте."""
         try:
+            if failure is not None:
+                return self.review.retry(project, failure)
             return self.review.preview(project)
         except Exception as exc:  # noqa: BLE001 — сеть, файлы выпуска: уведомление всё равно уйдёт
             log.event(
@@ -744,6 +763,7 @@ class StudioModule:
             "review_text": False,
             "draft": False,
             "disclaimers": True,
+            "ai_badge": True,
             "branding": False,
             "tempo": 1.0,
             "slide_s": slides.TARGET_SLIDE_S,
@@ -804,6 +824,7 @@ class StudioModule:
             out.append(missing_cli(self.config.llm_cmd[0]))
         # Битый channels.json в баннер выносит вкладка «Каналы» — владелец файла (ChannelStore).
         out += [f"Дайджест: канал {c.label} — {c.problem()}." for c in self._digest_channels() if c.problem()]
+        out += self.studio.load_problems  # выпуски в карантине или записанные более новой версией (BE-008)
         return out
 
     def _digest_channels(self) -> list[publish.Channel]:
@@ -869,7 +890,10 @@ class StudioModule:
             raise bad_request("post_format — video или photo.")
         if out["upscale_images"] not in UPSCALE_CHOICES:
             raise bad_request("upscale_images — none, 2k или 4k.")
-        bools = ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding", "draft")
+        bools = (
+            "draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "ai_badge", "branding",
+            "draft",
+        )  # fmt: skip
         for key in bools:
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
@@ -1196,6 +1220,8 @@ class StudioModule:
             "short_video": url(folder / steps.SHORT_VIDEO),
         }
         published = as_json(steps.PUBLISHED)
+        if isinstance(published, dict):  # схема 1: записи в обёртке (BE-008)
+            published = published.get("records")
         if isinstance(published, list):  # отклик в окнах 24ч/72ч/7д — рядом с записью, не поверх её полей
             facts = self._facts()
             published = [r | {"reach": stats.reach(r, facts)} if isinstance(r, dict) else r for r in published]
@@ -1268,6 +1294,8 @@ class StudioModule:
                 warn(f"«{channel.label}»: {channel.problem()}.")
         if not settings.get("channels"):
             info("Каналы не выбраны — публикация будет ждать выбора.")
+        elif stale := steps.registry_stale(self.config):
+            warn(stale)
         if not self.config.llm_available():
             warn(f"LLM-команда «{self.config.llm_cmd[0]}» не найдена — промпты и слайды не написать.")
         draws = settings.get("draw_images") and settings.get("images_mode") == "local" and not settings.get("draft")

@@ -221,6 +221,9 @@ class App:
             out.append(loose)
         for module in self.modules.values():
             out.extend(module.problems())
+            # Очереди вкладок: задачи в карантине или записанные более новой версией (BE-008).
+            for queue in (getattr(module, "jobs", None), getattr(module, "tasks", None)):
+                out.extend(getattr(queue, "load_problems", None) or [])
         return list(dict.fromkeys(out))  # общий движок (narrator) жалуется из нескольких вкладок
 
     def describe(self) -> dict:

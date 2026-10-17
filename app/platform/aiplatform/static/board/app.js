@@ -1,5 +1,5 @@
 // «Выпуски»: все выпуски всех сценариев по группам. У ждущего — что нужно и кнопка действия.
-import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, h, poller, reconcile, restoreFocus, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, h, poller, reconcile, restoreFocus, STATUS, statusChip, toneOf } from "/ui.js";
 
 const API = "/api/studio";
 const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
@@ -39,7 +39,7 @@ async function publish(p) {
 // Что можно сделать с выпуском прямо с доски.
 function actions(p) {
   const busy = state.busy.has(p.id) || p.running;
-  const out = [h("a", { class: "link", href: href(p) }, "Открыть")];
+  const out = [h("a", { class: "btn--link", href: href(p) }, "Открыть")];
   const need = p.attention;
   if (need?.step === "publish" && p.channels.length && p.verdict !== "не готово") {
     const names = p.channels.map((c) => c.label).join(", ");
@@ -53,12 +53,12 @@ function actions(p) {
   } else if (p.group === "drafts" || need?.status === "failed") {
     out.unshift(h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: busy, onclick: () => act(p, "run", {}) }, "Запустить всё"));
   }
-  if (p.running) out.push(h("button", { type: "button", class: "link", disabled: state.busy.has(p.id), onclick: () => act(p, "cancel") }, "Остановить"));
+  if (p.running) out.push(h("button", { type: "button", class: "btn btn--link", disabled: state.busy.has(p.id), onclick: () => act(p, "cancel") }, "Остановить"));
   else
     out.push(
       h(
         "button",
-        { type: "button", class: "link", disabled: busy, onclick: () => act(p, "archive", { archived: !p.archived }) },
+        { type: "button", class: "btn btn--link", disabled: busy, onclick: () => act(p, "archive", { archived: !p.archived }) },
         p.archived ? "Вернуть из архива" : "В архив",
       ),
     );
@@ -114,7 +114,7 @@ function reachRow(p, r) {
     {},
     h("span", {}, `✓ ${r.label}`),
     r.republish ? h("span", { class: "muted" }, " · опубликовано повторно") : null,
-    r.external_url ? h("a", { class: "link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
+    r.external_url ? h("a", { class: "btn--link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
     facts.length ? h("span", { class: "muted" }, ` · ${facts.join(" · ")}`) : null,
     manual ? manualForm(p, r) : null,
   );
@@ -244,6 +244,14 @@ function responsePanel(data) {
   );
 }
 
+// Тон карточки — из общего словаря статусов (toneOf): ждёт тебя — warning, шаг упал — danger,
+// идёт — info, опубликован — success, остальные группы — neutral.
+const GROUP_STATUS = { running: "running", published: "done" };
+function cardTone(p) {
+  if (p.group === "attention") return toneOf(p.attention?.status === "failed" ? "failed" : "waiting");
+  return toneOf(GROUP_STATUS[p.group]);
+}
+
 function card(p) {
   const need = p.attention;
   const meta = [
@@ -255,7 +263,7 @@ function card(p) {
   ];
   return h(
     "article",
-    { class: `board-card ${p.group}${need?.status === "failed" ? " failed" : ""}` },
+    { class: `board-card tone-${cardTone(p)}` },
     p.poster ? h("img", { class: "thumb", src: p.poster, alt: "" }) : h("div", { class: "thumb" }),
     h(
       "div",

@@ -10,7 +10,7 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from aiplatform.studio import publish, stats
+from aiplatform.studio import publish, stats, steps
 from tests.fixtures import ARTICLE, TOKEN
 from tests.helpers import StudioCase
 
@@ -359,7 +359,7 @@ class StatsHttpTest(StudioCase):
         )
         # Покрытие (AN-007): TG учтён; пакет YouTube без «Залил» — не публикация и в знаменатель не входит.
         self.assertEqual((board["coverage"]["counted"], board["coverage"]["total"]), (1, 1))
-        saved = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        saved = steps.load_published(self.folder(pid))
         self.assertTrue(saved[1]["stats"][-1]["manual"])
 
     def test_manual_metrics_with_measure_date(self):
@@ -381,7 +381,7 @@ class StatsHttpTest(StudioCase):
         self.assertEqual(
             self.json("POST", f"/api/studio/projects/{pid}/stats", {"channel": "yt", "views": 200, "at": early})[0], 200
         )
-        saved = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))[0]
+        saved = steps.load_published(self.folder(pid))[0]
         snaps = saved["stats"]
         self.assertEqual([s["views"] for s in snaps], [200, 500, 900])
         self.assertAlmostEqual(snaps[1]["age_h"], 48.0, places=2)

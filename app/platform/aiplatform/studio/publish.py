@@ -15,6 +15,7 @@ mp4 + заголовок + описание в папке.
 
 from __future__ import annotations
 
+import contextlib
 import html
 import json
 import os
@@ -30,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from aiplatform.core import perms
+from aiplatform.core import perms, schema
 from aiplatform.studio.llm import StudioError
 
 TELEGRAM, MANUAL = "telegram", "manual"
@@ -155,6 +156,8 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"{path}: не читается как JSON ({exc})") from exc
     token_file = str(narrator_dir / NARRATOR_TOKEN_FILE) if narrator_dir else ""
+    if isinstance(raw, dict) and isinstance(raw.get("channels"), list):  # схема 1: {"schema", "channels"}
+        raw = raw["channels"]
     if not isinstance(raw, list):
         raise ValueError(f"{path}: ожидается список каналов")
     out = []
@@ -184,10 +187,22 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
     return out
 
 
+# Схема channels.json (core/schema.py, ADR 0009): 0 — голый список, 1 — {"schema": 1, "channels": [...]}.
+CHANNELS_SCHEMA = 1
+
+
 def save_channels(path: Path, channels: list[Channel]) -> None:
     """Записать список целиком: атомарно и только для владельца (0600, SEC-010).
-    Зовёт только ChannelStore — под своим замком (channels/store.py)."""
-    perms.write_private(path, json.dumps([c.stored() for c in channels], ensure_ascii=False, indent=2) + "\n")
+    Зовёт только ChannelStore — под своим замком (channels/store.py).
+    Файл, записанный более новой версией, не перезаписываем: schema.TooNew (ADR 0009)."""
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        current = None
+    with contextlib.suppress(schema.Broken):
+        schema.upgrade(current, CHANNELS_SCHEMA, where=path.name)
+    payload = schema.wrap([c.stored() for c in channels], "channels", CHANNELS_SCHEMA)
+    perms.write_private(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def new_channel(existing: list[Channel], label: str, chat_id: str, fmt: str) -> Channel:
@@ -288,8 +303,36 @@ def plain_text(text: str) -> str:
     return _LINK.sub(r"\1 (\2)", text).replace("**", "").strip()
 
 
-# Неудаляемый хвост подписи: сноски реестра («* Компания … признана …») и строки об источнике.
-_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор)\b)")
+# Неудаляемый хвост подписи: сноски реестра («* Компания … признана …»), строки об источнике
+# и строка об ИИ-контенте (CMP-011).
+AI_PREFIX = "ИИ-контент"
+_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор|ИИ-контент)\b)")
+SYNTHETIC_FLAG = (
+    "Синтетический контент: да — при загрузке включи раскрытие ИИ («изменённый или синтетический контент»)."
+)
+
+
+def ai_line(*, voice: bool = False, images: bool = False, video: bool = False) -> str:
+    """Строка об ИИ по фактически использованным генераторам; ничего не генерировали — пусто."""
+    parts = [
+        text
+        for used, text in (
+            (voice, "озвучено ИИ-голосом"),
+            (images, "иллюстрации сгенерированы нейросетью"),
+            (video, "видео сгенерировано нейросетью"),
+        )
+        if used
+    ]
+    return f"{AI_PREFIX}: {'; '.join(parts)}." if parts else ""
+
+
+def with_ai_line(post: str, line: str) -> str:
+    """Пост со строкой об ИИ в неудаляемом хвосте (после сносок и источника)."""
+    if not line or line in post:
+        return post
+    return f"{post.rstrip()}\n\n{line}\n" if post.strip() else f"{line}\n"
+
+
 # Где можно резать тело: после конца предложения или абзаца; запасной вариант — по пробелу.
 _SENTENCE_END = re.compile(r"[.!?…»)](?=\s)|\n")
 _SPACE = re.compile(r"\s+")
@@ -619,8 +662,12 @@ def publish(
     seconds: float = 0.0,
     cover: Path | None = None,
     thumb: Path | None = None,
+    synthetic: bool = False,
 ) -> dict:
     """Отправить видео в канал; результат — {channel, ok, message, files?}.
+
+    synthetic — в выпуске есть сгенерированное ИИ: ручному каналу в описание
+    идёт флаг для раскрытия на площадке (YouTube, TikTok, VK его требуют).
 
     cover и thumb — обложка видео (первый кадр с плеем и плашкой) и её миниатюра:
     без них Telegram сам берёт случайный кадр.
@@ -630,7 +677,8 @@ def publish(
         target.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(video, target / "video.mp4")
         (target / "title.txt").write_text(title.strip() + "\n", encoding="utf-8")
-        (target / "description.txt").write_text(plain_text(post) + "\n", encoding="utf-8")
+        flag = f"\n\n{SYNTHETIC_FLAG}" if synthetic else ""
+        (target / "description.txt").write_text(plain_text(post) + flag + "\n", encoding="utf-8")
         return {
             "channel": channel.id,
             "ok": True,
