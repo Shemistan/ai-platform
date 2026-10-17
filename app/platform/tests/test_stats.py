@@ -33,7 +33,7 @@ class StatsUnitTest(unittest.TestCase):
         self.assertIsNone(stats.views_from_embed("<html>нет</html>"))
 
     def test_refresher_and_growth(self):
-        channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="-100123", token_env="AIP_TEST_TG")
+        channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="-100123", token_env="AIP_TG_TEST")
         pages = []
 
         def get(url):
@@ -41,7 +41,7 @@ class StatsUnitTest(unittest.TestCase):
             return EMBED
 
         record = {"channel": "tg", "ok": True, "message_id": 42, "members_at_publish": 120}
-        with mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}):
+        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}):
             fresh = stats.Refresher({"tg": channel}, http_post=fake_post, get=get).record(record)
         self.assertEqual(pages, ["https://t.me/mychan/42?embed=1"])
         self.assertTrue(fresh["public"])
@@ -137,7 +137,7 @@ class StatsHttpTest(StudioCase):
         folder = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, folder)
         channels = [
-            {"id": "tg", "label": "TG", "type": "telegram", "chat_id": "-100123", "token_env": "AIP_TEST_TG"},
+            {"id": "tg", "label": "TG", "type": "telegram", "chat_id": "-100123", "token_env": "AIP_TG_TEST"},
             {"id": "yt", "label": "YouTube", "type": "manual"},
         ]
         (folder / "channels.json").write_text(json.dumps(channels), encoding="utf-8")
@@ -154,7 +154,7 @@ class StatsHttpTest(StudioCase):
         (self.folder(pid) / "published.json").write_text(json.dumps(published), encoding="utf-8")
 
         with (
-            mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}),
+            mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}),
             mock.patch.object(publish, "_http_post", fake_post),
             mock.patch.object(stats, "http_get", lambda url: EMBED),
         ):

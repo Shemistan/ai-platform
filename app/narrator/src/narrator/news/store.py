@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from narrator.news.feeds import Item
+from narrator.news.feeds import Item, is_web
 from narrator.news.sources import Source
 
 DB_NAME = "news.db"
@@ -157,6 +157,8 @@ class Store:
             baseline = not self.ever_collected(src.id)
         fresh = 0
         for item in items:
+            if not is_web(item.url):  # только http(s): ссылку покажет страница новостей
+                continue
             key = item_id(item.url)
             if self.db.execute("SELECT 1 FROM items WHERE id = ?", (key,)).fetchone():
                 continue

@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from aiplatform.studio import publish
+from aiplatform.studio.llm import StudioError
 from tests.test_studio_flow import ARTICLE, StudioCase
 
 TOKEN = "123456:" + "A" * 35
@@ -76,7 +77,7 @@ class NarratorChannelsTest(unittest.TestCase):
     def test_topic_goes_as_message_thread_id(self):
         video = self.dir / "v.mp4"
         video.write_bytes(b"x")
-        channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="-1003755616451_14", token_env="AIP_TEST_TG")
+        channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="-1003755616451_14", token_env="AIP_TG_TEST")
         sent = {}
 
         def fake_post(url, body, ctype):
@@ -84,10 +85,46 @@ class NarratorChannelsTest(unittest.TestCase):
                 sent["body"] = body
             return {"ok": True, "result": {"message_id": 7}}
 
-        with mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}):
+        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}):
             publish.publish(channel, video=video, title="Т", post="П", out_dir=self.dir, http_post=fake_post)
         self.assertIn(b'name="chat_id"\r\n\r\n-1003755616451\r\n', sent["body"])
         self.assertIn(b'name="message_thread_id"\r\n\r\n14\r\n', sent["body"])
+
+    def test_token_env_only_allowed_names_and_token_like(self):
+        # SEC-006: чужая переменная или не-токен — ни одного запроса в api.telegram.org.
+        video = self.dir / "v.mp4"
+        video.write_bytes(b"x")
+        audio, poster = self.dir / "a.mp3", self.dir / "p.jpg"
+        audio.write_bytes(b"x")
+        poster.write_bytes(b"x")
+        calls = []
+
+        def fake_post(url, body, ctype):
+            calls.append(url)
+            return {"ok": True, "result": 5}
+
+        cases = [
+            ("HF_TOKEN", TOKEN, "AIP_TG_"),
+            ("AIP_TG_TEST", "hf_" + "x" * 40, "не похож на токен"),
+            ("AIP_TG_TEST", "", "нет токена в переменной AIP_TG_TEST"),
+        ]
+        for env, value, problem in cases:
+            with self.subTest(env=env, value=value):
+                channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@x", token_env=env)
+                with mock.patch.dict(os.environ, {env: value}):
+                    self.assertIn(problem, channel.problem())
+                    self.assertEqual(channel.token(), "")
+                    post = {"title": "Т", "post": "П", "http_post": fake_post}
+                    with self.assertRaises(StudioError):
+                        publish.publish(channel, video=video, out_dir=self.dir, **post)
+                    with self.assertRaises(StudioError):
+                        publish.publish_photo(channel, poster=poster, audio=audio, **post)
+                    self.assertIsNone(publish.members(channel, http_post=fake_post))
+        self.assertEqual(calls, [])
+        for name in ("AIP_TG_NEWS", "AIP_TELEGRAM_TOKEN", "NARRATOR_TELEGRAM_TOKEN", "NARRATOR_TELEGRAM_TOKEN_2"):
+            self.assertTrue(publish.token_env_allowed(name), name)
+        for name in ("HF_TOKEN", "ANTHROPIC_API_KEY", "NARRATOR_TELEGRAM_TOKEN_FILE", "AIP_TG_", "PATH"):
+            self.assertFalse(publish.token_env_allowed(name), name)
 
 
 class PublishButtonTest(StudioCase):
@@ -103,7 +140,7 @@ class PublishButtonTest(StudioCase):
                         "label": "TG",
                         "type": "telegram",
                         "chat_id": "-1003755616451_3",
-                        "token_env": "AIP_TEST_TG",
+                        "token_env": "AIP_TG_TEST",
                     }
                 ]
             ),
@@ -129,7 +166,7 @@ class PublishButtonTest(StudioCase):
             self.assertEqual(status, 200, view)
             return self.settle(pid)
 
-        with mock.patch.dict(os.environ, {"AIP_TEST_TG": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
+        with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
             done = press(channels=["tg"])
             self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
             self.assertEqual(done["settings"]["channels"], ["tg"])
