@@ -7,5 +7,6 @@
 <!-- gate:begin adr-index -->
 | № | Решение | Статус |
 |---|---------|--------|
-| [0001](0001-agent-config-templates.md) | Регламент агента: шаблоны .claude/ в репозитории, ставит bootstrap.sh | предложено |
+| [0001](0001-narrator-registry.md) | 0001. Реестр запрещённых организаций в narrator — файлом по пути из env | принято |
+| [0002](0002-agent-config-templates.md) | Регламент агента: шаблоны .claude/ в репозитории, ставит bootstrap.sh | предложено |
 <!-- gate:end adr-index -->

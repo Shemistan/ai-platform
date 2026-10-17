@@ -3,7 +3,7 @@
 # 1. git-хуки: core.hooksPath=.githooks (pre-commit, commit-msg, pre-push).
 # 2. Регламент агента: .claude/settings.json и .claude/hooks/ из шаблонов
 #    tools/claude/ — только если их ещё нет; свои правки не перетираем
-#    (ADR 0001: права агента включает человек, а не git pull).
+#    (ADR 0002: права агента включает человек, а не git pull).
 cd "$(dirname "$0")" || exit 1
 git config core.hooksPath .githooks
 chmod +x .githooks/pre-commit .githooks/commit-msg .githooks/pre-push \

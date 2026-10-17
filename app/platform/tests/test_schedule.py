@@ -143,7 +143,8 @@ class ScheduleTest(StudioCase):
         self.settle(project["id"])
         self.assertEqual(len(self.json("GET", "/api/settings/state")[1]["notifications"]), 1)
 
-        # Постер загружен → выпуск доходит до публикации и ждёт её; опубликовали — «Опубликовано».
+        # Постер загружен → выпуск доходит до публикации и ждёт её; выгрузили пакет — «Пакет готов»:
+        # пакет для ручной загрузки ещё не публикация (AN-003).
         self.call("POST", f"/api/studio/projects/{project['id']}/upload/poster", png_bytes())
         self.settle(project["id"])
         notes = self.json("GET", "/api/settings/state")[1]["notifications"]
@@ -151,7 +152,7 @@ class ScheduleTest(StudioCase):
         self.json("POST", f"/api/studio/projects/{project['id']}/publish", {"channels": ["download-16x9"]})
         self.settle(project["id"])
         notes = self.json("GET", "/api/settings/state")[1]["notifications"]
-        self.assertEqual(notes[0]["title"], "Опубликовано", notes)
+        self.assertEqual(notes[0]["title"], "Пакет готов — залей руками", notes)
 
         self.json("POST", "/api/settings/notify-test")
         self.assertEqual(

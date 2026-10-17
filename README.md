@@ -85,7 +85,7 @@ Require status checks to pass → добавить `check` (появится в 
 ## Регламент агента
 
 Правила для Claude Code — `CLAUDE.md`; механизм, который их держит, ставится
-на машину отдельно (решение — [ADR 0001](docs/decisions/0001-agent-config-templates.md)):
+на машину отдельно (решение — [ADR 0002](docs/decisions/0002-agent-config-templates.md)):
 
 1. `sh bootstrap.sh` в главном checkout: git-хуки (`main` агенту не
    коммитится и никому не пушится) и `.claude/settings.json` с
