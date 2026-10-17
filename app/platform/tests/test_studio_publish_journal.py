@@ -9,12 +9,14 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import unittest
 import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from aiplatform.studio import publish
+from aiplatform.core import media
+from aiplatform.studio import publish, stats
 from aiplatform.studio.llm import StudioError
 from tests.test_studio_channels import TOKEN
 from tests.test_studio_flow import ARTICLE, StudioCase, png_bytes
@@ -255,6 +257,58 @@ class RepublishTest(JournalCase):
         records = self.records(pid)
         self.assertEqual([(r["attempt"], r["state"]) for r in records], [(1, "sent"), (2, "sent")])
         self.assertTrue(records[1]["republish"])
+
+
+class DimensionsTest(JournalCase):
+    """Атрибуты контента пишутся в запись в момент публикации (AN-006)."""
+
+    def setUp(self):
+        super().setUp()
+        saved = json.loads(self.channels_file.read_text(encoding="utf-8"))
+        saved[1]["format"] = "vertical"  # tg-b — вертикальный канал: туда уходит шортс
+        saved.append({"id": "download-16x9", "label": "YouTube", "type": "manual", "format": "landscape"})
+        self.channels_file.write_text(json.dumps(saved), encoding="utf-8")
+        durations = mock.patch.object(media, "duration", lambda path, *a: 40.0 if path.name == "short.mp4" else 300.0)
+        durations.start()
+        self.addCleanup(durations.stop)
+
+    def records(self, pid) -> list[dict]:
+        return json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+
+    def test_vertical_channel_records_short_and_format_survives_config_change(self):
+        pid = self.video_project()
+        (self.folder(pid) / "short.mp4").write_bytes(b"y")
+        self.press(pid, channels=["tg-a", "tg-b", "download-16x9"])
+        records = {r["channel"]: r for r in self.records(pid)}
+        self.assertEqual((records["tg-b"]["media_s"], records["tg-b"]["format"]), (40.0, "vertical"))
+        self.assertEqual((records["tg-a"]["media_s"], records["tg-a"]["format"]), (300.0, "landscape"))
+        for record in records.values():
+            self.assertEqual(record["post_format"], "video")
+            self.assertTrue({"title", "poster_design", "sent", "weekday", "hour"} <= record.keys(), record)
+        local = time.localtime(records["tg-a"]["sent"])
+        self.assertEqual((records["tg-a"]["weekday"], records["tg-a"]["hour"]), (local.tm_wday, local.tm_hour))
+
+        manual = records["download-16x9"]  # у пакета для ручной загрузки — тоже sent, weekday, hour
+        self.assertEqual(manual["state"], "packaged")
+        self.assertIsNone(stats.sent_at(manual), "пакет без «Залил» — ещё не вышел")
+
+        # Смена формата канала после публикации не меняет срез: формат — из записи.
+        saved = json.loads(self.channels_file.read_text(encoding="utf-8"))
+        saved[1]["format"] = "landscape"
+        self.channels_file.write_text(json.dumps(saved), encoding="utf-8")
+        board = self.json("GET", "/api/studio/board")[1]
+        item = next(i for i in board["projects"] if i["id"] == pid)
+        formats = {r["channel"]: (r["format"], r["media_s"]) for r in item["published"]}
+        self.assertEqual(formats["tg-b"], ("vertical", 40.0))
+
+    def test_photo_post_is_not_video(self):
+        pid = self.create(scenario="article", text=ARTICLE)["id"]
+        self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/settings", {"post_format": "photo"})[0], 200)
+        (self.folder(pid) / "poster.png").write_bytes(png_bytes())
+        (self.folder(pid) / "voice.mp3").write_bytes(b"ID3fake")
+        self.press(pid, channels=["tg-a"])
+        record = self.records(pid)[0]
+        self.assertEqual((record["post_format"], record["media_s"]), ("photo", 300.0))
 
 
 class HttpPostTest(unittest.TestCase):

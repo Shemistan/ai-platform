@@ -1,6 +1,7 @@
 """Бэкфилл журнала событий из того, что выпуски хранили до него (AN-002).
 
     python -m aiplatform.studio.backfill [--data <каталог данных>] [--dry-run]
+    python -m aiplatform.studio.backfill --dimensions [--channels channels.json]  # AN-006, разово
 
 Источники: project.json (создание, архив, последнее состояние шагов), лог
 выпуска (▶ ✓ ✗ ⏸ ↷ ■ — история запусков, со временем без даты), published.json
@@ -21,8 +22,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from aiplatform.core import events
-from aiplatform.studio import pipeline, steps
+from aiplatform.core import events, media
+from aiplatform.studio import pipeline, publish, stats, steps
 
 SOURCE = "backfill"
 # Строка лога выпуска: «ЧЧ:ММ:СС» (до журнала) или «ГГГГ-ММ-ДД ЧЧ:ММ:СС», затем значок и шаг.
@@ -217,14 +218,69 @@ def run(data_dir: Path, *, dry_run: bool = False) -> dict:
     return {"projects": projects, "added": added, "skipped": skipped}
 
 
+def record_dimensions(record: dict, folder: Path, formats: dict[str, str], ffmpeg: str) -> dict:
+    """Атрибуты публикации (AN-006), которых нет в записи до него: формат — из записи или текущего
+    конфига канала (format_guessed), media_s — по файлу выпуска (ffprobe), день и час — по времени выхода."""
+    out: dict = {}
+    fmt = record.get("format") or formats.get(record["channel"])
+    if not record.get("format") and fmt:
+        out |= {"format": fmt, "format_guessed": True}
+    post_format = record.get("post_format") or ("photo" if record.get("parts") else "video")
+    if "post_format" not in record:
+        out["post_format"] = post_format
+    if record.get("media_s") is None:
+        if post_format == "photo":
+            sent_file = steps.find(folder, "voice", steps.AUDIO_EXT)
+        else:
+            sent_file = folder / (steps.SHORT_VIDEO if fmt == steps.VERTICAL else steps.VIDEO)
+        seconds = media.duration(sent_file, ffmpeg) if sent_file is not None and sent_file.is_file() else 0.0
+        if seconds:
+            out["media_s"] = round(seconds, 1)
+    when = stats.sent_at(record)
+    if "weekday" not in record and when is not None:
+        out |= steps.when_fields(when)
+    return out
+
+
+def fill_dimensions(data_dir: Path, formats: dict[str, str], *, ffmpeg: str = "ffmpeg", dry_run: bool = False) -> dict:
+    """Разово дописать атрибуты публикации в published.json выпусков. Запускать при остановленном
+    сервисе: published.json переписывается целиком. Повторный запуск ничего не меняет."""
+    projects = records_changed = 0
+    for path in sorted((data_dir / "studio" / "projects").glob("*/" + steps.PUBLISHED)):
+        records = steps.load_published(path.parent)
+        fresh = [r | record_dimensions(r, path.parent, formats, ffmpeg) for r in records]
+        changed = sum(a != b for a, b in zip(records, fresh, strict=True))
+        if not changed:
+            continue
+        projects += 1
+        records_changed += changed
+        if not dry_run:
+            steps.save_published(path.parent, fresh)
+    return {"projects": projects, "records": records_changed}
+
+
 def main(argv: list[str] | None = None) -> int:
     from aiplatform.config import SERVICE_DIR
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data", default=str(SERVICE_DIR / "data"), help="каталог данных (AIP_DATA_DIR)")
     parser.add_argument("--dry-run", action="store_true", help="только посчитать")
+    parser.add_argument(
+        "--dimensions", action="store_true", help="дописать атрибуты публикаций (media_s и др., AN-006) вместо событий"
+    )
+    parser.add_argument("--channels", default=str(SERVICE_DIR / "channels.json"), help="channels.json (AIP_CHANNELS)")
+    parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg (ffprobe — рядом)")
     args = parser.parse_args(argv)
-    result = run(Path(args.data).expanduser().resolve(), dry_run=args.dry_run)
+    data_dir = Path(args.data).expanduser().resolve()
+    if args.dimensions:
+        try:
+            formats = {c.id: c.format for c in publish.load_channels(Path(args.channels).expanduser())}
+        except ValueError:
+            formats = {}
+        result = fill_dimensions(data_dir, formats, ffmpeg=args.ffmpeg, dry_run=args.dry_run)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    result = run(data_dir, dry_run=args.dry_run)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

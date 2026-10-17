@@ -1040,7 +1040,9 @@ def step_publish(ctx: StepContext) -> None:
         if channel.type == publish.TELEGRAM and prev and send_state(prev) == SENT and not force:
             message = "уже опубликовано — включи «Опубликовать повторно», чтобы отправить ещё раз"
             ctx.log(f"{channel.label}: {message}")
-            journal.put(prev | {"label": channel.label, "skipped": True, "message": message})
+            # Запись без атрибутов (отмечена «Пост есть» или до AN-006) — дописать их сейчас.
+            dims = {} if "weekday" in prev else dimensions(ctx, channel, photo_post, title, prev)
+            journal.put(prev | dims | {"label": channel.label, "skipped": True, "message": message})
             continue
         ctx.progress(f"{channel.label} ({n} из {len(chosen)})", 100.0 * (n - 1) / len(chosen))
         again = channel.type == publish.TELEGRAM and force and prev is not None and send_state(prev) == SENT
@@ -1062,6 +1064,7 @@ def step_publish(ctx: StepContext) -> None:
             else:
                 fresh = {"state": PACKAGED, "at": time.time(), "attempt_id": uuid.uuid4().hex[:12]}
                 record = journal.put(result | {"label": channel.label} | fresh)
+        record = journal.put(record | dimensions(ctx, channel, photo_post, title, record))
         if off:  # осознанно без пометок: когда, почему и о ком — в записи публикации
             record = journal.put(record | {"disclaimers_off": off})
         ctx.log(f"{channel.label}: {record['message']}")
@@ -1074,6 +1077,41 @@ def step_publish(ctx: StepContext) -> None:
             state=record.get("state"),
         )
         published_event(ctx, channel, record, again=again)
+
+
+def when_fields(ts: float) -> dict:
+    """День недели (0 — понедельник) и час по местному времени — срезы «когда вышло»."""
+    local = time.localtime(ts)
+    return {"weekday": local.tm_wday, "hour": local.tm_hour}
+
+
+def dimensions(ctx: StepContext, channel: publish.Channel, photo_post: bool, title: str, record: dict) -> dict:
+    """Атрибуты контента в момент публикации (AN-006): срезы «Что работает» не зависят от того,
+    как потом поменяют канал или выпуск. media_s — длина отправленного файла: шортса у
+    вертикального канала, озвучки у поста «картинка и аудио». У пакета sent — время сборки."""
+    as_photo = channel.type == publish.TELEGRAM and photo_post
+    if as_photo:
+        sent_file = find(ctx.dir, "voice", AUDIO_EXT)
+        tempo = float(ctx.settings.get("tempo") or 1.0)
+        if sent_file is not None and tempo != 1.0:  # ушла озвучка в темпе из настроек (paced)
+            faster = sent_file.with_name(f"{sent_file.stem}-x{tempo:g}.mp3")
+            sent_file = faster if faster.is_file() else sent_file
+    else:
+        sent_file = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
+    seconds = None
+    if sent_file is not None and sent_file.is_file():
+        seconds = media.duration(sent_file, services(ctx).config.ffmpeg)
+    sent = record.get("published_at") or record.get("sent") or record.get("at") or time.time()
+    return {
+        "format": channel.format,
+        "post_format": "photo" if as_photo else "video",
+        "media_s": round(seconds, 1) if seconds else None,
+        "title": title,
+        "poster_design": {
+            k: ctx.settings.get(k) for k in ("poster_mode", "frame", "branding") if ctx.settings.get(k) is not None
+        },
+        "sent": record.get("sent") or sent,
+    } | when_fields(sent)
 
 
 def published_event(ctx: StepContext, channel: publish.Channel, record: dict, *, again: bool) -> None:

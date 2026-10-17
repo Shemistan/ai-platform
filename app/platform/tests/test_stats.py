@@ -50,18 +50,22 @@ class StatsUnitTest(unittest.TestCase):
         self.assertEqual(stats.Refresher({"tg": channel}).record(record), record)
 
     def test_summary_groups(self):
-        def post(views, growth=None, fmt="landscape"):
-            return {"views_24h": views, "growth_24h_attr": growth, "format": fmt}
+        def post(views, growth=None, fmt="landscape", media_s=None, **extra):
+            return {"views_24h": views, "growth_24h_attr": growth, "format": fmt, "media_s": media_s, **extra}
 
+        # Длина — из записи публикации (media_s отправленного файла), не из основного видео выпуска (AN-006).
         items = [
-            {"scenario_label": "Дайджест", "video_s": 120, "published": [post(100, 2)]},
-            {"scenario_label": "Дайджест", "video_s": 600, "published": [post(300)]},
-            {"scenario_label": "Статья", "video_s": 2000, "published": [post(50, 0, "vertical"), post(None)]},
+            {"scenario_label": "Дайджест", "video_s": 999, "published": [post(100, 2, media_s=120)]},
+            {"scenario_label": "Дайджест", "video_s": 999, "published": [post(300, media_s=600)]},
+            {"scenario_label": "Статья", "video_s": 2000, "published": [post(50, 0, "vertical", 2000), post(None)]},
+            {"scenario_label": "Пост", "published": [post(10, fmt="landscape", post_format="photo")]},
         ]
         found = {d["dimension"]: d["rows"] for d in stats.summary(items)}
         self.assertEqual(found["Сценарий"][0], {"label": "Дайджест", "posts": 2, "avg_views": 200, "avg_growth": 2.0})
         self.assertEqual([r["label"] for r in found["Длина ролика"]], ["8–15 мин", "до 3 мин", "длиннее 15 мин"])
-        self.assertEqual(found["Формат"][1]["label"], "вертикальный 9:16")
+        self.assertEqual(
+            [r["label"] for r in found["Формат"]], ["16:9 и квадрат", "вертикальный 9:16", "картинка и аудио"]
+        )
 
 
 H, D = 3600.0, 86400.0

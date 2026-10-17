@@ -430,7 +430,12 @@ class StudioModule:
                 "channel": r["channel"],
                 "label": r.get("label") or (known[r["channel"]].label if r["channel"] in known else r["channel"]),
                 "type": known[r["channel"]].type if r["channel"] in known else None,
-                "format": known[r["channel"]].format if r["channel"] in known else None,
+                # Атрибуты — как записаны в момент публикации (AN-006), не из текущего конфига канала.
+                "format": r.get("format"),
+                "post_format": r.get("post_format"),
+                "media_s": r.get("media_s"),
+                "weekday": r.get("weekday"),
+                "hour": r.get("hour"),
                 "public": r.get("public"),
                 "message_id": r.get("message_id"),
                 "state": steps.publication_state(r),
@@ -553,7 +558,9 @@ class StudioModule:
                 raise bad_request("В этот канал не выгружался пакет для ручной загрузки.")
             # Поправить ссылку можно; время публикации — первое «Залил».
             published_at = found.get("published_at") or time.time()
+            # День недели и час — когда пост вышел на площадке, а не когда собран пакет (AN-006).
             fixed = found | link | {"state": steps.UPLOADED, "published_at": published_at}
+            fixed |= steps.when_fields(published_at)
             steps.save_published(folder, [fixed if r is found else r for r in records])
             done.update(project=project, record=fixed, again=found.get("state") == steps.UPLOADED)
             return set()

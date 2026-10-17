@@ -55,8 +55,9 @@ def http_get(url: str) -> str:
 
 
 def sent_at(record: dict) -> float | None:
-    """Когда пост вышел: залит руками (published_at) или отправлен в Telegram (sent)."""
-    value = record.get("published_at") or record.get("sent")
+    """Когда пост вышел: залит руками (published_at) или отправлен в Telegram (sent).
+    У пакета, ещё не залитого руками, sent — время сборки пакета, а не выхода поста (AN-003, AN-006)."""
+    value = record.get("published_at") or (record.get("sent") if record.get("state") != "packaged" else None)
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
@@ -288,6 +289,14 @@ def _length(seconds: float | None) -> str | None:
     return next(label for limit, label in LENGTHS if seconds <= limit)
 
 
+def _format(record: dict) -> str | None:
+    if record.get("post_format") == "photo":
+        return "картинка и аудио"
+    if not record.get("format"):
+        return None
+    return "вертикальный 9:16" if record["format"] == publish.VERTICAL else "16:9 и квадрат"
+
+
 def summary(items: list[dict]) -> list[dict]:
     """«Что работает»: средние просмотры за 24ч и прирост подписчиков за сутки после поста (за вычетом
     тренда канала) по сценарию, длине ролика и формату. Считаются только публикации с закрытым окном
@@ -306,8 +315,10 @@ def summary(items: list[dict]) -> list[dict]:
             posts.append(
                 {
                     "Сценарий": item.get("scenario_label"),
-                    "Длина ролика": _length(item.get("video_s")),
-                    "Формат": "вертикальный 9:16" if record.get("format") == publish.VERTICAL else "16:9 и квадрат",
+                    # Срезы — по полям, записанным в момент публикации (AN-006): длина отправленного
+                    # файла (шортса у вертикального канала), формат канала тогда, вид поста.
+                    "Длина ролика": _length(record.get("media_s")),
+                    "Формат": _format(record),
                     "views": record["views_24h"],
                     "growth": record.get("growth_24h_attr"),
                 }
