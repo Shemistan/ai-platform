@@ -21,8 +21,8 @@
         <div class="field-head">
           <label class="field-label" for="text">Текст</label>
           <div class="toolbar">
-            <button type="button" class="small-btn" id="from-library">Из библиотеки…</button>
-            <button type="button" class="small-btn" id="from-files">Из файлов…</button>
+            <button type="button" class="btn btn--ghost btn--sm" id="from-library">Из библиотеки…</button>
+            <button type="button" class="btn btn--ghost btn--sm" id="from-files">Из файлов…</button>
             <input type="file" id="files" accept=".md,.markdown,.txt,text/markdown,text/plain" multiple hidden>
           </div>
         </div>
@@ -66,11 +66,11 @@
           <input type="checkbox" id="verify">
           <span>Проверить распознаванием<span class="hint">после озвучки каждый абзац распознаётся обратно и сверяется с текстом</span></span>
         </label>
-        <button type="button" class="link" id="voices-btn">Образцы голосов…</button>
+        <button type="button" class="btn btn--link" id="voices-btn">Образцы голосов…</button>
       </div>
 
       <p class="form-error" id="form-error" role="alert" hidden></p>
-      <button type="submit" class="primary" id="submit">Озвучить</button>
+      <button type="submit" class="btn btn--primary" id="submit">Озвучить</button>
     </form>
 
     <div class="side">
