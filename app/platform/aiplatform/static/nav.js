@@ -1,5 +1,6 @@
 // Общая шапка платформы: вкладки, состояние GPU и предупреждения из /api/config.
 // Подключается каждой страницей вкладки: <script type="module" src="/nav.js"></script>.
+import { api, poller } from "/ui.js";
 
 // Раздел «Если не работает при установке» (app/platform/README.md) — ссылка из баннера проблем.
 const HELP_URL =
@@ -80,11 +81,12 @@ function render() {
   return gpu;
 }
 
-async function pollGpu(gpu) {
-  try {
-    const res = await fetch("/api/status");
-    const data = await res.json();
-    const busy = Boolean(data.gpu);
+// Состояние GPU и счётчик «Выпусков»: раз в 3 с, пока GPU занят, раз в 6 с в простое;
+// в скрытой вкладке — раз в минуту, при сбое связи — реже (poller из ui.js).
+function pollGpu(gpu) {
+  let busy = false;
+  const show = (data) => {
+    busy = Boolean(data.gpu);
     gpu.classList.toggle("busy", busy);
     gpu.textContent = busy
       ? `GPU: ${data.gpu}${data.waiting ? ` · ждут ${data.waiting}` : ""}`
@@ -97,10 +99,14 @@ async function pollGpu(gpu) {
       badge.hidden = !n;
       badge.title = n ? `Ждут тебя: ${n}` : "";
     }
-  } catch {
-    gpu.textContent = "GPU: нет связи";
-  }
-  setTimeout(() => pollGpu(gpu), 3000);
+  };
+  poller({
+    run: async (signal) => show(await api("GET", "/api/status", undefined, { signal, timeout: 10000 })),
+    fast: 3000,
+    slow: 6000,
+    isActive: () => busy,
+    onError: () => (gpu.textContent = "GPU: нет связи"),
+  }).start();
 }
 
 async function showProblems(nav) {

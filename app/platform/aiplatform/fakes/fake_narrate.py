@@ -733,6 +733,9 @@ def cmd_bot(args, state: dict) -> int:
             a = find(state, args.dir)
             if not a.get("voiced"):
                 return fail(f"{args.dir}: статья ещё не озвучена")
+            if a.get("sent") and not args.force and not args.channel:  # как narrator: без --force не повторяет
+                print(f"телеграм: {args.dir} уже отправлена, повтор — --force")
+                return 0
             delay()
             a["sent"] = True
             save(state)

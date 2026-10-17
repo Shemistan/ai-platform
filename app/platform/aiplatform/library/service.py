@@ -186,14 +186,26 @@ class LibraryModule:
             case "send":
                 if not card.get("has_audio"):
                     raise bad_request("Сначала озвучь статью.")
-                argv = self.narrator.argv("bot", "send", article_id, "--force")
+                # Повтор в канал — только явным «Отправить ещё раз» (force): второй клик или ретрай
+                # после таймаута не дублирует пост, narrator сам не шлёт уже отправленное.
+                force = payload.get("force", False)
+                if not isinstance(force, bool):
+                    raise bad_request("force — true или false.")
                 channel = str(payload.get("channel") or "").strip()
+                if card.get("sent") and not force and not channel:
+                    raise HttpError(
+                        HTTPStatus.CONFLICT,
+                        "Статья уже в канале. Повторить — «Отправить ещё раз».",
+                        {"sent": True},
+                    )
+                argv = self.narrator.argv("bot", "send", article_id, *(["--force"] if force else []))
                 if channel:
                     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*|-?\d+(?:_\d+)?|@\w+", channel):
                         raise bad_request("Канал — имя из telegram_tems.md или id.")
                     argv += ["--channel", channel]
                 where = f" в {channel}" if channel else ""
-                return self._start("send", f"Отправка{where}: {name}", argv, target=article_id)
+                again = "Повторная отправка" if force else "Отправка"
+                return self._start("send", f"{again}{where}: {name}", argv, target=article_id)
             case "prepare":
                 if not card.get("has_source"):
                     raise bad_request("У статьи нет исходного текста — агенту не из чего готовить.")

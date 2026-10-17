@@ -1,5 +1,5 @@
 // Вкладка «Новости»: источники, главное за день, добор упавших, обзоры для YouTube.
-import { $, narratorApi as api, chip, copyButton, fill, followTask, h, modal, shortDate, taskCard } from "/ui.js";
+import { $, busyClick, chip, copyButton, errorState, fill, followTask, h, loadLast, modal, narratorApi as api, saveLast, shortDate, stamp, taskCard } from "/ui.js";
 
 const API = "/api/news";
 const KINDS = {
@@ -40,7 +40,7 @@ async function runTask(url, body, box) {
     await followTask(`${API}/tasks/${task.id}`, (t) => fill(box, taskCard(t, { full: true, onCancel: cancel })));
     show(state.tab);
   } catch (err) {
-    fill(box, h("p", { class: "job-error" }, err.message));
+    fill(box, errorState({ title: "Задача не выполнилась", error: err }));
   }
 }
 
@@ -54,7 +54,7 @@ function recentTask(tasks, box) {
   if (active)
     followTask(`${API}/tasks/${active.id}`, (t) => fill(box, taskCard(t, { full: true, onCancel: cancel })))
       .then(() => show(state.tab))
-      .catch((err) => fill(box, h("p", { class: "job-error" }, err.message)));
+      .catch((err) => fill(box, errorState({ title: "Задача не выполнилась", error: err })));
 }
 
 // --- источники ---
@@ -83,7 +83,7 @@ function usefulness(s) {
 }
 
 async function showSources() {
-  const data = await api("GET", `${API}/sources`);
+  const data = await load(`${API}/sources`);
   const taskBox = h("div", { class: "tasks" });
   const filters = [
     ["all", `Все (${data.sources.length})`],
@@ -100,7 +100,7 @@ async function showSources() {
       h("td", { class: "num" }, s.authority.toFixed(2)),
       h("td", {}, ...lastRun(s)),
       h("td", {}, usefulness(s)),
-      h("td", { class: "num" }, s.enabled ? h("button", { type: "button", class: "small-btn", onclick: () => runTask(`${API}/sources/collect`, { only: s.id }, taskBox) }, "Собрать") : null),
+      h("td", { class: "num" }, s.enabled ? h("button", { type: "button", class: "small-btn", onclick: busyClick(() => runTask(`${API}/sources/collect`, { only: s.id }, taskBox), "sources/collect") }, "Собрать") : null),
     ),
   );
   fill(
@@ -109,9 +109,9 @@ async function showSources() {
       "div",
       { class: "card-head" },
       segmentedButtons(filters, state.sourceFilter, (v) => ((state.sourceFilter = v), showSources())),
-      h("button", { type: "button", class: "secondary", onclick: () => runTask(`${API}/sources/collect`, {}, taskBox) }, "Собрать все"),
+      h("button", { type: "button", class: "secondary", onclick: busyClick(() => runTask(`${API}/sources/collect`, {}, taskBox), "sources/collect") }, "Собрать все"),
     ),
-    h("p", { class: "hint", style: "margin:10px 0" }, `Вес — авторитет источника в оценке важности. «Мало пользы» — разобрано от ${data.useless_after} материалов, а в выпуски не попало ничего: понизить вес или выключить в config/news-sources.toml движка.`),
+    h("p", { class: "hint", style: "margin:var(--sp-2) 0" }, `Вес — авторитет источника в оценке важности. «Мало пользы» — разобрано от ${data.useless_after} материалов, а в выпуски не попало ничего: понизить вес или выключить в config/news-sources.toml движка.`),
     taskBox,
     rows.length
       ? h("div", { class: "table-wrap" }, h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Источник"), h("th", {}, "Вес"), h("th", {}, "Последний сбор"), h("th", {}, "Польза"), h("th", {}, ""))), h("tbody", {}, ...rows)))
@@ -123,7 +123,7 @@ async function showSources() {
 // --- главное за день ---
 
 async function showTop() {
-  const data = await api("GET", `${API}/top?day=${state.day}`);
+  const data = await load(`${API}/top?day=${state.day}`);
   const dayInput = h("input", { type: "date", value: state.day, max: yesterday(), style: "width:auto" });
   dayInput.addEventListener("change", () => {
     state.day = dayInput.value || yesterday();
@@ -145,7 +145,7 @@ async function showTop() {
         h("a", { class: "link", href: "/studio/?scenario=digest" }, "Дайджест новостей →"),
       ),
     ),
-    h("p", { class: "hint", style: "margin:10px 0" }, "События, опубликованные в этот день, по важности 1–10: в выпуск идёт от 7, обязательные — от 9 и уязвимости. Видно, что не вошло."),
+    h("p", { class: "hint", style: "margin:var(--sp-2) 0" }, "События, опубликованные в этот день, по важности 1–10: в выпуск идёт от 7, обязательные — от 9 и уязвимости. Видно, что не вошло."),
     data.events.length
       ? h(
           "div",
@@ -157,7 +157,7 @@ async function showTop() {
               h("span", { class: `importance${e.importance >= 8 ? " high" : e.importance >= 6 ? " mid" : ""}`, title: `балл ${e.score}` }, String(e.importance)),
               h(
                 "div",
-                { style: "display:grid;gap:4px" },
+                { style: "display:grid;gap:var(--sp-1)" },
                 h("h3", {}, e.url ? h("a", { href: e.url, target: "_blank", rel: "noopener" }, e.title) : e.title),
                 e.why ? h("p", { class: "muted small" }, e.why) : null,
                 h("div", { class: "toolbar" }, chip(KINDS[e.kind] || e.kind, "info"), e.issued ? chip("в выпуске", "ok") : chip("не вошло"), h("span", { class: "muted small" }, e.sources.join(", "))),
@@ -172,7 +172,7 @@ async function showTop() {
 // --- добор ---
 
 async function showFailed() {
-  const data = await api("GET", `${API}/failed`);
+  const data = await load(`${API}/failed`);
   const taskBox = h("div", { class: "tasks" });
   const day = h("input", { type: "date", value: state.day, max: yesterday(), style: "width:auto" });
   fill(
@@ -181,7 +181,7 @@ async function showFailed() {
     data.failed.length
       ? h(
           "div",
-          { class: "table-wrap", style: "margin-top:12px" },
+          { class: "table-wrap", style: "margin-top:var(--sp-3)" },
           h(
             "table",
             { class: "data-table" },
@@ -192,10 +192,10 @@ async function showFailed() {
       : h("p", { class: "empty" }, "Упавших источников нет — добирать нечего."),
     h(
       "div",
-      { class: "toolbar", style: "margin-top:12px" },
+      { class: "toolbar", style: "margin-top:var(--sp-3)" },
       h("span", { class: "field-label" }, "Материалы за"),
       day,
-      h("button", { type: "button", class: "secondary", disabled: !data.failed.length, onclick: () => runTask(`${API}/failed/rescue`, { day: day.value }, taskBox) }, "Добрать агентом"),
+      h("button", { type: "button", class: "secondary", disabled: !data.failed.length, onclick: busyClick(() => runTask(`${API}/failed/rescue`, { day: day.value }, taskBox), "failed/rescue") }, "Добрать агентом"),
     ),
     taskBox,
   );
@@ -221,11 +221,11 @@ function openReview(id) {
     };
     render();
     fill(body, h("h3", {}, r.title), h("div", { class: "card-head" }, tabs, tools), text);
-  });
+  }).catch((err) => fill(body, errorState({ title: "Обзор не открылся", error: err, onRetry: () => (body.closest("dialog")?.close(), openReview(id)) })));
 }
 
 async function showReviews() {
-  const data = await api("GET", `${API}/reviews`);
+  const data = await load(`${API}/reviews`);
   const taskBox = h("div", { class: "tasks" });
   const now = new Date();
   const month = h("input", { type: "month", value: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`, style: "width:auto" });
@@ -234,17 +234,17 @@ async function showReviews() {
     h("p", { class: "hint" }, "Видео, которое снимаешь сам и читаешь с суфлёра. Агент отбирает события за неделю (суббота–пятница) или за месяц и пишет суфлёр, материалы для монтажа и пост."),
     h(
       "div",
-      { class: "toolbar", style: "margin:12px 0" },
-      h("button", { type: "button", class: "secondary", onclick: () => runTask(`${API}/reviews/weekly`, {}, taskBox) }, "Обзор недели"),
+      { class: "toolbar", style: "margin:var(--sp-3) 0" },
+      h("button", { type: "button", class: "secondary", onclick: busyClick(() => runTask(`${API}/reviews/weekly`, {}, taskBox), "reviews/weekly") }, "Обзор недели"),
       h("span", { class: "muted" }, "или"),
       month,
-      h("button", { type: "button", class: "secondary", onclick: () => runTask(`${API}/reviews/monthly`, { month: month.value }, taskBox) }, "Обзор месяца"),
+      h("button", { type: "button", class: "secondary", onclick: busyClick(() => runTask(`${API}/reviews/monthly`, { month: month.value }, taskBox), "reviews/monthly") }, "Обзор месяца"),
     ),
     taskBox,
     data.reviews.length
       ? h(
           "div",
-          { class: "list", style: "margin-top:12px" },
+          { class: "list", style: "margin-top:var(--sp-3)" },
           ...data.reviews.map((r) =>
             h(
               "button",
@@ -263,14 +263,34 @@ async function showReviews() {
 
 const VIEWS = { sources: showSources, top: showTop, failed: showFailed, reviews: showReviews };
 
+// GET раздела: удачный ответ запоминается в браузере; при сбое — он же с пометкой (state.stale).
+async function load(path) {
+  try {
+    const data = await api("GET", path);
+    saveLast(`news:${path}`, data);
+    return data;
+  } catch (err) {
+    const last = loadLast(`news:${path}`);
+    if (!last?.data) throw err;
+    state.stale = { at: last.at, err };
+    return last.data;
+  }
+}
+
 async function show(tab) {
   state.tab = tab;
+  state.stale = null;
   for (const b of $("tabs").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.value === tab));
   history.replaceState(null, "", `#${tab}`);
+  const retry = () => show(tab);
   try {
     await VIEWS[tab]();
+    if (state.stale) {
+      const note = `Показаны данные от ${stamp(state.stale.at)}: свежие не пришли.`;
+      $("view").prepend(errorState({ title: "Раздел не обновился", error: state.stale.err, note, onRetry: retry }));
+    }
   } catch (err) {
-    fill($("view"), h("p", { class: "job-error" }, err.message));
+    fill($("view"), errorState({ title: "Раздел не загрузился", error: err, onRetry: retry }));
   }
 }
 

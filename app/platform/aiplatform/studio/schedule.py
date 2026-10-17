@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from aiplatform.config import pick
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError
 from aiplatform.core.log import event as log_event
 
@@ -115,10 +116,7 @@ class Scheduler:
     def _mark(self, name: str, value: str | dict) -> None:
         with self._lock_state:
             data = self._read() | {name: value}
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            tmp.replace(self.path)
+            atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
     def digest_run(self) -> dict:
         """Последний запуск дайджеста; старая запись строкой-датой считается удачной."""
