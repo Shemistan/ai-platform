@@ -1,0 +1,46 @@
+{
+  "$comment": "ответ `narrate bridge reviews`",
+  "type": "object",
+  "required": [
+    "reviews"
+  ],
+  "properties": {
+    "reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "added",
+          "files",
+          "folder",
+          "id",
+          "kind",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "added": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

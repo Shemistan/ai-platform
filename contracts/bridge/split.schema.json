@@ -1,0 +1,31 @@
+{
+  "$comment": "ответ `narrate bridge split`",
+  "type": "object",
+  "required": [
+    "articles"
+  ],
+  "properties": {
+    "articles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "text",
+          "title",
+          "words"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "words": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
