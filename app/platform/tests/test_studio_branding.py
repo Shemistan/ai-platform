@@ -104,14 +104,14 @@ class TelegramCoverTest(unittest.TestCase):
             video, cover, thumb = folder / "v.mp4", folder / "v-cover.jpg", folder / "v-thumb.jpg"
             for path in (video, cover, thumb):
                 path.write_bytes(b"data")
-            channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@x", token_env="AIP_TEST_TG")
+            channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@x", token_env="AIP_TG_TEST")
             sent = {}
 
             def fake_post(url, body, ctype):
                 sent["body"] = body
                 return {"ok": True, "result": {"message_id": 1}}
 
-            with mock.patch.dict(os.environ, {"AIP_TEST_TG": "1:S"}):
+            with mock.patch.dict(os.environ, {"AIP_TG_TEST": "123456:" + "S" * 35}):
                 publish.publish(
                     channel, video=video, title="Т", post="П", out_dir=folder, http_post=fake_post,
                     cover=cover, thumb=thumb,

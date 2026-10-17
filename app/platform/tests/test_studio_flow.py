@@ -274,7 +274,7 @@ class TelegramWithoutTokenTest(StudioCase):
         self.addCleanup(shutil.rmtree, channels.parent)
         channels.write_text(
             json.dumps(
-                [{"id": "tg", "label": "TG", "type": "telegram", "chat_id": "@x", "token_env": "AIP_NO_SUCH_TOKEN"}]
+                [{"id": "tg", "label": "TG", "type": "telegram", "chat_id": "@x", "token_env": "AIP_TG_NO_SUCH"}]
             ),
             encoding="utf-8",
         )
@@ -283,7 +283,7 @@ class TelegramWithoutTokenTest(StudioCase):
 
     def test_config_shows_problem_and_publish_fails(self):
         _, cfg = self.json("GET", "/api/studio/config")
-        self.assertEqual(cfg["channels"][0]["problem"], "нет токена в переменной AIP_NO_SUCH_TOKEN")
+        self.assertEqual(cfg["channels"][0]["problem"], "нет токена в переменной AIP_TG_NO_SUCH")
         project = self.create(scenario="article", text=ARTICLE, settings={"channels": ["tg"], "auto_publish": True})
         folder = self.folder(project["id"])
         (folder / "video.mp4").write_bytes(b"x")

@@ -31,6 +31,7 @@ import subprocess
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 INDEX_NAME = "index.md"
 META_NAME = "meta.json"
@@ -51,6 +52,12 @@ _TRANSLIT = dict(
         strict=True,
     )
 )
+
+
+def is_web(url: str) -> bool:
+    """Ссылка http(s) с хостом: только такую страница платформы покажет кликабельной."""
+    parts = urlsplit(str(url).strip())
+    return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
 
 
 @dataclass
@@ -75,6 +82,11 @@ class Entry:
     kind: str = "article"
     image_prompt: str = ""  # устарело: промпт обложки теперь в image_prompt.md
     license: str = "none"  # право на переработку статьи: одно из LICENSES
+
+    def __post_init__(self) -> None:
+        # meta.json пишет агент по чужой статье: ссылка не http(s) (javascript:…) — не ссылка.
+        if self.url is not None and not is_web(self.url):
+            self.url = None
 
     @classmethod
     def load(cls, path: Path) -> Entry:
