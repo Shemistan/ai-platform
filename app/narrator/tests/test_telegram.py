@@ -105,6 +105,16 @@ def test_state_roundtrip_and_unknown_fields(tmp_path):
     assert State.load(tmp_path / "нет.json") == State()
 
 
+def test_state_save_is_owner_only(tmp_path):
+    # Подписчики — личные данные: файл 0600 и после перезаписи, временных не остаётся (SEC-010).
+    path = tmp_path / "telegram.json"
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o644)
+    State(offset=1).save(path)
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert [p.name for p in tmp_path.iterdir()] == ["telegram.json"]
+
+
 def test_upsert_returns_true_only_for_new_chat():
     state = State()
     assert state.upsert(42, "Аня") is True

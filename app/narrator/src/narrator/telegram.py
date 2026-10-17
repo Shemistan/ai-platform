@@ -33,6 +33,7 @@ import mimetypes
 import os
 import re
 import secrets
+import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -206,10 +207,17 @@ class State:
         return cls(subscribers=subs, **data)
 
     def save(self, path: Path) -> None:
+        """Атомарно и только для владельца (0600): в файле chat_id и имена — личные данные."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(asdict(self), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        text = json.dumps(asdict(self), ensure_ascii=False, indent=2) + "\n"
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:  # mkstemp создаёт файл с 0600
+                fh.write(text)
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
 
     def find(self, chat_id: int) -> Subscriber | None:
         return next((s for s in self.subscribers if s.chat_id == chat_id), None)

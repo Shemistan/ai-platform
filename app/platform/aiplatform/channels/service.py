@@ -13,15 +13,19 @@ from __future__ import annotations
 import threading
 import time
 from http import HTTPStatus
+from pathlib import Path
 
+from aiplatform.config import pick
 from aiplatform.core import narrator as narrator_module
-from aiplatform.core import runner
+from aiplatform.core import perms, runner
 from aiplatform.core.http import Request, bad_request, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import publish
 
 PREFIX = "channels"
+TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"  # как narrator.telegram.TOKEN_FILE_ENV
+TOKEN_FILE = "bot_token.md"  # как narrator.telegram.TOKEN_FILE
 LOG_TAIL = 200
 
 
@@ -88,6 +92,7 @@ class ChannelsModule:
     def __init__(self, ctx) -> None:
         self.config = studio_config.load(ctx.config)
         self.narrator = narrator_module.load(ctx.config)
+        self.env = ctx.config.env
         self.serve = BotServe(self.narrator)
 
     def describe(self) -> dict:
@@ -95,7 +100,24 @@ class ChannelsModule:
 
     def problems(self) -> list[str]:
         problem = self.narrator.check()
-        return [problem] if problem else []
+        return ([problem] if problem else []) + self.secret_problems()
+
+    def secret_files(self) -> list[tuple[Path, str]]:
+        """Файлы движка с токеном, каналами и подписчиками — им нужны права 0600 (SEC-010)."""
+        home = self.narrator.home
+        token = pick(self.env, TOKEN_FILE_ENV) or str(home / TOKEN_FILE)
+        return [
+            (Path(token).expanduser(), "Файл токена бота"),
+            (home / "telegram_tems.md", "Список каналов"),
+            (home / "library" / "telegram.json", "Файл подписчиков бота"),
+            (self.config.channels_file, "Файл каналов публикации"),
+        ]
+
+    def secret_problems(self) -> list[str]:
+        """Предупреждения о правах шире 0600; в демо файлы фейковые — молчим."""
+        if self.narrator.fake:
+            return []
+        return [w for path, what in self.secret_files() if (w := perms.warning(path, what))]
 
     # --- данные ---
 

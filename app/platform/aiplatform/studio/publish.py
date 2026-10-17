@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from aiplatform.core import perms
 from aiplatform.studio.llm import StudioError
 
 TELEGRAM, MANUAL = "telegram", "manual"
@@ -181,10 +182,8 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
 
 
 def save_channels(path: Path, channels: list[Channel]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps([c.stored() for c in channels], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    """channels.json атомарно и только для владельца (0600): id каналов и имена переменных токенов."""
+    perms.write_private(path, json.dumps([c.stored() for c in channels], ensure_ascii=False, indent=2) + "\n")
 
 
 def new_channel(existing: list[Channel], label: str, chat_id: str, fmt: str) -> Channel:
