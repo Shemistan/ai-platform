@@ -30,6 +30,7 @@ from pathlib import Path
 WORDS_PER_SECOND = 2.5
 MIN_SECONDS = 1.0
 HOME_ENV = "FAKE_NARRATOR_HOME"
+BRIDGE_API = 1  # как narrator.bridge.BRIDGE_API; FAKE_BRIDGE_API — подменить в тестах
 ENGINES = (
     ("espeech", "ESpeech", "лучшее качество, нужна видеокарта", True, (32, 1.0)),
     ("silero", "Silero", "секунды на CPU, свои ударения", False, (0, 1.0)),
@@ -368,6 +369,8 @@ def voice_sample(stem: str) -> Path:
 def bridge(args, state: dict) -> dict:
     ensure_audio(state)
     match args.bridge_cmd:
+        case "version":
+            return {"bridge_api": int(os.environ.get("FAKE_BRIDGE_API", BRIDGE_API))}
         case "engines":
             ready = set(state["mlx"])
             out = []
@@ -922,7 +925,7 @@ def parser() -> argparse.ArgumentParser:
 
     b = sub.add_parser("bridge").add_subparsers(dest="bridge_cmd", required=True)
     for name in (
-        "engines", "voices", "models", "preview", "split", "library", "article-new",
+        "version", "engines", "voices", "models", "preview", "split", "library", "article-new",
         "sources", "failed", "reviews", "unsent",
     ):  # fmt: skip
         b.add_parser(name)
