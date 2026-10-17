@@ -1062,6 +1062,8 @@ def step_publish(ctx: StepContext) -> None:
     ctx.remember(registry_warning=stale or None)  # видно в состоянии шага; публикацию не держит
     if stale:
         ctx.log(stale)
+    if unlicensed := series_unlicensed(ctx):
+        raise StudioError(unlicensed)
     post = with_source(ctx, ctx.read(POST))
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
@@ -1342,6 +1344,22 @@ def post_links(scenario: str, settings: dict, read, post: str) -> dict:
     """Домены ссылок поста и те из них, которых нет в исходнике; пост «Пост в канал» пишет человек."""
     foreign = [] if scenario == POST_SCENARIO else publish.foreign_domains(post, link_sources(scenario, settings, read))
     return {"domains": publish.link_domains(post), "foreign": foreign}
+
+
+# Право на переработку статьи — как `license` у статей narrator (CMP-005): own, cc-by, permission, none.
+LICENSES = ("own", "cc-by", "permission", "none")
+PUBLISHABLE = ("own", "cc-by", "permission")
+
+
+def series_unlicensed(ctx: StepContext) -> str:
+    """Часть серии по статье без права на переработку: целиком в канал не уходит (CMP-021)."""
+    if not ctx.project.get("series_of") or ctx.settings.get("source_license") in PUBLISHABLE:
+        return ""
+    return (
+        "Серия частями — это полный пересказ чужой статьи, а права на переработку нет. "
+        "Если оно есть (своя статья, CC BY или разрешение автора), выбери его в поле «Право на переработку» "
+        "в шаге «Публикация» и нажми «Опубликовать» снова; иначе опубликуй одно видео-аннотацию по статье."
+    )
 
 
 def with_source(ctx: StepContext, post: str) -> str:

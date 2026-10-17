@@ -191,6 +191,13 @@ function fieldsOf(values, prefix) {
       h("label", { class: "field" }, h("span", { class: "hint" }, "Ссылка на оригинал статьи"), h("input", { type: "url", id: id("source_url"), value: values.source_url || "", placeholder: "https://…" })),
     source_author: () =>
       h("label", { class: "field" }, h("span", { class: "hint" }, "Автор оригинала"), h("input", { type: "text", id: id("source_author"), value: values.source_author || "", placeholder: "Имя автора или издание" })),
+    // Право на переработку (CMP-021): без него серия частями — полный пересказ — в канал не уходит.
+    source_license: () =>
+      select(
+        "source_license",
+        "Право на переработку — без него серия частями не публикуется",
+        [["none", "Нет права"], ["own", "Своя статья"], ["cc-by", "CC BY"], ["permission", "Разрешение автора"]].map(([v, label]) => [v, label, v === (values.source_license || "none")]),
+      ),
     review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
     draft: () =>
       check(
@@ -252,7 +259,7 @@ function settingsForm(values, prefix) {
     group("Слайды", f.slide_s(), f.reading()),
     group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
     group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish()),
-    scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author()) : null,
+    scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author(), f.source_license()) : null,
     f.review_text(),
   );
 }
@@ -270,7 +277,8 @@ const POST_SETTINGS = [
 
 // Читает поля формы с этим префиксом; names — какие именно (engine читается вместе с голосом).
 // У статьи ещё источник: ссылка и автор оригинала.
-const ARTICLE_SETTINGS = [...SETTING_NAMES, "source_url", "source_author"];
+const SOURCE_SETTINGS = ["source_url", "source_author", "source_license"];
+const ARTICLE_SETTINGS = [...SETTING_NAMES, ...SOURCE_SETTINGS];
 
 function readSettings(prefix, names = { post: POST_SETTINGS, article: ARTICLE_SETTINGS }[scenario] || SETTING_NAMES) {
   const get = (name) => document.getElementById(`${prefix}-${name}`);
@@ -534,6 +542,23 @@ async function addChannel(prefix) {
 function publishPick(project) {
   if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(project.settings.channels), force: false, ignoreVerdict: false, noDisclaimers: "" };
   return state.publish[project.id];
+}
+
+// Источник статьи прямо в шаге «Публикация» (CMP-021): без него выпуск не уйдёт, без права — не уйдёт серия.
+function sourceBox(p) {
+  const f = fieldsOf(p.settings, "step-source");
+  return h(
+    "fieldset",
+    { class: "source-box" },
+    h("legend", {}, "Источник статьи"),
+    f.source_url(),
+    f.source_author(),
+    f.source_license(),
+    p.series_of && !["own", "cc-by", "permission"].includes(p.settings.source_license)
+      ? h("p", { class: "form-error" }, "Часть серии по чужой статье без права на переработку не публикуется — укажи право или сделай одно видео-аннотацию.")
+      : null,
+    h("button", { type: "button", class: "secondary", disabled: p.running, onclick: busyClick(() => act("settings", readSettings("step-source", SOURCE_SETTINGS))) }, "Сохранить источник"),
+  );
 }
 
 // Публикация необратима: сначала подтверждение — каналы по названиям, начало подписи, вердикт судьи.
@@ -929,6 +954,7 @@ function stepBody(step) {
       const sentTo = new Set((p.published || []).filter((r) => r.sent).map((r) => r.channel));
       return [
         p.scenario === "post" ? null : editor("post", a.post, 5),
+        p.scenario === "article" ? sourceBox(p) : null,
         h(
           "div",
           { class: "publish-box" },
@@ -1257,7 +1283,7 @@ const STEP_DATA = {
   short: (p) => [p.artifacts.short, p.files.short_video],
   publish: (p) => {
     const pick = publishPick(p);
-    return [p.artifacts.post, p.published, p.review, state.config.channels, [...pick.channels], pick.force, pick.ignoreVerdict];
+    return [p.artifacts.post, p.published, p.review, state.config.channels, [...pick.channels], pick.force, pick.ignoreVerdict, p.series_of, p.running, ...SOURCE_SETTINGS.map((k) => p.settings[k])];
   },
 };
 

@@ -81,6 +81,7 @@ SETTING_STEPS = {
     # «Видео по статье»: источник — в конце поста и на последнем слайде (CMP-005).
     "source_url": ("render", "short"),
     "source_author": ("render", "short"),
+    "source_license": None,  # право на переработку: держит только публикацию серии (CMP-021)
 }
 # Правка файла на странице → (файл, шаг, чей это результат).
 ARTIFACTS = {
@@ -747,6 +748,7 @@ class StudioModule:
             "channels": [],
             "source_url": "",
             "source_author": "",
+            "source_license": "none",
         }
 
     def scenario_defaults(self, scenario: str) -> dict:
@@ -908,6 +910,8 @@ class StudioModule:
             out[key] = " ".join(value.split())
         if out["source_url"] and not re.fullmatch(r"https?://\S+", out["source_url"]):
             raise bad_request("Ссылка на источник — вида https://…")
+        if out.get("source_license", "none") not in steps.LICENSES:
+            raise bad_request(f"source_license — одно из: {', '.join(steps.LICENSES)}.")
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
             raise bad_request("channels — список id каналов.")

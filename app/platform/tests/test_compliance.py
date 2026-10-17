@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from aiplatform.fakes import fake_narrate
-from aiplatform.studio import publish
+from aiplatform.studio import publish, series
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.render import VERTICAL, Renderer
 from aiplatform.updates import registry
@@ -338,6 +338,51 @@ class ArticleSourceTest(StudioCase):
         payload = {"scenario": "article", "text": ARTICLE, "settings": settings}
         status, _ = self.json("POST", "/api/studio/projects", payload)
         self.assertEqual(status, 400)
+
+
+@NEEDS_FFMPEG
+class SeriesLicenseTest(StudioCase):
+    """CMP-021: серия частями по чужой статье без права на переработку в канал не уходит."""
+
+    TEXT = (
+        "# Начало\n\nСборщик мусора стал быстрее. Паузы короче вдвое. Память освобождается раньше.\n\n"
+        "# Конец\n\nИтог простой. Обновляйтесь на новую версию. Тесты проходят быстрее."
+    )
+
+    def part(self, settings):
+        source = self.create(scenario="article", text=self.TEXT, title="Чужая", settings=settings)
+        split = series.split  # короткие части — короткий рендер
+        with mock.patch.object(series, "split", lambda text: split(text, 10)):
+            status, body = self.json("POST", f"/api/studio/projects/{source['id']}/split", {})
+        self.assertEqual(status, 201, body)
+        return body["projects"][0]["id"]
+
+    def test_series_without_license_is_not_published(self):
+        pid = self.part({"channels": ["download-16x9"], "auto_publish": True})
+        project = self.json("GET", f"/api/studio/projects/{pid}")[1]
+        self.assertEqual(project["settings"]["source_license"], "none")  # поле есть у выпуска и шага «Публикация»
+        self.json("POST", f"/api/studio/projects/{pid}/run", {})
+        done = self.settle(pid)
+        step = next(s for s in done["steps"] if s["id"] == "publish")
+        self.assertEqual(step["status"], "failed", done["log"])
+        self.assertIn("права на переработку нет", step["error"])
+        self.assertFalse((self.folder(pid) / "publish").exists())
+
+        status, _ = self.json("POST", f"/api/studio/projects/{pid}/settings", {"source_license": "own"})
+        self.assertEqual(status, 200)
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"]})
+        self.assertEqual(status, 202, view)
+        done = self.settle(pid)
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+
+    def test_bad_license(self):
+        payload = {"scenario": "article", "text": ARTICLE, "settings": {"source_license": "maybe"}}
+        self.assertEqual(self.json("POST", "/api/studio/projects", payload)[0], 400)
+
+    def test_source_editable_in_publish_step(self):
+        js = (Path(publish.__file__).parents[1] / "static" / "studio" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('p.scenario === "article" ? sourceBox(p) : null', js)
+        self.assertIn('readSettings("step-source", SOURCE_SETTINGS)', js)
 
 
 if __name__ == "__main__":
