@@ -16,8 +16,8 @@ from http import HTTPStatus
 
 from aiplatform.core import narrator as narrator_module
 from aiplatform.core import runner
-from aiplatform.core.http import HttpError, Request, bad_request, not_found
-from aiplatform.core.narrator import INSTALL_HINT, NarratorError
+from aiplatform.core.http import Request, bad_request, not_found
+from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import publish
 
@@ -103,7 +103,7 @@ class ChannelsModule:
         try:
             return self.narrator.bridge(*args)
         except NarratorError as exc:
-            raise HttpError(HTTPStatus.BAD_GATEWAY, str(exc)) from exc
+            raise http_error(exc) from exc
 
     def _channels(self) -> list[publish.Channel]:
         try:
