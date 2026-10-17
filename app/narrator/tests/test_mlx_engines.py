@@ -169,3 +169,31 @@ def test_fake_worker_writes_valid_wav(fake_worker, tmp_path):
     finally:
         worker.close()
     assert sf.info(out).samplerate == SR
+
+
+def test_live_voice_clone_needs_consent(fake_worker, tmp_path, monkeypatch):
+    # CMP-009: клон живого голоса без согласия — отказ до запуска модели; с согласием — синтез.
+    import numpy as np
+    import soundfile as sf
+
+    from narrator import consent
+    from narrator.synth import ConsentMissingError
+
+    monkeypatch.setenv("NARRATOR_MODELS_DIR", str(tmp_path / "models"))
+    voices = tmp_path / "models" / "voices"
+    voices.mkdir(parents=True)
+    sf.write(voices / "shem.wav", np.zeros(8 * 8000, dtype=np.float32), 8000)
+    (voices / "shem.txt").write_text("Образ+ец.\n", encoding="utf-8")
+    synth = make_synth(Settings(engine="qwen3", voice="Shem"))
+    with pytest.raises(ConsentMissingError, match="без согласия"):
+        synth.prepare()
+    assert not fake_worker.exists(), "модель не запускалась"
+    consent.write(voices / "shem.wav", consent.make("Шамистан", "self"))
+    synth = make_synth(Settings(engine="qwen3", voice="Shem"))
+    try:
+        wav, _ = synth.clip(Block("para", "Проверка голоса.", 1))
+    finally:
+        synth.close()
+    assert len(wav)
+    (req,) = requests(fake_worker)
+    assert req["ref_audio"] == str(voices / "shem.wav")

@@ -72,7 +72,9 @@ sh tools/import-old.sh <old-narrator-dir>   # каталог старого narr
 Движки: `espeech` (лучшее качество, видеокарта), `silero` (секунды на CPU,
 CC BY-NC), `supertonic` (быстро на CPU), для сравнения на Apple Silicon —
 `higgs`, `fish`, `moss`, `qwen3`, `chatterbox`. Голоса-клоны — `Charon`,
-`M1`, `Shem`, `Shem-v2`.
+`M1`, `Shem`, `Shem-v2`. Shem — живой голос: образца нет в репозитории, он
+лежит в `<папка моделей>/voices/` вместе с согласием владельца —
+[`docs/voice-consent.md`](docs/voice-consent.md).
 
 ## Как устроено
 

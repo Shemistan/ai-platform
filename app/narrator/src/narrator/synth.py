@@ -60,13 +60,13 @@ SILERO_SR = 48000
 # предложениям на группы с запасом (+ удлиняют текст).
 SILERO_MAX_CHARS = 700
 
-# Образцы для клонирования: голос → имя файлов <имя>.wav и <имя>.txt в
-# voices/ пакета. M1 — из Supertonic. Charon — голос Gemini TTS, отрывок
-# дайджеста за 9 октября 2026; другой образец записывает `./narrate voice
-# charon` в <папка моделей>/voices/, он главнее. Shem — живой голос, первые
-# фразы дайджеста за 12 октября 2026, прочитанного человеком на камеру.
-# Shem-v2 — тот же голос, запись по тексту для клонирования (16 октября
-# 2026): 11,6 с ровного повествования вместо 6 с заставки.
+# Образцы для клонирования: голос → имя файлов <имя>.wav и <имя>.txt.
+# В пакете (voices/) — только синтетические: M1 из Supertonic и Charon —
+# голос Gemini TTS, отрывок дайджеста за 9 октября 2026; другой образец
+# записывает `./narrate voice charon` в <папка моделей>/voices/, он главнее.
+# Shem и Shem-v2 — живой голос человека: это личные данные, в git их нет
+# (CMP-009). Они лежат только в <папка моделей>/voices/ рядом с записью о
+# согласии `<имя>.consent.json` (consent.py); без неё клон не строится.
 CLONE_VOICES = {"M1": "m1", "Charon": "charon", "Shem": "shem", "Shem-v2": "shem-v2"}
 # Голоса, которые есть в Gemini TTS: их образец можно записать по ключу.
 GEMINI_VOICES = ("Charon",)
@@ -109,6 +109,10 @@ class ModelMissingError(RuntimeError):
     pass
 
 
+class ConsentMissingError(ModelMissingError):
+    """Образец живого голоса есть, а записи о согласии владельца нет (CMP-009)."""
+
+
 @dataclass(frozen=True)
 class Settings:
     engine: str = "supertonic"
@@ -135,13 +139,30 @@ def voices_dir() -> Path:
 
 
 def ref_sample(voice: str) -> tuple[Path, Path]:
-    """Образец голоса для клонирования: wav и его текст с «+» перед ударными."""
+    """Образец голоса для клонирования: wav и его текст с «+» перед ударными.
+
+    Живой голос — только с записью о согласии рядом (CMP-009): иначе
+    ConsentMissingError, синтез не начнётся.
+    """
+    from narrator import consent
+
     stem = CLONE_VOICES[voice]
     # Перезаписанный человеком образец главнее того, что в пакете.
     for d in (voices_dir(), VOICE_DIR):
         wav, text = d / f"{stem}.wav", d / f"{stem}.txt"
         if wav.exists() and text.exists():
+            try:
+                consent.check(stem, wav)
+            except consent.ConsentError as e:
+                raise ConsentMissingError(str(e)) from e
             return wav, text
+    if stem not in consent.SYNTHETIC:
+        raise ModelMissingError(
+            f"нет образца голоса {voice} в {voices_dir()}: живой голос в пакете не лежит "
+            f"(CMP-009) — положи туда {stem}.wav и {stem}.txt или запиши: ./narrate voice "
+            f"{stem} --from <файл> --text «…» --owner «чей голос» --form self|written "
+            f"({consent.DOC})"
+        )
     raise ModelMissingError(
         f"нет образца голоса {voice} в {voices_dir()}: запиши его один раз вне sandbox — "
         f"./narrate voice {stem}"

@@ -61,7 +61,7 @@ def cmd_voice(args) -> int:
     """Записывает образец голоса для клонирования: из Gemini TTS или из готового файла."""
     import soundfile as sf
 
-    from narrator import gemini, models, synth
+    from narrator import consent, gemini, models, synth
     from narrator.stress import strip_marks
 
     # M1 — образец из Supertonic, его не перезаписывают.
@@ -70,6 +70,19 @@ def cmd_voice(args) -> int:
     if stem not in stems:
         return fail(f"голос {args.name!r} не записывается, есть: {', '.join(stems)}")
     voice = stems[stem]
+    # Живой голос — только с согласием владельца: запись о нём ляжет рядом с образцом (CMP-009).
+    record = None
+    if stem not in consent.SYNTHETIC:
+        if not args.owner or not args.form:
+            return fail(
+                f"голос {voice} — живой: только из своей записи и с согласием владельца — "
+                f"./narrate voice {stem} --from <файл> --text «…» --owner «чей голос» "
+                "--form self (мой голос) или written (письменное согласие)"
+            )
+        try:
+            record = consent.make(args.owner, args.form, expires=args.expires)
+        except consent.ConsentError as e:
+            return fail(str(e))
     if args.text:
         # Свой текст образца (отрывок готовой озвучки): ударения ставит RUAccent.
         from narrator.stress import Accentor
@@ -117,12 +130,48 @@ def cmd_voice(args) -> int:
         out.mkdir(parents=True, exist_ok=True)
         sf.write(out / f"{stem}.wav", audio, sr, subtype="PCM_16")
         (out / f"{stem}.txt").write_text(marked + "\n", encoding="utf-8")
+        if record is not None:
+            consent.write(out / f"{stem}.wav", record)
     except OSError as e:
         hint = "" if models.models_root().exists() else f": {models.missing_hint()}"
         return fail(f"образец не записан в {out} ({e}){hint}", 3)
     engines = ", ".join(synth.CLONE_ENGINES)
     print(f"{out / f'{stem}.wav'}  {seconds:.1f} с")
     print(f"голос {voice} готов для {engines}: --voice {voice}")
+    return 0
+
+
+def add_consent_args(s: argparse.ArgumentParser, required: bool) -> None:
+    from narrator import consent
+
+    s.add_argument("--owner", required=required, help="чей это голос (имя владельца)")
+    s.add_argument(
+        "--form",
+        choices=consent.FORMS,
+        required=required,
+        help="self — мой голос; written — есть письменное согласие владельца",
+    )
+    s.add_argument("--expires", help="до какого дня согласие действует, ГГГГ-ММ-ДД")
+
+
+def cmd_voice_consent(args) -> int:
+    """Запись о согласии для образца, который положили в папку голосов руками (CMP-009)."""
+    from narrator import consent, synth
+
+    stem = args.name.lower()
+    if stem not in synth.CLONE_VOICES.values() or stem in consent.SYNTHETIC:
+        live = sorted(set(synth.CLONE_VOICES.values()) - consent.SYNTHETIC)
+        return fail(f"согласие пишут для живых голосов: {', '.join(live)}")
+    wav = synth.voices_dir() / f"{stem}.wav"
+    if not wav.exists():
+        return fail(f"нет образца {wav}: положи туда {stem}.wav и {stem}.txt")
+    try:
+        path = consent.write(wav, consent.make(args.owner, args.form, expires=args.expires))
+    except consent.ConsentError as e:
+        return fail(str(e))
+    except OSError as e:
+        return fail(f"не записать согласие рядом с {wav}: {e}", 3)
+    print(f"согласие записано: {path}")
     return 0
 
 
@@ -795,7 +844,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--text",
         help="что сказано в образце, слово в слово, цифры словами; по умолчанию — фраза образца M1",
     )
+    add_consent_args(s, required=False)
     s.set_defaults(func=cmd_voice)
+
+    s = sub.add_parser(
+        "voice-consent",
+        help="записать согласие владельца живого голоса рядом с образцом (<имя>.consent.json)",
+    )
+    s.add_argument("name", help="shem или shem-v2")
+    add_consent_args(s, required=True)
+    s.set_defaults(func=cmd_voice_consent)
 
     s = sub.add_parser("fetch", help="скачать статью: каталог в библиотеке + source.md")
     s.add_argument("url")

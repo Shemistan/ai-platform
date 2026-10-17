@@ -36,8 +36,10 @@ WebFetch и WebSearch, `source.md`, аннотации в базе пишут п
   сравнения — пять моделей на mlx-audio: `higgs`, `fish`, `moss`, `qwen3`,
   `chatterbox` (`src/narrator/mlx_engines.py`), только Mac на Apple Silicon.
 - Голоса-клоны (`espeech` и mlx): `Charon` (Gemini TTS), `M1`, `Shem`,
-  `Shem-v2` (`CLONE_VOICES` в `synth.py`); образцы — `src/narrator/voices/`,
-  перезаписанные человеком — `<папка моделей>/voices/`.
+  `Shem-v2` (`CLONE_VOICES` в `synth.py`); синтетические образцы —
+  `src/narrator/voices/`, живой голос (Shem) — только `<папка моделей>/voices/`
+  с записью о согласии `<имя>.consent.json`, в репозитории его нет
+  (`docs/voice-consent.md`); перезаписанные человеком — там же.
 - Модели — `/Volumes/External SSD/local_models` (`$NARRATOR_MODELS_DIR`,
   пути — `src/narrator/models.py`). Скачивает и переносит их человек:
   вкладка «Обновления» платформы или `make models`, `make move-models`.
