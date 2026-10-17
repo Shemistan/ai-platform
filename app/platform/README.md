@@ -274,7 +274,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | `AIP_VIDEO_LTX_CMD`, `AIP_VIDEO_WAN_CMD`, `AIP_VIDEO_MODEL` | из PATH | пайплайны видео (или старые `VIDEOGEN_*`) |
 | `AIP_NARRATOR_DIR` | `app/narrator` | движок озвучки и новостей |
 | `AIP_NARRATE_CMD` | `$AIP_NARRATOR_DIR/narrate` | команда озвучки (`narrate say`) |
-| `AIP_AUDIO_ENGINE` | `higgs` | движок озвучки по умолчанию (голос — Charon) |
+| `AIP_AUDIO_ENGINE` | первый с весами: `higgs` → `espeech` → `silero` | движок озвучки по умолчанию; не задан — первый, чьи веса стоят (после одного `make models` — `espeech`, higgs ставит `make models-mlx E=higgs`). Нет весов у движка по умолчанию — баннер «Проблемы» с командой установки |
 | `AIP_LLM_CMD` | `claude -p` | LLM для промптов и слайдов: промпт на stdin, ответ в stdout |
 | `AIP_UPDATES_LLM_CMD` | `claude -p --allowedTools WebSearch,WebFetch` | LLM со свежим вебом для сверки списка запрещённых организаций |
 | `AIP_NEWS_CMD` | `make -C {narrator} news-collect news-agent news-judge DAY={day}` | сбор дайджеста |

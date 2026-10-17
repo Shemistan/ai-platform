@@ -11,6 +11,8 @@
 #   higgs, fish, moss, qwen3, chatterbox — большие модели на mlx-audio для
 #   сравнения (make models-mlx), только Mac на Apple Silicon
 # Переменная окружения NARRATOR_ENGINE, если задана, главнее этой строки.
+# По умолчанию espeech: его веса ставит make models. Платформа без явного
+# AIP_AUDIO_ENGINE берёт первый движок с весами: higgs → espeech → silero.
 ENGINE ?= $(or $(NARRATOR_ENGINE),espeech)
 # Голос: espeech и модели mlx — Charon (по умолчанию), M1, Shem, Shem-v2; silero — eugene, aidar, baya, kseniya, xenia;
 # supertonic — M1…M5, F1…F5. Пусто — голос движка по умолчанию.

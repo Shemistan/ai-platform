@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import replace
 from http import HTTPStatus
 from pathlib import Path
 
@@ -44,7 +45,7 @@ class AudioModule:
     label = "Аудио"
 
     def __init__(self, ctx) -> None:
-        self.config = audio_config.load(ctx.config)
+        self.config = replace(audio_config.load(ctx.config), installed=self._installed)
         self.narrator = self.config.narrator
         self.uploads = ctx.uploads
         self.jobs = AudioJobs(self.config, ctx.gate, URL_BASE)
@@ -97,10 +98,28 @@ class AudioModule:
             "install_hint": INSTALL_HINT,
         }
 
+    def _installed(self) -> set[str] | None:
+        """Движки, у которых мост не нашёл проблем (веса на месте); None — мост не ответил."""
+        info = self.engines()
+        if info.get("error") or not isinstance(info.get("engines"), list):
+            return None
+        return {e["id"] for e in info["engines"] if isinstance(e, dict) and not e.get("problem")}
+
     def problems(self) -> list[str]:
-        if self.config.runner_available():
+        if not self.config.runner_available():
+            return [f"Аудио: команда «{self.config.narrate_cmd[0]}» не найдена. {INSTALL_HINT}"]
+        info = self.engines()
+        live = {e.get("id"): e for e in info.get("engines") or [] if isinstance(e, dict)}
+        engine_id = self.config.default_engine
+        problem = (live.get(engine_id) or {}).get("problem")
+        if info.get("error") or not problem:
             return []
-        return [f"Аудио: команда «{self.config.narrate_cmd[0]}» не найдена. {INSTALL_HINT}"]
+        engine = voices.ENGINES.get(engine_id)
+        label = engine.label if engine else engine_id
+        hint = voices.models_command(engine_id)
+        where = info.get("models_hint")
+        tail = f" Папка моделей: {where}." if where and not info.get("models_dir_exists", True) else ""
+        return [f"Аудио: у движка по умолчанию {label} нет весов ({problem}). Поставь: {hint}.{tail}"]
 
     # --- маршруты ---
 
