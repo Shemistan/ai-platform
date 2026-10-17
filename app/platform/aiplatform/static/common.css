@@ -64,3 +64,4 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
   font-size: var(--fs-md);
 }
 .platform-problems ul { margin: var(--sp-1) 0 0; padding-left: var(--sp-4); }
+.platform-problems .help { display: inline-block; margin-top: var(--sp-2); color: inherit; font-weight: var(--fw-semibold); }

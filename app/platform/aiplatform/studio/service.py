@@ -20,7 +20,7 @@ from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
 from aiplatform.studio import news, prompts, publish, schedule, series, slides, stats, steps
 from aiplatform.studio.cache import MediaCache, place
-from aiplatform.studio.llm import StudioError, complete
+from aiplatform.studio.llm import StudioError, complete, missing_cli
 from aiplatform.studio.pipeline import (
     LABELS,
     STEP_IDS,
@@ -673,7 +673,7 @@ class StudioModule:
     def problems(self) -> list[str]:
         out = []
         if not self.config.llm_available():
-            out.append(f"Сценарии: LLM-команда «{self.config.llm_cmd[0]}» не найдена — задай AIP_LLM_CMD.")
+            out.append(missing_cli(self.config.llm_cmd[0]))
         try:
             self.config.channels()
         except ValueError as exc:
