@@ -26,6 +26,7 @@ FAST = {
     "FAKE_LLM_GARBAGE": "",
     "FAKE_NEWS_EMPTY": "",
 }
+SOURCE = {"source_url": "https://example.dev/gc", "source_author": "Иван Петров"}
 NEEDS_FFMPEG = unittest.skipUnless(shutil.which("ffmpeg"), "нужен ffmpeg")
 
 
@@ -41,6 +42,8 @@ class StudioCase(PlatformCase):
     extra_env = {"AIP_RENDER_SCALE": "0.25"}
 
     def create(self, **payload):
+        if payload.get("scenario") == "article":  # без источника статья не публикуется (CMP-005)
+            payload["settings"] = SOURCE | (payload.get("settings") or {})
         status, project = self.json("POST", "/api/studio/projects", payload)
         self.assertEqual(status, 201, project)
         return project
