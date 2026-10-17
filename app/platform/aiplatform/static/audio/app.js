@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -511,9 +511,10 @@ function fileRecord(v, low, high, busy, taskBox, reload) {
       return;
     }
     try {
-      const upload = await api("POST", `${API}/uploads`, file.files[0]);
+      const upload = await uploadFile(`${API}/uploads`, file.files[0], { limit: (state.config?.upload_limits || UPLOAD_LIMITS).media });
       await startRecord(v.stem, { upload: upload.id, text: text.value }, taskBox, reload);
     } catch (err) {
+      if (err.kind === "abort") return; // отменили сами — форма как была
       error.textContent = err.message;
       error.hidden = false;
     }

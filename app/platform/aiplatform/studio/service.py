@@ -36,6 +36,7 @@ from aiplatform.studio.pipeline import (
     dependents,
 )
 from aiplatform.studio.render import Renderer
+from aiplatform.studio.review import Review
 from aiplatform.updates import registry
 from aiplatform.video import models as video_models
 
@@ -197,6 +198,9 @@ def _read_json_list(path) -> list[dict]:
     return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
 
 
+TOO_BIG = "Файл больше 200 МБ."
+
+
 def place_upload(src: Path, target: Path) -> None:
     """Загрузка из временного файла — на место атомарно (та же ФС: папка проекта)."""
     os.replace(src, target)
@@ -206,6 +210,15 @@ class StudioModule:
     prefix = PREFIX
     label = "Сценарии"
 
+    def nav(self) -> list[dict]:
+        """Вкладки шапки: доска «Выпуски» со счётчиком ждущих и по вкладке на сценарий."""
+        board = {"id": "board", "label": "Выпуски", "href": "/board/", "badge": "attention"}
+        scenarios = [
+            {"id": k, "label": v, "href": f"/studio/?scenario={k}"} | ({"default": True} if k == "article" else {})
+            for k, v in SCENARIOS.items()
+        ]
+        return [board, *scenarios]
+
     def __init__(self, ctx) -> None:
         self.ctx = ctx
         self.config = studio_config.load(ctx.config)
@@ -213,6 +226,7 @@ class StudioModule:
         self.studio = Studio(self.config.projects_dir, steps.STEPS, journal=self.events)
         self.studio.on_stop = self._on_stop
         ctx.notifier.telegram = self.owner_telegram
+        self.review = Review(self)  # превью и кнопки публикации в личке владельца (PRD-001)
         self.scheduler = schedule.Scheduler(self, self.config.data_dir, self.config.schedule_tick_s)
         self._rates: tuple[float, estimate_module.Rates] | None = None
         self._durations: dict[tuple[str, int], float] = {}
@@ -234,6 +248,9 @@ class StudioModule:
             cache=MediaCache(self.config.cache_dir),
             space=self.ctx.gate.check,
         )
+        channels = self.ctx.modules.get("channels")
+        if channels is not None:  # нажатия кнопок бота приходят из `bot serve` этой вкладки
+            channels.serve.on_update = self.review.handle
         self.scheduler.start()
         self._after_restart()
 
@@ -261,10 +278,11 @@ class StudioModule:
 
     # --- уведомления ---
 
-    def notify(self, title: str, text: str, *, important: bool) -> None:
-        """В журнал уведомлений всегда; показать — если важно и уведомления включены в настройках."""
+    def notify(self, title: str, text: str, *, important: bool, telegram: bool = True) -> None:
+        """В журнал уведомлений всегда; показать — если важно и уведомления включены в настройках.
+        telegram=False — владелец уже получил в Telegram превью выпуска, второе сообщение не нужно."""
         show = important and self.ctx.config.settings.load()["notify"]["enabled"]
-        self.ctx.notifier.send(title, text, show=show)
+        self.ctx.notifier.send(title, text, show=show, telegram=telegram)
 
     def owner_channel(self) -> publish.Channel | None:
         """Личный чат владельца из настроек как канал Telegram: токен — тем же путём, что у каналов."""
@@ -294,7 +312,19 @@ class StudioModule:
         need = attention(project)
         if need and before.get(need["step"]) != need["status"]:
             head = "Выпуск упал" if need["status"] == "failed" else "Выпуск ждёт тебя"
-            self.notify(head, f"{project['title']} — {need['label']}: {need['text']}".strip(" :"), important=True)
+            previewed = need["step"] == "publish" and need["text"] in steps.REVIEW_NOTES and self._preview(project)
+            text = f"{project['title']} — {need['label']}: {need['text']}".strip(" :")
+            self.notify(head, text, important=True, telegram=not previewed)
+
+    def _preview(self, project: dict) -> bool:
+        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление."""
+        try:
+            return self.review.preview(project)
+        except Exception as exc:  # noqa: BLE001 — сеть, файлы выпуска: уведомление всё равно уйдёт
+            log.event(
+                "review.failed", level=logging.WARNING, project=project["id"], error=f"{type(exc).__name__}: {exc}"
+            )
+            return False
 
     # --- описание ---
 
@@ -305,6 +335,15 @@ class StudioModule:
         except ValueError:
             return []
 
+    def channels_or_503(self) -> list[publish.Channel]:
+        """Для действий, которым каналы нужны: битый channels.json — ошибка сервера (503), не запроса."""
+        try:
+            return self.config.channels()
+        except ValueError as exc:
+            raise HttpError(
+                HTTPStatus.SERVICE_UNAVAILABLE, f"Каналы: файл настроек сломан — {exc}", code="config_broken"
+            ) from exc
+
     def publish_now(self, project_id: str, payload: object) -> dict:
         """Кнопка «Опубликовать», как `make news-publish`: выбранные каналы, повторно — с force."""
         if not isinstance(payload, dict):
@@ -313,7 +352,7 @@ class StudioModule:
         ignore_verdict = payload.get("ignore_verdict", False)
         if not isinstance(chosen, list) or not chosen or not all(isinstance(c, str) for c in chosen):
             raise bad_request("Выбери хотя бы один канал.")
-        unknown = [c for c in chosen if c not in {ch.id for ch in self.channels()}]
+        unknown = [c for c in chosen if c not in {ch.id for ch in self.channels_or_503()}]
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
         if not isinstance(force, bool) or not isinstance(ignore_verdict, bool):
@@ -425,6 +464,7 @@ class StudioModule:
         counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
         return {
             "groups": list(BOARD_GROUPS.items()),
+            "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
             "counts": counts,
             "projects": items,
             "response": stats.summary(items),
@@ -674,6 +714,7 @@ class StudioModule:
         return {
             "scenario_defaults": {k: self.scenario_defaults(k) for k in SCENARIOS},
             "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
+            "upload_limits": uploads_module.limits(),
             "steps": [{"id": s, "label": LABELS[s]} for s in STEP_IDS],
             "defaults": self.defaults(),
             "engines": [e.public() for e in self.ctx.modules["audio"].config.engines().values()],
@@ -1236,12 +1277,11 @@ class StudioModule:
             )
         return out
 
-    def _receive(self, req: Request, project_id: str) -> Path:
-        """Загрузка в проект: тело потоком во временный файл в папке проекта (SEC-009)."""
+    def _upload_dir(self, project_id: str) -> Path:
+        # Куда писать загрузку в проект: папка проекта, та же ФС — потом os.replace (SEC-009).
         if self.studio.get(project_id) is None:
             raise not_found("Проект не найден.")
-        folder = self.studio.project_dir(project_id)
-        return req.body_to_file(folder, uploads_module.MAX_AUDIO_BYTES, "Файл больше 200 МБ.")
+        return self.studio.project_dir(project_id)
 
     def upload_slide(self, project_id: str, kind: str, key: str, src: Path) -> dict:
         """Картинка или видео слайда от человека. Все на месте — шаг готов, сборка заново."""
@@ -1409,6 +1449,10 @@ class StudioModule:
         except ProjectNotFound as exc:
             raise not_found("Проект не найден.") from exc
 
+    @staticmethod
+    def _follow(project_id: str) -> dict[str, str]:
+        return {"Location": f"/api/studio/projects/{project_id}"}
+
     def _route(self, req: Request) -> None:
         match (req.method, req.sub):
             case ("GET", ["config"]):
@@ -1430,19 +1474,22 @@ class StudioModule:
             case ("POST", ["projects", pid, "summary"]):
                 return req.send_json(self.summarize(pid), HTTPStatus.ACCEPTED)
             case ("POST", ["projects", pid, "clone"]):
-                return req.send_json(self.clone(pid), HTTPStatus.CREATED)
+                copy = self.clone(pid)
+                return req.send_json(copy, HTTPStatus.CREATED, self._follow(copy["id"]))
             case ("POST", ["projects", pid, "archive"]):
                 return req.send_json(self.archive(pid, req.json() or {}))
             case ("POST", ["projects"]):
                 key = req.headers.get("Idempotency-Key")
-                return req.send_json(self.create_once(req.json(MAX_BODY), key), HTTPStatus.CREATED)
+                made = self.create_once(req.json(MAX_BODY), key)
+                return req.send_json(made, HTTPStatus.CREATED, self._follow(made["id"]))
             case ("GET", ["projects", pid]):
                 return req.send_json(self.view(pid))
             case ("POST", ["projects", pid, "settings"]):
                 return req.send_json(self.update_settings(pid, req.json()))
             case ("POST", ["projects", pid, "run"]):
                 payload = req.json() or {}
-                return req.send_json(self.rerun(pid, payload))
+                # Асинхронное действие: 202 и ссылка на выпуск, за которым следить (docs/api.md).
+                return req.send_json(self.rerun(pid, payload), HTTPStatus.ACCEPTED, self._follow(pid))
             case ("POST", ["projects", pid, "cancel"]):
                 self.studio.cancel(pid)
                 return req.send_json(self.view(pid))
@@ -1454,7 +1501,7 @@ class StudioModule:
                 self.studio.approve(pid, step)
                 return req.send_json(self.view(pid))
             case ("POST", ["projects", pid, "publish"]):
-                return req.send_json(self.publish_now(pid, req.json()))
+                return req.send_json(self.publish_now(pid, req.json()), HTTPStatus.ACCEPTED, self._follow(pid))
             case ("POST", ["projects", pid, "publish", "resolve"]):
                 return req.send_json(self.resolve_publish(pid, req.json()))
             case ("POST", ["projects", pid, "uploaded"]):
@@ -1462,9 +1509,11 @@ class StudioModule:
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):
-                return req.send_json(self.upload(pid, what, self._receive(req, pid)))
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, TOO_BIG)
+                return req.send_json(self.upload(pid, what, src))
             case ("POST", ["projects", pid, "upload", kind, key]):
-                return req.send_json(self.upload_slide(pid, kind, key, self._receive(req, pid)))
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, TOO_BIG)
+                return req.send_json(self.upload_slide(pid, kind, key, src))
             case ("GET", ["projects", pid, "files", *rest]):
                 return self._send_file(req, pid, "/".join(rest))
         raise not_found()

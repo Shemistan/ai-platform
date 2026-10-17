@@ -20,7 +20,7 @@ class RerunWithSettingsTest(StudioCase):
             "POST", f"/api/studio/projects/{pid}/run",
             {"step": "voice", "settings": {"engine": "supertonic", "voice": "F2", "voice_mode": "tts"}},
         )  # fmt: skip
-        self.assertEqual(status, 200, rerun)
+        self.assertEqual(status, 202, rerun)
         self.assertEqual((rerun["settings"]["engine"], rerun["settings"]["voice"]), ("supertonic", "F2"))
         voiced = self.settle(pid)
         steps = self.statuses(voiced)
@@ -32,7 +32,7 @@ class RerunWithSettingsTest(StudioCase):
         status, _ = self.json(
             "POST", f"/api/studio/projects/{pid}/run", {"step": "render", "settings": {"frame": "square"}}
         )
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 202)
         rendered = self.settle(pid)
         self.assertEqual(self.statuses(rendered)["render"], "done", rendered["log"])
         self.assertEqual(rendered["settings"]["frame"], "square")

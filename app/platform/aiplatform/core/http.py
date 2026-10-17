@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import threading
+from email.utils import formatdate, parsedate_to_datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -20,18 +21,52 @@ _upload_slots = threading.BoundedSemaphore(UPLOAD_SLOTS)
 _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
+# Машинный код ошибки по HTTP-статусу (BE-011, docs/api.md): клиент различает ошибки по code, не по тексту.
+CODES = {
+    HTTPStatus.BAD_REQUEST: "bad_request",
+    HTTPStatus.UNAUTHORIZED: "unauthorized",
+    HTTPStatus.FORBIDDEN: "forbidden",
+    HTTPStatus.NOT_FOUND: "not_found",
+    HTTPStatus.METHOD_NOT_ALLOWED: "method_not_allowed",
+    HTTPStatus.CONFLICT: "conflict",
+    HTTPStatus.LENGTH_REQUIRED: "length_required",
+    HTTPStatus.REQUEST_ENTITY_TOO_LARGE: "too_large",
+    HTTPStatus.MISDIRECTED_REQUEST: "bad_host",
+    HTTPStatus.UNPROCESSABLE_ENTITY: "invalid",
+    HTTPStatus.TOO_MANY_REQUESTS: "rate_limited",
+    HTTPStatus.INTERNAL_SERVER_ERROR: "internal",
+    HTTPStatus.SERVICE_UNAVAILABLE: "unavailable",
+}
+
+
+def default_code(status: int) -> str:
+    return CODES.get(status) or f"http_{int(status)}"
+
+
 class HttpError(Exception):
     """extra — дополнительные поля ответа рядом с error (например, existing у дубликата);
-    headers — заголовки ответа (например, Allow у 405)."""
+    headers — заголовки ответа (например, Allow у 405); code — машинный код ошибки,
+    по умолчанию из статуса (docs/api.md)."""
 
     def __init__(
-        self, status: HTTPStatus, message: str, extra: dict | None = None, headers: dict[str, str] | None = None
+        self,
+        status: HTTPStatus,
+        message: str,
+        extra: dict | None = None,
+        headers: dict[str, str] | None = None,
+        *,
+        code: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
         self.extra = extra or {}
         self.headers = headers or {}
+        self.code = code or default_code(status)
+
+    def body(self) -> dict:
+        """Тело ответа: {"error", "code", …extra}. error — для человека, code — для программы."""
+        return {"error": self.message, "code": self.code, **self.extra}
 
 
 def not_found(message: str = "Нет такого адреса.") -> HttpError:
@@ -175,10 +210,21 @@ class Request:
         ranged: bool = False,
     ) -> None:
         h = self._h
-        size = path.stat().st_size
+        stat = path.stat()
+        size = stat.st_size
         start, end, status = 0, size - 1, HTTPStatus.OK
         header = self.headers.get("Range")
         self.started = True
+        # Валидаторы (FE-006): с ними no-cache превращается в дешёвый 304 без тела при каждом переходе.
+        etag = f'"{stat.st_mtime_ns:x}-{size:x}"'
+        modified = formatdate(stat.st_mtime, usegmt=True)
+        if not_modified(self.headers, etag, stat.st_mtime):
+            h.send_response(HTTPStatus.NOT_MODIFIED)
+            h.send_header("ETag", etag)
+            h.send_header("Last-Modified", modified)
+            h.send_header("Cache-Control", cache)
+            h.end_headers()
+            return
         if ranged and header:
             parsed = parse_range(header, size)
             if parsed is None:
@@ -193,6 +239,8 @@ class Request:
         h.send_header("Content-Type", ctype)
         h.send_header("Content-Length", str(max(end - start + 1, 0)))
         h.send_header("Cache-Control", cache)
+        h.send_header("ETag", etag)
+        h.send_header("Last-Modified", modified)
         if attachment:
             h.send_header("Content-Disposition", f'attachment; filename="{attachment}"')
         if ranged:
@@ -211,6 +259,21 @@ class Request:
                     break
                 h.wfile.write(chunk)
                 remaining -= len(chunk)
+
+
+def not_modified(headers, etag: str, mtime: float) -> bool:
+    """Условный GET: If-None-Match (главнее) или If-Modified-Since совпали с файлом → 304."""
+    match = headers.get("If-None-Match")
+    if match is not None:
+        tags = {t.strip().removeprefix("W/") for t in match.split(",")}
+        return "*" in tags or etag in tags
+    since = headers.get("If-Modified-Since")
+    if not since:
+        return False
+    try:
+        return int(mtime) <= parsedate_to_datetime(since).timestamp()
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return False
 
 
 def parse_range(header: str, size: int) -> tuple[int, int] | None:
@@ -241,7 +304,7 @@ def handle_uploads(req: Request, store: UploadStore, url_base: str, kinds: tuple
                 raise bad_request(str(exc)) from exc
             width, height = store.size(upload_id) or (None, None)
             body = {"id": upload_id, "url": f"{url_base}/uploads/{upload_id}", "width": width, "height": height}
-            req.send_json(body, HTTPStatus.CREATED)
+            req.send_json(body, HTTPStatus.CREATED, {"Location": body["url"]})
             return True
         case ("GET", ["uploads", upload_id]):
             path = store.path(upload_id)
