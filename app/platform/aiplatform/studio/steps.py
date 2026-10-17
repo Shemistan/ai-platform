@@ -896,6 +896,10 @@ def step_short(ctx: StepContext) -> None:
 SENDING, SENT, UNKNOWN, SEND_FAILED = "sending", "sent", "unknown", "failed"
 UNCLEAR = (SENDING, UNKNOWN)  # ушёл ли пост — неизвестно: решает человек
 UNCLEAR_NOTE = "Статус неизвестен — проверь канал"
+# Публикация ждёт решения человека — на эти ожидания бот шлёт владельцу превью с кнопками (PRD-001).
+CHOOSE_NOTE = "Выбери каналы и нажми «Опубликовать»."
+APPROVE_NOTE = "Посмотри видео, выбери каналы и нажми «Опубликовать»."
+REVIEW_NOTES = (CHOOSE_NOTE, APPROVE_NOTE)
 
 
 # Пакет для ручной загрузки (YouTube, TikTok…): packaged — файлы готовы, uploaded — автор залил и
@@ -1018,9 +1022,9 @@ def step_publish(ctx: StepContext) -> None:
     svc = services(ctx)
     chosen = ctx.settings.get("channels") or []
     if not chosen:
-        raise Waiting("Выбери каналы и нажми «Опубликовать».")
+        raise Waiting(CHOOSE_NOTE)
     if not ctx.settings.get("auto_publish") and not ctx.state.get("approved"):
-        raise Waiting("Посмотри видео, выбери каналы и нажми «Опубликовать».")
+        raise Waiting(APPROVE_NOTE)
     if verdict(ctx.read(NARRATOR_REVIEW)) == NOT_READY and not ctx.state.get("ignore_verdict"):
         raise Waiting(
             "Судья сказал «не готово» — см. его отчёт в шаге «Текст». Поправь выпуск или включи "

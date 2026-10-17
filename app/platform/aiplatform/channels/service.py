@@ -11,16 +11,18 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import logging
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from http import HTTPStatus
 from pathlib import Path
 
 from aiplatform.channels.store import ChannelsBroken
 from aiplatform.config import pick
+from aiplatform.core import log, perms, runner
 from aiplatform.core import narrator as narrator_module
-from aiplatform.core import perms, runner
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.studio import config as studio_config
@@ -30,6 +32,7 @@ PREFIX = "channels"
 TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"  # как narrator.telegram.TOKEN_FILE_ENV
 TOKEN_FILE = "bot_token.md"  # как narrator.telegram.TOKEN_FILE
 LOG_TAIL = 200
+UPDATE = "update "  # строка `bot serve --updates`: нажатие кнопки или ответ боту, дальше — JSON
 
 
 @contextlib.contextmanager
@@ -48,10 +51,14 @@ def channel_errors() -> Iterator[None]:
 
 
 class BotServe:
-    """`narrate bot serve` в фоне: принимает /start и /stop, пока не остановят."""
+    """`narrate bot serve` в фоне: принимает /start и /stop, пока не остановят.
+
+    Нажатия кнопок и ответы боту serve печатает строкой `update {json}` — их получает
+    on_update (ревью выпуска в личке владельца, PRD-001), в лог вкладки они не идут."""
 
     def __init__(self, narrator) -> None:
         self._narrator = narrator
+        self.on_update: Callable[[dict], None] | None = None
         self._lock = threading.Lock()
         self._cancel: threading.Event | None = None
         self._thread: threading.Thread | None = None
@@ -82,14 +89,16 @@ class BotServe:
 
     def _run(self, cancel: threading.Event) -> None:
         def on_line(line: str) -> None:
-            if line.strip():
+            if line.startswith(UPDATE):
+                self._dispatch(line[len(UPDATE) :])
+            elif line.strip():
                 with self._lock:
                     self._state["log"].append(line.rstrip())
                     del self._state["log"][:-LOG_TAIL]
 
         error = None
         try:
-            argv = self._narrator.argv("bot", "serve")
+            argv = self._narrator.argv("bot", "serve", "--updates")
             runner.run(argv, on_line, cancel, cwd=self._narrator.cwd, env=self._narrator.env, missing_hint=INSTALL_HINT)
             error = "Бот остановился сам — причина в логе."
         except runner.Canceled:
@@ -98,6 +107,15 @@ class BotServe:
             error = str(exc)
         with self._lock:
             self._state.update(running=False, stopped_at=time.time(), error=error)
+
+    def _dispatch(self, raw: str) -> None:
+        handler = self.on_update
+        if handler is None:
+            return
+        try:
+            handler(json.loads(raw))
+        except Exception as exc:  # noqa: BLE001 — сбой одного нажатия не роняет приём подписок
+            log.event("bot.update_failed", level=logging.WARNING, error=f"{type(exc).__name__}: {exc}")
 
     def close(self) -> None:
         self.stop()
