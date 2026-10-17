@@ -192,7 +192,11 @@ Mac системные (osascript), своя команда — `AIP_NOTIFY_CMD`
 `channels.json` (`AIP_CHANNELS`); дальше каналы берутся оттуда, «убрать» —
 удаляет. Токен бота — как у narrator: `$NARRATOR_TELEGRAM_TOKEN`, файл
 `$NARRATOR_TELEGRAM_TOKEN_FILE` или `bot_token.md` в каталоге narrator; у
-канала можно задать свою переменную `token_env`. Тот же список — на вкладке
+канала можно задать свою переменную `token_env` — только с именем
+`AIP_TG_<ИМЯ>`, `AIP_TELEGRAM_TOKEN` или `NARRATOR_TELEGRAM_TOKEN[_<ИМЯ>]`
+(чужие секреты окружения вроде `HF_TOKEN` в URL Telegram не уйдут), а её
+значение должно выглядеть как токен бота (`123456:ABC…`) — иначе публикация
+не отправит ни одного запроса. Тот же список — на вкладке
 «Каналы»: там каналы правятся, берутся из движка, там же бот и его подписчики.
 
 ## Оформление: плей и плашка «подпишись»
@@ -346,7 +350,8 @@ claude CLI. Данные старого narrator (статьи, база нов�
 
 - `telegram` — видео отправляется ботом (`sendVideo`, до 50 МБ) с подписью из
   шага «Публикация». Токен бота — в переменной из `token_env` (например,
-  `export AIP_TELEGRAM_TOKEN=…`); в файлы и логи он не пишется.
+  `export AIP_TG_NEWS=…`; имя — `AIP_TG_…`, `AIP_TELEGRAM_TOKEN` или
+  `NARRATOR_TELEGRAM_TOKEN…`); в файлы и логи он не пишется.
 - `manual` — пакет для ручной загрузки: `video.mp4`, `title.txt`,
   `description.txt` в `data/studio/projects/<id>/publish/<канал>/`. Так
   сделано для YouTube, TikTok и Instagram: их API требуют OAuth-приложений.

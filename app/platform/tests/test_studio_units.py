@@ -262,11 +262,11 @@ class PublishTest(unittest.TestCase):
         self.assertEqual([c.type for c in defaults], ["manual", "manual"])
         path = self.dir / "channels.json"
         path.write_text(
-            json.dumps([{"id": "tg", "label": "TG", "type": "telegram", "chat_id": "@x", "token_env": "AIP_TEST_TG"}]),
+            json.dumps([{"id": "tg", "label": "TG", "type": "telegram", "chat_id": "@x", "token_env": "AIP_TG_TEST"}]),
             encoding="utf-8",
         )
         (tg,) = publish.load_channels(path)
-        self.assertEqual(tg.problem(), "нет токена в переменной AIP_TEST_TG")
+        self.assertEqual(tg.problem(), "нет токена в переменной AIP_TG_TEST")
         path.write_text(json.dumps([{"id": "Плохой", "type": "x"}]), encoding="utf-8")
         with self.assertRaises(ValueError):
             publish.load_channels(path)
@@ -288,7 +288,8 @@ class PublishTest(unittest.TestCase):
         self.assertTrue((self.dir / "publish/yt/video.mp4").is_file())
 
     def test_telegram_send_and_secret_hygiene(self):
-        channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@news", token_env="AIP_TEST_TG")
+        secret = "123456:" + "SECRET" * 6
+        channel = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="@news", token_env="AIP_TG_TEST")
         with self.assertRaisesRegex(StudioError, "нет токена"):
             publish.publish(channel, video=self.video, title="Т", post="П", out_dir=self.dir)
         sent = {}
@@ -297,7 +298,7 @@ class PublishTest(unittest.TestCase):
             sent.update(url=url, body=body, ctype=ctype)
             return {"ok": True, "result": {"message_id": 42}}
 
-        with mock.patch.dict(os.environ, {"AIP_TEST_TG": "123:SECRET"}):
+        with mock.patch.dict(os.environ, {"AIP_TG_TEST": secret}):
             result = publish.publish(
                 channel,
                 video=self.video,
@@ -309,13 +310,13 @@ class PublishTest(unittest.TestCase):
                 height=1080,
             )
             self.assertIn("42", result["message"])
-            self.assertTrue(sent["url"].endswith("/bot123:SECRET/sendVideo"))
+            self.assertTrue(sent["url"].endswith(f"/bot{secret}/sendVideo"))
             self.assertIn(b'name="chat_id"\r\n\r\n@news', sent["body"])
             self.assertIn(b"<b>\xd0\x9f</b>", sent["body"])
             self.assertIn(b'name="width"\r\n\r\n1920', sent["body"])
 
             def failing(url, body, ctype):
-                return {"ok": False, "description": "Unauthorized for 123:SECRET"}
+                return {"ok": False, "description": f"Unauthorized for {secret}"}
 
             with self.assertRaises(StudioError) as err:
                 publish.publish(channel, video=self.video, title="Т", post="П", out_dir=self.dir, http_post=failing)

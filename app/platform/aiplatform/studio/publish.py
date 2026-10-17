@@ -44,6 +44,11 @@ _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _CHAT = re.compile(r"-?\d+(?:_\d+)?|@\w+")  # как resolve_channel у narrator: канал, тема в группе, @username
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 _TOKEN = re.compile(r"\d{6,}:[A-Za-z0-9_-]{30,}")
+# Переменная токена канала — только из «своих» имён: иначе через API можно указать
+# ANTHROPIC_API_KEY или HF_TOKEN, и значение уйдёт в URL api.telegram.org (SEC-006).
+_TOKEN_ENV = re.compile(r"AIP_TG_[A-Z0-9_]+|(?:AIP_TELEGRAM_TOKEN|NARRATOR_TELEGRAM_TOKEN)(?:_[A-Z0-9_]+)?")
+TOKEN_ENV_NAMES = "AIP_TG_<ИМЯ>, AIP_TELEGRAM_TOKEN или NARRATOR_TELEGRAM_TOKEN[_<ИМЯ>]"
+TOKEN_ENV_HINT = f"Переменная токена — {TOKEN_ENV_NAMES}."
 NARRATOR_CHANNELS = "telegram_tems.md"
 NARRATOR_TOKEN_ENV = "NARRATOR_TELEGRAM_TOKEN"
 NARRATOR_TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"
@@ -74,11 +79,13 @@ class Channel:
         return data | {"format": self.format}
 
     def token(self) -> str:
-        """Токен бота; пусто — не найден."""
+        """Токен бота; пусто — не найден, имя переменной не из разрешённых или значение не токен."""
         if self.token_env:
-            return os.environ.get(self.token_env, "").strip()
+            value = os.environ.get(self.token_env, "").strip() if token_env_allowed(self.token_env) else ""
+            return value if _TOKEN.fullmatch(value) else ""
         if os.environ.get(NARRATOR_TOKEN_ENV, "").strip():
-            return os.environ[NARRATOR_TOKEN_ENV].strip()
+            value = os.environ[NARRATOR_TOKEN_ENV].strip()
+            return value if _TOKEN.fullmatch(value) else ""
         path = os.environ.get(NARRATOR_TOKEN_FILE_ENV) or self.token_file
         try:
             found = _TOKEN.search(Path(path).read_text(encoding="utf-8")) if path else None
@@ -100,10 +107,19 @@ class Channel:
             if not _CHAT.fullmatch(self.chat_id):
                 return "chat_id — вида -1001234567890, -1001234567890_3 (тема) или @username"
             if not self.token():
+                if self.token_env and not token_env_allowed(self.token_env):
+                    return f"переменная токена — только {TOKEN_ENV_NAMES}"
+                env = self.token_env or (NARRATOR_TOKEN_ENV if os.environ.get(NARRATOR_TOKEN_ENV, "").strip() else "")
+                if env and os.environ.get(env, "").strip():
+                    return f"токен в переменной {env} не похож на токен бота"
                 if self.token_env:
                     return f"нет токена в переменной {self.token_env}"
                 return f"нет токена бота: ${NARRATOR_TOKEN_ENV} или {NARRATOR_TOKEN_FILE} в narrator"
         return None
+
+
+def token_env_allowed(name: str) -> bool:
+    return bool(_TOKEN_ENV.fullmatch(name)) and not name.endswith("_FILE")
 
 
 def narrator_channels(narrator_dir: Path) -> list[dict]:
@@ -205,8 +221,8 @@ def edit_channel(existing: list[Channel], channel_id: str, changes: dict) -> lis
             raise ValueError("Назови канал.")
         if fmt not in (LANDSCAPE, VERTICAL):
             raise ValueError("Формат — landscape или vertical.")
-        if token_env and not re.fullmatch(r"[A-Z_][A-Z0-9_]*", token_env):
-            raise ValueError("Переменная токена — латиницей заглавными, вида AIP_TELEGRAM_TOKEN.")
+        if token_env and not token_env_allowed(token_env):
+            raise ValueError(TOKEN_ENV_HINT)
         out.append(Channel(c.id, label, c.type, fmt, c.chat_id, token_env, c.token_file))
     if not found:
         raise LookupError("Нет такого канала.")
@@ -372,6 +388,8 @@ def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, st
 
 def _send(channel: Channel, method: str, fields: dict, files: dict[str, Path], http_post: HttpPost | None) -> dict:
     token = channel.token()
+    if not token:  # без годного токена — ни одного запроса в сеть
+        raise StudioError(f"{channel.label}: {channel.problem() or 'нет токена бота'}.")
     body, ctype = multipart({**channel.target(), **fields}, files)
     answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype)
     if not answer.get("ok"):
