@@ -176,9 +176,7 @@ def _read_text(path) -> str:
 
 
 def _write_json(path, data: object) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def video_seconds(project: dict) -> float | None:
@@ -359,7 +357,8 @@ class StudioModule:
                 )
             return set()
 
-        project = self.studio.update(project_id, apply)
+        with steps.published_lock(folder):  # журнал не поменяется между чтением и записью в apply
+            project = self.studio.update(project_id, apply)
         chosen = project["settings"].get("channels") or []
         records = {r["channel"]: r for r in steps.load_published(folder)}
         if not any(steps.is_unclear(records.get(c)) for c in chosen):
@@ -446,17 +445,39 @@ class StudioModule:
         refresher = stats.Refresher({c.id: c for c in self.channels()})
         updated = 0
         for item in self.studio.list() + self.studio.list(archived=True):
-            if item["running"]:
-                continue
-            path = self.studio.project_dir(item["id"]) / steps.PUBLISHED
-            records = _read_json_list(path)
+            folder = self.studio.project_dir(item["id"])
+            records = _read_json_list(folder / steps.PUBLISHED)
+            # Сеть — вне замка: она бывает медленной, а публикация в это время пишет журнал.
             fresh = [refresher.record(r) if r.get("ok") else r for r in records]
-            if fresh != records:
-                _write_json(path, fresh)
+            snaps = {
+                old["channel"]: (old, new)
+                for old, new in zip(records, fresh, strict=True)
+                if len(new.get("stats") or []) > len(old.get("stats") or [])
+            }
+            if not snaps:
+                continue
+            added: list[dict] = []
+
+            def merge(current: list[dict], snaps=snaps, added=added) -> list[dict]:
+                # Под замком выпуска — свежий журнал: снимок дописывается к той же отправке, а записи,
+                # появившиеся за время похода в сеть (новый канал публикации), остаются как есть.
+                out = []
+                for r in current:
+                    old, new = snaps.get(r["channel"], (None, None))
+                    if new is not None and r.get("message_id") == old.get("message_id"):
+                        # Что узнал отклик (публичность канала и т. п.) и новый снимок — поверх свежей записи.
+                        delta = {k: v for k, v in new.items() if k != "stats" and old.get(k) != v}
+                        history = [*(r.get("stats") or []), new["stats"][-1]][-stats.KEEP :]
+                        r = r | delta | {"stats": history}
+                        added.append(r)
+                    out.append(r)
+                return out
+
+            steps.update_published(folder, merge)
+            if added:
                 updated += 1
-                for old, new in zip(records, fresh, strict=True):
-                    if len(new.get("stats") or []) > len(old.get("stats") or []):
-                        self._snapshot_event(item, new, events.actor(events.SYSTEM))
+            for record in added:
+                self._snapshot_event(item, record, events.actor(events.SYSTEM))
         self.scheduler.note("stats_at", time.strftime("%Y-%m-%d %H:%M"))
         return f"отклик: обновлено выпусков {updated}"
 
@@ -469,15 +490,15 @@ class StudioModule:
             raise bad_request("views — целое число от 0.")
         if self.studio.get(project_id) is None:
             raise not_found("Проект не найден.")
-        path = self.studio.project_dir(project_id) / steps.PUBLISHED
-        records = _read_json_list(path)
-        if channel not in {r["channel"] for r in records}:
-            raise bad_request("В этот канал выпуск не публиковался.")
-        records = [
-            stats.add_snapshot(r, {"views": views, "members": None, "manual": True}) if r["channel"] == channel else r
-            for r in records
-        ]
-        _write_json(path, records)
+        folder = self.studio.project_dir(project_id)
+
+        def add(records: list[dict]) -> list[dict]:
+            if channel not in {r["channel"] for r in records}:
+                raise bad_request("В этот канал выпуск не публиковался.")
+            snapshot = {"views": views, "members": None, "manual": True}
+            return [stats.add_snapshot(r, snapshot) if r["channel"] == channel else r for r in records]
+
+        records = steps.update_published(folder, add)
         project = self.studio.get(project_id) or {}
         record = next(r for r in records if r["channel"] == channel)
         self._snapshot_event(project, record, events.actor())
@@ -507,7 +528,8 @@ class StudioModule:
             done.update(project=project, record=fixed, again=found.get("state") == steps.UPLOADED)
             return set()
 
-        self.studio.update(project_id, apply)
+        with steps.published_lock(folder):  # журнал не поменяется между чтением и записью в apply
+            self.studio.update(project_id, apply)
         record = done["record"]
         self.events.emit(
             "publication.uploaded",

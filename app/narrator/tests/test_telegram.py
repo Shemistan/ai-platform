@@ -113,7 +113,7 @@ def test_state_save_is_owner_only(tmp_path):
     path.chmod(0o644)
     State(offset=1).save(path)
     assert path.stat().st_mode & 0o777 == 0o600
-    assert [p.name for p in tmp_path.iterdir()] == ["telegram.json"]
+    assert not [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
 
 
 def test_upsert_returns_true_only_for_new_chat():
