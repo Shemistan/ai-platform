@@ -4,7 +4,8 @@ from pathlib import Path
 from aiplatform.fakes import fake_ltx
 from aiplatform.video import living, ltx
 from aiplatform.video.timeline import ValidationError
-from tests.test_video_server import ServerCase, load
+from tests.helpers import VideoServerCase as ServerCase
+from tests.helpers import video_load as load
 
 
 def fake_models():

@@ -6,7 +6,7 @@ from pathlib import Path
 from aiplatform.core import uploads
 from aiplatform.photo import upscale
 from aiplatform.photo.params import ValidationError
-from tests.test_photo_server import ServerCase
+from tests.helpers import PhotoServerCase as ServerCase
 
 
 class SizesTest(unittest.TestCase):
