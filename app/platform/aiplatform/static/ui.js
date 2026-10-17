@@ -30,7 +30,8 @@ function httpMessage(status, text) {
 // api(метод, путь, тело, { signal, timeout }) → JSON ответа или ApiError.
 // timeout в мс: по умолчанию 30 с, у загрузок (тело — Blob/File) — без срока; 0 — без срока.
 export async function api(method, path, body, { signal, timeout } = {}) {
-  const init = { method, headers: {} };
+  // X-AIP: 1 — признак запроса своей страницы: без него и без Origin сервер POST отклонит (SEC-002).
+  const init = { method, headers: { "X-AIP": "1" } };
   if (body instanceof Blob) {
     init.body = body;
   } else if (body !== undefined) {
@@ -80,11 +81,29 @@ export async function api(method, path, body, { signal, timeout } = {}) {
 export const NARRATOR_TIMEOUT_MS = 190000;
 export const narratorApi = (method, path, body, opts = {}) => api(method, path, body, { timeout: NARRATOR_TIMEOUT_MS, ...opts });
 
+// Атрибуты-ссылки: сюда приходят адреса из лент, статей и реестра, то есть чужие данные.
+const URL_ATTRS = new Set(["href", "src", "action", "formaction", "poster", "xlink:href"]);
+const MEDIA_ATTRS = new Set(["src", "poster"]);
+
+// Ссылка безопасна: http(s), относительная, blob:, а в src/poster ещё data:image|audio|video.
+// javascript:, vbscript:, data:text/html и прочее — нет: атрибут не ставим (SEC-003).
+export function safeUrl(key, value) {
+  let url;
+  try {
+    url = new URL(String(value), location.href); // разбор как в браузере: пробелы, регистр, \t в схеме
+  } catch {
+    return false;
+  }
+  if (url.protocol === "http:" || url.protocol === "https:" || url.protocol === "blob:") return true;
+  return url.protocol === "data:" && MEDIA_ATTRS.has(key) && /^data:(image|audio|video)\//i.test(url.href);
+}
+
 // h("p", { class: "x", onclick: fn }, "текст", child, null) — null и false пропускаются.
 export function h(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
     if (value === null || value === undefined || value === false) continue;
+    if (URL_ATTRS.has(key.toLowerCase()) && !safeUrl(key.toLowerCase(), value)) continue;
     if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
     else if (key === "value") node.value = value;
     else if (value === true) node.setAttribute(key, "");

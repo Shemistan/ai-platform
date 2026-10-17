@@ -126,6 +126,21 @@ def test_parse_atom_and_rdf():
     assert rdf[0].published == "2026-09-22T06:00:00+00:00"
 
 
+def test_feed_drops_non_http_links(tmp_path):
+    # Вредная лента: ссылка-скрипт стала бы кликабельной на странице новостей (SEC-003).
+    evil = """<?xml version="1.0"?><rss version="2.0"><channel><title>X</title>
+<item><title>Click me</title><link>javascript:alert(1)</link></item>
+<item><title>Data</title><link>data:text/html,hi</link></item>
+<item><title>Fine</title><link>https://x.test/ok</link></item>
+</channel></rss>"""
+    items = feeds.parse_feed(evil, "https://x.test/feed")
+    assert [i.url for i in items] == ["https://x.test/ok"]
+    with Store(tmp_path / "news.db") as store:
+        bad = [Item("javascript:alert(1)", "Evil evil evil"), Item("JavaScript:x", "Evil two")]
+        assert store.add(src(), bad, NOW, days=3, baseline=False) == 0
+        assert store.db.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 0
+
+
 def test_parse_feed_rejects_html():
     with pytest.raises(FetchError):
         feeds.parse_feed("<html><body>not a feed</body></html>")
