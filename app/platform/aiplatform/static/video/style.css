@@ -17,8 +17,7 @@
   border-radius: var(--radius);
   background: var(--info-bg);
 }
-.banner.warn { background: var(--warn-bg); color: var(--warn); }
-.banner.error { background: var(--bad-bg); color: var(--bad); }
+.banner:is(.tone-warning, .tone-danger) { background: var(--tone-bg); color: var(--tone); }
 .banner code { user-select: all; overflow-wrap: anywhere; }
 
 @media (max-width: 960px) {

@@ -35,17 +35,13 @@
 .step {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-left: 4px solid var(--line);
+  border-left: 4px solid var(--tone-line, var(--line));
   border-radius: 12px;
   padding: 14px 16px;
   display: grid;
   gap: 10px;
   min-width: 0;
 }
-.step.running { border-left-color: var(--accent); }
-.step.done { border-left-color: var(--ok); }
-.step.waiting { border-left-color: var(--warn); }
-.step.failed { border-left-color: var(--bad); }
 .step.skipped { opacity: 0.7; }
 .step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .step-head h3 { font-size: 15px; margin: 0; flex: 1 1 auto; }
@@ -139,14 +135,9 @@
   white-space: nowrap;
 }
 .stepper-item:hover { background: var(--sunken); }
-.stepper-item .mark { font-weight: 700; color: var(--muted); }
-.stepper-item.done .mark { color: var(--ok); }
-.stepper-item.running { border-color: var(--accent); }
-.stepper-item.running .mark { color: var(--accent); }
-.stepper-item.waiting { border-color: var(--warn); }
-.stepper-item.waiting .mark { color: var(--warn); }
-.stepper-item.failed { border-color: var(--bad); }
-.stepper-item.failed .mark { color: var(--bad); }
+.stepper-item .mark { font-weight: 700; color: var(--tone, var(--muted)); }
+/* Рамкой выделены шаги, где что-то происходит; готовый — только цветом отметки. */
+.stepper-item:is(.tone-info, .tone-warning, .tone-danger) { border-color: var(--tone-line); }
 .stepper-item.skipped { opacity: 0.7; }
 /* Переход к шагу не прячет его заголовок под шапкой и степпером. */
 .step { scroll-margin-top: calc(var(--nav-h, 52px) + 64px); }
