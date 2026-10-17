@@ -75,7 +75,7 @@ class ChannelsTest(PlatformCase):
             "POST", "/api/channels/channels", {"label": "Свой бот", "chat_id": "@own_chan", "token_env": "AIP_TG_OWN"}
         )
         self.assertEqual(status, 201, body)
-        saved = json.loads((Path(self.tmp.name) / "channels.json").read_text(encoding="utf-8"))
+        saved = json.loads((Path(self.tmp.name) / "channels.json").read_text(encoding="utf-8"))["channels"]
         self.assertEqual(saved[-1]["token_env"], "AIP_TG_OWN")
 
     def test_broken_file_is_503_and_problem(self):

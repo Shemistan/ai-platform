@@ -582,7 +582,7 @@ function uploadRow(label, onCancel) {
     { class: "upload-row progress" },
     h("div", { class: "progress-head" }, h("span", { class: "stage" }, label), percent),
     bar,
-    h("div", { class: "progress-foot" }, h("span", {}), h("button", { type: "button", class: "btn btn--link danger", onclick: onCancel }, "Отменить")),
+    h("div", { class: "progress-foot" }, h("span", {}), h("button", { type: "button", class: "btn btn--link btn--danger", onclick: onCancel }, "Отменить")),
   );
   tray.append(row);
   return {

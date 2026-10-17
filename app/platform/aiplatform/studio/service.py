@@ -15,7 +15,7 @@ from http import HTTPStatus
 from pathlib import Path
 
 from aiplatform.audio import voices
-from aiplatform.core import events, log, media
+from aiplatform.core import events, log, media, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
@@ -192,11 +192,12 @@ def video_seconds(project: dict) -> float | None:
 
 
 def _read_json_list(path) -> list[dict]:
+    """Записи published.json: голый список (схема 0) или обёртка {"schema", "records"} (BE-008)."""
     try:
-        data = json.loads(_read_text(path) or "[]")
-    except json.JSONDecodeError:
+        data = schema.unwrap(json.loads(_read_text(path) or "[]"), "records")
+    except (json.JSONDecodeError, schema.Broken):
         return []
-    return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
+    return [r for r in data if isinstance(r, dict) and r.get("channel")]
 
 
 TOO_BIG = "Файл больше 200 МБ."
@@ -808,6 +809,7 @@ class StudioModule:
             out.append(missing_cli(self.config.llm_cmd[0]))
         # Битый channels.json в баннер выносит вкладка «Каналы» — владелец файла (ChannelStore).
         out += [f"Дайджест: канал {c.label} — {c.problem()}." for c in self._digest_channels() if c.problem()]
+        out += self.studio.load_problems  # выпуски в карантине или записанные более новой версией (BE-008)
         return out
 
     def _digest_channels(self) -> list[publish.Channel]:
@@ -1203,6 +1205,8 @@ class StudioModule:
             "short_video": url(folder / steps.SHORT_VIDEO),
         }
         published = as_json(steps.PUBLISHED)
+        if isinstance(published, dict):  # схема 1: записи в обёртке (BE-008)
+            published = published.get("records")
         if isinstance(published, list):  # отклик в окнах 24ч/72ч/7д — рядом с записью, не поверх её полей
             facts = self._facts()
             published = [r | {"reach": stats.reach(r, facts)} if isinstance(r, dict) else r for r in published]
