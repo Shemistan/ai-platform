@@ -71,9 +71,13 @@ def add_snapshot(record: dict, snapshot: dict, now: float | None = None) -> dict
     start = sent_at(record)
     if start is not None:
         entry["age_h"] = round((at - start) / HOUR, 3)
-    history = [*record.get("stats", []), entry]
-    frozen = freeze(record | {"stats": history})  # окна — до разреживания, по полной истории
-    return frozen | {"stats": thin(history, start)}
+    return with_history(record, [*record.get("stats", []), entry])
+
+
+def with_history(record: dict, history: list[dict]) -> dict:
+    """Запись с новой историей снимков: окна замораживаются по полной истории, потом — разреживание."""
+    frozen = freeze(record | {"stats": history})
+    return frozen | {"stats": thin(history, sent_at(record))}
 
 
 def thin(history: list[dict], start: float | None) -> list[dict]:

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiplatform.audio import config as audio_config
+from aiplatform.channels.store import ChannelStore
 from aiplatform.config import SERVICE_DIR, Config, pick
 from aiplatform.studio import publish
 from aiplatform.updates import registry
@@ -52,9 +53,13 @@ class StudioConfig:
     def cache_dir(self) -> Path:
         return self.data_dir / "cache"
 
+    def channel_store(self) -> ChannelStore:
+        """Владелец channels.json; в демо — без каналов narrator (там настоящие каналы Telegram)."""
+        return ChannelStore(self.channels_file, None if self.fake else self.narrator_dir)
+
     def channels(self) -> list[publish.Channel]:
-        """Каналы публикации; в демо — без каналов narrator (там настоящие каналы Telegram)."""
-        return publish.load_channels(self.channels_file, None if self.fake else self.narrator_dir)
+        """Каналы публикации; битый файл — ChannelsBroken (подкласс ValueError)."""
+        return self.channel_store().load()
 
     def llm_available(self) -> bool:
         return self.fake or shutil.which(self.llm_cmd[0]) is not None
@@ -78,7 +83,12 @@ def load(config: Config) -> StudioConfig:
         news_cmd = pick(env, "AIP_NEWS_CMD", default=DEFAULT_NEWS_CMD)
         news_where = pick(env, "AIP_NEWS_WHERE", default=DEFAULT_NEWS_WHERE)
     # В демо свой список каналов в данных демо: настоящий channels.json не трогаем.
-    home = config.data_dir if config.fake else SERVICE_DIR
+    # Каналы — данные: в каталоге данных (вне рабочей копии). Старый channels.json рядом
+    # с Makefile читается, пока в данных своего нет (перенос — make migrate-data).
+    home = config.data_dir
+    legacy = SERVICE_DIR / "channels.json"
+    if not config.fake and not (home / "channels.json").is_file() and legacy.is_file():
+        home = SERVICE_DIR
     channels = pick(env, "AIP_CHANNELS", default=str(home / "channels.json"))
     return StudioConfig(
         data_dir=data_dir,

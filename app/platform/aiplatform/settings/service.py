@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from http import HTTPStatus
 
+from aiplatform import backup
 from aiplatform.audio import voices
 from aiplatform.core import settings as settings_module
 from aiplatform.core.cleanup import Cleaner
@@ -56,6 +57,10 @@ class SettingsModule:
 
     def describe(self) -> dict:
         return {"file": str(self.settings.path)}
+
+    def ready_checks(self) -> list[dict]:
+        """Для /api/ready: возраст последнего бэкапа (make backup, REL-012)."""
+        return [backup.status(self.ctx.config.data_dir, self.ctx.config.env)]
 
     def problems(self) -> list[str]:
         data = self.settings.load()["disabled"]

@@ -1,5 +1,5 @@
 // Вкладка «Статьи»: библиотека статей движка — текст для озвучки, озвучка, проверка, канал.
-import { $, busyClick, chip, errorState, fill, h, loadLast, minutes, narratorApi as api, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
+import { $, busyClick, chip, confirmAction, errorState, fill, h, loadLast, minutes, narratorApi as api, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
 
 const API = "/api/library";
 const QUALITY = { verbatim: "текст дословно", pasted: "текст прислан", webfetch: "текст по пересказу WebFetch" };
@@ -133,7 +133,7 @@ function renderList() {
                 {},
                 h("button", { type: "button", class: "row-link", "data-article": a.id, "aria-current": a.id === state.selected ? "true" : null }, a.title),
                 h("span", { class: "sub" }, [shortDate(a.added), a.duration_sec ? minutes(a.duration_sec) : "", a.engine ? engineLabel(a.engine) : ""].filter(Boolean).join(" · ")),
-                h("span", { class: "toolbar", style: "margin-top:6px" }, ...statusChips(a)),
+                h("span", { class: "toolbar", style: "margin-top:var(--sp-2)" }, ...statusChips(a)),
               ),
             ),
           ),
@@ -189,7 +189,7 @@ function renderCard() {
     }
   };
 
-  const title = h("input", { type: "text", value: c.title, "aria-label": "Название", style: "font-size:17px;font-weight:600" });
+  const title = h("input", { type: "text", value: c.title, "aria-label": "Название", class: "title-input" });
   const summary = h("input", { type: "text", value: c.summary || "", placeholder: "1–3 предложения: о чём статья и главный вывод" });
   // Право на переработку: без него полный пересказ в канал не уходит — только аннотация со ссылкой.
   const license = h(
@@ -212,6 +212,12 @@ function renderCard() {
     } catch (err) {
       fail(err);
     }
+  };
+  // Повтор — необратимый второй пост в канале: только с подтверждением.
+  const sendAgain = async () => {
+    const where = channel.value || "канал статей";
+    const ok = await confirmAction({ title: "Отправить ещё раз?", body: `«${c.title}» уже отправлена. В ${where} уйдёт второй пост с тем же mp3.`, confirmLabel: "Отправить ещё раз" });
+    if (ok) await run("send", { channel: channel.value, force: true })();
   };
   const fromSource = () => {
     script.value = (c.source || "")
@@ -286,8 +292,14 @@ function renderCard() {
         4,
         "Публикация",
         h("div", { class: "toolbar" }, c.has_audio ? (c.sent ? chip("в канале", "ok") : chip("ещё не в канале")) : chip("нечего отправлять")),
-        h("div", { class: "toolbar" }, channel, h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: busyClick(() => run("send", { channel: channel.value })(), `act:${c.id}`) }, "Отправить")),
-        h("p", { class: "hint" }, "Уходит mp3 с описанием статьи. Повторная отправка в тот же канал — по этой кнопке."),
+        h(
+          "div",
+          { class: "toolbar" },
+          channel,
+          h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: busyClick(() => run("send", { channel: channel.value })(), `act:${c.id}`) }, "Отправить"),
+          c.sent ? h("button", { type: "button", class: "small-btn", disabled: locked, onclick: busyClick(sendAgain, `act:${c.id}`) }, "Отправить ещё раз") : null,
+        ),
+        h("p", { class: "hint" }, "Уходит mp3 с описанием статьи. Уже отправленное «Отправить» не повторяет — для повтора есть «Отправить ещё раз»."),
         h("div", { class: "toolbar" }, h("button", { type: "button", class: "small-btn accent", disabled: !c.has_script, onclick: busyClick(() => makeVideo(c, script.value)) }, "Сделать видео по статье →")),
       ),
     ),

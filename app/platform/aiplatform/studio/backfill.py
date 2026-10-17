@@ -243,8 +243,7 @@ def record_dimensions(record: dict, folder: Path, formats: dict[str, str], ffmpe
 
 
 def fill_dimensions(data_dir: Path, formats: dict[str, str], *, ffmpeg: str = "ffmpeg", dry_run: bool = False) -> dict:
-    """Разово дописать атрибуты публикации в published.json выпусков. Запускать при остановленном
-    сервисе: published.json переписывается целиком. Повторный запуск ничего не меняет."""
+    """Разово дописать атрибуты публикации в published.json выпусков. Повторный запуск ничего не меняет."""
     projects = records_changed = 0
     for path in sorted((data_dir / "studio" / "projects").glob("*/" + steps.PUBLISHED)):
         records = steps.load_published(path.parent)
@@ -254,8 +253,12 @@ def fill_dimensions(data_dir: Path, formats: dict[str, str], *, ffmpeg: str = "f
             continue
         projects += 1
         records_changed += changed
-        if not dry_run:
-            steps.save_published(path.parent, fresh)
+        if not dry_run:  # под замком выпуска (BE-002): по свежему журналу
+
+            def change(current: list[dict], folder: Path = path.parent) -> list[dict]:
+                return [r | record_dimensions(r, folder, formats, ffmpeg) for r in current]
+
+            steps.update_published(path.parent, change)
     return {"projects": projects, "records": records_changed}
 
 

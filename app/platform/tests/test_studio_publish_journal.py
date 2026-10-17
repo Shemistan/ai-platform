@@ -258,6 +258,10 @@ class RepublishTest(JournalCase):
         self.assertEqual([(r["attempt"], r["state"]) for r in records], [(1, "sent"), (2, "sent")])
         self.assertTrue(records[1]["republish"])
 
+        # «Обновить отклик» дописывает снимок каждой попытке, а не одной на канал.
+        self.app.modules["studio"].refresh_stats_now()
+        self.assertEqual([len(r.get("stats") or []) for r in self.records(pid)], [1, 1])
+
 
 class DimensionsTest(JournalCase):
     """Атрибуты контента пишутся в запись в момент публикации (AN-006)."""

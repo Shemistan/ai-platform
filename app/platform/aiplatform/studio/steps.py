@@ -29,12 +29,15 @@ import dataclasses
 import json
 import re
 import shutil
+import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import log, media
+from aiplatform.core import disk, log, media
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.runner import Canceled
 from aiplatform.studio import cache, news, prompts, publish, render, slides
 from aiplatform.studio.config import StudioConfig
@@ -81,10 +84,22 @@ class Services:
     video: object  # video.jobs.JobManager: create / get / cancel / video_path
     renderer: Renderer
     cache: cache.MediaCache  # готовые картинки, ролики и озвучка по входам генерации
+    space: Callable[[str], None] | None = None  # проверка места до сборки (GPU-замок: Gate.check)
 
 
 def services(ctx: StepContext) -> Services:
     return ctx.studio.services
+
+
+def ensure_space(ctx: StepContext, what: str) -> None:
+    """Мало места на диске данных — сборка не стартует: обрезанный ffmpeg-ом файл хуже ошибки."""
+    check = services(ctx).space
+    if check is None:
+        return
+    try:
+        check(what)
+    except disk.NoSpace as exc:
+        raise StudioError(str(exc)) from exc
 
 
 def find(folder: Path, stem: str, exts: tuple[str, ...]) -> Path | None:
@@ -250,13 +265,13 @@ def slide_media(folder: Path, n: int, kind: str, prompt: str) -> Path | None:
 
 def save_slide_media(folder: Path, n: int, ext: str, data: bytes, prompt: str, kind: str) -> Path:
     """Файл слайда от человека: прежний вариант (любого формата) заменяется."""
-    folder.mkdir(parents=True, exist_ok=True)
-    for old in (folder / f"{n:02d}{e}" for e in MEDIA[kind][0]):
-        old.unlink(missing_ok=True)
     path = folder / f"{n:02d}.{ext}"
-    path.write_bytes(data)
+    atomic_write(path, data)  # сначала новый файл целиком, потом — прежний в другом формате
+    for old in (folder / f"{n:02d}{e}" for e in MEDIA[kind][0]):
+        if old != path:
+            old.unlink(missing_ok=True)
     meta = json.dumps({"prompt": prompt, "uploaded": True}, ensure_ascii=False)
-    (folder / f"{n:02d}.json").write_text(meta, encoding="utf-8")
+    atomic_write(folder / f"{n:02d}.json", meta)
     return path
 
 
@@ -678,6 +693,7 @@ def render_video(
 ) -> None:
     """source — строка «Источник: …» для последнего слайда (видео по чужой статье)."""
     svc = services(ctx)
+    ensure_space(ctx, "Сборка видео")
     audio = paced(ctx, audio)
     audio_s = media.duration(audio, svc.config.ffmpeg)
     if audio_s <= 0:
@@ -780,6 +796,7 @@ def render_still(ctx: StepContext) -> None:
     audio = find(ctx.dir, "voice", AUDIO_EXT)
     if audio is None:
         raise StudioError("Нет озвучки — выполни шаг «Озвучка».")
+    ensure_space(ctx, "Сборка видео")
     audio = paced(ctx, audio)
     audio_s = media.duration(audio, svc.config.ffmpeg)
     if audio_s <= 0:
@@ -971,18 +988,29 @@ class Journal:
         return current_record(self.records, channel_id)
 
     def put(self, record: dict) -> dict:
-        # Запись (канал, попытка) — на своём месте; новая попытка или новый канал — в конец.
+        # Под замком выпуска журнал перечитывается: снимки отклика, дописанные «Обновить отклик»
+        # во время публикации, не теряются, а он не затирает запись этого канала.
         channel = record["channel"]
-        same = [n for n, r in enumerate(self.records) if r["channel"] == channel]
-        if "attempt" not in record:  # без явной попытки — продолжение текущей
-            record = record | {"attempt": attempt_of(self.records[same[-1]]) if same else 1}
-        record = record | {"publication_id": f"{self.ctx.project['id']}:{channel}:{record['attempt']}"}
-        match = [n for n in same if attempt_of(self.records[n]) == record["attempt"]]
-        if match:
-            self.records[match[0]] = record
-        else:
-            self.records.append(record)
-        self.ctx.write(PUBLISHED, json.dumps(self.records, ensure_ascii=False, indent=2) + "\n")
+
+        def change(records: list[dict]) -> list[dict]:
+            nonlocal record
+            # Запись (канал, попытка) — на своём месте; новая попытка или новый канал — в конец (AN-005).
+            same = [n for n, r in enumerate(records) if r["channel"] == channel]
+            if "attempt" not in record:  # без явной попытки — продолжение текущей
+                record = record | {"attempt": attempt_of(records[same[-1]]) if same else 1}
+            record = record | {"publication_id": f"{self.ctx.project['id']}:{channel}:{record['attempt']}"}
+            match = [n for n in same if attempt_of(records[n]) == record["attempt"]]
+            if match:
+                disk = records[match[0]]
+                merged = record
+                if len(disk.get("stats") or []) > len(record.get("stats") or []):
+                    merged = record | {"stats": disk["stats"]}
+                records[match[0]] = merged
+            else:
+                records.append(record)
+            return records
+
+        self.records = update_published(self.ctx.dir, change)
         return record
 
 
@@ -1321,9 +1349,28 @@ def load_published(folder: Path) -> list[dict]:
 
 
 def save_published(folder: Path, records: list[dict]) -> None:
-    tmp = folder / (PUBLISHED + ".tmp")
-    tmp.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(folder / PUBLISHED)
+    """Записать журнал целиком; read-modify-write — только под published_lock (см. update_published)."""
+    atomic_write(folder / PUBLISHED, json.dumps(records, ensure_ascii=False, indent=2) + "\n")
+
+
+_PUBLISHED_GUARD = threading.Lock()
+_PUBLISHED_LOCKS: dict[Path, threading.RLock] = {}
+
+
+def published_lock(folder: Path) -> threading.RLock:
+    """Замок published.json выпуска: шаг публикации, «Обновить отклик», ручные просмотры и решения
+    человека читают-меняют-пишут журнал только под ним — запись о новом канале не затирается."""
+    key = Path(folder).absolute()
+    with _PUBLISHED_GUARD:
+        return _PUBLISHED_LOCKS.setdefault(key, threading.RLock())
+
+
+def update_published(folder: Path, change: Callable[[list[dict]], list[dict]]) -> list[dict]:
+    """Перечитать журнал, изменить и записать — под замком выпуска; возвращает записанное."""
+    with published_lock(folder):
+        records = change(load_published(folder))
+        save_published(folder, records)
+        return records
 
 
 STEPS = {
