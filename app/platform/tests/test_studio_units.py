@@ -134,12 +134,37 @@ class SlidesTest(unittest.TestCase):
         self.assertEqual(slides.starts(paras, plan, 6.0), [0.0, 2.0, 4.0])
         self.assertEqual([slides.spoken(paras, plan, n) for n in range(3)], ["раз два.", "три четыре.", "пять шесть"])
 
-    def test_target_slides_keeps_slide_near_four_seconds(self):
-        # ~130 слов в минуту: 600 слов — ~4,5 минуты, по слайду на 4–5 секунд.
+    def test_target_slides_follows_slide_seconds(self):
+        # ~130 слов в минуту: 600 слов — ~4,5 минуты; слайд на 6 с по умолчанию, на 12 с — вдвое меньше слайдов.
         self.assertEqual(
             slides.target_slides(["слово " * 600]), round(600 / slides.WORDS_PER_S / slides.TARGET_SLIDE_S)
         )
+        self.assertEqual(slides.target_slides(["слово " * 600], 12), round(600 / slides.WORDS_PER_S / 12))
         self.assertEqual(slides.target_slides([""]), 1)
+
+    def test_reading_time_by_words_on_slide(self):
+        slide = slides.Slide(0, "Три слова тут", bullets=["раз два", "три четыре пять"])
+        self.assertEqual(slides.slide_words(slide), 8)
+        self.assertAlmostEqual(slides.reading_s(slide, 2.0), slides.READ_BASE_S + 4.0)
+        self.assertEqual(slides.reading_s(slide, 0.0), 0.0)
+        chart = slides.Slide(0, "Рост", kind="chart", data={"chart": "bar", "data": [{"label": "2024", "value": 1}]})
+        self.assertEqual(slides.slide_words(chart), 3)  # заголовок, подпись и число; вид графика — не текст
+        code = slides.Slide(0, "Код", kind="code", data={"code": "x = 1\n" * 200})
+        self.assertEqual(slides.reading_s(code, 3.0), slides.MAX_READ_S)
+
+    def test_durations_wait_for_reading(self):
+        # Каждая фраза — секунда озвучки, а слайд читается 4 с: следующий ждёт, длинный в конце догоняет.
+        paras = ["а. б. в. г г г г г г г г г г г г г г г г"]
+        plan = [slides.Slide(0, "a"), slides.Slide(0, "b", sent=1), slides.Slide(0, "c", sent=2)]
+        d = slides.durations(slides.paragraphs(paras[0]), plan, 19.0, minimums=[4.0, 4.0, 4.0])
+        self.assertEqual(d[:2], [4.0, 4.0])
+        self.assertAlmostEqual(sum(d), 19.0, places=2)
+        self.assertEqual(slides.lag(paras, plan, d, 19.0), 6.0)
+        # Без минимумов слайд меняется вместе с фразой.
+        self.assertEqual(slides.durations(paras, plan, 19.0)[:2], [1.5, 1.5])
+        # Аудио не хватает на все минимумы — сжимаются в одной доле и ровно покрывают звук.
+        tight = slides.durations(paras, plan, 6.0, minimums=[4.0, 4.0, 4.0])
+        self.assertEqual(tight, [2.0, 2.0, 2.0])
 
     def test_parse_plan_errors(self):
         for raw in ({"slides": []}, {"slides": [{"title": ""}]}, {"nope": 1}, "текст"):

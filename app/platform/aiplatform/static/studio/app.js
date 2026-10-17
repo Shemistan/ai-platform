@@ -123,6 +123,22 @@ function fieldsOf(values, prefix) {
         "Скорость в видео — ускоряет озвучку без смены высоты голоса, слайды подстраиваются под неё",
         [0.75, 1, 1.25, 1.5, 1.75, 2].map((t) => [t, `×${String(t).replace(".", ",")}`, t === Number(values.tempo || 1)]),
       ),
+    slide_s: () =>
+      select(
+        "slide_s",
+        "Сколько держится слайд — ориентир для плана: чем дольше, тем меньше слайдов и больше времени прочитать каждый",
+        [4, 6, 8, 10, 12].map((t) => [t, `~${t} с`, t === Number(values.slide_s || 6)]),
+      ),
+    reading: () =>
+      select(
+        "reading",
+        "Время на чтение — слайд не сменится, пока не прочитан его текст (по числу слов); следующие догонят озвучку позже",
+        [
+          ["normal", "Обычно — 3 слова в секунду"],
+          ["slow", "Медленно — 2 слова в секунду"],
+          ["off", "Не ждать — слайд меняется вместе с фразой"],
+        ].map(([v, label]) => [v, label, v === (values.reading || "normal")]),
+      ),
     channels: () =>
       cfg.channels.length
         ? h(
@@ -210,6 +226,7 @@ function settingsForm(values, prefix) {
     group("Ролики", f.clips(), f.clips_mode(), f.video_model()),
     group("Озвучка", f.voice_mode(), f.engine()),
     group("Шортс", f.shorts()),
+    group("Слайды", f.slide_s(), f.reading()),
     group("Оформление", f.frame(), f.branding(), f.disclaimers()),
     group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish()),
     f.review_text(),
@@ -219,7 +236,7 @@ function settingsForm(values, prefix) {
 const SETTING_NAMES = [
   "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
   "voice_mode", "engine", "shorts", "review_text", "disclaimers", "branding", "tempo", "frame", "auto_publish", "channels",
-  "post_format", "draft",
+  "post_format", "draft", "slide_s", "reading",
 ]; // prettier-ignore
 // Поля формы поста: остальные настройки у него не меняются.
 const POST_SETTINGS = [
@@ -239,6 +256,7 @@ function readSettings(prefix, names = scenario === "post" ? POST_SETTINGS : SETT
     post_format: () => radio("post_format"),
     engine: () => ({ engine: get("engine").value, voice: get("voice").value }),
     tempo: () => ({ tempo: Number(get("tempo").value) }),
+    slide_s: () => ({ slide_s: Number(get("slide_s").value) }),
     channels: () => ({ channels: [...document.querySelectorAll(`input[name="${prefix}-channels"]:checked`)].map((i) => i.value) }),
   };
   const out = {};
@@ -518,8 +536,9 @@ const STEP_FIELDS = {
   images: ["draw_images", "images_mode", "image_model", "upscale_images"],
   clips: ["clips", "clips_mode", "video_model"],
   voice: ["voice_mode", "engine"],
-  render: ["draft", "frame", "tempo", "branding", "disclaimers"],
-  short: ["shorts", "tempo", "branding", "disclaimers"],
+  plan: ["slide_s"],
+  render: ["draft", "frame", "tempo", "reading", "branding", "disclaimers"],
+  short: ["shorts", "tempo", "reading", "branding", "disclaimers"],
 };
 
 const openSettings = new Set();

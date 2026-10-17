@@ -138,6 +138,19 @@ class DigestBrandingTest(StudioCase):
         self.assertEqual(bad[0], 400)
         self.assertIn("tempo", bad[1]["error"])
 
+        # Слайды дайджеста — подлиннее; время на чтение пересобирает видео, длина слайда — план.
+        self.assertEqual((done["settings"]["slide_s"], done["settings"]["reading"]), (8, "normal"))
+        status, changed = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"reading": "slow"})
+        self.assertEqual(status, 200, changed)
+        self.assertEqual((self.statuses(changed)["plan"], self.statuses(changed)["render"]), ("done", "pending"))
+        status, changed = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"slide_s": 12})
+        self.assertEqual(status, 200, changed)
+        self.assertEqual(self.statuses(changed)["plan"], "pending")
+        for bad_value in ({"slide_s": 7}, {"slide_s": True}, {"reading": "fast"}):
+            bad = self.json("POST", f"/api/studio/projects/{project['id']}/settings", bad_value)
+            self.assertEqual(bad[0], 400, bad_value)
+            self.assertIn(next(iter(bad_value)), bad[1]["error"])
+
     def test_article_has_no_branding_by_default(self):
         project = self.create(scenario="article", text="Заголовок\n\nПервый абзац. Второе предложение.", run=True)
         self.assertFalse(project["settings"]["branding"])

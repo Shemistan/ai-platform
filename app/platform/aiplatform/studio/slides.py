@@ -22,7 +22,13 @@ MAX_POINTS = 8  # точек графика
 MAX_QUOTE = 280
 MIN_SLIDE_S = 1.5
 WORDS_PER_S = 2.2  # ~130 слов в минуту, как у оценки длины озвучки
-TARGET_SLIDE_S = 4.5  # ориентир для LLM: слайд держится 3–6 с
+SLIDE_SECONDS = (4, 6, 8, 10, 12)  # настройка slide_s: ориентир для LLM, сколько держится слайд
+TARGET_SLIDE_S = 6
+# Время на чтение (настройка reading): слов в секунду, которые зритель читает с экрана
+# под озвучку. Слайд не сменится раньше, чем прочитается его текст.
+READING = {"off": 0.0, "normal": 3.0, "slow": 2.0}
+READ_BASE_S = 1.0  # найти текст глазами
+MAX_READ_S = 15.0  # код и длинные списки — смотрят, а не читают целиком
 
 IMAGE = "image"
 DYNAMIC = ("bullets", "stat", "chart", "flow", "compare", "quote", "chapter", "code", "summary")
@@ -71,10 +77,32 @@ def sentences(paragraph: str) -> list[str]:
     return [s for s in _SENTENCE.split(paragraph.strip()) if s] or [paragraph]
 
 
-def target_slides(paras: list[str]) -> int:
-    """Сколько слайдов просить у LLM, чтобы слайд держался ~TARGET_SLIDE_S секунд озвучки."""
+def target_slides(paras: list[str], seconds: float = TARGET_SLIDE_S) -> int:
+    """Сколько слайдов просить у LLM, чтобы слайд держался ~seconds секунд озвучки."""
     words = sum(len(p.split()) for p in paras)
-    return max(1, round(words / WORDS_PER_S / TARGET_SLIDE_S))
+    return max(1, round(words / WORDS_PER_S / (seconds or TARGET_SLIDE_S)))
+
+
+def slide_words(slide: Slide) -> int:
+    """Сколько слов на экране: заголовок, тезисы и тексты сцены (пункты, шаги, подписи, цитата)."""
+
+    def count(value: object) -> int:
+        if isinstance(value, str):
+            return len(value.split())
+        if isinstance(value, dict):
+            return sum(count(v) for k, v in value.items() if k not in ("chart", "number"))
+        if isinstance(value, list):
+            return sum(count(v) for v in value)
+        return 1 if isinstance(value, int | float) and not isinstance(value, bool) else 0
+
+    return count(slide.title) + count(slide.bullets) + count(slide.data)
+
+
+def reading_s(slide: Slide, words_per_s: float) -> float:
+    """Сколько секунд нужно, чтобы прочитать слайд; 0 — время на чтение выключено."""
+    if words_per_s <= 0:
+        return 0.0
+    return min(READ_BASE_S + slide_words(slide) / words_per_s, MAX_READ_S)
 
 
 def _short(value: object, limit: int) -> str:
@@ -255,24 +283,48 @@ def spoken(paras: list[str], plan: list[Slide], n: int) -> str:
     return " ".join(said or [text for p, s, text in flat if (p, s) >= begin][:1])
 
 
-def durations(paras: list[str], slides: list[Slide], total_s: float, intro_s: float = 0.0) -> list[float]:
+def _begins(paras: list[str], slides: list[Slide], total_s: float, intro_s: float) -> list[float]:
+    """С какой секунды после интро звучит фраза каждого слайда."""
+    begin = [max(s - intro_s, 0.0) for s in starts(paras, slides, total_s)]
+    begin[0] = 0.0
+    return begin
+
+
+def durations(
+    paras: list[str],
+    slides: list[Slide],
+    total_s: float,
+    intro_s: float = 0.0,
+    minimums: list[float] | None = None,
+) -> list[float]:
     """Сколько секунд держится каждый слайд, чтобы вместе с интро ровно покрыть аудио.
 
-    Первые intro_s секунд занимает постер. Слайд не короче MIN_SLIDE_S (если
-    аудио на всех хватает) — короткий сдвигает начало следующих.
+    Первые intro_s секунд занимает постер. Слайд не короче MIN_SLIDE_S и своего
+    minimums (время на чтение) — короткий сдвигает начало следующих, они догоняют
+    озвучку на длинных слайдах. Не хватает аудио на все минимумы — все сжимаются
+    в одной доле.
     """
     if not slides:
         return []
     body = max(total_s - intro_s, 0.0)
     n = len(slides)
-    floor = min(MIN_SLIDE_S, body / n) if n else 0.0
-    begin = [max(s - intro_s, 0.0) for s in starts(paras, slides, total_s)]
-    begin[0] = 0.0
+    floors = [max(MIN_SLIDE_S, m) for m in (minimums or [0.0] * n)]
+    if sum(floors) > body:
+        floors = [f * body / sum(floors) for f in floors]
+    begin = _begins(paras, slides, total_s, intro_s)
     for i in range(1, n):
-        begin[i] = max(begin[i], begin[i - 1] + floor)
-    # Не вылезти за конец: последние слайды поджимаются назад, оставляя каждому floor.
+        begin[i] = max(begin[i], begin[i - 1] + floors[i - 1])
+    # Не вылезти за конец: последние слайды поджимаются назад, оставляя каждому его floor.
     for i in range(n - 1, -1, -1):
-        limit = body - floor * (n - i)
+        limit = body - sum(floors[i:])
         begin[i] = min(begin[i], max(limit, 0.0))
     ends = begin[1:] + [body]
     return [round(max(e - b, 0.0), 3) for b, e in zip(begin, ends, strict=True)]
+
+
+def lag(paras: list[str], slides: list[Slide], seconds: list[float], total_s: float, intro_s: float = 0.0) -> float:
+    """На сколько секунд слайд самое большее отстаёт от своей фразы в озвучке."""
+    if not slides:
+        return 0.0
+    shown = [sum(seconds[:i]) for i in range(len(slides))]
+    return round(max(s - b for s, b in zip(shown, _begins(paras, slides, total_s, intro_s), strict=True)), 1)

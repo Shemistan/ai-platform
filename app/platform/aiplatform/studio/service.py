@@ -57,6 +57,8 @@ SETTING_STEPS = {
     "disclaimers": ("render", "short"),
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
+    "slide_s": "plan",  # ориентир для LLM: сколько держится слайд
+    "reading": ("render", "short"),  # время на чтение: слайд не сменится, пока не прочитан
     "draft": ("images", "clips", "render", "short"),  # черновик: без картинок и роликов, половинный кадр
     "frame": "render",  # готовые картинки остаются — кадр берёт их с обрезкой; новые рисуются под кадр
     "review_text": None,
@@ -417,6 +419,8 @@ class StudioModule:
             "disclaimers": True,
             "branding": False,
             "tempo": 1.0,
+            "slide_s": slides.TARGET_SLIDE_S,
+            "reading": "normal",
             "frame": "landscape",
             "auto_publish": False,
             "post_format": "video",
@@ -428,7 +432,7 @@ class StudioModule:
         if scenario == "digest":
             # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
             # по промпту выпуска — постер загружает человек.
-            out: dict = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster"}
+            out: dict = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
             usual = [c.id for c in self.channels() if c.id == DIGEST_CHANNEL]  # VOICE_NEWS narrator
             if usual:
                 out["channels"] = usual
@@ -508,6 +512,13 @@ class StudioModule:
         if isinstance(tempo, bool) or not isinstance(tempo, int | float) or float(tempo) not in steps.TEMPOS:
             raise bad_request(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}.")
         out["tempo"] = float(tempo)
+        slide_s = out.get("slide_s", slides.TARGET_SLIDE_S)
+        if isinstance(slide_s, bool) or slide_s not in slides.SLIDE_SECONDS:
+            raise bad_request(f"slide_s — одно из: {', '.join(map(str, slides.SLIDE_SECONDS))}.")
+        out["slide_s"] = int(slide_s)
+        out.setdefault("reading", "normal")
+        if out["reading"] not in slides.READING:
+            raise bad_request(f"reading — одно из: {', '.join(slides.READING)}.")
         engine = self.ctx.modules["audio"].config.engines().get(out["engine"])
         if engine is None:
             raise bad_request(voices.unknown(out["engine"]))
