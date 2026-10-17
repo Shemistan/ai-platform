@@ -27,15 +27,20 @@ api.telegram.org идут через `Bot.transport`, в тестах вмест
 
 from __future__ import annotations
 
+import contextlib
+import copy
+import fcntl
 import html
 import json
 import mimetypes
 import os
+import random
 import re
 import secrets
+import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
@@ -52,11 +57,20 @@ ARTICLE_CHANNEL = "HISTORY_CHAN"  # имя канала с озвученным�
 NEWS_CHANNEL_ENV = "NARRATOR_NEWS_CHANNEL"
 NEWS_CHANNEL = "VOICE_NEWS"  # имя канала с дайджестом новостей
 STATE_NAME = "telegram.json"
+SERVE_LOCK = "telegram.serve.lock"  # держит `bot serve`: getUpdates зовёт только он
 API_ROOT = "https://api.telegram.org"
 CAPTION_LIMIT = 1024
 SIZE_LIMIT = 50 * 1024 * 1024  # предел Telegram на файл от бота
 TIMEOUT = 120
 POLL_TIMEOUT = 30
+# Повторы запросов к Bot API. Методы чтения повторяем на сетевые сбои, 5xx и 429;
+# отправку (send*) — только на 429 и на сбой до отправки тела: после таймаута
+# ответа сообщение могло уйти, и повтор дал бы дубль в канале.
+SAFE_METHODS = frozenset({"getMe", "getChat", "getChatMemberCount", "getUpdates"})
+ATTEMPTS = 3
+BACKOFF_S = 1.0  # пауза перед вторым заходом; дальше вдвое больше, с разбросом
+MAX_RETRY_AFTER_S = 120  # просит ждать дольше — не ждём, отдаём ошибку
+SEND_RATE = 25  # сообщений в секунду на бота: ниже лимита Telegram 30 msg/s
 
 _TOKEN_RE = re.compile(r"\d{6,}:[A-Za-z0-9_-]{30,}")
 _CHAT_RE = re.compile(r"-?\d{5,}(?:_\d+)?|@\w{4,}")
@@ -76,6 +90,10 @@ HINT = "Я только рассылаю озвучки статей. Коман
 
 class TelegramError(RuntimeError):
     """Телеграм не ответил или ответил ошибкой."""
+
+
+class NotSent(TelegramError):  # noqa: N818 — не сбой ответа, а «запрос не ушёл»
+    """Запрос не ушёл (соединение не открылось, тело не отправлено) — повтор безопасен."""
 
 
 def read_token() -> str:
@@ -203,13 +221,39 @@ class State:
         if unknown:
             raise ValueError(f"{path}: неизвестные поля {sorted(unknown)}")
         subs = [Subscriber(**s) for s in data.pop("subscribers", [])]
-        return cls(subscribers=subs, **data)
+        state = cls(subscribers=subs, **data)
+        state._base = copy.deepcopy(state)
+        return state
 
     def save(self, path: Path) -> None:
+        """Атомарно (tmp + os.replace, права 600) и без потери чужих правок.
+
+        Файл пишут и `bot serve`, и `bot send`, и `synth --send` из других процессов.
+        Под flock на `<файл>.lock` файл перечитывается и сливается с тем, что
+        поменял этот процесс с момента load: свой offset (максимум), свои отметки
+        `sent` и подписчики поверх чужих. Чего этот процесс не трогал — берётся с диска.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(asdict(self), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        with state_lock(path):
+            disk = State.load(path) if path.exists() else State()
+            merged = _merge(getattr(self, "_base", None) or State(), self, disk)
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+            try:
+                tmp.write_text(
+                    json.dumps(asdict(merged), ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                os.chmod(tmp, 0o600)  # подписчики — личные данные
+                os.replace(tmp, path)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+            self.offset, self.subscribers, self.sent = (
+                merged.offset,
+                merged.subscribers,
+                merged.sent,
+            )
+            self._base = copy.deepcopy(merged)
 
     def find(self, chat_id: int) -> Subscriber | None:
         return next((s for s in self.subscribers if s.chat_id == chat_id), None)
@@ -233,6 +277,81 @@ class State:
         sub = self.find(chat_id)
         if sub is not None:
             sub.active, sub.note = False, note
+
+
+@contextlib.contextmanager
+def state_lock(path: Path) -> Iterator[None]:
+    """Межпроцессный замок файла состояния: flock на соседнем `<файл>.lock`."""
+    lock = path.with_name(path.name + ".lock")
+    with open(lock, "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _merge(base: State, mine: State, disk: State) -> State:
+    """Трёхстороннее слияние: что процесс поменял относительно base — его, прочее — с диска."""
+    out = State(offset=max(mine.offset, disk.offset))
+    out.sent = dict(disk.sent)
+    for key, stamp in mine.sent.items():
+        if base.sent.get(key) != stamp:
+            out.sent[key] = max(stamp, disk.sent.get(key, ""))
+    was = {s.chat_id: s for s in base.subscribers}
+    ours = {s.chat_id: s for s in mine.subscribers}
+    subs = {s.chat_id: s for s in disk.subscribers}
+    for chat_id, sub in ours.items():
+        if was.get(chat_id) != sub:  # подписался, отписался или переименован здесь
+            subs[chat_id] = sub
+    out.subscribers = list(subs.values())
+    return out
+
+
+_SERVING = False  # этот процесс держит SERVE_LOCK (`bot serve`)
+
+
+def serve_lock_path(root: Path | None = None) -> Path:
+    return state_path(root).with_name(SERVE_LOCK)
+
+
+@contextlib.contextmanager
+def serving(root: Path | None = None) -> Iterator[None]:
+    """Держит `bot serve`: второй serve — TelegramError, остальные не зовут getUpdates."""
+    global _SERVING
+    path = serve_lock_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as e:
+            raise TelegramError("bot serve уже запущен в другом процессе") from e
+        fh.seek(0)
+        fh.truncate()
+        fh.write(f"{os.getpid()}\n")
+        fh.flush()
+        _SERVING = True
+        try:
+            yield
+        finally:
+            _SERVING = False
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def serve_running(root: Path | None = None) -> bool:
+    """Запущен ли `bot serve` в другом процессе: его flock на SERVE_LOCK не взять."""
+    if _SERVING:
+        return False
+    path = serve_lock_path(root)
+    if not path.exists():
+        return False
+    with open(path) as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(fh, fcntl.LOCK_UN)
+    return False
 
 
 def recipients(
@@ -295,7 +414,11 @@ def http_transport(token: str, api_root: str = API_ROOT) -> Callable[..., dict]:
                 return json.loads(e.read().decode("utf-8"))
             except (ValueError, OSError):
                 raise TelegramError(f"{method}: HTTP {e.code}") from e
-        except (urllib.error.URLError, OSError, ValueError) as e:
+        except urllib.error.URLError as e:
+            # urllib заворачивает в URLError сбои соединения и отправки запроса: он не дошёл.
+            raise NotSent(f"{method}: {e}") from e
+        except (OSError, ValueError) as e:
+            # Запрос ушёл, ответа нет или он битый (таймаут чтения, обрыв) — сообщение могло уйти.
             raise TelegramError(f"{method}: {e}") from e
 
     return call
@@ -309,27 +432,86 @@ class Reply:
     result: object = None
     code: int = 0
     description: str = ""
+    retry_after: float = 0  # 429: сколько секунд Telegram просит подождать
+
+
+def backoff(attempt: int) -> float:
+    """Пауза перед повтором: 1, 2, 4… с, с разбросом ±50% — повторы не бьют разом."""
+    return BACKOFF_S * 2 ** (attempt - 1) * (0.5 + random.random())
 
 
 class Bot:
-    def __init__(self, token: str, transport: Callable[..., dict] | None = None):
+    """Bot API с повторами и темпом отправки; sleep и clock подменяют в тестах."""
+
+    def __init__(
+        self,
+        token: str,
+        transport: Callable[..., dict] | None = None,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        rate: float = SEND_RATE,
+    ):
         self.transport = transport or http_transport(token)
+        self._sleep, self._clock = sleep, clock
+        self._gap = 1 / rate if rate else 0.0
+        self._last_send: float | None = None
+
+    def _pace(self) -> None:
+        """Отправки не чаще rate в секунду: рассылка по растущему списку не упрётся в 429."""
+        if self._last_send is not None:
+            wait = self._last_send + self._gap - self._clock()
+            if wait > 0:
+                self._sleep(wait)
+        self._last_send = self._clock()
 
     def request(self, method: str, params: dict | None = None, files: dict | None = None) -> Reply:
-        data = self.transport(method, params or {}, files)
-        if data.get("ok"):
-            return Reply(ok=True, result=data.get("result"))
-        return Reply(
-            ok=False,
-            code=int(data.get("error_code", 0)),
-            description=str(data.get("description", "неизвестная ошибка")),
-        )
+        safe = method in SAFE_METHODS
+        for attempt in range(1, ATTEMPTS + 1):
+            last = attempt == ATTEMPTS
+            if not safe:
+                self._pace()
+            try:
+                data = self.transport(method, params or {}, files)
+            except NotSent:
+                if last:
+                    raise
+                self._sleep(backoff(attempt))
+                continue
+            except TelegramError:
+                if not safe or last:  # отправка без ответа могла дойти — решает человек
+                    raise
+                self._sleep(backoff(attempt))
+                continue
+            reply = _reply(data)
+            if reply.ok or last:
+                return reply
+            if reply.code == 429 and reply.retry_after <= MAX_RETRY_AFTER_S:
+                self._sleep(reply.retry_after or backoff(attempt))
+                continue
+            if safe and reply.code >= 500:
+                self._sleep(backoff(attempt))
+                continue
+            return reply
+        raise AssertionError("недостижимо")  # pragma: no cover
 
     def call(self, method: str, params: dict | None = None, files: dict | None = None) -> object:
         reply = self.request(method, params, files)
         if not reply.ok:
             raise TelegramError(f"{method}: {reply.description} (код {reply.code})")
         return reply.result
+
+
+def _reply(data: dict) -> Reply:
+    if data.get("ok"):
+        return Reply(ok=True, result=data.get("result"))
+    params = data.get("parameters") or {}
+    return Reply(
+        ok=False,
+        code=int(data.get("error_code", 0)),
+        description=str(data.get("description", "неизвестная ошибка")),
+        retry_after=float(params.get("retry_after") or 0) if isinstance(params, dict) else 0,
+    )
 
 
 def chat_name(chat: dict) -> str:
@@ -347,7 +529,12 @@ def pull(bot: Bot, state: State, timeout: int = 0) -> list[Subscriber]:
     /start — подписка, /stop — отписка, остальное — подсказка. Возвращает тех,
     кто подписался в этот заход. Курсор getUpdates хранится в state.offset,
     поэтому одно и то же сообщение не обрабатывается дважды.
+
+    Пока работает `bot serve` в другом процессе, getUpdates не зовём: два опроса
+    дают 409 и роняют serve. Подписки тогда забирает он.
     """
+    if serve_running():
+        return []
     params = {"offset": state.offset, "allowed_updates": ["message"]}
     if timeout:
         params["timeout"] = timeout

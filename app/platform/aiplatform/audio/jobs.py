@@ -16,6 +16,7 @@ from pathlib import Path
 from aiplatform.audio import voices
 from aiplatform.audio.config import AudioConfig
 from aiplatform.core import cleanup, media, runner
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
 from aiplatform.core.narrator import INSTALL_HINT
 
@@ -323,9 +324,7 @@ class AudioJobs:
     def _save(self, job: dict) -> None:
         folder = self._dir(job["id"])
         folder.mkdir(parents=True, exist_ok=True)
-        tmp = folder / "job.json.tmp"
-        tmp.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(folder / "job.json")
+        atomic_write(folder / "job.json", json.dumps(job, ensure_ascii=False, indent=2))
 
     def _load(self) -> None:
         for path in self._config.jobs_dir.glob("*/job.json"):

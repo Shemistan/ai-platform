@@ -1,5 +1,5 @@
 // Вкладка «Статьи»: библиотека статей движка — текст для озвучки, озвучка, проверка, канал.
-import { $, busyClick, chip, errorState, fill, h, loadLast, minutes, narratorApi as api, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
+import { $, busyClick, chip, confirmAction, errorState, fill, h, loadLast, minutes, narratorApi as api, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
 
 const API = "/api/library";
 const QUALITY = { verbatim: "текст дословно", pasted: "текст прислан", webfetch: "текст по пересказу WebFetch" };
@@ -213,6 +213,12 @@ function renderCard() {
       fail(err);
     }
   };
+  // Повтор — необратимый второй пост в канале: только с подтверждением.
+  const sendAgain = async () => {
+    const where = channel.value || "канал статей";
+    const ok = await confirmAction({ title: "Отправить ещё раз?", body: `«${c.title}» уже отправлена. В ${where} уйдёт второй пост с тем же mp3.`, confirmLabel: "Отправить ещё раз" });
+    if (ok) await run("send", { channel: channel.value, force: true })();
+  };
   const fromSource = () => {
     script.value = (c.source || "")
       .split("\n")
@@ -286,8 +292,14 @@ function renderCard() {
         4,
         "Публикация",
         h("div", { class: "toolbar" }, c.has_audio ? (c.sent ? chip("в канале", "ok") : chip("ещё не в канале")) : chip("нечего отправлять")),
-        h("div", { class: "toolbar" }, channel, h("button", { type: "button", class: "btn btn--secondary", disabled: locked || !c.has_audio, onclick: busyClick(() => run("send", { channel: channel.value })(), `act:${c.id}`) }, "Отправить")),
-        h("p", { class: "hint" }, "Уходит mp3 с описанием статьи. Повторная отправка в тот же канал — по этой кнопке."),
+        h(
+          "div",
+          { class: "toolbar" },
+          channel,
+          h("button", { type: "button", class: "btn btn--secondary", disabled: locked || !c.has_audio, onclick: busyClick(() => run("send", { channel: channel.value })(), `act:${c.id}`) }, "Отправить"),
+          c.sent ? h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: locked, onclick: busyClick(sendAgain, `act:${c.id}`) }, "Отправить ещё раз") : null,
+        ),
+        h("p", { class: "hint" }, "Уходит mp3 с описанием статьи. Уже отправленное «Отправить» не повторяет — для повтора есть «Отправить ещё раз»."),
         h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: !c.has_script, onclick: busyClick(() => makeVideo(c, script.value)) }, "Сделать видео по статье →")),
       ),
     ),
