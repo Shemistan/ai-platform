@@ -68,7 +68,7 @@ function renderModels(job) {
     h(
       "div",
       { class: "table-wrap" },
-      h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Что"), h("th", {}, "У нас"), h("th", {}, "В источнике"), h("th", {}, "Статус"), h("th", {}, "Подробности"))), h("tbody", {}, ...rows)),
+      h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Что"), h("th", {}, "У нас"), h("th", {}, "В источнике"), h("th", {}, "Статус"), h("th", {}, "Подробности"))), h("tbody", {}, ...rows)),
     ),
   );
 }
@@ -90,7 +90,7 @@ function entryTable(rows) {
   return h(
     "div",
     { class: "table-wrap" },
-    h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Организация и как ищем"), h("th", {}, "Статус"), h("th", {}, "Пометка на видео"), h("th", {}, "Основание"))), h("tbody", {}, ...rows)),
+    h("table", { class: "data-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Организация и как ищем"), h("th", {}, "Статус"), h("th", {}, "Пометка на видео"), h("th", {}, "Основание"))), h("tbody", {}, ...rows)),
   );
 }
 
