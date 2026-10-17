@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, busy as busyRequest, busyClick, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reportError, safe, STATUS, statusChip, toast, toneOf } from "/ui.js";
+import { $, announce, api, busy as busyRequest, busyClick, confirmAction, confirmPublish, countOf, debounce, fmtNum, h, logBlock, poller, progressBar, reportError, safe, STATUS, statusChip, toast, toneOf } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -367,7 +367,7 @@ function captionCounter(area) {
   const count = h("span", { class: "hint" });
   const update = () => {
     const visible = area.value.replace(/\*\*/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").length;
-    count.textContent = `${visible} знаков из ${CAPTION_LIMIT}${visible > CAPTION_LIMIT ? " — длинно: вместо подписи уйдёт заголовок" : ""}`;
+    count.textContent = `${countOf(visible, "знак", "знака", "знаков")} из ${fmtNum(CAPTION_LIMIT)}${visible > CAPTION_LIMIT ? " — длинно: вместо подписи уйдёт заголовок" : ""}`;
     count.classList.toggle("warn", visible > CAPTION_LIMIT);
   };
   area.addEventListener("input", update);
@@ -883,7 +883,7 @@ function stepBody(step) {
       const dynamic = a.plan.slides.filter((s) => (s.kind || (s.image_prompt ? "image" : "bullets")) !== "image").length;
       return [
         a.plan.title ? h("p", {}, h("span", { class: "muted" }, "Название: "), a.plan.title) : null,
-        h("p", { class: "muted small" }, `${a.plan.slides.length} слайдов: ${a.plan.slides.length - dynamic} с картинкой, ${dynamic} динамических`),
+        h("p", { class: "muted small" }, `${countOf(a.plan.slides.length, "слайд", "слайда", "слайдов")}: ${a.plan.slides.length - dynamic} с картинкой, ${dynamic} динамических`),
         h("div", { class: "slides-list" }, ...cards),
         h("details", {}, h("summary", { class: "link" }, "Править план (JSON)"), editor("plan", JSON.stringify(a.plan, null, 2), 14, true)),
       ];
@@ -908,7 +908,7 @@ function stepBody(step) {
       ];
     case "short":
       return [
-        a.short ? h("details", {}, h("summary", { class: "link" }, `Сценарий шортса: ${a.short.beats.length} частей`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,
+        a.short ? h("details", {}, h("summary", { class: "link" }, `Сценарий шортса: ${countOf(a.short.beats.length, "часть", "части", "частей")}`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,
         f.short_video
           ? h("div", {}, h("video", { class: "vertical-video", controls: true, src: f.short_video, preload: "metadata" }), h("p", {}, h("a", { class: "link", href: `${f.short_video.split("?")[0]}?download=1` }, "Скачать шортс 9:16")))
           : null,
@@ -1023,11 +1023,6 @@ function goToStep(stepId) {
   node.focus({ preventScroll: true });
 }
 
-const plural = (n, one, few, many) => {
-  const d = n % 10;
-  const dd = n % 100;
-  return `${n} ${d === 1 && dd !== 11 ? one : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many}`;
-};
 
 // Сводка свёрнутого шага одной строкой: «71 слайд, 26 с картинкой».
 function stepSummary(step) {
@@ -1038,7 +1033,7 @@ function stepSummary(step) {
   switch (step.id) {
     case "text": {
       const words = (p.scenario === "post" ? a.post : a.text)?.split(/\s+/).filter(Boolean).length || 0;
-      return [plural(words, "слово", "слова", "слов"), p.review?.verdict ? `судья: ${p.review.verdict}` : ""].filter(Boolean).join(" · ");
+      return [countOf(words, "слово", "слова", "слов"), p.review?.verdict ? `судья: ${p.review.verdict}` : ""].filter(Boolean).join(" · ");
     }
     case "poster_prompt":
       return a.poster_prompt ? `${a.poster_prompt.slice(0, 80)}${a.poster_prompt.length > 80 ? "…" : ""}` : "";
@@ -1048,12 +1043,12 @@ function stepSummary(step) {
       if (!a.plan) return "";
       const n = a.plan.slides.length;
       const withImage = a.plan.slides.filter((s) => (s.kind || (s.image_prompt ? "image" : "bullets")) === "image").length;
-      return `${plural(n, "слайд", "слайда", "слайдов")}, ${withImage} с картинкой`;
+      return `${countOf(n, "слайд", "слайда", "слайдов")}, ${withImage} с картинкой`;
     }
     case "images":
-      return plural(Object.keys(f.images || {}).length, "картинка", "картинки", "картинок");
+      return countOf(Object.keys(f.images || {}).length, "картинка", "картинки", "картинок");
     case "clips":
-      return plural(p.slides.filter((s) => s.clip).length, "ролик", "ролика", "роликов");
+      return countOf(p.slides.filter((s) => s.clip).length, "ролик", "ролика", "роликов");
     case "voice":
       return f.voice ? "озвучка готова" : "";
     case "render":

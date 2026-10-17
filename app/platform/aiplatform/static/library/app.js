@@ -1,19 +1,11 @@
 // Вкладка «Статьи»: библиотека статей движка — текст для озвучки, озвучка, проверка, канал.
-import { $, busyClick, chip, confirmAction, errorState, fill, h, loadLast, minutes, narratorApi as api, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
+import { $, busyClick, chip, confirmAction, errorState, fill, h, loadLast, minutes, narratorApi as api, plural, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
 
 const API = "/api/library";
 const QUALITY = { verbatim: "текст дословно", pasted: "текст прислан", webfetch: "текст по пересказу WebFetch" };
 const state = { data: null, audio: null, card: null, selected: null, filter: "all", search: "" };
 
 const isActive = (t) => t.status === "queued" || t.status === "running";
-
-function plural(n, one, few, many) {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
-  return many;
-}
 
 function segmented(box, onPick) {
   for (const b of box.querySelectorAll("button")) {

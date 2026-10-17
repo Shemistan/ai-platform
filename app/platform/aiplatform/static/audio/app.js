@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, countOf, fmtNum, plural, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -87,14 +87,6 @@ const refreshPreview = debounce(async () => {
   }
 }, 600);
 
-function plural(n, one, few, many) {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
-  return many;
-}
-
 function renderPreview(data) {
   const parts = [];
   parts.push(data.changed ? `${data.changed} ${plural(data.changed, "строка переведена", "строки переведены", "строк переведено")} в произношение` : "текст уже готов к озвучке");
@@ -106,7 +98,7 @@ function renderPreview(data) {
 }
 
 function updateCount() {
-  $("text-count").textContent = `${$("text").value.length.toLocaleString("ru-RU")} знаков из ${state.config.max_text.toLocaleString("ru-RU")}`;
+  $("text-count").textContent = `${countOf($("text").value.length, "знак", "знака", "знаков")} из ${fmtNum(state.config.max_text)}`;
 }
 
 function setText(text) {
@@ -210,9 +202,9 @@ function renderBatch() {
     h(
       "ol",
       { class: "list" },
-      ...batch.articles.map((a, n) => h("li", { class: "list-row", style: "cursor:default" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, `${a.words} слов`))),
+      ...batch.articles.map((a, n) => h("li", { class: "list-row", style: "cursor:default" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, countOf(a.words, "слово", "слова", "слов")))),
     ),
-    over ? h("p", { class: "form-error" }, `За раз — не больше ${max} статей.`) : null,
+    over ? h("p", { class: "form-error" }, `За раз — не больше ${max} ${plural(max, "статьи", "статей", "статей")}.`) : null,
     h("p", { class: "hint" }, "Каждая статья встанет в очередь отдельной задачей с настройками ниже — по порядку."),
     h(
       "div",
@@ -356,7 +348,7 @@ function renderJob(job) {
     return;
   }
   const active = job.status === "queued" || job.status === "running";
-  const meta = [job.engine_label, job.voice, job.speed ? `×${job.speed}` : "", job.steps ? `${job.steps} шагов` : "", `${job.chars} знаков`].filter(Boolean).join(" · ");
+  const meta = [job.engine_label, job.voice, job.speed ? `×${job.speed}` : "", job.steps ? countOf(job.steps, "шаг", "шага", "шагов") : "", countOf(job.chars, "знак", "знака", "знаков")].filter(Boolean).join(" · ");
   fill(box, 
     h(
       "div",

@@ -226,6 +226,24 @@ export function debounce(fn, ms) {
   };
 }
 
+// Форма слова после числа: plural(n, "канал", "канала", "каналов") → «канал» при 1, 21; «канала» при 2–4;
+// «каналов» при 0, 5–20, 11–14. Python-близнец — aiplatform/core/words.py (TXT-002).
+export function plural(n, one, few, many) {
+  const abs = Math.abs(Math.trunc(Number(n) || 0));
+  const d = abs % 10;
+  const dd = abs % 100;
+  if (d === 1 && dd !== 11) return one;
+  if (d >= 2 && d <= 4 && (dd < 12 || dd > 14)) return few;
+  return many;
+}
+
+// Число с разделителем разрядов по-русски: 1200 → «1 200» (неразрывный пробел).
+const NUM = new Intl.NumberFormat("ru-RU");
+export const fmtNum = (n) => NUM.format(n);
+
+// «5 каналов», «1 200 просмотров»: число и согласованное слово.
+export const countOf = (n, one, few, many) => `${fmtNum(n)} ${plural(n, one, few, many)}`;
+
 // «12 окт.», с годом — если не этот.
 export function shortDate(value) {
   if (!value) return "";

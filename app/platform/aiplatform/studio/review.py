@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from aiplatform.core import log
+from aiplatform.core import log, words
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError
 from aiplatform.studio import publish, steps
@@ -78,11 +78,7 @@ def http_transport(channel: publish.Channel) -> Transport:
 
 
 def plural(n: int) -> str:
-    if n % 10 == 1 and n % 100 != 11:
-        return "канал"
-    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
-        return "канала"
-    return "каналов"
+    return words.plural(n, "канал", "канала", "каналов")
 
 
 def is_owner(user: dict, owner: str) -> bool:
