@@ -12,7 +12,7 @@ import urllib.error
 from unittest import mock
 
 from aiplatform.core import media
-from aiplatform.studio import publish, stats
+from aiplatform.studio import publish, stats, steps
 from aiplatform.studio.llm import StudioError
 from tests.fixtures import ARTICLE, png_bytes
 from tests.helpers import JournalCase
@@ -130,7 +130,7 @@ class RepublishTest(JournalCase):
     """Повтор с «Опубликовать повторно» — новая запись канала, прежняя цела (AN-005)."""
 
     def records(self, pid) -> list[dict]:
-        return json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        return steps.load_published(self.folder(pid))
 
     def test_force_keeps_first_record(self):
         pid = self.video_project()
@@ -190,7 +190,7 @@ class DimensionsTest(JournalCase):
         self.addCleanup(durations.stop)
 
     def records(self, pid) -> list[dict]:
-        return json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        return steps.load_published(self.folder(pid))
 
     def test_vertical_channel_records_short_and_format_survives_config_change(self):
         pid = self.video_project()

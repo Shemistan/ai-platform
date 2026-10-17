@@ -13,9 +13,10 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
-from aiplatform.core import cleanup, runner
+from aiplatform.core import cleanup, runner, schema
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
+from aiplatform.core.schema import JOB_FIELDS, JOB_SCHEMA
 from aiplatform.core.uploads import UploadStore
 from aiplatform.video import living, ltx, models, timeline, wan
 from aiplatform.video.config import VideoConfig
@@ -214,15 +215,17 @@ class JobManager:
     def _save(self, job: dict) -> None:
         folder = self._dir(job["id"])
         folder.mkdir(parents=True, exist_ok=True)
-        atomic_write(folder / "job.json", json.dumps(job, ensure_ascii=False, indent=2))
+        atomic_write(folder / "job.json", json.dumps(schema.stamp(job, JOB_SCHEMA), ensure_ascii=False, indent=2))
 
     def _load(self) -> None:
+        # Битая задача — в карантин (job.json.bad) и в problems вкладки; остальные грузятся (BE-008).
+        self.load_problems: list[str] = []
         for path in self._config.jobs_dir.glob("*/job.json"):
             if not _ID.match(path.parent.name):
                 continue
-            try:
-                job = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            label = f"Задача {path.parent.name}"
+            job, _ = schema.load_record(path, JOB_SCHEMA, check=JOB_FIELDS, problems=self.load_problems, label=label)
+            if job is None:
                 continue
             if job.get("status") in ACTIVE:
                 self._finish(job, "failed", error="Сервис был перезапущен во время генерации.")
