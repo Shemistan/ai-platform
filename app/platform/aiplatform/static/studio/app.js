@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, busy as busyRequest, busyClick, captureFocus, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reconcile, reportError, restoreFocus, safe, STATUS, statusChip, toast, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { $, announce, api, busy as busyRequest, busyClick, captureFocus, confirmAction, confirmPublish, countLabel, debounce, h, logBlock, poller, progressBar, reconcile, reportError, restoreFocus, safe, STATUS, statusChip, toast, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const API = "/api/studio";
 // Сценарий из адреса; неизвестный — «article». Названия сценариев — из /api/studio/config (FE-007).
@@ -1048,12 +1048,6 @@ function goToStep(stepId) {
   node.focus({ preventScroll: true });
 }
 
-const plural = (n, one, few, many) => {
-  const d = n % 10;
-  const dd = n % 100;
-  return `${n} ${d === 1 && dd !== 11 ? one : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many}`;
-};
-
 // Сводка свёрнутого шага одной строкой: «71 слайд, 26 с картинкой».
 function stepSummary(step) {
   const p = state.project;
@@ -1063,7 +1057,7 @@ function stepSummary(step) {
   switch (step.id) {
     case "text": {
       const words = (p.scenario === "post" ? a.post : a.text)?.split(/\s+/).filter(Boolean).length || 0;
-      return [plural(words, "слово", "слова", "слов"), p.review?.verdict ? `судья: ${p.review.verdict}` : ""].filter(Boolean).join(" · ");
+      return [countLabel(words, "слово", "слова", "слов"), p.review?.verdict ? `судья: ${p.review.verdict}` : ""].filter(Boolean).join(" · ");
     }
     case "poster_prompt":
       return a.poster_prompt ? `${a.poster_prompt.slice(0, 80)}${a.poster_prompt.length > 80 ? "…" : ""}` : "";
@@ -1073,12 +1067,12 @@ function stepSummary(step) {
       if (!a.plan) return "";
       const n = a.plan.slides.length;
       const withImage = a.plan.slides.filter((s) => (s.kind || (s.image_prompt ? "image" : "bullets")) === "image").length;
-      return `${plural(n, "слайд", "слайда", "слайдов")}, ${withImage} с картинкой`;
+      return `${countLabel(n, "слайд", "слайда", "слайдов")}, ${withImage} с картинкой`;
     }
     case "images":
-      return plural(Object.keys(f.images || {}).length, "картинка", "картинки", "картинок");
+      return countLabel(Object.keys(f.images || {}).length, "картинка", "картинки", "картинок");
     case "clips":
-      return plural(p.slides.filter((s) => s.clip).length, "ролик", "ролика", "роликов");
+      return countLabel(p.slides.filter((s) => s.clip).length, "ролик", "ролика", "роликов");
     case "voice":
       return f.voice ? "озвучка готова" : "";
     case "render":
