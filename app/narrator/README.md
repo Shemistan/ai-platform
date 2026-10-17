@@ -14,7 +14,7 @@
 
 ```sh
 cd app/narrator
-make models        # модели ~3,7 ГБ в /Volumes/External SSD/local_models (NARRATOR_MODELS_DIR)
+make models        # модели ~3,7 ГБ в NARRATOR_MODELS_DIR (у автора — /Volumes/External SSD/local_models)
 make check         # первый запуск ставит Python-зависимости (torch, f5-tts) — несколько минут
 make skills        # skill youtube-news для обзоров недели и месяца
 ```
@@ -28,7 +28,7 @@ make skills        # skill youtube-news для обзоров недели и м
 Со старого каталога их забирает один скрипт, он только копирует:
 
 ```sh
-sh tools/import-old.sh ~/my_track/07_offline_text-to-word
+sh tools/import-old.sh <old-narrator-dir>   # каталог старого narrator с library/
 ```
 
 Запускай из основного checkout: библиотека одна на машину, worktree её не

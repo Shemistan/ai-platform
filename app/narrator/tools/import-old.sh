@@ -1,13 +1,13 @@
 #!/bin/sh
 # Один раз: данные старого narrator → сюда. Копирует, ничего не удаляет.
-#   sh tools/import-old.sh ~/my_track/07_offline_text-to-word
+#   sh tools/import-old.sh <old-narrator-dir>
 # Что берёт: library/ (статьи, база новостей, подписчики бота),
 # telegram_tems.md (каналы), bot_token.md (токен бота).
 # Что уже есть здесь — не перезаписывает (rsync --ignore-existing).
 # Запускать в обычном терминале из основного checkout: sandbox агента
 # не пишет в library/, а worktree держит библиотеку в основном checkout.
 set -e
-OLD=${1:?укажи каталог старого narrator: sh tools/import-old.sh ~/my_track/07_offline_text-to-word}
+OLD=${1:?укажи каталог старого narrator: sh tools/import-old.sh <old-narrator-dir>}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 [ -d "$OLD/library" ] || { echo "в $OLD нет library/ — это не каталог narrator" >&2; exit 2; }
 

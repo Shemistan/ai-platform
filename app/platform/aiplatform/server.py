@@ -194,6 +194,7 @@ class App:
     def describe(self) -> dict:
         return {
             "backend": self.config.backend,
+            "version": __version__,
             "tabs": [{"id": m.prefix, "label": m.label} for m in self.modules.values()],
             "problems": self.problems(),
         }
