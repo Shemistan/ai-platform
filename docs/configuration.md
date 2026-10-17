@@ -87,6 +87,7 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `AIP_VIDEO_MODELS_DIR` | `AIP_MODELS_DIR`, иначе каталог рядом с `AIP_VIDEO_MODEL` | веса видеомоделей, если они лежат отдельно от фото (или старый `VIDEOGEN_MODELS_DIR`) |
 | `AIP_VIDEO_WAN_STEPS` | `10` | шаги Wan 2.2 (или старый `VIDEOGEN_WAN_STEPS`); целое от 1 |
 | `AIP_TEST_GUARD` | — | ставят тесты (`app/platform/tests/__init__.py`): с ним сервис отказывается работать на боевых `data/` и `data-demo/` |
+| `AIP_TELEGRAM_API` | `https://api.telegram.org` | адрес Bot API для публикации и уведомлений; тесты ставят фейковый сервер `tests/fake_telegram.py`. Токен уходит по этому адресу — в бою не задавать |
 | `NARRATOR_ENGINE` | — | запасное имя для `AIP_AUDIO_ENGINE`; его же читает Makefile движка |
 | `NARRATOR_MODELS_DIR` | `/Volumes/External SSD/local_models` (у автора — внешний диск) | папка моделей озвучки; читает движок `app/narrator`; диска нет — свой каталог |
 | `AIP_TELEGRAM_TOKEN` (или другое имя) | — | токен бота канала: имя переменной задаёт `token_env` в `channels.json`, см. [«Каналы публикации»](../app/platform/README.md#каналы-публикации); значение не в git |
