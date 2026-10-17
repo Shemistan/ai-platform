@@ -62,7 +62,9 @@ def collect(
     cwd = config.narrator_dir if config.narrator_dir.is_dir() else None
     if not skip_collect:
         try:
-            runner.run(config.news_argv(config.news_cmd, day), on_line, cancel, cwd=cwd, missing_hint=INSTALL_HINT)
+            runner.run(
+                config.news_argv(config.news_cmd, day), on_line, cancel, cwd=cwd, missing_hint=INSTALL_HINT, kind="news"
+            )
         except runner.RunFailed as exc:
             raise StudioError(f"Сбор новостей: {exc}") from exc
     lines: list[str] = []
@@ -72,7 +74,9 @@ def collect(
         on_line(line)
 
     try:
-        runner.run(config.news_argv(config.news_where, day), keep, cancel, cwd=cwd, missing_hint=INSTALL_HINT)
+        runner.run(
+            config.news_argv(config.news_where, day), keep, cancel, cwd=cwd, missing_hint=INSTALL_HINT, kind="llm"
+        )
     except runner.RunFailed as exc:
         raise StudioError(f"narrate news where: {exc}") from exc
     folder = parse_where(lines, day)

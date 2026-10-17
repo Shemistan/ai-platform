@@ -7,10 +7,12 @@
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 from aiplatform.audio import voices
 from aiplatform.core import settings as settings_module
 from aiplatform.core.cleanup import Cleaner
-from aiplatform.core.http import Request, bad_request, not_found
+from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.video import models as video_models
 
@@ -131,9 +133,18 @@ class SettingsModule:
             case ("POST", ["cleanup", "run"]):
                 return req.send_json(self.cleanup(run=True))
             case ("POST", ["notify-test"]):
-                self.ctx.notifier.send("Проверка уведомлений", "Так будет выглядеть уведомление о выпуске.", show=True)
-                return req.send_json(self.state())
+                return req.send_json(self.notify_test())
         raise not_found()
+
+    def notify_test(self) -> dict:
+        """Тестовое уведомление всеми настроенными путями; не дошло ни одним — 502 с причинами."""
+        results = self.ctx.notifier.send(
+            "Проверка уведомлений", "Так будет выглядеть уведомление о выпуске.", show=True
+        )
+        if results and not any(r["ok"] for r in results):
+            reasons = "; ".join(f"{r['via']}: {r['error']}" for r in results)
+            raise HttpError(HTTPStatus.BAD_GATEWAY, f"Уведомление не доставлено — {reasons}.")
+        return self.state() | {"notify_test": results}
 
     def update_section(self, name: str, payload: object) -> dict:
         """Часть раздела: {enabled, time, day} расписания, {enabled} уведомлений и т.п. Мусор — 400."""
@@ -154,7 +165,10 @@ class SettingsModule:
         wrong = [k for k in payload if checked[k] != payload[k]]
         if wrong:
             raise bad_request(f"Неверное значение: {', '.join(wrong)}.")
-        self.settings.change(lambda data: section(data).update(payload))
+        changes = dict(payload)
+        if name == "notify" and payload.get("telegram_chat") and not current["telegram_chat"]:
+            changes.setdefault("enabled", True)  # чат задали впервые — уведомления включаются сами
+        self.settings.change(lambda data: section(data).update(changes))
         return self.state()
 
     def toggle(self, payload: object) -> dict:
