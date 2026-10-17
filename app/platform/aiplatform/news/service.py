@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from datetime import date, timedelta
 from http import HTTPStatus
 
@@ -20,6 +21,7 @@ from aiplatform.core import narrator as narrator_module
 from aiplatform.core import tasks as tasks_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
+from aiplatform.studio.llm import missing_cli
 
 PREFIX = "news"
 _SOURCE = re.compile(r"^[a-z0-9_]{1,64}$")
@@ -56,14 +58,23 @@ class NewsModule:
 
     def __init__(self, ctx) -> None:
         self.narrator = narrator_module.load(ctx.config)
+        self.fake = ctx.config.fake
+        self.claude = ctx.config.env.get("CLAUDE") or "claude"
         self.tasks = tasks_module.Tasks(ctx.config.data_dir / "news" / "tasks")
 
     def describe(self) -> dict:
         return {}
 
     def problems(self) -> list[str]:
+        out = []
         problem = self.narrator.check()
-        return [problem] if problem else []
+        if problem:
+            out.append(problem)
+        # Агент дайджеста, добора и обзоров — claude из Makefile движка (CLAUDE ?= claude):
+        # без него сбор падает уже в работе, на шаге news-agent.
+        if not self.fake and shutil.which(self.claude) is None:
+            out.append(missing_cli(self.claude))
+        return out
 
     def _bridge(self, *args: str) -> dict:
         try:

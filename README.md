@@ -81,3 +81,24 @@ make run                                  # http://127.0.0.1:8780 — насто
 Require status checks to pass → добавить `check` (появится в списке после
 первого прогона workflow). Тогда PR `staging → main` не сольётся с красным
 статусом.
+
+## Регламент агента
+
+Правила для Claude Code — `CLAUDE.md`; механизм, который их держит, ставится
+на машину отдельно (решение — [ADR 0002](docs/decisions/0002-agent-config-templates.md)):
+
+1. `sh bootstrap.sh` в главном checkout: git-хуки (`main` агенту не
+   коммитится и никому не пушится) и `.claude/settings.json` с
+   `.claude/hooks/preflight.sh` из шаблонов `tools/claude/` — если их ещё
+   нет. Свои правки `.claude/` не перетираются; отличие от шаблона
+   `bootstrap.sh` показывает командой `diff`.
+2. Общие хуки агента в `~/.claude/hooks/` — `preflight.sh` (worktree на
+   старте задачи) и `guard.py` (PreToolUse: запрет правок `main`,
+   `--no-verify`, подмены хуков). Их ставит `install-global.sh` из скелета
+   ai-god-mode. Без них preflight блокирует промпты с подсказкой, а
+   `bootstrap.sh` предупреждает.
+3. Проверка: `claude` в корне — первый промпт проходит preflight; попытка
+   агента закоммитить в `main` отклоняется `pre-commit`.
+
+Поменять права агента для всех — правка шаблона в `tools/claude/` через PR;
+на своей машине — `diff` и копия руками.
