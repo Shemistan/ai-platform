@@ -630,7 +630,9 @@ def digest_caption(path: Path, entry: Entry) -> str:
     text = post.read_text(encoding="utf-8") if post.exists() else ""
     if not text.strip():
         text = f"**{entry.title.replace('*', '')}**\n\n{entry.summary.strip()}"
-    text = registry.with_footnotes(text, spoken_text(path, entry), registry.load())
+    entries = registry.load()
+    text = registry.with_footnotes(text, spoken_text(path, entry), entries)
+    text = registry.with_materials(text, registry.materials(digest_agents(path), entries))
     try:
         return registry.fit_caption(text, CAPTION_LIMIT)
     except registry.CaptionError as e:
@@ -679,9 +681,18 @@ def _send_digest(
 
 
 def audio_caption(path: Path, entry: Entry, title: str) -> str:
-    """Подпись к аудио дайджеста: аудио могут переслать отдельно — сноски и тут."""
-    notes = registry.footnotes_html(spoken_text(path, entry), registry.load())
-    return "\n\n".join(p for p in (html.escape(title), notes) if p)
+    """Подпись к аудио дайджеста: аудио могут переслать отдельно — сноски и маркировка тут же."""
+    entries = registry.load()
+    notes = registry.footnotes_html(spoken_text(path, entry), entries)
+    labels = "\n".join(html.escape(m) for m in registry.materials(digest_agents(path), entries))
+    return "\n\n".join(p for p in (labels, html.escape(title), notes) if p)
+
+
+def digest_agents(path: Path) -> list[str]:
+    """Иноагенты, чьи материалы вошли в дайджест path (отметка в news.db при сборе, CMP-012)."""
+    from narrator.news.store import db_path, issue_agents
+
+    return issue_agents(db_path(library.library_root()), article_id(path))
 
 
 def send_digest_video(

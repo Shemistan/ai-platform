@@ -168,3 +168,79 @@ def test_video_frame_has_note_band(tmp_path):
     _, _, frame = video.make_frames(cover)  # пометки ушли — кадр пересобран без полосы
     assert not (tmp_path / video.NOTE).exists()
     assert min(Image.open(frame).convert("RGB").getpixel((2, 398))) > 200
+
+
+AGENT = {
+    "id": "petrov",
+    "name": "Иван Петров",
+    "status": "foreign_agent",
+    "kind": "person",
+    "aliases": ["Иван* Петров*"],
+    "channels": ["https://t.me/petrov_it", "@petrov_tube"],
+}
+
+
+def test_foreign_agent_parse_and_source_match():
+    """CMP-012: иноагент — пометка и маркировка по шаблону, канал узнаётся по адресу."""
+    (agent,) = registry.parse([AGENT])
+    assert agent.disclaimer == "Иван Петров признан(а) Минюстом РФ иностранным агентом"
+    assert "РАСПРОСТРАНЕНО ИНОСТРАННЫМ АГЕНТОМ Иван Петров" in agent.material
+    assert registry.notes("Иван Петров рассказал", [agent]) == [f"{agent.disclaimer}."]
+    found = registry.source_agent
+    assert found(["https://t.me/s/petrov_it"], "Канал", [agent]) is agent
+    assert found(["petrov_it"], "Канал", [agent]) is agent
+    assert found(["https://www.youtube.com/@petrov_tube"], "Канал", [agent]) is agent
+    assert found(["https://t.me/other"], "Иван Петров о Go", [agent]) is agent
+    assert found(["https://t.me/petrov_it_fan"], "Другой", [agent]) is None
+    post = registry.with_materials("Пост.", [agent.material])
+    assert post.startswith(agent.material)
+    assert registry.with_materials(post, [agent.material]) == post
+
+
+def test_foreign_agent_material_marked_in_db_and_caption(tmp_path, monkeypatch):
+    """CMP-012: материал из канала иноагента помечен в news.db и маркируется в подписи."""
+    from narrator.news import cli as news_cli
+    from narrator.news.feeds import Item
+    from narrator.news.sources import Source
+    from narrator.news.store import Store, db_path, now_utc
+
+    own = tmp_path / "registry.json"
+    own.write_text(json.dumps({"entries": [AGENT]}), encoding="utf-8")
+    monkeypatch.setenv(registry.REGISTRY_ENV, str(own))
+    root = tmp_path / "library"
+    monkeypatch.setenv("NARRATOR_LIBRARY", str(root))
+    entries = registry.load()
+    tube = Source(
+        id="petrov",
+        name="Petrov IT",
+        url="https://t.me/s/petrov_it",
+        type="telegram_channel",
+        category="telegram",
+        kind="telegram",
+        channel="petrov_it",
+    )
+    plain = Source(
+        id="go_blog", name="The Go Blog", url="https://go.dev/blog/", type="official",
+        category="stack", kind="feed",
+    )  # fmt: skip
+    assert news_cli.agent_of(tube, entries) == "petrov"
+    assert news_cli.agent_of(plain, entries) is None
+    path = root / "2026" / "10" / "17" / "digest"
+    path.mkdir(parents=True)
+    now = now_utc()
+    with Store(db_path(root)) as store:
+        store.add(tube, [Item("https://t.me/petrov_it/1", "Пост")], now, 3, False, "petrov")
+        store.add(plain, [Item("https://go.dev/blog/x", "Go")], now, 3, False, None)
+        rows = {r["source"]: r["foreign_agent"] for r in store.db.execute("SELECT * FROM items")}
+        assert rows == {"petrov": "petrov", "go_blog": None}
+        keys = [r["id"] for r in store.db.execute("SELECT id FROM items")]
+        store.mark_issue(keys, "2026-10-17-digest")
+    entry = Entry(title="Дайджест разработчика, 17 октября", added="2026-10-17", kind="digest")
+    (path / "post.md").write_text("**Дайджест**\n\n🐹 Вышел Go — [релиз](https://go.dev/x)\n")
+    caption = telegram.digest_caption(path, entry)
+    assert caption.startswith("ДАННОЕ СООБЩЕНИЕ (МАТЕРИАЛ)") and "Вышел Go" in caption
+    assert "ИНОСТРАННОГО АГЕНТА Иван Петров" in telegram.audio_caption(path, entry, "Новости")
+    other = root / "2026" / "10" / "16" / "digest"
+    other.mkdir(parents=True)
+    (other / "post.md").write_text("**Дайджест**\n\nПро Go.\n")
+    assert "ДАННОЕ" not in telegram.digest_caption(other, entry)

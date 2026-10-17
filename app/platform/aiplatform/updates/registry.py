@@ -1,4 +1,5 @@
-"""Реестр организаций, признанных в РФ экстремистскими, террористическими или нежелательными.
+"""Реестр организаций, признанных в РФ экстремистскими, террористическими или нежелательными,
+и иностранных агентов (организаций и физлиц).
 
 Если такая организация упоминается в выпуске, на кадре мелким текстом идёт
 стандартная пометка, а в подпись к посту она дописывается в конце. Список
@@ -13,6 +14,13 @@
 в тексте про потоки. stopwords записи — слова, которые псевдоним с `*` ловить
 не должен («Мет*» → «Метой», но не «метод»): слово целиком, с дефисными
 частями, сверяется с ними так же, с `*` на конце.
+
+Иностранный агент (status foreign_agent, CMP-012; спека —
+docs/superpowers/specs/2026-10-17-foreign-agents-registry.md): kind — person
+или org, пометка об упоминании (disclaimer) и маркировка материала (material)
+по умолчанию собираются из шаблонов TEMPLATES (свои — ключ templates в
+registry.json). channels — адреса и @-имена его каналов: материал из
+такого источника дайджест маркирует целиком. Тексты шаблонов сверяет юрист.
 """
 
 from __future__ import annotations
@@ -32,6 +40,19 @@ STATUSES = {
     "extremist": "экстремистская",
     "terrorist": "террористическая",
     "undesirable": "нежелательная",
+    "foreign_agent": "иностранный агент",
+}
+FOREIGN_AGENT = "foreign_agent"
+KINDS = ("org", "person")
+# Шаблоны пометок иноагента (255-ФЗ ст. 9, 11). Тексты — до сверки юристом: свои — ключ
+# templates в registry.json. {name} — name записи.
+TEMPLATES = {
+    "foreign_agent_person": "{name} признан(а) Минюстом РФ иностранным агентом",
+    "foreign_agent_org": "Организация {name} признана Минюстом РФ иностранным агентом",
+    "foreign_agent_material": (
+        "ДАННОЕ СООБЩЕНИЕ (МАТЕРИАЛ) СОЗДАНО И (ИЛИ) РАСПРОСТРАНЕНО ИНОСТРАННЫМ АГЕНТОМ {name} "
+        "ЛИБО КАСАЕТСЯ ДЕЯТЕЛЬНОСТИ ИНОСТРАННОГО АГЕНТА {name}"
+    ),
 }
 MAX_ENTRIES = 200
 MAX_STOPWORDS = 80
@@ -52,6 +73,9 @@ class Entry:
     stopwords: tuple[str, ...] = ()
     ref: str = ""  # номер в официальном перечне
     archive_url: str = ""  # снимок первоисточника (web.archive.org и т. п.)
+    kind: str = "org"  # org | person — для шаблона пометки иноагента
+    channels: tuple[str, ...] = ()  # каналы иноагента: адреса и @-имена
+    material: str = ""  # маркировка материала иноагента (только foreign_agent)
 
     @property
     def confirmed(self) -> bool:
@@ -63,7 +87,8 @@ class Entry:
 
     def stored(self) -> dict:
         """Запись для JSON: кортежи — списками."""
-        return asdict(self) | {"aliases": list(self.aliases), "stopwords": list(self.stopwords)}
+        lists = {"aliases": list(self.aliases), "stopwords": list(self.stopwords), "channels": list(self.channels)}
+        return asdict(self) | lists
 
     def mentioned_in(self, text: str) -> bool:
         return alias_found(text, self.aliases, self.stopwords)
@@ -128,8 +153,19 @@ def _words(items: list) -> tuple[str, ...]:
     return tuple(dict.fromkeys(" ".join(str(a).split()) for a in items if str(a or "").strip()))
 
 
+def templates(obj: object) -> dict[str, str]:
+    """Шаблоны пометок иноагента: свои из {templates: …} поверх TEMPLATES."""
+    own = obj.get("templates") if isinstance(obj, dict) else None
+    out = dict(TEMPLATES)
+    for key, value in (own or {}).items() if isinstance(own, dict) else ():
+        if key in TEMPLATES and isinstance(value, str) and "{name}" in value:
+            out[key] = " ".join(value.split())
+    return out
+
+
 def parse(obj: object) -> list[Entry]:
     """Записи из JSON ({entries: [...]} или список). Ошибка в записи — ValueError с её именем."""
+    texts = templates(obj)
     raw = obj.get("entries") if isinstance(obj, dict) else obj
     if not isinstance(raw, list):
         raise ValueError("нужен список entries")
@@ -155,19 +191,35 @@ def parse(obj: object) -> list[Entry]:
         stopwords = item.get("stopwords") or []
         if not isinstance(stopwords, list):
             raise ValueError(f"у записи {entry_id} stopwords — список")
+        kind = item.get("kind") or "org"
+        if kind not in KINDS:
+            raise ValueError(f"у записи {entry_id} kind — org или person")
+        channels = item.get("channels") or []
+        if not isinstance(channels, list):
+            raise ValueError(f"у записи {entry_id} channels — список")
+        name = _text(item, "name", 120)
+        agent = status == FOREIGN_AGENT
+        disclaimer = _text(item, "disclaimer", 400, required=not agent).rstrip(".")
+        material = _text(item, "material", 400, required=False).rstrip(".") if agent else ""
+        if agent:
+            disclaimer = disclaimer or texts[f"foreign_agent_{kind}"].format(name=name)
+            material = material or texts["foreign_agent_material"].format(name=name)
         seen.add(entry_id)
         out.append(
             Entry(
                 id=entry_id,
-                name=_text(item, "name", 120),
+                name=name,
                 status=status,
                 aliases=names[:30],
-                disclaimer=_text(item, "disclaimer", 400).rstrip("."),
+                disclaimer=disclaimer,
                 basis=_text(item, "basis", 400, required=False),
                 source=_web(_text(item, "source", 400, required=False)),
                 stopwords=tuple(w for w in _words(stopwords) if w.strip("*"))[:MAX_STOPWORDS],
                 ref=_text(item, "ref", 60, required=False),
                 archive_url=_web(_text(item, "archive_url", 400, required=False)),
+                kind=kind,
+                channels=_words(channels)[:20],
+                material=material,
             )
         )
     return out
@@ -251,11 +303,22 @@ class Registry:
             "checked": checked or date.today().isoformat(),
             "entries": [e.stored() for e in entries],
         }
+        own = self._templates()
+        if own:  # свои шаблоны пометок иноагента переживают сверку и правку
+            data["templates"] = own
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_name(self.path.name + ".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             tmp.replace(self.path)
+
+    def _templates(self) -> dict:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        own = data.get("templates") if isinstance(data, dict) else None
+        return own if isinstance(own, dict) else {}
 
     def reset(self) -> None:
         with self._lock:

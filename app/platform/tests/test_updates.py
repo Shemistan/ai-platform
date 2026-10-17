@@ -85,6 +85,23 @@ class RegistryTest(unittest.TestCase):
         self.assertIn("не сверяли", registry.stale_note("", 14, today))
         self.assertIsNone(registry.age_days("вчера", today))
 
+    def test_foreign_agent_templates(self):
+        # CMP-012: иноагент — пометка об упоминании и маркировка материала по шаблону.
+        base = {"id": "ivan", "name": "Иван Петров", "status": "foreign_agent", "aliases": ["Иван* Петров*"]}
+        person = registry.parse([base | {"kind": "person", "channels": ["t.me/petrov"]}])[0]
+        self.assertEqual(person.disclaimer, "Иван Петров признан(а) Минюстом РФ иностранным агентом")
+        self.assertTrue(person.material.startswith("ДАННОЕ СООБЩЕНИЕ (МАТЕРИАЛ)"))
+        self.assertIn("ИНОСТРАННЫМ АГЕНТОМ Иван Петров", person.material)
+        self.assertEqual((person.channels, person.public()["status_label"]), (("t.me/petrov",), "иностранный агент"))
+        org = registry.parse({"templates": {"foreign_agent_org": "{name} — иноагент"}, "entries": [base]})[0]
+        self.assertEqual(org.disclaimer, "Иван Петров — иноагент")
+        own = registry.parse([base | {"disclaimer": "Своя пометка."}])[0]
+        self.assertEqual(own.disclaimer, "Своя пометка")
+        self.assertEqual(registry.notes("Интервью Ивана Петрова", [person]), [f"{person.disclaimer}."])
+        with self.assertRaisesRegex(ValueError, "kind"):
+            registry.parse([base | {"kind": "bot"}])
+        self.assertEqual(registry.parse([{**base, "status": "extremist", "disclaimer": "X"}])[0].material, "")
+
     def test_footnotes_once(self):
         post = registry.with_footnotes("**Главное** за день.", "Instagram запустил ленту", DEFAULT)
         self.assertEqual(post, f"**Главное** за день.\n\n* {META_NOTE}\n")
@@ -334,6 +351,35 @@ class DisclaimerFlowTest(StudioCase):
             encoding="utf-8"
         )
         self.assertNotIn("экстремистской", description)
+
+
+FOREIGN_AGENT = {
+    "id": "petrov",
+    "name": "Иван Петров",
+    "status": "foreign_agent",
+    "kind": "person",
+    "aliases": ["Иван* Петров*"],
+}
+
+
+@NEEDS_FFMPEG
+class ForeignAgentFlowTest(StudioCase):
+    def test_mention_gets_footnote_in_studio(self):
+        # CMP-012: упоминание иноагента в выпуске студии — сноска в посте и пометка на кадре.
+        store = registry.Registry(Path(self.tmp.name) / registry.FILE_NAME)
+        store.save([*DEFAULT, *registry.parse([FOREIGN_AGENT])])
+        note = "Иван Петров признан(а) Минюстом РФ иностранным агентом."
+        text = ARTICLE_META.replace("Meta открыла", "Иван Петров рассказал, как Meta открыла")
+        settings = {"channels": ["download-16x9"], "auto_publish": True}
+        project = self.create(scenario="article", text=text, settings=settings, run=True)
+        self.assertIn({"name": "Иван Петров", "note": note}, project["disclaimers"])
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+        description = (self.folder(project["id"]) / "publish" / "download-16x9" / "description.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(f"* {note}", description)
+        self.assertIn(META_NOTE, description)
 
 
 class VoiceModelsTest(PlatformCase):
