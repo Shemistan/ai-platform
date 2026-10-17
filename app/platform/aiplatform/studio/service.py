@@ -261,6 +261,10 @@ class StudioModule:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
         if not isinstance(force, bool) or not isinstance(ignore_verdict, bool):
             raise bad_request("force и ignore_verdict — true или false.")
+        # Пометки выключены, а в тексте есть упоминания из реестра: публикация — с причиной (CMP-004).
+        ignore_disclaimers = payload.get("ignore_disclaimers") or ""
+        if not isinstance(ignore_disclaimers, str) or len(ignore_disclaimers) > 500:
+            raise bad_request("ignore_disclaimers — причина публикации без пометок, строка до 500 знаков.")
 
         def apply(project: dict) -> set[str]:
             project["settings"]["channels"] = list(dict.fromkeys(chosen))
@@ -268,6 +272,7 @@ class StudioModule:
 
         self.studio.update(project_id, apply)
         state = {"approved": True, "force": force, "ignore_verdict": ignore_verdict}
+        state["ignore_disclaimers"] = " ".join(ignore_disclaimers.split())
         self.studio.run(project_id, "publish", state=state)
         return self.view(project_id)
 
