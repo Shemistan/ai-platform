@@ -218,7 +218,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | GET | `/api/studio/board` | ?archived | JSON | Все выпуски всех сценариев по группам: ждёт тебя, идёт, опубликовано, черновики |
 | POST | `/api/studio/projects/{pid}/split` | JSON | JSON 201 | Серия: по выпуску на часть (по главам, ~8 мин), с теми же настройками. Исходный — в архив |
 | POST | `/api/studio/projects/{pid}/summary` | — | JSON 202 | Выжимка: LLM в фоне пишет текст на 5–8 минут, из него — новый выпуск. Ход — в журнале исходного |
-| POST | `/api/studio/projects/{pid}/clone` | — | JSON 201 | Копия выпуска: те же настройки и готовые результаты до сборки; сборка и публикация — заново |
+| POST | `/api/studio/projects/{pid}/clone` | JSON | JSON 201 | Копия выпуска: те же настройки и готовые результаты до сборки; сборка и публикация — заново |
 | POST | `/api/studio/projects/{pid}/archive` | JSON | JSON | — |
 | POST | `/api/studio/projects` | JSON | JSON 201 | POST /projects с Idempotency-Key: повтор с тем же ключом отдаёт уже созданный выпуск |
 | GET | `/api/studio/projects/{pid}` | — | JSON | — |
