@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import queue
 import re
 import threading
@@ -19,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from aiplatform.core import runner
+from aiplatform.core import log, runner
 from aiplatform.core.gate import Gate
 
 ACTIVE = ("queued", "running")
@@ -40,6 +41,9 @@ class Spec:
     hint: str = runner.DEFAULT_MISSING_HINT
     progress: Callable[[str], str | None] | None = None  # строка лога → этап; None — без смены
     on_done: Callable[[dict], None] | None = None  # после успешного конца, в потоке очереди
+    limits: str | None = None  # вид для лимитов времени runner (audio, llm…); None — без лимита
+    timeout_s: float | None = None  # явный лимит на весь запуск
+    idle_timeout_s: float | None = None  # явный лимит «нет вывода»
 
 
 class Tasks:
@@ -212,16 +216,29 @@ class Tasks:
                 task["stage"] = f"Ждёт GPU (занят: {holder})"
                 self._save(task)
 
+        def execute() -> None:
+            with self._lock:
+                task["stage"] = "Идёт"
+            runner.run(
+                spec.argv,
+                on_line,
+                cancel,
+                cwd=spec.cwd,
+                env=spec.env,
+                missing_hint=spec.hint,
+                kind=spec.limits,
+                timeout_s=spec.timeout_s,
+                idle_timeout_s=spec.idle_timeout_s,
+            )
+
+        started = time.monotonic()
+        log.event("task.start", task=task["id"], kind=spec.kind, title=spec.title)
         try:
             if spec.gpu and self._gate is not None:
                 with self._gate.hold(spec.gpu, on_wait, cancel):
-                    with self._lock:
-                        task["stage"] = "Идёт"
-                    runner.run(spec.argv, on_line, cancel, cwd=spec.cwd, env=spec.env, missing_hint=spec.hint)
+                    execute()
             else:
-                with self._lock:
-                    task["stage"] = "Идёт"
-                runner.run(spec.argv, on_line, cancel, cwd=spec.cwd, env=spec.env, missing_hint=spec.hint)
+                execute()
             if spec.on_done:
                 spec.on_done(self._view(task))
         except runner.Canceled:
@@ -236,6 +253,14 @@ class Tasks:
         else:
             with self._lock:
                 self._finish(task, "done")
+        log.event(
+            f"task.{task['status']}",
+            level=logging.WARNING if task["status"] == "failed" else logging.INFO,
+            task=task["id"],
+            kind=spec.kind,
+            duration_s=round(time.monotonic() - started, 1),
+            error=task["error"],
+        )
 
 
 def _last(task: dict) -> str:

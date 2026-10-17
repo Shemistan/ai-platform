@@ -402,7 +402,9 @@ class AudioJobs:
                     job["started_at"] = time.time()
                 narrator = self._config.narrator
                 argv = self.argv(spec, folder / SOURCE, output)
-                runner.run(argv, on_line, cancel, cwd=narrator.cwd, env=narrator.env, missing_hint=INSTALL_HINT)
+                runner.run(
+                    argv, on_line, cancel, cwd=narrator.cwd, env=narrator.env, missing_hint=INSTALL_HINT, kind="audio"
+                )
             if not output.is_file() or output.stat().st_size == 0:
                 raise runner.RunFailed("Озвучка завершилась без ошибки, но mp3 не появился.")
             duration = media.duration(output, self._config.ffmpeg)

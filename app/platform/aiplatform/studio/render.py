@@ -335,7 +335,7 @@ class Renderer:
     def _run(self, argv: list[str], cancel: threading.Event, what: str) -> None:
         lines: list[str] = []
         try:
-            runner.run(argv, lines.append, cancel, missing_hint=FFMPEG_HINT)
+            runner.run(argv, lines.append, cancel, missing_hint=FFMPEG_HINT, kind="render")
         except runner.RunFailed as exc:
             tail = " ".join(x.strip() for x in lines[-3:] if x.strip())
             raise StudioError(f"ffmpeg ({what}): {exc} {tail}".strip()) from exc

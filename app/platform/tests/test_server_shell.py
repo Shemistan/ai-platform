@@ -118,7 +118,7 @@ class ShellTest(PlatformCase):
         self.assertEqual(body["code"], "internal")
         self.assertEqual(body["error"], "Внутренняя ошибка")
         self.assertTrue(body["request_id"])
-        self.assertIn(body["request_id"], logs.output[0])
+        self.assertEqual(body["request_id"], logs.records[0].request_id)
         self.assertIn("KeyError", logs.output[0])
 
     def test_other_methods_get_json_405(self):
