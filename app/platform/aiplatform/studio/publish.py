@@ -255,6 +255,27 @@ def post_html(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
 
 
+# --- домены ссылок: что увидит читатель и откуда они взялись (SEC-013) ---
+
+_URL = re.compile(r"https?://[^\s)\]>\"'<]+", re.IGNORECASE)
+
+
+def link_domains(text: str) -> list[str]:
+    """Домены всех ссылок текста — и [текст](url), и голых URL (Telegram делает их ссылками)."""
+    out = set()
+    for m in _URL.finditer(text or ""):
+        host = (urllib.parse.urlsplit(m.group(0)).hostname or "").lower().rstrip(".")
+        if host:
+            out.add(host.removeprefix("www."))
+    return sorted(out)
+
+
+def foreign_domains(post: str, sources: list[str]) -> list[str]:
+    """Домены ссылок поста, которых нет в исходном материале (поддомен известного — свой)."""
+    known = {d for text in sources for d in link_domains(text)}
+    return [d for d in link_domains(post) if not any(d == k or d.endswith("." + k) for k in known)]
+
+
 def _bold(escaped: str) -> str:
     return _BOLD.sub(r"<b>\1</b>", escaped)
 

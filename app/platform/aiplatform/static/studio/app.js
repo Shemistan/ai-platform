@@ -910,6 +910,15 @@ function stepBody(step) {
         h(
           "div",
           { class: "publish-box" },
+          // Домены ссылок поста; не из исходника — красным: автопубликация их не пропустит (SEC-013).
+          p.links?.domains?.length
+            ? h(
+                "p",
+                { class: "post-links" },
+                "Ссылки ведут на: ",
+                ...p.links.domains.map((d) => h("span", { class: `chip ${p.links.foreign.includes(d) ? "tone-danger" : ""}`, title: p.links.foreign.includes(d) ? "Этого домена нет в исходном материале" : "" }, d)),
+              )
+            : null,
           h("strong", {}, "Куда опубликовать"),
           h(
             "div",
