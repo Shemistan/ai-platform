@@ -147,6 +147,11 @@ input.time-input:disabled { background: var(--sunken); color: var(--muted); }
 /* --- настройки --- */
 
 .settings-wide { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+/* Шесть длительностей не влезают в колонку 170px — своя строка; dense подтягивает
+   «Размер кадра» к «Модели», подписи полей — по верху (UX-027). */
+.settings:has(.field-durations) { grid-auto-flow: row dense; align-items: start; }
+.field-durations { grid-column: 1 / -1; }
+.settings:has(.field-durations) > .check { align-self: end; align-items: center; min-height: var(--control-h-md); }
 
 /* --- задача --- */
 

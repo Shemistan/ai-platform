@@ -1,5 +1,6 @@
 """Доска «Выпуски»: группы, что ждёт человека, публикация с доски, архив."""
 
+import json
 import time
 import unittest
 from pathlib import Path
@@ -141,6 +142,23 @@ class BoardTest(StudioCase):
         self.assertEqual([p["id"] for p in self.board(archived=True)["projects"]], [project["id"]])
         self.json("POST", f"/api/studio/projects/{project['id']}/archive", {"archived": False})
         self.assertEqual([p["id"] for p in self.board()["projects"]], [project["id"]])
+
+    def test_ready_video_counts_in_header(self):
+        # UX-026: видео готово, шаг публикации не начат — на доске «Ждут тебя», и счётчик шапки его видит.
+        project = self.create(scenario="article", text=ARTICLE, settings={"channels": ["download-16x9"]}, run=True)
+        self.settle(project["id"])
+        path = self.folder(project["id"]) / "project.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["steps"]["publish"]["status"] = "pending"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        from aiplatform import server as server_module
+
+        app = server_module.App(self.config)  # свежая загрузка с диска
+        self.addCleanup(app.close)
+        studio = app.modules["studio"]
+        item = next(p for p in studio.board()["projects"] if p["id"] == project["id"])
+        self.assertEqual(item["group"], "attention")
+        self.assertEqual(studio.badges()["studio_attention"], 1)
 
     def test_draft_and_running_groups(self):
         draft = self.create(scenario="article", text=ARTICLE)

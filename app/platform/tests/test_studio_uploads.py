@@ -330,6 +330,20 @@ class OldProjectTest(StudioCase):
         updated = studio.update_settings(project["id"], {"shorts": True})
         self.assertFalse(updated["settings"]["clips"])
 
+    def test_migration_on_load_keeps_updated_at(self):
+        # BE-014: миграция при старте — не движение выпуска, срок уборки и время на доске прежние.
+        project = self.create(scenario="article", text="Абзац.")
+        path = self.folder(project["id"]) / "project.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        del data["steps"]["clips"]
+        data["updated_at"] = 1_000_000.0
+        path.write_text(json.dumps(data), encoding="utf-8")
+        from aiplatform import server as server_module
+
+        app = server_module.App(self.config)
+        self.addCleanup(app.close)
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["updated_at"], 1_000_000.0)
+
 
 if __name__ == "__main__":
     unittest.main()

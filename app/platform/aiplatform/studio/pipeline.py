@@ -201,10 +201,12 @@ class Studio:
     def project_dir(self, project_id: str) -> Path:
         return self.root / project_id
 
-    def _save(self, project: dict) -> None:
+    def _save(self, project: dict, *, touch: bool = True) -> None:
+        # touch=False — миграция при загрузке: не движение выпуска, срок уборки не сдвигает (BE-014).
         folder = self.project_dir(project["id"])
         folder.mkdir(parents=True, exist_ok=True)
-        project["updated_at"] = time.time()
+        if touch or not project.get("updated_at"):
+            project["updated_at"] = time.time()
         data = schema.stamp(project, PROJECT_SCHEMA)
         atomic_write(folder / "project.json", json.dumps(data, ensure_ascii=False, indent=2))
 
@@ -238,7 +240,7 @@ class Studio:
                 project["running"] = False
                 changed = True
             if changed:
-                self._save(project)
+                self._save(project, touch=False)
             self._projects[project["id"]] = project
 
     # --- чтение ---
