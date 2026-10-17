@@ -1,4 +1,4 @@
-.PHONY: run demo smoke test test-serial cov lint check release-prep release-tag python-check models move-models install-agent \
+.PHONY: run demo smoke contracts test test-serial cov lint check release-prep release-tag python-check models move-models install-agent \
 	uninstall-agent agent-status digest-check backup restore migrate-data tm-exclude deploy deployed
 
 # Нужен Python 3.11+. Не задан (make PYTHON=… или окружение) — берём первый подходящий
@@ -70,6 +70,11 @@ deployed:
 # Короткий прогон на настоящих моделях с замером времени: картинка, фраза озвучки, черновик статьи.
 smoke: python-check
 	$(PYTHON) -m aiplatform.smoke
+
+# Снапшоты --help настоящих CLI генерации в tests/contracts/ (QA-005): после обновления пайплайна.
+# Тест сверяет с ними флаги build_argv. Один снапшот: make contracts C=flux2-t2i.
+contracts: python-check
+	$(PYTHON) -m aiplatform.contracts $(C)
 
 # Пайплайны и веса фото и видео (нужны сеть и Mac на Apple Silicon): make models M="z-image-turbo ltx-2.3-q4".
 # Другой каталог весов: … AIP_MODELS_DIR=~/local_models. Список моделей: make models M=--list.

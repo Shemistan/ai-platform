@@ -1,5 +1,5 @@
 // Вкладка «Статьи»: библиотека статей движка — текст для озвучки, озвучка, проверка, канал.
-import { $, busyClick, chip, confirmAction, errorState, fill, h, loadLast, minutes, narratorApi as api, plural, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
+import { $, busyClick, chip, confirmAction, errorState, fill, h, icon, loadLast, minutes, narratorApi as api, plural, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
 
 const API = "/api/library";
 const QUALITY = { verbatim: "текст дословно", pasted: "текст прислан", webfetch: "текст по пересказу WebFetch" };
@@ -125,7 +125,7 @@ function renderList() {
                 {},
                 h("button", { type: "button", class: "row-link", "data-article": a.id, "aria-current": a.id === state.selected ? "true" : null }, a.title),
                 h("span", { class: "sub" }, [shortDate(a.added), a.duration_sec ? minutes(a.duration_sec) : "", a.engine ? engineLabel(a.engine) : ""].filter(Boolean).join(" · ")),
-                h("span", { class: "toolbar", style: "margin-top:var(--sp-2)" }, ...statusChips(a)),
+                h("span", { class: "toolbar mt-2" }, ...statusChips(a)),
               ),
             ),
           ),
@@ -237,7 +237,7 @@ function renderCard() {
         { class: "toolbar" },
         h("span", { class: "muted small" }, shortDate(c.added)),
         chip(QUALITY[c.source_quality] || c.source_quality),
-        c.url ? h("a", { class: "btn btn--link", href: c.url, target: "_blank", rel: "noopener" }, "оригинал ↗") : null,
+        c.url ? h("a", { class: "btn btn--link", href: c.url, target: "_blank", rel: "noopener" }, "оригинал", icon("external")) : null,
       ),
       ...busy.map((t) => taskCard(t, { onCancel: cancelTask })),
       error,
@@ -255,7 +255,7 @@ function renderCard() {
           c.has_source ? h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: locked, onclick: busyClick(run("prepare"), `act:${c.id}`) }, "Подготовить агентом") : null,
         ),
         h("p", { class: "hint" }, "Агент пишет полный пересказ для уха по правилам озвучки и заполняет описание. Цифры и латиницу движок и так переведёт в произношение."),
-        c.source ? h("details", { class: "inline" }, h("summary", {}, "Исходный текст (source.md)"), h("pre", { class: "preview-text" }, c.source)) : null,
+        c.source ? h("details", { class: "disclosure" }, h("summary", {}, "Исходный текст (source.md)"), h("pre", { class: "preview-text" }, c.source)) : null,
       ),
       section(
         2,
@@ -277,7 +277,7 @@ function renderCard() {
         c.check !== null && c.check !== undefined
           ? h("div", { class: "check-head" }, h("span", { class: `score ${c.check >= 85 ? "ok" : "warn"}` }, `${c.check}%`), h("span", { class: "muted" }, "совпадение по словам"))
           : h("p", { class: "hint" }, "Озвучка распознаётся обратно в текст: так видно, где модель исказила слова."),
-        c.check_report ? h("details", { class: "inline" }, h("summary", {}, "Отчёт проверки"), h("pre", { class: "preview-text" }, c.check_report)) : null,
+        c.check_report ? h("details", { class: "disclosure" }, h("summary", {}, "Отчёт проверки"), h("pre", { class: "preview-text" }, c.check_report)) : null,
         h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary", disabled: locked || !c.has_audio, onclick: busyClick(run("verify"), `act:${c.id}`) }, "Проверить")),
       ),
       section(

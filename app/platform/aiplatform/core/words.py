@@ -1,6 +1,6 @@
 """Числа в текстах по-русски: согласованная форма слова и разряды (TXT-002).
 
-Близнец `plural` / `fmtNum` / `countOf` из static/ui.js — правила одни.
+Близнец `plural` / `fmtNum` / `countLabel` из static/core/format.js (их отдаёт и ui.js) — правила одни.
 """
 
 from __future__ import annotations

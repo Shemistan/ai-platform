@@ -1,9 +1,9 @@
-// plural/fmtNum/countOf из ui.js: склонение после числа и разряды (TXT-002); близнец — core/words.py.
+// plural/fmtNum/countLabel из core/format.js: склонение после числа и разряды (TXT-002); близнец — core/words.py.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { loadStatic } from "./load.mjs";
 
-const { plural, fmtNum, countOf } = await loadStatic("ui.js");
+const { plural, fmtNum, countLabel } = await loadStatic("core/format.js");
 const CHANNEL = ["канал", "канала", "каналов"];
 
 test("формы после 1/2/5/11/21/22/25/111", () => {
@@ -17,6 +17,6 @@ test("«Опубликовать в N каналов»", () => {
 
 test("разряды через неразрывный пробел", () => {
   assert.equal(fmtNum(1200), "1 200");
-  assert.equal(countOf(1200, "просмотр", "просмотра", "просмотров"), "1 200 просмотров");
-  assert.equal(countOf(-3, "подписчик", "подписчика", "подписчиков"), "-3 подписчика");
+  assert.equal(countLabel(1200, "просмотр", "просмотра", "просмотров"), "1 200 просмотров");
+  assert.equal(countLabel(-3, "подписчик", "подписчика", "подписчиков"), "-3 подписчика");
 });

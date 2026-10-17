@@ -1,30 +1,5 @@
 /* Только своё для вкладки «Видео»: токены — в /tokens.css, общие элементы — в /ui.css. */
 
-.top {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-4) var(--sp-6) var(--sp-2);
-  max-width: var(--container);
-  margin: 0 auto;
-}
-.top h1 { font-size: var(--fs-xl); letter-spacing: -0.01em; }
-
-.banner {
-  max-width: calc(var(--container) - 48px);
-  margin: var(--sp-2) auto 0;
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--r-md);
-  background: var(--info-bg);
-}
-.banner:is(.tone-warning, .tone-danger) { background: var(--tone-bg); color: var(--tone); }
-.banner code { user-select: all; overflow-wrap: anywhere; }
-
-@media (max-width: 960px) {
-  .top { padding-inline: var(--sp-4); }
-  .banner { margin-inline: var(--sp-4); }
-}
-
 .main-col { display: grid; gap: var(--sp-5); min-width: 0; }
 
 .field-label .muted { font-weight: var(--fw-regular); }
@@ -43,12 +18,7 @@
 }
 .strip.drop { border-color: var(--accent); background: var(--info-bg); }
 
-.arrow {
-  align-self: center;
-  color: var(--muted);
-  font-size: var(--fs-lg);
-  line-height: 1;
-}
+.arrow { align-self: center; color: var(--muted); }
 
 .frame-card {
   width: 132px;
@@ -82,21 +52,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-.icon {
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  background: var(--panel);
-  cursor: pointer;
-  font-size: var(--fs-xs);
-  line-height: 1;
-}
-.icon:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.icon:disabled { opacity: 0.35; cursor: default; }
-.icon.remove { position: absolute; top: 5px; right: 5px; font-size: var(--fs-lg); }
+/* Кнопки на кадре — общий .btn-icon (ui.css); здесь только место «убрать» в углу картинки. */
+.remove { position: absolute; top: 4px; right: 4px; }
 
 .frame-card-body { display: grid; gap: var(--sp-2); padding: var(--sp-2); }
 .role { font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
@@ -104,7 +61,7 @@
 /* input.: иначе общий input[type="text"] из ui.css перебьёт отступы. */
 input.time-input { padding: var(--sp-1) var(--sp-2); font-variant-numeric: tabular-nums; }
 input.time-input:disabled { background: var(--sunken); color: var(--muted); }
-.order { display: flex; gap: var(--sp-2); }
+.order { display: flex; gap: var(--sp-1); }
 .card-error { padding: 0 var(--sp-2) var(--sp-2); font-size: var(--fs-xs); color: var(--bad); }
 
 .add { flex: 0 0 132px; display: flex; }
@@ -123,7 +80,6 @@ input.time-input:disabled { background: var(--sunken); color: var(--muted); }
   cursor: pointer;
 }
 .add-tile:hover { border-color: var(--accent); color: var(--accent); }
-.plus { font-size: var(--fs-2xl); line-height: 1; }
 
 /* --- живое фото --- */
 

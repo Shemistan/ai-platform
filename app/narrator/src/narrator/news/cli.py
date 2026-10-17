@@ -11,7 +11,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from narrator import library
+from narrator import library, registry
 from narrator.library import META_NAME, Entry
 from narrator.news import designs, digest, feeds, sources
 from narrator.news.store import Store, db_path, now_utc
@@ -86,6 +86,13 @@ def recent_vendors(store: Store, srcs: dict, day: date) -> set[str]:
     return out
 
 
+def agent_of(src: sources.Source, entries: list[registry.Entry]) -> str | None:
+    """id иноагента из реестра, если источник — его канал (CMP-012)."""
+    places = [src.url, src.feed or "", src.channel or "", src.handle or ""]
+    found = registry.source_agent(places, src.name, entries)
+    return found.id if found else None
+
+
 def load_sources() -> list[sources.Source]:
     try:
         return sources.load()
@@ -104,6 +111,7 @@ def cmd_collect(args) -> int:
             return fail(f"нет таких включённых источников: {sorted(unknown)}")
         srcs = [s for s in srcs if s.id in args.only]
     total_new, failed, blocked = 0, [], []
+    agents = registry.load()
     with open_store() as store:
         memo = store.memo()
         for src in srcs:
@@ -119,7 +127,7 @@ def cmd_collect(args) -> int:
                 failed.append(src.id)
                 print(f"  сбой  {src.id:<26} {e}", flush=True)
                 continue
-            fresh = store.add(src, items, now, args.days)
+            fresh = store.add(src, items, now, args.days, agent=agent_of(src, agents))
             store.log_run(src.id, now, ok=True, found=len(items), new=fresh)
             total_new += fresh
             print(f"  ок    {src.id:<26} материалов {len(items):>3}, новых {fresh}", flush=True)
@@ -224,10 +232,12 @@ def cmd_add(args) -> int:
     checked = [c for c in checked if c in srcs and c not in found]
     now = now_utc()
     total = 0
+    agents = registry.load()
     with open_store() as store:
         failed = store.failed()
         for key, items in found.items():
-            fresh = store.add(srcs[key], items, now, args.days, baseline=False)
+            agent = agent_of(srcs[key], agents)
+            fresh = store.add(srcs[key], items, now, args.days, baseline=False, agent=agent)
             error = failed.get(key, {}).get("error", "")
             store.log_rescue(key, now, error, found=len(items), new=fresh)
             total += fresh
@@ -733,7 +743,7 @@ def cmd_publish(args) -> int:
     отметка своя.
     """
     from narrator import cli as app
-    from narrator import registry, telegram
+    from narrator import telegram
 
     fmt = post_format(args.as_)
     try:  # имя канала проверяем до сборки видео
@@ -871,7 +881,6 @@ def cmd_check(args) -> int:
 
 def check_footnotes(post: str) -> list[str]:
     """Упоминание из реестра запрещённых организаций без пометки в post.md — ошибка."""
-    from narrator import registry
 
     return [
         f"{POST}: упоминание без пометки реестра — допиши в конец строку «* {n}»"

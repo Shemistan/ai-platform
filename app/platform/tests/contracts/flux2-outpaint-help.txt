@@ -1,0 +1,91 @@
+# flux2-outpaint: --help; снято 2026-10-17 (make contracts)
+OVERVIEW: Extend an image on any of the four sides via Flux2OutpaintingChain
+
+USAGE: flux2 outpaint [<options>] --image <image> --prompt <prompt> --output <output>
+
+OPTIONS:
+  --models-dir <models-dir>
+                          Custom models directory (for sandboxed apps or custom
+                          storage). Defaults to the framework's standard models
+                          path.
+  --flux-model <flux-model>
+                          FLUX.2 model: klein-9b (distilled, default) |
+                          klein-9b-base | klein-9b-kv | dev | klein-4b |
+                          klein-4b-base. (default: klein-9b)
+  -i, --image <image>     Input image to extend.
+  -p, --prompt <prompt>   Text prompt describing the full extended scene.
+                          Follow Flux 2 prompting guidelines
+                          (https://docs.bfl.ml/guides/prompting_guide_flux2):
+                          Subject + Action + Style + Context, 30–80 words,
+                          mention the content of the keep region too.
+  -o, --output <output>   Output PNG path.
+  --top <top>             Pixels to add at the top. Rounded up to a multiple of
+                          32. (default: 0)
+  --bottom <bottom>       Pixels to add at the bottom. Rounded up to a multiple
+                          of 32. (default: 0)
+  --left <left>           Pixels to add on the left. Rounded up to a multiple
+                          of 32. (default: 0)
+  --right <right>         Pixels to add on the right. Rounded up to a multiple
+                          of 32. (default: 0)
+  --steps <steps>         Denoising steps (4 for distilled klein, 25-28 for
+                          base/dev). (default: 4)
+  --guidance <guidance>   Guidance scale (1.0 for distilled, 3.5 for base, 4.0
+                          for dev). (default: 1.0)
+  --seed <seed>           Random seed.
+  --upsample-prompt       Text-encoder-only prompt rewriting
+                          (Mistral/Klein-Qwen3). Does NOT look at the image.
+                          For image-aware rewriting that continues the source's
+                          lighting/materials into the new strips, use
+                          --enrich-prompt-with-vlm instead.
+  --enrich-prompt-with-vlm
+                          Image-aware prompt rewriting via a VLM
+                          (--vlm-provider: bundled Qwen3.5 by default, or Gemma
+                          4 E2B). The VLM looks at --image and the requested
+                          extension sides, then assembles a 30-80 word
+                          BFL-style Flux 2 prompt that continues the kept
+                          region's materials, perspective, lighting and palette
+                          into the new strips. Strictly optional: if no VLM is
+                          loaded, the chain falls back to --prompt verbatim
+                          with a warning. Pass --qwen35-variant/--qwen35-path
+                          (or --gemma4-variant/--gemma4-path) to have this
+                          command load one in-process. When both
+                          --upsample-prompt and --enrich-prompt-with-vlm are
+                          set, the VLM wins.
+  --vlm-provider <vlm-provider>
+                          Which VLM serves --enrich-prompt-with-vlm: 'qwen35'
+                          (default, bundled Qwen3.5 4B) or 'gemma4' (Gemma 4
+                          E2B-it). Both answer the same system prompts; Gemma
+                          is smaller and faster, Qwen3.5 is the historical
+                          default. (values: qwen35, gemma4; default: qwen35)
+  --qwen35-variant <qwen35-variant>
+                          Qwen3.5 VLM variant to load in-process when
+                          --enrich-prompt-with-vlm is set: '8bit' (5 GB,
+                          recommended) or '4bit' (3 GB, faster but lower
+                          quality). Auto-downloads if missing. Omit (and omit
+                          --qwen35-path) to skip loading — the chain then falls
+                          back to --prompt verbatim with a warning.
+  --qwen35-path <qwen35-path>
+                          Override the local path to Qwen3.5 VLM weights
+                          (alternative to --qwen35-variant for sandboxed apps).
+  --gemma4-variant <gemma4-variant>
+                          Gemma 4 E2B-it variant when --vlm-provider gemma4:
+                          '6bit' (default, ~4.2 GB), '4bit' (~3.6 GB), '8bit'
+                          (~5.2 GB) or 'bf16' (~10 GB). Auto-downloads if
+                          missing.
+  --gemma4-path <gemma4-path>
+                          Override the local path to Gemma 4 weights (directory
+                          with config.json + safetensors + tokenizer.json).
+                          Takes precedence over --gemma4-variant.
+  --transition-pixels <transition-pixels>
+                          Width of the soft transition band, in pixels of the
+                          keep region. Default 32. (default: 32)
+  --max-pixels <max-pixels>
+                          Cap on the total working pixel count. Defaults to 4
+                          M; raise if you want larger canvases. (default:
+                          4194304)
+  --beacon                Advertise activity to external monitors (writes a
+                          transient manifest in ~/Library/Application
+                          Support/ai-runtime-beacons/)
+  --version               Show the version.
+  -h, --help              Show help information.
+

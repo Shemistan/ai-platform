@@ -4,10 +4,11 @@ import dataclasses
 import json
 import tempfile
 import unittest
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from aiplatform.studio import slides, steps
-from aiplatform.studio.render import Layout, slide_filter
+from aiplatform.studio.render import Layout, note_text, slide_filter
 from aiplatform.updates import checks, registry
 from tests.fixtures import NEEDS_FFMPEG
 from tests.helpers import PlatformCase, StudioCase
@@ -49,6 +50,57 @@ class RegistryTest(unittest.TestCase):
         for text, want in found.items():
             with self.subTest(text=text):
                 self.assertEqual(ids(text), want)
+
+    def test_case_declensions_and_products(self):
+        # CMP-014: регистр, склонения через «Мет*» со стоп-словами и продукты Meta.
+        for text in ["META", "meta", "Метой", "Меты", "о Мете", "Threads", "Meta AI", "Llama 4", "Quest 3"]:
+            with self.subTest(text=text):
+                self.assertEqual(ids(text), ["meta"])
+        for text in ["метод", "метрика", "метаданные", "Метро", "метафора", "мета-анализ", "threads в Python"]:
+            with self.subTest(text=text):
+                self.assertEqual(ids(text), [])
+
+    def test_stopwords_and_exact_case(self):
+        item = {"id": "x", "name": "X", "status": "extremist", "disclaimer": "X"}
+        entry = registry.parse([item | {"aliases": ["Икс*", "=Zed"], "stopwords": ["иксы-*", "иксер*"]}])[0]
+        self.assertTrue(entry.mentioned_in("про Иксов"))
+        self.assertFalse(entry.mentioned_in("иксеры и иксы-игреки"))
+        self.assertTrue(entry.mentioned_in("Zed вышел") and not entry.mentioned_in("zed"))
+        self.assertEqual(entry.stored()["stopwords"], ["иксы-*", "иксер*"])
+        with self.assertRaisesRegex(ValueError, "stopwords"):
+            registry.parse([item | {"aliases": ["X Corp"], "stopwords": "x"}])
+
+    def test_ref_archive_and_freshness(self):
+        # CMP-013: проверяемые основания и предупреждение о несверенном реестре.
+        item = {"id": "x", "name": "X", "status": "extremist", "aliases": ["X Corp"], "disclaimer": "X"}
+        full = registry.parse([item | {"ref": " 96 ", "archive_url": "https://web.archive.org/x"}])[0]
+        self.assertTrue(full.confirmed and full.public()["confirmed"])
+        self.assertEqual((full.ref, full.stored()["archive_url"]), ("96", "https://web.archive.org/x"))
+        bare = registry.parse([item | {"archive_url": "javascript:alert(1)"}])[0]
+        self.assertFalse(bare.confirmed or bare.archive_url)
+        today = date(2026, 10, 17)
+        self.assertEqual(registry.age_days("2026-10-03", today), 14)
+        self.assertEqual(registry.stale_note("2026-10-03", 14, today), "")
+        self.assertIn("15 дн. назад", registry.stale_note("2026-10-02", 14, today))
+        self.assertIn("не сверяли", registry.stale_note("", 14, today))
+        self.assertIsNone(registry.age_days("вчера", today))
+
+    def test_foreign_agent_templates(self):
+        # CMP-012: иноагент — пометка об упоминании и маркировка материала по шаблону.
+        base = {"id": "ivan", "name": "Иван Петров", "status": "foreign_agent", "aliases": ["Иван* Петров*"]}
+        person = registry.parse([base | {"kind": "person", "channels": ["t.me/petrov"]}])[0]
+        self.assertEqual(person.disclaimer, "Иван Петров признан(а) Минюстом РФ иностранным агентом")
+        self.assertTrue(person.material.startswith("ДАННОЕ СООБЩЕНИЕ (МАТЕРИАЛ)"))
+        self.assertIn("ИНОСТРАННЫМ АГЕНТОМ Иван Петров", person.material)
+        self.assertEqual((person.channels, person.public()["status_label"]), (("t.me/petrov",), "иностранный агент"))
+        org = registry.parse({"templates": {"foreign_agent_org": "{name} — иноагент"}, "entries": [base]})[0]
+        self.assertEqual(org.disclaimer, "Иван Петров — иноагент")
+        own = registry.parse([base | {"disclaimer": "Своя пометка."}])[0]
+        self.assertEqual(own.disclaimer, "Своя пометка")
+        self.assertEqual(registry.notes("Интервью Ивана Петрова", [person]), [f"{person.disclaimer}."])
+        with self.assertRaisesRegex(ValueError, "kind"):
+            registry.parse([base | {"kind": "bot"}])
+        self.assertEqual(registry.parse([{**base, "status": "extremist", "disclaimer": "X"}])[0].material, "")
 
     def test_footnotes_once(self):
         post = registry.with_footnotes("**Главное** за день.", "Instagram запустил ленту", DEFAULT)
@@ -124,6 +176,15 @@ class SlideNotesTest(unittest.TestCase):
         self.assertNotIn("n.txt", without)
         self.assertIn("n.txt", with_note)
         self.assertTrue(with_note.endswith(":y=240"), "две строки по 10 px над отступом снизу")
+
+    def test_long_note_not_cut(self):
+        # CMP-014: в вертикальном шортсе (66 знаков в строке) длинная пометка не режется «…».
+        long_note = META_NOTE + " " + "Решение суда вступило в силу, сноска сверена с перечнем. " * 4
+        text = note_text([long_note, META_NOTE], 66)
+        self.assertNotIn("…", text)
+        self.assertEqual(" ".join(text.split()), " ".join(f"{long_note} {META_NOTE}".split()))
+        self.assertTrue(all(len(line) <= 66 for line in text.splitlines()))
+        self.assertGreater(len(text.splitlines()), 5, "строк больше прежнего лимита в 4")
 
 
 class ChecksTest(unittest.TestCase):
@@ -221,6 +282,33 @@ class UpdatesTabTest(PlatformCase):
         _, body = self.json("POST", "/api/updates/registry/reset")
         self.assertEqual(len(body["registry"]["entries"]), 6)
 
+    def test_registry_age_and_unconfirmed(self):
+        old = (date.today() - timedelta(days=30)).isoformat()
+        registry.Registry(Path(self.tmp.name) / registry.FILE_NAME).save(DEFAULT, old)
+        reg = self.json("GET", "/api/updates/state")[1]["registry"]
+        self.assertEqual((reg["age_days"], reg["max_age_days"]), (30, 14))
+        self.assertIn("30 дн. назад", reg["stale"])
+        self.assertIn("Meta", reg["unconfirmed"])  # в списке по умолчанию номеров и снимков нет
+        self.assertFalse(reg["entries"][0]["confirmed"])
+        self.config.settings.change(lambda d: d["registry"].update(max_age_days=60))
+        self.assertEqual(self.json("GET", "/api/updates/state")[1]["registry"]["stale"], "")
+
+    def test_daily_registry_check_in_schedule(self):
+        updates = self.app.modules["updates"]
+        scheduler = self.app.modules["studio"].scheduler
+        self.assertIs(scheduler.daily["registry"].__func__, type(updates)._daily_registry)
+        scheduler.daily = {"registry": scheduler.daily["registry"]}  # без отклика и уборки
+        scheduler.tick(datetime.now())
+        body = self.poll("/api/updates/state", lambda b: self.done(b, "registry"))
+        self.assertEqual(body["registry"]["check"]["status"], "done", body["registry"]["check"])
+        self.assertIsNotNone(body["registry"]["check"]["proposal"], "применяет человек, не расписание")
+        self.assertFalse(body["registry"]["customized"])
+        self.config.settings.change(lambda d: d["registry"].update(auto_check=False))
+        scheduler._mark("registry", "")
+        self.json("POST", "/api/updates/registry/dismiss")
+        scheduler.tick(datetime.now())
+        self.assertIsNone(self.json("GET", "/api/updates/state")[1]["registry"]["check"]["proposal"])
+
 
 ARTICLE_META = """Meta открыла модель Llama
 
@@ -263,6 +351,35 @@ class DisclaimerFlowTest(StudioCase):
             encoding="utf-8"
         )
         self.assertNotIn("экстремистской", description)
+
+
+FOREIGN_AGENT = {
+    "id": "petrov",
+    "name": "Иван Петров",
+    "status": "foreign_agent",
+    "kind": "person",
+    "aliases": ["Иван* Петров*"],
+}
+
+
+@NEEDS_FFMPEG
+class ForeignAgentFlowTest(StudioCase):
+    def test_mention_gets_footnote_in_studio(self):
+        # CMP-012: упоминание иноагента в выпуске студии — сноска в посте и пометка на кадре.
+        store = registry.Registry(Path(self.tmp.name) / registry.FILE_NAME)
+        store.save([*DEFAULT, *registry.parse([FOREIGN_AGENT])])
+        note = "Иван Петров признан(а) Минюстом РФ иностранным агентом."
+        text = ARTICLE_META.replace("Meta открыла", "Иван Петров рассказал, как Meta открыла")
+        settings = {"channels": ["download-16x9"], "auto_publish": True}
+        project = self.create(scenario="article", text=text, settings=settings, run=True)
+        self.assertIn({"name": "Иван Петров", "note": note}, project["disclaimers"])
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+        description = (self.folder(project["id"]) / "publish" / "download-16x9" / "description.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(f"* {note}", description)
+        self.assertIn(META_NOTE, description)
 
 
 class VoiceModelsTest(PlatformCase):
