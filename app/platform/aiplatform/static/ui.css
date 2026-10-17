@@ -9,7 +9,7 @@ code { font: 13px var(--mono); }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 
-.page-head { max-width: 1280px; margin: 0 auto; padding: 16px 24px 4px; display: grid; gap: 4px; }
+.page-head { max-width: var(--container); margin: 0 auto; padding: 16px 24px 4px; display: grid; gap: 4px; }
 .page-head h1 { font-size: 20px; letter-spacing: -0.01em; }
 
 .layout {
@@ -17,7 +17,7 @@ code { font: 13px var(--mono); }
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
-  max-width: 1280px;
+  max-width: var(--container);
   margin: 0 auto;
   padding: 16px 24px 48px;
 }
@@ -131,7 +131,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 .progress-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .stage .muted { font-weight: 400; }
 .status.demo { background: var(--warn-bg); color: var(--warn); }
-audio, video { width: 100%; border-radius: 8px; background: #000; }
+audio, video { width: 100%; border-radius: 8px; background: var(--media-bg); }
 audio { background: transparent; }
 .log-wrap summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .log {
@@ -223,9 +223,9 @@ dialog.modal {
   border-radius: 14px;
   background: var(--panel);
   color: var(--text);
-  box-shadow: 0 20px 60px rgb(0 0 0 / 0.25);
+  box-shadow: var(--shadow-modal);
 }
-dialog.modal::backdrop { background: rgb(0 0 0 / 0.35); }
+dialog.modal::backdrop { background: var(--overlay); }
 .modal-head {
   display: flex;
   justify-content: space-between;
@@ -268,7 +268,7 @@ blockquote.quote { margin: 0; padding: 6px 12px; border-left: 3px solid var(--li
 .weak { display: grid; gap: 4px; padding: 10px 12px; border-radius: 8px; background: var(--sunken); font-size: 14px; }
 .weak-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; }
 
-.wide { max-width: 1280px; margin: 0 auto; padding: 16px 24px 48px; display: grid; gap: 20px; }
+.wide { max-width: var(--container); margin: 0 auto; padding: 16px 24px 48px; display: grid; gap: 20px; }
 .cols-2 { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (max-width: 960px) {
   .cols-2 { grid-template-columns: minmax(0, 1fr); }
@@ -355,5 +355,5 @@ form.field { gap: 12px; }
   border: 0;
 }
 /* Главная кнопка необратимого действия в подтверждении. */
-.primary.danger { background: var(--bad); border-color: var(--bad); color: var(--panel); }
+.primary.danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
 .confirm-list { list-style: disc; padding-left: 18px; margin: 4px 0 0; }

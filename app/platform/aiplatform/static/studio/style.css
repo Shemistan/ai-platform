@@ -3,7 +3,7 @@
   grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
-  max-width: 1440px;
+  max-width: var(--container-wide);
   margin: 0 auto;
   padding: 16px 24px 48px;
 }
@@ -120,7 +120,7 @@
 .stepper {
   position: sticky;
   top: var(--nav-h, 52px);
-  z-index: 10;
+  z-index: var(--z-sticky);
   background: var(--bg);
   padding: 6px 0;
 }
@@ -178,7 +178,7 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--switch-thumb);
   transition: transform 0.15s;
 }
 .auto-publish input:checked { background: var(--warn); }

@@ -1,4 +1,4 @@
-.updates { display: grid; gap: 20px; max-width: 1280px; margin: 0 auto; padding: 16px 24px 48px; }
+.updates { display: grid; gap: 20px; max-width: var(--container); margin: 0 auto; padding: 16px 24px 48px; }
 @media (max-width: 960px) { .updates { padding-inline: 16px; } }
 .updates .panel { display: grid; gap: 12px; }
 .section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
