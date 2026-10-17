@@ -73,6 +73,19 @@ class RegistryTest(unittest.TestCase):
                 registry.parse(obj)
         self.assertEqual(registry.parse([good])[0].disclaimer, "X запрещена")
 
+    def test_parse_source_only_http(self):
+        # Источник встаёт в href на вкладке «Обновления»: javascript: — не ссылка (SEC-003).
+        good = {"id": "x", "name": "X", "status": "extremist", "aliases": ["X Corp"], "disclaimer": "X"}
+        for source, expected in [
+            ("javascript:alert(1)", ""),
+            ("JavaScript:alert(1)", ""),
+            ("data:text/html,x", ""),
+            ("//evil.test/x", ""),
+            ("https://minjust.gov.ru/ru/documents/", "https://minjust.gov.ru/ru/documents/"),
+        ]:
+            with self.subTest(source=source):
+                self.assertEqual(registry.parse([good | {"source": source}])[0].source, expected)
+
     def test_diff_and_storage(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = registry.Registry(Path(tmp) / "registry.json")
