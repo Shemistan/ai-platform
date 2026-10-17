@@ -51,18 +51,22 @@ class StatsUnitTest(unittest.TestCase):
         self.assertEqual(stats.Refresher({"tg": channel}).record(record), record)
 
     def test_summary_groups(self):
-        def post(views, growth=None, fmt="landscape"):
-            return {"views_24h": views, "growth_24h_attr": growth, "format": fmt}
+        def post(views, growth=None, fmt="landscape", media_s=None, **extra):
+            return {"views_24h": views, "growth_24h_attr": growth, "format": fmt, "media_s": media_s, **extra}
 
+        # Длина — из записи публикации (media_s отправленного файла), не из основного видео выпуска (AN-006).
         items = [
-            {"scenario_label": "Дайджест", "video_s": 120, "published": [post(100, 2)]},
-            {"scenario_label": "Дайджест", "video_s": 600, "published": [post(300)]},
-            {"scenario_label": "Статья", "video_s": 2000, "published": [post(50, 0, "vertical"), post(None)]},
+            {"scenario_label": "Дайджест", "video_s": 999, "published": [post(100, 2, media_s=120)]},
+            {"scenario_label": "Дайджест", "video_s": 999, "published": [post(300, media_s=600)]},
+            {"scenario_label": "Статья", "video_s": 2000, "published": [post(50, 0, "vertical", 2000), post(None)]},
+            {"scenario_label": "Пост", "published": [post(10, fmt="landscape", post_format="photo")]},
         ]
         found = {d["dimension"]: d["rows"] for d in stats.summary(items)}
         self.assertEqual(found["Сценарий"][0], {"label": "Дайджест", "posts": 2, "avg_views": 200, "avg_growth": 2.0})
         self.assertEqual([r["label"] for r in found["Длина ролика"]], ["8–15 мин", "до 3 мин", "длиннее 15 мин"])
-        self.assertEqual(found["Формат"][1]["label"], "вертикальный 9:16")
+        self.assertEqual(
+            [r["label"] for r in found["Формат"]], ["16:9 и квадрат", "вертикальный 9:16", "картинка и аудио"]
+        )
 
 
 H, D = 3600.0, 86400.0
@@ -147,10 +151,36 @@ class WindowsTest(unittest.TestCase):
         self.assertEqual(record["stats"][-1]["age_h"], 25.0)
         self.assertEqual(record["views_24h"], 240)
         self.assertNotIn("views_72h", record)
-        # Замороженное окно не сдвигается: ни новыми снимками, ни потерей старых (KEEP).
+        # Замороженное окно не сдвигается: ни новыми снимками, ни потерей старых (разреживание).
         record = stats.add_snapshot(record | {"stats": []}, {"views": 5000, "members": None}, now=T0 + 200 * H)
         self.assertEqual(record["views_24h"], 240)
         self.assertEqual(record["views_7d"], round(5000 * 168 / 200))
+
+
+class ThinTest(unittest.TestCase):
+    """Разреживание снимков AN-004: ранние — все, после 7 суток — по одному на неделю."""
+
+    def grow(self, record, times):
+        for n, at in enumerate(times):
+            record = stats.add_snapshot(record, {"views": 10 * (n + 1), "members": 100 + n}, now=at)
+        return record
+
+    def test_early_snapshots_kept(self):
+        # 100 снимков за первые ~4 суток (раз в час) и ещё 30 суток раз в сутки.
+        times = [T0 + (n + 1) * H for n in range(100)] + [T0 + 5 * D + k * D for k in range(30)]
+        record = self.grow({"sent": T0}, times)
+        early = [s for s in record["stats"] if s["age_h"] < 168]
+        self.assertEqual([s["at"] for s in early], [t for t in times if t - T0 < 168 * H], "ранние все на месте")
+        late = [s for s in record["stats"] if s["age_h"] >= 168]
+        weeks = [int(s["age_h"] // 168) for s in late]
+        self.assertEqual(len(weeks), len(set(weeks)), "после 7 суток — не больше одного снимка в неделю")
+        self.assertEqual(record["stats"][-1]["at"], times[-1], "последний снимок остаётся")
+        self.assertEqual((record["views_24h"], record["views_72h"]), (240, 720), "окна заморожены до разреживания")
+
+    def test_year_of_daily_snapshots_is_bounded(self):
+        record = self.grow({"sent": T0}, [T0 + k * D for k in range(1, 366)])
+        self.assertLessEqual(len(record["stats"]), 7 + 53)
+        self.assertIsNotNone(record["views_7d"])
 
     def test_growth_window_cut_by_next_post(self):
         first = {"channel": "tg", "sent": T0, "members_at_publish": 100}
@@ -187,6 +217,16 @@ class WindowsTest(unittest.TestCase):
         rows = {d["dimension"]: d["rows"] for d in stats.summary(items)}["Сценарий"]
         self.assertEqual([(r["label"], r["avg_views"]) for r in rows], [("Свежий", 384), ("Старый", 100)])
         self.assertEqual(items[0]["published"][0]["views"], 5000, "сырые последние просмотры остаются в API")
+
+    def test_summary_counts_channel_once(self):
+        # Повтор в тот же канал (AN-005): в «Что работает» — только первая вышедшая публикация.
+        first = {"channel": "tg", "state": "sent", "views_24h": 100}
+        again = {"channel": "tg", "state": "sent", "views_24h": 900, "republish": True}
+        other = {"channel": "tg2", "state": "sent", "views_24h": 300}
+        failed = {"channel": "tg3", "state": "failed", "views_24h": 5}
+        items = [{"scenario_label": "Статья", "published": [first, again, other, failed]}]
+        row = {d["dimension"]: d["rows"] for d in stats.summary(items)}["Сценарий"][0]
+        self.assertEqual((row["posts"], row["avg_views"]), (2, 200))
 
 
 class StatsHttpTest(StudioCase):

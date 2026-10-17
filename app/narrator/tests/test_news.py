@@ -578,7 +578,8 @@ def test_digest_goes_to_news_channel_as_photo_then_audio(tmp_path, monkeypatch):
     assert '<a href="https://go.dev/x">Вышел Go 1.26</a>' in photo["caption"]
     _, params, files = fake.calls[1]
     assert params["chat_id"] == channel_id
-    assert params["caption"] == "Новости за 23 сентября"
+    assert params["caption"] == f"Новости за 23 сентября\n\n{telegram.DIGEST_AI}"  # CMP-011
+    assert photo["caption"].endswith(telegram.DIGEST_AI)
     assert params["title"] == "23 сентября" and params["duration"] == 95
     assert files == ["audio", "thumbnail"]
     assert not telegram.is_fresh(state, path, "gemini")
@@ -1091,6 +1092,35 @@ def test_http_get_retries_cut_off_response(monkeypatch):
     monkeypatch.setattr(feeds.urllib.request, "urlopen", lambda *a, **k: Response())
     with pytest.raises(FetchError, match="ответ оборвался"):
         feeds.http_get("https://x.test", attempts=1)
+
+
+def test_http_get_refuses_oversized_response(monkeypatch):
+    # SEC-009: лента больше лимита — ошибка источника, а не падение и не сотни МБ в памяти.
+    import http.client
+    import io
+
+    asked = []
+
+    class Response(io.BytesIO):
+        headers = http.client.HTTPMessage()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, n=-1):
+            asked.append(n)
+            return super().read(n)
+
+    big = b"x" * (feeds.MAX_RESPONSE_BYTES + 100)
+    monkeypatch.setattr(feeds.urllib.request, "urlopen", lambda *a, **k: Response(big))
+    with pytest.raises(FetchError, match="ответ больше"):
+        feeds.http_get("https://x.test")
+    assert asked == [feeds.MAX_RESPONSE_BYTES + 1]
+    monkeypatch.setattr(feeds.urllib.request, "urlopen", lambda *a, **k: Response(b"<rss/>"))
+    assert feeds.http_get("https://x.test") == "<rss/>"
 
 
 def test_ghsa_filters_by_severity_and_shows_epss():

@@ -76,10 +76,11 @@ class PosterReplaceTest(StudioCase):
         self.assertEqual(self.call("POST", f"/api/studio/projects/{pid}/upload/poster", first)[0], 200)
         poster = steps.find(self.folder(pid), "poster", steps.IMAGE_EXT)
         self.assertIsNotNone(poster)
-        with mock.patch.object(service_module, "atomic_write", side_effect=OSError("диск полон")):
+        with mock.patch.object(service_module, "place_upload", side_effect=OSError("диск полон")):
             status, _, _ = self.call("POST", f"/api/studio/projects/{pid}/upload/poster", png_bytes())
         self.assertEqual(status, 500)
         self.assertEqual(poster.read_bytes(), first, "прежний постер на месте")
+        self.assertEqual(list(self.folder(pid).glob(".upload-*")), [], "временный файл загрузки удалён")
 
 
 if __name__ == "__main__":
