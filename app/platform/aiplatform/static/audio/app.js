@@ -473,7 +473,7 @@ function recordControls(v, data, busy, taskBox, reload) {
       h("summary", {}, "Перезаписать образец"),
       h(
         "div",
-        { class: "field", style: "margin-top:8px" },
+        { class: "field", style: "margin-top:var(--sp-2)" },
         h("p", { class: "hint" }, "Голос Charon есть в Gemini TTS: движок сам запишет образец по ключу GEMINI_API_KEY. Можно и своей записью — загрузи её ниже."),
         text,
         h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: () => startRecord(v.stem, { text: text.value }, taskBox, reload) }, "Записать из Gemini TTS")),
@@ -505,7 +505,7 @@ function fileRecord(v, low, high, busy, taskBox, reload) {
   };
   return h(
     "div",
-    { class: "field", style: "margin-top:8px" },
+    { class: "field", style: "margin-top:var(--sp-2)" },
     h("span", { class: "hint" }, `Запись голоса ${v.voice}: ${low}–${high} с ровной речи, без музыки и шума.`),
     file,
     text,

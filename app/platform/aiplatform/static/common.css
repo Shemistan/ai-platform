@@ -7,17 +7,17 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
   z-index: var(--z-nav);
   display: flex;
   align-items: center;
-  gap: 4px 16px;
+  gap: var(--sp-1) var(--sp-4);
   flex-wrap: wrap;
-  padding: 8px 16px;
+  padding: var(--sp-2) var(--sp-4);
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-.platform-nav .brand { font-weight: var(--fw-bold); letter-spacing: .02em; margin-right: 8px; }
-.platform-nav .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
+.platform-nav .brand { font-weight: var(--fw-bold); letter-spacing: .02em; margin-right: var(--sp-2); }
+.platform-nav .tabs { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
 .platform-nav .tabs a {
   display: block;
-  padding: 6px 12px;
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-pill);
   color: var(--text);
   text-decoration: none;
@@ -28,8 +28,8 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
 .platform-nav .badge {
   display: inline-block;
   min-width: 18px;
-  margin-left: 6px;
-  padding: 0 5px;
+  margin-left: var(--sp-2);
+  padding: 0 var(--sp-1);
   border-radius: var(--r-pill);
   background: var(--warn);
   color: var(--panel);
@@ -39,28 +39,28 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
   text-align: center;
 }
 .platform-nav .badge[hidden] { display: none; }
-.platform-nav .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+.platform-nav .sep { width: 1px; height: 20px; background: var(--line); margin: 0 var(--sp-1); }
 .platform-nav .gpu { margin-left: auto; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
 .platform-nav .gpu.busy { color: var(--warn); }
 .platform-nav .version { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
 /* Узкий экран: шапка в одну строку и не липнет — 13 вкладок прокручиваются вбок,
    активная вкладка прокручена в видимую область (nav.js). */
 @media (max-width: 640px) {
-  .platform-nav { position: static; flex-wrap: nowrap; gap: 8px; padding: 6px 8px; }
+  .platform-nav { position: static; flex-wrap: nowrap; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2); }
   .platform-nav .brand { display: none; }
   .platform-nav .tabs { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .platform-nav .tabs::-webkit-scrollbar { display: none; }
   .platform-nav .tabs > li { flex: none; }
-  .platform-nav .tabs a { padding: 6px 10px; }
+  .platform-nav .tabs a { padding: var(--sp-2) var(--sp-2); }
   .platform-nav .gpu { flex: none; max-width: 32vw; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); }
   .platform-nav .version { display: none; }
 }
 .platform-problems {
-  margin: 12px 16px 0;
-  padding: 10px 14px;
+  margin: var(--sp-3) var(--sp-4) 0;
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-md);
   background: var(--warn-bg);
   color: var(--warn);
   font-size: var(--fs-md);
 }
-.platform-problems ul { margin: 4px 0 0; padding-left: 18px; }
+.platform-problems ul { margin: var(--sp-1) 0 0; padding-left: var(--sp-4); }

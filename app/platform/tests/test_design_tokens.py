@@ -34,6 +34,11 @@ class TokensTest(unittest.TestCase):
         # И отдельное свойство, и шорткат font: 13px/1.5 …
         self.assertEqual(offenders(r"font(-size)?: *[0-9]"), [])
 
+    def test_spacing_only_from_tokens(self):
+        # padding/margin/gap: числа в px — только волосяные 1–2px, остальное — --sp-*.
+        decl = r"(?<![\w-])(?:padding|margin|gap|row-gap|column-gap)(?:-[a-z-]+)?\s*:[^;}]*"
+        self.assertEqual(offenders(decl + r"(?<![\w.-])(?:[3-9]|\d{2,})px"), [])
+
     def test_type_scale_in_rem(self):
         tokens = (STATIC / "tokens.css").read_text(encoding="utf-8")
         sizes = re.findall(r"--fs-[\w-]+: *([^;]+);", tokens)
