@@ -104,7 +104,7 @@ class App:
             out.append("Не найден шрифт с кириллицей для слайдов — задай AIP_FONT=/путь/к/шрифту.ttf.")
         for module in self.modules.values():
             out.extend(module.problems())
-        return out
+        return list(dict.fromkeys(out))  # общий движок (narrator) жалуется из нескольких вкладок
 
     def describe(self) -> dict:
         return {
