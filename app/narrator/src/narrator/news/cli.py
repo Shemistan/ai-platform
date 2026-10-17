@@ -14,7 +14,7 @@ from pathlib import Path
 from narrator import library, registry
 from narrator.library import META_NAME, Entry
 from narrator.news import designs, digest, feeds, sources
-from narrator.news.store import Store, db_path, now_utc
+from narrator.news.store import RETENTION_DAYS, Store, db_path, now_utc
 
 EVENTS = "events.md"
 POST = "post.md"
@@ -132,6 +132,9 @@ def cmd_collect(args) -> int:
             total_new += fresh
             print(f"  ок    {src.id:<26} материалов {len(items):>3}, новых {fresh}", flush=True)
         store.save_memo(memo)
+        pruned = store.prune(now_utc())  # ретенция в ежедневном сборе (CMP-016)
+    if pruned:
+        print(f"  в архив старше {RETENTION_DAYS} дней: {pruned}")
     if blocked:
         print(
             f"  закрыто sandbox {len(blocked)} — в журнал не пишется, чтобы не затереть"
@@ -923,6 +926,14 @@ def check_video(d: Path, meta: Entry) -> int:
     return 1 if problems else 0
 
 
+def cmd_prune(args) -> int:
+    """Ретенция: материалы старше --days — в архив, база сжимается (CMP-016)."""
+    with open_store() as store:
+        n = store.prune(now_utc(), args.days)
+    print(f"в архив старше {args.days:g} дней: {n}")
+    return 0
+
+
 def add_parser(sub) -> None:
     s = sub.add_parser("news", help="дайджест новостей: сбор, разбор, отбор, публикация")
     news = s.add_subparsers(dest="news_cmd", required=True)
@@ -934,6 +945,12 @@ def add_parser(sub) -> None:
     )
     n.add_argument("--date", help="нужен выпуск за этот день: окно архива дотянется до него")
     n.set_defaults(func=cmd_collect)
+
+    n = news.add_parser("prune", help="старые материалы — в архив, сжать базу (зовёт и collect)")
+    n.add_argument(
+        "--days", type=float, default=RETENTION_DAYS, help=f"старше — в архив ({RETENTION_DAYS})"
+    )
+    n.set_defaults(func=cmd_prune)
 
     n = news.add_parser("where", help="пути к выпуску дня: что читать и что озвучить")
     n.add_argument("--date", help="ГГГГ-ММ-ДД, today или yesterday; по умолчанию сегодня")

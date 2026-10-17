@@ -191,13 +191,20 @@ function renderServe() {
   );
 }
 
+// chat_id маской, как в логах narrator (CMP-007): полный — `./narrate bot subscribers --names`.
+function maskChat(id) {
+  const text = String(id);
+  return text.length > 4 ? `chat …${text.slice(-4)}` : "chat …";
+}
+
 function renderSubscribers() {
   const data = state.subscribers;
   const box = $("subscribers");
   if (!data) return;
   const total = data.subscribers.length;
   fill(box, 
-    h("div", { class: "stat-row" }, h("div", { class: "stat" }, h("b", {}, String(data.active)), h("span", {}, "подписаны")), h("div", { class: "stat" }, h("b", {}, String(total - data.active)), h("span", {}, "отписались"))),
+    h("div", { class: "stat-row" }, h("div", { class: "stat" }, h("b", {}, String(total)), h("span", {}, "подписаны"))),
+    h("p", { class: "hint" }, "О подписчике хранится только номер чата и дата подписки. /stop удаляет запись; удалить по просьбе — ./narrate bot forget <chat_id>."),
     total
       ? h(
           "div",
@@ -205,12 +212,12 @@ function renderSubscribers() {
           h(
             "table",
             { class: "data-table" },
-            h("thead", {}, h("tr", {}, h("th", {}, "Кто"), h("th", {}, "С какого дня"), h("th", {}, ""))),
+            h("thead", {}, h("tr", {}, h("th", {}, "Чат"), h("th", {}, "С какого дня"))),
             h(
               "tbody",
               {},
               ...data.subscribers.map((s) =>
-                h("tr", {}, h("td", {}, s.name || "без имени", h("span", { class: "sub" }, String(s.chat_id))), h("td", {}, shortDate(s.added)), h("td", {}, s.active ? chip("подписан", "ok") : chip(s.note ? `отписан: ${s.note}` : "отписан"))),
+                h("tr", {}, h("td", {}, maskChat(s.chat_id)), h("td", {}, shortDate(s.added))),
               ),
             ),
           ),

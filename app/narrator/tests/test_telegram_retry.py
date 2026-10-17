@@ -144,7 +144,7 @@ def test_broadcast_keeps_send_rate(tmp_path):
 
     state = State()
     for n in range(100):
-        state.upsert(1000 + n, f"подписчик {n}")
+        state.upsert(1000 + n)
     done = telegram.broadcast(bot(transport, clock), state, path, entry, "silero")
     assert len(done) == 100 and all(d.ok for d in done)
     rate = telegram.SEND_RATE

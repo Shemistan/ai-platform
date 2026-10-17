@@ -215,7 +215,13 @@ class AudioEngineFeaturesTest(AudioServerCase):
         self.assertEqual(status, 201, raw)
         upload = json.loads(raw)["id"]
         self.assertEqual(self.json("POST", "/api/audio/voices/shem", {"upload": upload})[0], 400)
-        status, task = self.json("POST", "/api/audio/voices/shem", {"upload": upload, "text": "Мой голос."})
+        # CMP-010: без подтверждения согласия — 400, задача не стартует.
+        body = {"upload": upload, "text": "Мой голос."}
+        for consent in (None, {"owner": "Аня"}, {"confirmed": True}, {"confirmed": True, "owner": "Аня", "form": "x"}):
+            status, err = self.json("POST", "/api/audio/voices/shem", body | ({"consent": consent} if consent else {}))
+            self.assertEqual(status, 400, (consent, err))
+        consent = {"confirmed": True, "owner": "Аня", "form": "self"}
+        status, task = self.json("POST", "/api/audio/voices/shem", body | {"consent": consent})
         self.assertEqual(status, 202, task)
         done = self.poll(f"/api/audio/tasks/{task['id']}", lambda t: t["status"] not in ("queued", "running"))
         self.assertEqual(done["status"], "done", done)
@@ -223,6 +229,13 @@ class AudioEngineFeaturesTest(AudioServerCase):
         shem = next(v for v in data["voices"] if v["stem"] == "shem")
         self.assertTrue(shem["custom"])
         self.assertEqual(shem["text"], "Мой голос.")
+        self.assertEqual(shem["consent"], "live")
+        # Образец и запись о согласии есть, исходной загрузки в uploads/ нет.
+        voices = self.config.data_dir / "fake-narrator" / "voices"
+        record = json.loads((voices / "shem.consent.json").read_text(encoding="utf-8"))
+        self.assertEqual((record["kind"], record["owner"], record["form"]), ("live", "Аня", "self"))
+        self.assertIsNone(self.app.ctx.uploads.path(upload))
+        self.assertEqual(self.call("GET", f"/api/audio/uploads/{upload}")[0], 404)
 
     def test_gemini_record_needs_key(self):
         _, task = self.json("POST", "/api/audio/voices/charon", {})

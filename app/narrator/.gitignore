@@ -10,3 +10,6 @@ tmp/
 :memory:.ses
 # skills агентов ставит make skills из docs/skills/
 .claude/skills/
+# Живой голос — личные данные (CMP-009): образцы и согласия только в <папка моделей>/voices/
+src/narrator/voices/shem*
+src/narrator/voices/*.consent.json

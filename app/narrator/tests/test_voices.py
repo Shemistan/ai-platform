@@ -1,4 +1,5 @@
 import base64
+import json
 
 import numpy as np
 import pytest
@@ -36,17 +37,12 @@ def test_clone_voice_sample(models_dir, tmp_path, monkeypatch):
     low, high = synth.REF_SECONDS
     assert low <= sf.info(wav).duration <= high and sf.info(wav).channels == 1
     assert "+" in text.read_text(encoding="utf-8")
-    # Shem — живой голос, образец тоже в пакете; по умолчанию остаётся Charon.
-    wav, text = ref_sample("Shem")
-    assert wav.parent == synth.VOICE_DIR and has_voice("espeech", "Shem")
-    assert low <= sf.info(wav).duration <= high and sf.info(wav).channels == 1
-    assert "+" in text.read_text(encoding="utf-8")
+    # Shem — живой голос: в пакете его нет (CMP-009), только в папке моделей.
+    assert not list(synth.VOICE_DIR.glob("shem*"))
     assert "Shem" in synth.ENGINE_VOICES["higgs"] and "Shem" not in synth.ENGINE_VOICES["silero"]
-    # Shem-v2 — вторая запись того же голоса, тоже в пакете.
-    wav, text = ref_sample("Shem-v2")
-    assert wav.parent == synth.VOICE_DIR and has_voice("higgs", "Shem-v2")
-    assert low <= sf.info(wav).duration <= high and sf.info(wav).channels == 1
-    assert "+" in text.read_text(encoding="utf-8")
+    with pytest.raises(ModelMissingError, match="живой голос в пакете не лежит"):
+        ref_sample("Shem")
+    assert not has_voice("higgs", "Shem-v2")
     # Записанный человеком образец главнее.
     own = put_sample(models_dir)
     assert ref_sample("Charon") == own
@@ -164,8 +160,14 @@ def test_voice_command_takes_own_text(models_dir, tmp_path, monkeypatch):
     sf.write(cut, np.zeros(6 * SR, dtype=np.float32), SR)
     assert main(["voice", "charon", "--from", str(cut), "--text", " Это выпуск. "]) == 0
     assert ref_sample("Charon")[1].read_text(encoding="utf-8") == "Это в+ыпуск.\n"
-    assert main(["voice", "shem", "--from", str(cut), "--text", "Это выпуск."]) == 0
+    # Живой голос — только с согласием: без --owner/--form образец не пишется.
+    assert main(["voice", "shem", "--from", str(cut), "--text", "Это выпуск."]) == 1
+    assert not (models_dir / "voices" / "shem.wav").exists()
+    argv = ["voice", "shem", "--from", str(cut), "--text", "Это выпуск."]
+    assert main([*argv, "--owner", "Шамистан", "--form", "self"]) == 0
     assert ref_sample("Shem")[0].parent == models_dir / "voices"
+    record = json.loads((models_dir / "voices" / "shem.consent.json").read_text(encoding="utf-8"))
+    assert record["kind"] == "live" and record["owner"] == "Шамистан" and record["form"] == "self"
 
 
 def test_gemini_http_error_is_reported(models_dir, monkeypatch, capsys):
@@ -177,3 +179,49 @@ def test_gemini_http_error_is_reported(models_dir, monkeypatch, capsys):
     assert main(["voice", "charon"]) == 3
     assert "HTTP 403" in capsys.readouterr().err
     assert not (models_dir / "voices").exists()
+
+
+# --- согласие владельца живого голоса (CMP-009) -------------------------------
+
+
+def put_live(models_dir, stem="shem"):
+    d = models_dir / "voices"
+    d.mkdir(parents=True, exist_ok=True)
+    sf.write(d / f"{stem}.wav", np.zeros(8 * SR, dtype=np.float32), SR)
+    (d / f"{stem}.txt").write_text("Образ+ец.\n", encoding="utf-8")
+    return d / f"{stem}.wav"
+
+
+def test_live_voice_needs_consent(models_dir, capsys):
+    from narrator import consent
+
+    wav = put_live(models_dir)
+    with pytest.raises(synth.ConsentMissingError, match="без согласия"):
+        ref_sample("Shem")
+    assert not has_voice("espeech", "Shem")
+    # Запись о согласии для образца, положенного руками.
+    assert main(["voice-consent", "shem", "--owner", "Шамистан", "--form", "self"]) == 0
+    assert ref_sample("Shem")[0] == wav
+    assert consent.check("shem", wav)["kind"] == "live"
+    # Истёкшее согласие — снова отказ.
+    consent.write(wav, consent.make("Шамистан", "written", expires="2020-01-01"))
+    with pytest.raises(synth.ConsentMissingError, match="истекло"):
+        ref_sample("Shem")
+    # Битая запись — понятная ошибка, а не падение.
+    consent.path_for(wav).write_text("{}", encoding="utf-8")
+    with pytest.raises(synth.ConsentMissingError, match="kind"):
+        ref_sample("Shem")
+    # Синтетическим голосам запись не нужна.
+    assert consent.check("charon", synth.VOICE_DIR / "charon.wav")["kind"] == "synthetic"
+    assert main(["voice-consent", "charon", "--owner", "x", "--form", "self"]) == 1
+
+
+def test_consent_make_validates():
+    from narrator import consent
+
+    with pytest.raises(consent.ConsentError, match="чей"):
+        consent.make("  ", "self")
+    with pytest.raises(consent.ConsentError, match="форма"):
+        consent.make("Аня", "устно")
+    with pytest.raises(consent.ConsentError, match="ГГГГ"):
+        consent.make("Аня", "written", expires="завтра")

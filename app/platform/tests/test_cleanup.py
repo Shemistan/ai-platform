@@ -4,6 +4,7 @@
 import json
 import os
 import time
+from unittest import mock
 
 from aiplatform.studio import history
 from tests.fixtures import ARTICLE, NEEDS_FFMPEG
@@ -105,8 +106,26 @@ class CleanupTest(StudioCase):
         self.assertFalse(old.exists())
         self.assertTrue(new.exists())
 
+    def test_old_upload_used_by_live_job_is_kept(self):
+        # CMP-016: старая загрузка, на которую ссылается оставшаяся задача, — не удаляется.
+        uploads = self.app.ctx.uploads.root
+        used, unused = uploads / ("c" * 32 + ".png"), uploads / ("d" * 32 + ".jpg")
+        stamp = time.time() - MONTH_LATER
+        for path in (used, unused):
+            path.write_bytes(b"x" * 100)
+            os.utime(path, (stamp, stamp))
+        job = {"id": "j1", "status": "done", "finished_at": time.time(), "source_url": f"/api/photo/uploads/{'c' * 32}"}
+        with mock.patch.object(self.app.modules["photo"].jobs, "list", return_value=[job]):
+            dry = self.cleaner.run(30, dry=True, policy=POLICY)
+            self.assertEqual(dry["uploads"], 1)
+            result = self.cleaner.run(30, dry=False, policy=POLICY)
+        self.assertEqual(result["uploads"], 1)
+        self.assertTrue(used.exists(), "загрузку использует живая задача")
+        self.assertFalse(unused.exists())
+
     def test_auto_cleanup_on_by_default(self):
         self.assertIs(self.json("GET", "/api/settings/state")[1]["cleanup"]["auto"], True)
+        self.assertEqual(self.json("GET", "/api/settings/state")[1]["cleanup"]["days"], 30)
 
 
 class CleanupKeepsPublicationsTest(StudioCase):

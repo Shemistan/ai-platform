@@ -138,6 +138,7 @@ def test_platform_argv_parses_with_real_parser(platform_modules):
         ["bot", "serve", "--updates"],
         ["news", "collect"],
         ["voice", "shem"],
+        ["voice", "shem", "--from", "a.wav", "--text", "т", "--owner", "Аня", "--form", "self"],
         ["verify", "abc"],
     ]
     for argv in argvs:
