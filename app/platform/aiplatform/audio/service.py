@@ -149,7 +149,7 @@ class AudioModule:
                     job = self.jobs.create(payload)
                 except ValidationError as exc:
                     raise bad_request(str(exc)) from exc
-                return req.send_json(job, HTTPStatus.CREATED)
+                return req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/audio/jobs/{job['id']}"})
             case ("POST", ["jobs", "batch"]):
                 return req.send_json(self.batch(req.json(MAX_FILE_BODY)), HTTPStatus.CREATED)
             case ("GET", ["jobs", job_id]):

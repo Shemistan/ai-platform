@@ -21,6 +21,7 @@ ARTICLE = """Как устроен сборщик мусора в Go
 FAST = {
     "FAKE_GEN_STEP_DELAY": "0.005",
     "FAKE_TTS_STEP_DELAY": "0.01",
+    "FAKE_TTS_WORDS_PER_SECOND": "10",
     "FAKE_NEWS_DELAY": "0",
     "FAKE_LLM_FAIL": "",
     "FAKE_LLM_GARBAGE": "",
@@ -209,7 +210,7 @@ class DigestVerdictTest(StudioCase):
         self.assertTrue(any("судья: не готово" in line for line in done["log"]))
 
         status, _ = self.json("POST", f"/api/studio/projects/{project['id']}/publish", {"channels": ["download-16x9"]})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 202)
         self.assertEqual(self.statuses(self.settle(project["id"]))["publish"], "waiting")
         body = {"channels": ["download-16x9"], "ignore_verdict": True}
         self.json("POST", f"/api/studio/projects/{project['id']}/publish", body)

@@ -66,7 +66,9 @@ class LibraryModule:
             case ("GET", ["state"]):
                 return req.send_json(self.state())
             case ("POST", ["articles"]):
-                return req.send_json(self.add(req.json(MAX_BODY)), HTTPStatus.CREATED)
+                card = self.add(req.json(MAX_BODY))
+                location = f"{URL_BASE}/articles/{quote(str(card.get('id', '')))}"
+                return req.send_json(card, HTTPStatus.CREATED, {"Location": location})
             case ("GET", ["articles", article_id]):
                 return req.send_json(self.article(_checked(article_id)))
             case ("POST", ["articles", article_id]):

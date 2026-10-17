@@ -13,25 +13,9 @@ python3 tools/api_routes.py   # пересобрать после нового �
 метода, который ветка зовёт. Пустое «Что делает» лечится комментарием над
 `case`, а не правкой этого файла.
 
-Правила контракта (формат ошибок, коды, глаголы) — задача BE-011,
-`docs/api.md`; здесь только список маршрутов и то, что не выводится из кода.
-
-## Общее для всех маршрутов
-
-- Только `GET` и `POST`; остальные методы — `405` с `Allow`.
-- Ошибка — JSON `{"error": "текст для человека", …}` с HTTP-кодом; ошибки
-  движка narrator отображаются по `kind`: `invalid` → 400, `not_found` → 404,
-  `unavailable` → 503 (`aiplatform/core/narrator.py`).
-- `Host` должен быть из разрешённых (`127.0.0.1`, `localhost`,
-  `AIP_ALLOWED_HOSTS`), иначе `421`.
-- `POST` из браузера — только со своим `Origin`; без `Origin` нужен
-  заголовок `X-AIP: 1` (так ходит фронтенд и `curl`-скрипты), иначе `403`.
-- При заданном `AIP_AUTH_TOKEN` — `Authorization: Bearer <токен>` или cookie
-  после входа по ссылке `/?token=…`; без них `/api/…` отвечает `401`.
-  `/api/health` и `/api/ready` — без токена (пробы launchd и чекера).
-- Сервис останавливается — `POST` получает `503`.
-
-Пример:
+Правила контракта — глаголы, формат ошибок, коды, `X-AIP`, токен, лимиты —
+в [`api.md`](api.md); здесь только список маршрутов и то, что не выводится
+из кода. Пример:
 
 ```sh
 curl -s http://127.0.0.1:8780/api/status
@@ -116,7 +100,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | GET | `/api/config` | — | JSON | — |
 | GET | `/api/status` | — | JSON | — |
 | GET | `/api/health` | — | JSON | — |
-| GET | `/api/ready` | — | JSON | — |
+| GET | `/api/ready` | — | JSON, JSON 503 | — |
 
 ### `audio`
 
@@ -147,10 +131,10 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | Метод | Путь | Тело / query | Ответ | Что делает |
 |---|---|---|---|---|
 | GET | `/api/channels/state` | — | JSON | — |
-| POST | `/api/channels/channels` | JSON | JSON 201 | — |
-| POST | `/api/channels/channels/import` | — | JSON | Каналы движка, которых ещё нет в списке, — в channels.json |
-| POST | `/api/channels/channels/{channel_id}/delete` | — | JSON | — |
-| POST | `/api/channels/channels/{channel_id}` | JSON | JSON | — |
+| POST | `/api/channels/items` | JSON | JSON 201 | — |
+| POST | `/api/channels/items/import` | — | JSON | Каналы движка, которых ещё нет в списке, — в channels.json |
+| POST | `/api/channels/items/{channel_id}/delete` | — | JSON | — |
+| POST | `/api/channels/items/{channel_id}` | JSON | JSON | — |
 | POST | `/api/channels/bot/check` | — | JSON | — |
 | GET | `/api/channels/subscribers` | ?sync | JSON | — |
 | GET | `/api/channels/serve` | — | JSON | — |
@@ -238,10 +222,10 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/studio/projects` | JSON | JSON 201 | POST /projects с Idempotency-Key: повтор с тем же ключом отдаёт уже созданный выпуск |
 | GET | `/api/studio/projects/{pid}` | — | JSON | — |
 | POST | `/api/studio/projects/{pid}/settings` | JSON | JSON | — |
-| POST | `/api/studio/projects/{pid}/run` | JSON | JSON | «Выполнить/Перезапустить шаг»: с settings — сначала параметры из карточки шага |
+| POST | `/api/studio/projects/{pid}/run` | JSON | JSON 202 | «Выполнить/Перезапустить шаг»: с settings — сначала параметры из карточки шага |
 | POST | `/api/studio/projects/{pid}/cancel` | — | JSON | — |
 | POST | `/api/studio/projects/{pid}/approve` | JSON | JSON | — |
-| POST | `/api/studio/projects/{pid}/publish` | JSON | JSON | Кнопка «Опубликовать», как `make news-publish`: выбранные каналы, повторно — с force |
+| POST | `/api/studio/projects/{pid}/publish` | JSON | JSON 202 | Кнопка «Опубликовать», как `make news-publish`: выбранные каналы, повторно — с force |
 | POST | `/api/studio/projects/{pid}/publish/resolve` | JSON | JSON | «Пост есть» / «Поста нет» по каналу, где ответа Telegram не было; затем публикация |
 | POST | `/api/studio/projects/{pid}/uploaded` | JSON | JSON | «Залил»: автор сам залил пакет на площадку и дал ссылку на ролик — теперь выпуск опубликован |
 | POST | `/api/studio/projects/{pid}/artifacts/{name}` | JSON | JSON | — |
