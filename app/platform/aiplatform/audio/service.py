@@ -27,6 +27,7 @@ from aiplatform.audio.jobs import (
     parse_tempo,
 )
 from aiplatform.core import tasks as tasks_module
+from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, handle_uploads, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.core.uploads import AUDIO
@@ -96,6 +97,7 @@ class AudioModule:
             "engines_error": info.get("error"),
             "models_hint": info.get("models_hint"),
             "install_hint": INSTALL_HINT,
+            "upload_limits": uploads_module.limits(),
         }
 
     def _installed(self) -> set[str] | None:

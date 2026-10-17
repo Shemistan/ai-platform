@@ -695,6 +695,7 @@ class StudioModule:
         return {
             "scenario_defaults": {k: self.scenario_defaults(k) for k in SCENARIOS},
             "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
+            "upload_limits": uploads_module.limits(),
             "steps": [{"id": s, "label": LABELS[s]} for s in STEP_IDS],
             "defaults": self.defaults(),
             "engines": [e.public() for e in self.ctx.modules["audio"].config.engines().values()],

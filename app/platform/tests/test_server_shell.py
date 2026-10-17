@@ -86,6 +86,16 @@ class NavTabsTest(PlatformCase):
         self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
         self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention"])
 
+    def test_upload_limits_in_module_config(self):
+        """FE-003: страница сверяет размер файла с лимитом до отправки — лимиты в /config модулей."""
+        from aiplatform.core import uploads
+
+        want = {"image": uploads.MAX_UPLOAD_BYTES, "media": uploads.MAX_AUDIO_BYTES}
+        for module in ("photo", "video", "audio", "studio"):
+            status, body = self.json("GET", f"/api/{module}/config")
+            self.assertEqual(status, 200, module)
+            self.assertEqual(body["upload_limits"], want, module)
+
 
 class ShellTest(PlatformCase):
     @staticmethod

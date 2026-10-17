@@ -543,6 +543,111 @@ export function busyClick(fn, key = null) {
   };
 }
 
+// --- Загрузка файлов: прогресс, отмена, лимит (FE-003) ---
+
+// Лимиты загрузки по умолчанию; точные приходят в /config модуля (upload_limits).
+export const UPLOAD_LIMITS = { image: 25 * 1024 * 1024, media: 200 * 1024 * 1024 };
+
+const megabytes = (bytes) => Math.round(bytes / 2 ** 20);
+
+let activeUploads = 0;
+// Уход со страницы обрывает загрузку молча — пока она идёт, браузер переспросит.
+function guardUnload(event) {
+  event.preventDefault();
+  event.returnValue = ""; // старые Chrome и Safari показывают вопрос только так
+}
+function uploadStarted() {
+  if (activeUploads++ === 0) globalThis.addEventListener?.("beforeunload", guardUnload);
+}
+function uploadFinished() {
+  if (--activeUploads === 0) globalThis.removeEventListener?.("beforeunload", guardUnload);
+}
+export const uploadsInFlight = () => activeUploads;
+
+// Строка загрузки в лотке внизу экрана: имя, полоска, процент, «Отменить».
+function uploadRow(label, onCancel) {
+  if (typeof document === "undefined") return null;
+  let tray = document.getElementById("upload-tray");
+  if (!tray) {
+    tray = h("div", { id: "upload-tray", class: "upload-tray", role: "status", "aria-label": "Загрузки" });
+    document.body.append(tray);
+  }
+  const fill = h("div", { class: "bar-fill", style: "width:0%" });
+  const bar = h("div", { class: "bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": "0", "aria-label": `Загрузка: ${label}` }, fill);
+  const percent = h("span", { class: "percent" }, "0%");
+  const row = h(
+    "div",
+    { class: "upload-row progress" },
+    h("div", { class: "progress-head" }, h("span", { class: "stage" }, label), percent),
+    bar,
+    h("div", { class: "progress-foot" }, h("span", {}), h("button", { type: "button", class: "btn btn--link danger", onclick: onCancel }, "Отменить")),
+  );
+  tray.append(row);
+  return {
+    update(p) {
+      fill.style.width = `${p}%`;
+      bar.setAttribute("aria-valuenow", String(p));
+      percent.textContent = `${p}%`;
+    },
+    remove() {
+      row.remove();
+      if (!tray.childElementCount) tray.remove();
+    },
+  };
+}
+
+// uploadFile(url, файл, { limit, label, onProgress, signal }) → JSON ответа или ApiError, как у api().
+// Больше limit — отказ «Файл больше N МБ.» без запроса (kind: too_big): иначе сервер ответит 413,
+// не дочитав тело, и браузер покажет «Failed to fetch». Пока идёт — строка с полоской и «Отменить»
+// внизу экрана и предупреждение при уходе со страницы. Отмена (кнопкой или signal) — kind: abort.
+// XMLHttpRequest, а не fetch: только у него есть прогресс отправки тела.
+export function uploadFile(url, file, { limit = 0, label = file?.name || "файл", onProgress = null, signal = null } = {}) {
+  if (limit && file.size > limit) {
+    return Promise.reject(new ApiError(`Файл больше ${megabytes(limit)} МБ.`, { kind: "too_big", data: { limit } }));
+  }
+  if (signal?.aborted) return Promise.reject(new ApiError("Загрузка отменена.", { kind: "abort" }));
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const cancel = () => xhr.abort();
+    const row = uploadRow(label, cancel);
+    let done = false;
+    const finish = (settle, value) => {
+      if (done) return;
+      done = true;
+      signal?.removeEventListener("abort", cancel);
+      row?.remove();
+      uploadFinished();
+      settle(value);
+    };
+    xhr.open("POST", url);
+    xhr.setRequestHeader("X-AIP", "1"); // как у api(): признак запроса своей страницы (SEC-002)
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      const percent = Math.min(100, Math.round((100 * e.loaded) / e.total));
+      row?.update(percent);
+      onProgress?.({ loaded: e.loaded, total: e.total, percent });
+    };
+    xhr.onload = () => {
+      const text = xhr.responseText;
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) return finish(resolve, data || {});
+      let message = data?.error || httpMessage(xhr.status, data ? "" : text);
+      if (data?.request_id) message = `${message.replace(/\.$/, "")}. Код для поиска в логе: ${data.request_id}`;
+      finish(reject, new ApiError(message, { kind: "http", status: xhr.status, data: data || {} }));
+    };
+    xhr.onerror = () => finish(reject, new ApiError("Сервис не отвечает. Проверь, что он запущен.", { kind: "network" }));
+    xhr.onabort = () => finish(reject, new ApiError("Загрузка отменена.", { kind: "abort" }));
+    signal?.addEventListener("abort", cancel, { once: true });
+    uploadStarted();
+    xhr.send(file);
+  });
+}
+
 // --- Перерисовка блоков без потери ввода (студия, доска) ---
 
 const blockSig = new WeakMap();

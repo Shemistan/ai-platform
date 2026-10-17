@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, busy as busyRequest, busyClick, captureFocus, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reconcile, reportError, restoreFocus, safe, STATUS, statusChip, toast, toneOf } from "/ui.js";
+import { $, announce, api, busy as busyRequest, busyClick, captureFocus, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reconcile, reportError, restoreFocus, safe, STATUS, statusChip, toast, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const API = "/api/studio";
 // Сценарий из адреса; неизвестный — «article». Названия сценариев — из /api/studio/config (FE-007).
@@ -645,11 +645,13 @@ async function saveArtifact(name, text) {
   }
 }
 
+// Свой постер или озвучка: прогресс и «Отменить» — в лотке загрузок (uploadFile, FE-003).
+// Сервер принимает здесь до лимита медиа (озвучка); отмена возвращает шаг как был.
 async function upload(what, file) {
   try {
-    show(await api("POST", `${API}/projects/${state.project.id}/upload/${what}`, file));
+    show(await uploadFile(`${API}/projects/${state.project.id}/upload/${what}`, file, { limit: (state.config?.upload_limits || UPLOAD_LIMITS).media }));
   } catch (err) {
-    alertBox(err.message);
+    if (err.kind !== "abort") alertBox(err.message);
   }
 }
 
@@ -682,10 +684,11 @@ function uploader(what, accept, label) {
 }
 
 async function uploadSlide(kind, key, file) {
+  const limits = (state.config?.upload_limits || UPLOAD_LIMITS);
   try {
-    show(await api("POST", `${API}/projects/${state.project.id}/upload/${kind}/${key}`, file));
+    show(await uploadFile(`${API}/projects/${state.project.id}/upload/${kind}/${key}`, file, { limit: kind === "clips" ? limits.media : limits.image }));
   } catch (err) {
-    alertBox(err.message);
+    if (err.kind !== "abort") alertBox(err.message);
   }
 }
 

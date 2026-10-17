@@ -1,6 +1,6 @@
 // Вкладка «Фото» (перенос UI photogen): режим, промпт, исходное фото с маской или полями, запуск и результат. Без сборки и зависимостей.
 
-import { $, api, busyClick, chip, h, jobProgress, poller, STATUS, statusChip, toneOf } from "/ui.js";
+import { $, api, busyClick, chip, h, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 import { loadOriented } from "./exif.js";
 
 const state = {
@@ -297,8 +297,9 @@ async function buildPayload() {
     if (g.cw === g.sw && g.ch === g.sh) throw new Error("Задай поле хотя бы с одной стороны.");
     payload.padding = g.pad;
   }
-  payload.source = (await api("POST", "/api/photo/uploads", await toPng($("photo-canvas")))).id;
-  if (state.mode === "inpaint") payload.mask = (await api("POST", "/api/photo/uploads", await maskBlob())).id;
+  const limit = (state.config?.upload_limits || UPLOAD_LIMITS).image;
+  payload.source = (await uploadFile("/api/photo/uploads", await toPng($("photo-canvas")), { limit, label: "Исходное фото" })).id;
+  if (state.mode === "inpaint") payload.mask = (await uploadFile("/api/photo/uploads", await maskBlob(), { limit, label: "Маска" })).id;
   return payload;
 }
 

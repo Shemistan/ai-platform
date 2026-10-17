@@ -24,6 +24,11 @@ class UploadError(ValueError):
     """Файл не принят; текст показывается пользователю."""
 
 
+def limits() -> dict[str, int]:
+    """Лимиты загрузки для /config модулей: страница сверяет размер файла до отправки (FE-003)."""
+    return {"image": MAX_UPLOAD_BYTES, "media": MAX_AUDIO_BYTES}
+
+
 def sniff(data: bytes) -> str | None:
     if data.startswith(_PNG_SIGNATURE):
         return "png"
