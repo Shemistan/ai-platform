@@ -18,8 +18,10 @@ from __future__ import annotations
 import html
 import json
 import os
+import random
 import re
 import shutil
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -183,7 +185,8 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
 
 
 def save_channels(path: Path, channels: list[Channel]) -> None:
-    """channels.json атомарно и только для владельца (0600): id каналов и имена переменных токенов."""
+    """Записать список целиком: атомарно и только для владельца (0600, SEC-010).
+    Зовёт только ChannelStore — под своим замком (channels/store.py)."""
     perms.write_private(path, json.dumps([c.stored() for c in channels], ensure_ascii=False, indent=2) + "\n")
 
 
@@ -391,7 +394,7 @@ def _http_post(url: str, body: bytes, content_type: str) -> dict:
         try:
             return json.loads(exc.read() or b"{}")
         except json.JSONDecodeError:
-            return {"ok": False, "description": f"HTTP {exc.code}"}
+            return {"ok": False, "error_code": exc.code, "description": f"HTTP {exc.code}"}
     except urllib.error.URLError as exc:
         # urllib заворачивает в URLError сбои соединения и отправки запроса: целиком он не дошёл.
         raise StudioError(f"Telegram недоступен: {exc.__class__.__name__}") from exc
@@ -403,6 +406,52 @@ def _http_post(url: str, body: bytes, content_type: str) -> dict:
     except json.JSONDecodeError:
         # Ответ 200 принят, но не разобран: пост ушёл, id сообщения неизвестен.
         return {"ok": True, "result": {}}
+
+
+# Повторы запросов к Bot API. Методы о канале (getChat, getChatMemberCount) повторяем на сетевые
+# сбои, 5xx и 429; отправку — только на 429 и на сбой до отправки тела (StudioError): после
+# таймаута ответа (Unknown) пост мог уйти, повтор дал бы дубль — решает человек (BE-001).
+ATTEMPTS = 3
+BACKOFF_S = 1.0  # пауза перед вторым заходом; дальше вдвое больше, с разбросом
+MAX_RETRY_AFTER_S = 120  # Telegram просит ждать дольше — не ждём, отдаём ошибку
+_sleep = time.sleep  # тесты подменяют, чтобы паузы были мгновенными
+
+
+def backoff(attempt: int) -> float:
+    """1, 2, 4… с, с разбросом ±50% — повторы разных выпусков не бьют разом."""
+    return BACKOFF_S * 2 ** (attempt - 1) * (0.5 + random.random())
+
+
+def call_api(url: str, body: bytes, ctype: str, http_post: HttpPost | None, *, safe: bool) -> dict:
+    """Запрос к Bot API с безопасными повторами; safe — метод только читает (повтор не создаёт пост)."""
+    post = http_post or _http_post
+    for attempt in range(1, ATTEMPTS + 1):
+        last = attempt == ATTEMPTS
+        try:
+            answer = post(url, body, ctype)
+        except Unknown:
+            if not safe or last:
+                raise
+            _sleep(backoff(attempt))
+            continue
+        except StudioError:  # запрос не ушёл целиком — повтор безопасен и для отправки
+            if last:
+                raise
+            _sleep(backoff(attempt))
+            continue
+        if answer.get("ok") or last:
+            return answer
+        code = answer.get("error_code")
+        params = answer.get("parameters") if isinstance(answer.get("parameters"), dict) else {}
+        wait = params.get("retry_after") or 0
+        if code == 429 and isinstance(wait, int | float) and wait <= MAX_RETRY_AFTER_S:
+            _sleep(wait or backoff(attempt))
+            continue
+        if safe and isinstance(code, int) and code >= 500:
+            _sleep(backoff(attempt))
+            continue
+        return answer
+    raise AssertionError("недостижимо")
 
 
 def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, str]:
@@ -426,7 +475,7 @@ def _send(channel: Channel, method: str, fields: dict, files: dict[str, Path], h
     if not token:  # без годного токена — ни одного запроса в сеть
         raise StudioError(f"{channel.label}: {channel.problem() or 'нет токена бота'}.")
     body, ctype = multipart({**channel.target(), **fields}, files)
-    answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype)
+    answer = call_api(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype, http_post, safe=False)
     if not answer.get("ok"):
         description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
         raise StudioError(f"{channel.label}: Telegram ответил «{description}».")
@@ -440,7 +489,7 @@ def chat_call(channel: Channel, method: str, http_post: HttpPost | None = None) 
         return None
     body, ctype = multipart({"chat_id": channel.target()["chat_id"]}, {})
     try:
-        answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype)
+        answer = call_api(f"{TELEGRAM_API}/bot{token}/{method}", body, ctype, http_post, safe=True)
     except StudioError:
         return None
     return answer.get("result") if answer.get("ok") else None
@@ -611,7 +660,7 @@ def publish(
     if thumb is not None:
         files["thumbnail"] = thumb
     body, ctype = multipart(fields, files)
-    answer = (http_post or _http_post)(f"{TELEGRAM_API}/bot{token}/sendVideo", body, ctype)
+    answer = call_api(f"{TELEGRAM_API}/bot{token}/sendVideo", body, ctype, http_post, safe=False)
     if not answer.get("ok"):
         description = str(answer.get("description", "неизвестная ошибка")).replace(token, "***")
         raise StudioError(f"{channel.label}: Telegram ответил «{description}».")

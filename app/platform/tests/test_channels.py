@@ -1,10 +1,18 @@
 """Вкладка «Каналы»: каналы публикации, бот, подписчики и приём подписок — на фейковом движке."""
 
+import contextlib
+import json
+import shutil
+import tempfile
+import threading
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from aiplatform.channels.service import ChannelsModule
+from aiplatform.channels.store import ChannelsBroken, ChannelStore
+from aiplatform.studio import publish
 from tests.helpers import PlatformCase
 
 
@@ -62,6 +70,26 @@ class ChannelsTest(PlatformCase):
         self.assertNotIn(added, [c["id"] for c in body["channels"]])
         self.assertEqual(self.json("POST", f"/api/channels/channels/{added}/delete")[0], 404)
 
+    def test_add_keeps_token_env(self):
+        status, body = self.json(
+            "POST", "/api/channels/channels", {"label": "Свой бот", "chat_id": "@own_chan", "token_env": "AIP_TG_OWN"}
+        )
+        self.assertEqual(status, 201, body)
+        saved = json.loads((Path(self.tmp.name) / "channels.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved[-1]["token_env"], "AIP_TG_OWN")
+
+    def test_broken_file_is_503_and_problem(self):
+        (Path(self.tmp.name) / "channels.json").write_text("{не json", encoding="utf-8")
+        status, body = self.json("POST", "/api/channels/channels", {"label": "Мой", "chat_id": "@my_chan"})
+        self.assertEqual(status, 503, body)
+        self.assertIn("channels.json", body["error"])
+        self.assertEqual(self.json("POST", "/api/channels/channels/x/delete")[0], 503)
+        self.assertEqual(self.json("POST", "/api/channels/channels/import")[0], 503)
+        _, state = self.json("GET", "/api/channels/state")
+        self.assertTrue(state["error"])
+        _, cfg = self.json("GET", "/api/config")
+        self.assertTrue(any(p.startswith("Каналы:") for p in cfg["problems"]), cfg["problems"])
+
     def test_bot_check_and_subscribers(self):
         _, bot = self.json("POST", "/api/channels/bot/check")
         self.assertEqual(bot["username"], "demo_narrator_bot")
@@ -101,6 +129,53 @@ class ChannelsTest(PlatformCase):
         _, serve = self.json("POST", "/api/channels/serve/stop")
         self.assertFalse(serve["running"])
         self.assertIsNone(serve["error"])
+
+
+class ChannelStoreTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.path = self.dir / "channels.json"
+
+    def test_parallel_adds_keep_both(self):
+        """Два add параллельно: без замка оба читают старый список и один канал теряется."""
+        real_save = publish.save_channels
+        both_read = threading.Barrier(2, timeout=0.5)
+
+        def slow_save(path, channels):
+            # Без замка оба потока дойдут сюда со старым списком; под замком второй ждёт снаружи.
+            with contextlib.suppress(threading.BrokenBarrierError):
+                both_read.wait()
+            real_save(path, channels)
+
+        def add(chat):
+            ChannelStore(self.path).add({"label": chat, "chat_id": chat})
+
+        with mock.patch.object(publish, "save_channels", slow_save):
+            threads = [threading.Thread(target=add, args=(c,)) for c in ("@first_chan", "@second_chan")]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(5)
+        chats = {c.chat_id for c in ChannelStore(self.path).load()}
+        self.assertTrue({"@first_chan", "@second_chan"} <= chats, chats)
+
+    def test_broken_file(self):
+        self.path.write_text("[1]", encoding="utf-8")
+        with self.assertRaises(ChannelsBroken):
+            ChannelStore(self.path).load()
+        with self.assertRaises(ChannelsBroken):
+            ChannelStore(self.path).add({"label": "x", "chat_id": "@x_chan"})
+
+    def test_only_store_saves(self):
+        """publish.save_channels в коде зовёт только ChannelStore."""
+        root = Path(__file__).resolve().parent.parent / "aiplatform"
+        callers = sorted(
+            str(p.relative_to(root))
+            for p in root.rglob("*.py")
+            if "save_channels(" in p.read_text(encoding="utf-8") and p.name != "publish.py"
+        )
+        self.assertEqual(callers, ["channels/store.py"])
 
 
 if __name__ == "__main__":

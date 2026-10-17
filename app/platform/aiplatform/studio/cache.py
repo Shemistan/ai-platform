@@ -20,6 +20,8 @@ import sys
 import time
 from pathlib import Path
 
+from aiplatform.core.fsutil import tmp_path
+
 
 def _clonefile():
     if sys.platform != "darwin":
@@ -43,11 +45,14 @@ def entry_id(kind: str, **inputs: object) -> str:
 def place(source: Path, target: Path) -> None:
     """Положить копию файла (клоном APFS, если можно); target заменяется атомарно."""
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    tmp.unlink(missing_ok=True)
-    if _CLONE is None or _CLONE(os.fsencode(source), os.fsencode(tmp), 0) != 0:
-        shutil.copyfile(source, tmp)
-    tmp.replace(target)
+    tmp = tmp_path(target)  # уникальный tmp: два выпуска с одним промптом не делят его
+    try:
+        if _CLONE is None or _CLONE(os.fsencode(source), os.fsencode(tmp), 0) != 0:
+            shutil.copyfile(source, tmp)
+        tmp.replace(target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class MediaCache:
@@ -75,6 +80,8 @@ class MediaCache:
         """Сохранить готовый файл в кэш. Сбой кэша не мешает выпуску."""
         with contextlib.suppress(OSError):
             self.root.mkdir(parents=True, exist_ok=True)
+            target = self.root / f"{entry}{source.suffix.lower()}"
+            place(source, target)  # сначала новая запись целиком, потом — прежние в других форматах
             for old in self.root.glob(f"{entry}.*"):
-                old.unlink(missing_ok=True)
-            place(source, self.root / f"{entry}{source.suffix.lower()}")
+                if old != target and not old.name.endswith(".tmp"):
+                    old.unlink(missing_ok=True)

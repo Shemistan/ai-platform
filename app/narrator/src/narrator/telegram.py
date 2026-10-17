@@ -31,6 +31,7 @@ import html
 import json
 import mimetypes
 import os
+import random
 import re
 import secrets
 import tempfile
@@ -59,6 +60,14 @@ CAPTION_LIMIT = 1024
 SIZE_LIMIT = 50 * 1024 * 1024  # предел Telegram на файл от бота
 TIMEOUT = 120
 POLL_TIMEOUT = 30
+# Повторы запросов к Bot API. Методы чтения повторяем на сетевые сбои, 5xx и 429;
+# отправку (send*) — только на 429 и на сбой до отправки тела: после таймаута
+# ответа сообщение могло уйти, и повтор дал бы дубль в канале.
+SAFE_METHODS = frozenset({"getMe", "getChat", "getChatMemberCount", "getUpdates"})
+ATTEMPTS = 3
+BACKOFF_S = 1.0  # пауза перед вторым заходом; дальше вдвое больше, с разбросом
+MAX_RETRY_AFTER_S = 120  # просит ждать дольше — не ждём, отдаём ошибку
+SEND_RATE = 25  # сообщений в секунду на бота: ниже лимита Telegram 30 msg/s
 
 _TOKEN_RE = re.compile(r"\d{6,}:[A-Za-z0-9_-]{30,}")
 _CHAT_RE = re.compile(r"-?\d{5,}(?:_\d+)?|@\w{4,}")
@@ -87,6 +96,10 @@ INVITE_ENV = "NARRATOR_BOT_INVITE"  # пусто — /start без кода
 
 class TelegramError(RuntimeError):
     """Телеграм не ответил или ответил ошибкой."""
+
+
+class NotSent(TelegramError):  # noqa: N818 — не сбой ответа, а «запрос не ушёл»
+    """Запрос не ушёл (соединение не открылось, тело не отправлено) — повтор безопасен."""
 
 
 def read_token() -> str:
@@ -313,7 +326,11 @@ def http_transport(token: str, api_root: str = API_ROOT) -> Callable[..., dict]:
                 return json.loads(e.read().decode("utf-8"))
             except (ValueError, OSError):
                 raise TelegramError(f"{method}: HTTP {e.code}") from e
-        except (urllib.error.URLError, OSError, ValueError) as e:
+        except urllib.error.URLError as e:
+            # urllib заворачивает в URLError сбои соединения и отправки запроса: он не дошёл.
+            raise NotSent(f"{method}: {e}") from e
+        except (OSError, ValueError) as e:
+            # Запрос ушёл, ответа нет или он битый (таймаут чтения, обрыв) — сообщение могло уйти.
             raise TelegramError(f"{method}: {e}") from e
 
     return call
@@ -327,27 +344,86 @@ class Reply:
     result: object = None
     code: int = 0
     description: str = ""
+    retry_after: float = 0  # 429: сколько секунд Telegram просит подождать
+
+
+def backoff(attempt: int) -> float:
+    """Пауза перед повтором: 1, 2, 4… с, с разбросом ±50% — повторы не бьют разом."""
+    return BACKOFF_S * 2 ** (attempt - 1) * (0.5 + random.random())
 
 
 class Bot:
-    def __init__(self, token: str, transport: Callable[..., dict] | None = None):
+    """Bot API с повторами и темпом отправки; sleep и clock подменяют в тестах."""
+
+    def __init__(
+        self,
+        token: str,
+        transport: Callable[..., dict] | None = None,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        rate: float = SEND_RATE,
+    ):
         self.transport = transport or http_transport(token)
+        self._sleep, self._clock = sleep, clock
+        self._gap = 1 / rate if rate else 0.0
+        self._last_send: float | None = None
+
+    def _pace(self) -> None:
+        """Отправки не чаще rate в секунду: рассылка по растущему списку не упрётся в 429."""
+        if self._last_send is not None:
+            wait = self._last_send + self._gap - self._clock()
+            if wait > 0:
+                self._sleep(wait)
+        self._last_send = self._clock()
 
     def request(self, method: str, params: dict | None = None, files: dict | None = None) -> Reply:
-        data = self.transport(method, params or {}, files)
-        if data.get("ok"):
-            return Reply(ok=True, result=data.get("result"))
-        return Reply(
-            ok=False,
-            code=int(data.get("error_code", 0)),
-            description=str(data.get("description", "неизвестная ошибка")),
-        )
+        safe = method in SAFE_METHODS
+        for attempt in range(1, ATTEMPTS + 1):
+            last = attempt == ATTEMPTS
+            if not safe:
+                self._pace()
+            try:
+                data = self.transport(method, params or {}, files)
+            except NotSent:
+                if last:
+                    raise
+                self._sleep(backoff(attempt))
+                continue
+            except TelegramError:
+                if not safe or last:  # отправка без ответа могла дойти — решает человек
+                    raise
+                self._sleep(backoff(attempt))
+                continue
+            reply = _reply(data)
+            if reply.ok or last:
+                return reply
+            if reply.code == 429 and reply.retry_after <= MAX_RETRY_AFTER_S:
+                self._sleep(reply.retry_after or backoff(attempt))
+                continue
+            if safe and reply.code >= 500:
+                self._sleep(backoff(attempt))
+                continue
+            return reply
+        raise AssertionError("недостижимо")  # pragma: no cover
 
     def call(self, method: str, params: dict | None = None, files: dict | None = None) -> object:
         reply = self.request(method, params, files)
         if not reply.ok:
             raise TelegramError(f"{method}: {reply.description} (код {reply.code})")
         return reply.result
+
+
+def _reply(data: dict) -> Reply:
+    if data.get("ok"):
+        return Reply(ok=True, result=data.get("result"))
+    params = data.get("parameters") or {}
+    return Reply(
+        ok=False,
+        code=int(data.get("error_code", 0)),
+        description=str(data.get("description", "неизвестная ошибка")),
+        retry_after=float(params.get("retry_after") or 0) if isinstance(params, dict) else 0,
+    )
 
 
 def chat_name(chat: dict) -> str:

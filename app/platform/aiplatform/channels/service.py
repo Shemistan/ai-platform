@@ -10,15 +10,18 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
+from collections.abc import Iterator
 from http import HTTPStatus
 from pathlib import Path
 
+from aiplatform.channels.store import ChannelsBroken
 from aiplatform.config import pick
 from aiplatform.core import narrator as narrator_module
 from aiplatform.core import perms, runner
-from aiplatform.core.http import Request, bad_request, not_found
+from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import publish
@@ -27,6 +30,21 @@ PREFIX = "channels"
 TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"  # как narrator.telegram.TOKEN_FILE_ENV
 TOKEN_FILE = "bot_token.md"  # как narrator.telegram.TOKEN_FILE
 LOG_TAIL = 200
+
+
+@contextlib.contextmanager
+def channel_errors() -> Iterator[None]:
+    """Ошибки ChannelStore → HTTP: битый файл — 503 (чинить сервер), нет канала — 404, ввод — 400."""
+    try:
+        yield
+    except ChannelsBroken as exc:
+        raise HttpError(
+            HTTPStatus.SERVICE_UNAVAILABLE, f"Каналы: файл настроек сломан, правки недоступны — {exc}"
+        ) from exc
+    except LookupError as exc:
+        raise not_found(str(exc)) from exc
+    except ValueError as exc:
+        raise bad_request(str(exc)) from exc
 
 
 class BotServe:
@@ -94,13 +112,22 @@ class ChannelsModule:
         self.narrator = narrator_module.load(ctx.config)
         self.env = ctx.config.env
         self.serve = BotServe(self.narrator)
+        self.store = self.config.channel_store()
 
     def describe(self) -> dict:
         return {"channels_file": str(self.config.channels_file)}
 
     def problems(self) -> list[str]:
+        out = []
         problem = self.narrator.check()
-        return ([problem] if problem else []) + self.secret_problems()
+        if problem:
+            out.append(problem)
+        try:
+            self.store.load()
+        except ChannelsBroken as exc:  # каналы — забота этой вкладки: баннер один, даже если сценарии тоже читают
+            out.append(f"Каналы: {exc}")
+        out.extend(self.secret_problems())
+        return out
 
     def secret_files(self) -> list[tuple[Path, str]]:
         """Файлы движка с токеном, каналами и подписчиками — им нужны права 0600 (SEC-010)."""
@@ -126,12 +153,6 @@ class ChannelsModule:
             return self.narrator.bridge(*args)
         except NarratorError as exc:
             raise http_error(exc) from exc
-
-    def _channels(self) -> list[publish.Channel]:
-        try:
-            return self.config.channels()
-        except ValueError as exc:
-            raise bad_request(f"Каналы: {exc}") from exc
 
     def channels_view(self) -> dict:
         try:
@@ -197,53 +218,30 @@ class ChannelsModule:
     def add(self, payload: object) -> dict:
         if not isinstance(payload, dict):
             raise bad_request("Тело запроса — не объект JSON.")
-        current = self._channels()
-        try:
-            channel = publish.new_channel(
-                current,
-                str(payload.get("label") or ""),
-                str(payload.get("chat_id") or ""),
-                str(payload.get("format") or publish.LANDSCAPE),
-            )
-            if payload.get("token_env"):
-                [channel] = publish.edit_channel([channel], channel.id, {"token_env": payload["token_env"]})
-        except ValueError as exc:
-            raise bad_request(str(exc)) from exc
-        publish.save_channels(self.config.channels_file, [*current, channel])
+        with channel_errors():
+            channel = self.store.add(payload)
         return self.channels_view() | {"added": channel.id}
 
     def edit(self, channel_id: str, payload: object) -> dict:
         if not isinstance(payload, dict):
             raise bad_request("Тело запроса — не объект JSON.")
-        try:
-            changed = publish.edit_channel(self._channels(), channel_id, payload)
-        except LookupError as exc:
-            raise not_found(str(exc)) from exc
-        except ValueError as exc:
-            raise bad_request(str(exc)) from exc
-        publish.save_channels(self.config.channels_file, changed)
+        with channel_errors():
+            self.store.edit(channel_id, payload)
         return self.channels_view()
 
     def delete(self, channel_id: str) -> dict:
-        current = self._channels()
-        if channel_id not in {c.id for c in current}:
-            raise not_found("Нет такого канала.")
-        publish.save_channels(self.config.channels_file, [c for c in current if c.id != channel_id])
+        with channel_errors():
+            self.store.delete(channel_id)
         return self.channels_view()
 
     def import_narrator(self) -> dict:
         """Каналы движка, которых ещё нет в списке, — в channels.json."""
-        current = self._channels()
+        with channel_errors():
+            self.store.load()  # битый файл — 503 до похода в мост
         names = self._bridge("bot").get("channels") or {}
-        known = {c.chat_id for c in current}
-        taken = {c.id for c in current}
-        added = []
-        for raw in publish.from_narrator(names):
-            if raw["chat_id"] in known or raw["id"] in taken:
-                continue
-            added.append(publish.Channel(raw["id"], raw["label"], publish.TELEGRAM, chat_id=raw["chat_id"]))
-        publish.save_channels(self.config.channels_file, [*current, *added])
-        return self.channels_view() | {"imported": [c.id for c in added]}
+        with channel_errors():
+            added = self.store.import_narrator(names)
+        return self.channels_view() | {"imported": added}
 
     def close(self) -> None:
         self.serve.close()

@@ -9,11 +9,13 @@ import mimetypes
 import re
 import threading
 import time
+from dataclasses import dataclass, field
 from http import HTTPStatus
 
 from aiplatform.audio import voices
 from aiplatform.core import events, log, media
 from aiplatform.core import uploads as uploads_module
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
@@ -91,6 +93,18 @@ _FILE = re.compile(
 )
 _SLIDE = re.compile(r"^\d{2,3}$")  # ключ слайда — f"{n:02d}": 01…99, дальше 100…
 RATES_TTL_S = 60
+IDEMPOTENCY_KEEP = 200  # сколько последних Idempotency-Key помним
+IDEMPOTENCY_WAIT_S = 30  # повтор ждёт, пока первый запрос с тем же ключом создаёт выпуск
+
+
+@dataclass
+class _Once:
+    """Создание по Idempotency-Key: готово ли и какой выпуск вышел."""
+
+    done: threading.Event = field(default_factory=threading.Event)
+    project_id: str | None = None
+
+
 SUMMARY_WORDS = 900  # ~7 минут озвучки
 # Копия выпуска: что не переносится (итоги сборки и публикации) и чьи статусы переносятся.
 CLONE_SKIP = {
@@ -198,6 +212,9 @@ class StudioModule:
         self._rates: tuple[float, estimate_module.Rates] | None = None
         self._durations: dict[tuple[str, int], float] = {}
         self._stats_lock = threading.Lock()
+        self._create_lock = threading.Lock()  # проверка дубля + создание выпуска (create_unique)
+        self._idem_lock = threading.Lock()
+        self._idem: dict[str, _Once] = {}  # Idempotency-Key → создание (последние IDEMPOTENCY_KEEP)
         self._stats_thread: threading.Thread | None = None
         self.scheduler.daily["stats"] = self._daily_stats
 
@@ -276,40 +293,11 @@ class StudioModule:
     # --- описание ---
 
     def channels(self) -> list[publish.Channel]:
+        """Каналы только читаем; правит их вкладка «Каналы» через ChannelStore (/api/channels)."""
         try:
             return self.config.channels()
         except ValueError:
             return []
-
-    def add_channel(self, payload: object) -> dict:
-        """Канал Telegram со страницы: список целиком записывается в channels.json."""
-        if not isinstance(payload, dict):
-            raise bad_request("Тело запроса — не объект JSON.")
-        current = self._channels_or_400()
-        try:
-            channel = publish.new_channel(
-                current,
-                str(payload.get("label") or ""),
-                str(payload.get("chat_id") or ""),
-                str(payload.get("format") or publish.LANDSCAPE),
-            )
-        except ValueError as exc:
-            raise bad_request(str(exc)) from exc
-        publish.save_channels(self.config.channels_file, [*current, channel])
-        return {"channels": [c.public() for c in self.channels()], "added": channel.id}
-
-    def delete_channel(self, channel_id: str) -> dict:
-        current = self._channels_or_400()
-        if channel_id not in {c.id for c in current}:
-            raise not_found("Нет такого канала.")
-        publish.save_channels(self.config.channels_file, [c for c in current if c.id != channel_id])
-        return {"channels": [c.public() for c in self.channels()]}
-
-    def _channels_or_400(self) -> list[publish.Channel]:
-        try:
-            return self.config.channels()
-        except ValueError as exc:
-            raise bad_request(f"Каналы: {exc}") from exc
 
     def publish_now(self, project_id: str, payload: object) -> dict:
         """Кнопка «Опубликовать», как `make news-publish`: выбранные каналы, повторно — с force."""
@@ -674,10 +662,7 @@ class StudioModule:
         out = []
         if not self.config.llm_available():
             out.append(missing_cli(self.config.llm_cmd[0]))
-        try:
-            self.config.channels()
-        except ValueError as exc:
-            out.append(f"Каналы: {exc}")
+        # Битый channels.json в баннер выносит вкладка «Каналы» — владелец файла (ChannelStore).
         out += [f"Дайджест: канал {c.label} — {c.problem()}." for c in self._digest_channels() if c.problem()]
         return out
 
@@ -814,8 +799,7 @@ class StudioModule:
             extra["source"] = source_id(scenario, day=extra["day"])
             title = title or f"Дайджест новостей за {day.strftime('%d.%m.%Y')}"
             extra["auto_title"] = False
-            self._no_duplicate(extra["source"], force_new)
-            project = self.studio.create(scenario, title, settings, extra)
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
         elif scenario == "post":
             post = payload.get("post")
             if not isinstance(post, str) or not post.strip():
@@ -826,12 +810,11 @@ class StudioModule:
             first = publish.plain_text(post).splitlines()[0] if publish.plain_text(post) else ""
             title = title or first[:90] or "Пост в канал"
             extra["source"] = source_id(scenario, text=f"{post}\n{text}")
-            self._no_duplicate(extra["source"], force_new)
-            project = self.studio.create(scenario, title, settings, extra)
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
             folder = self.studio.project_dir(project["id"])
-            (folder / steps.POST).write_text(post.strip() + "\n", encoding="utf-8")
+            atomic_write(folder / steps.POST, post.strip() + "\n")
             if text.strip():
-                (folder / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
+                atomic_write(folder / steps.TEXT, text.strip() + "\n")
         else:
             text = payload.get("text")
             if not isinstance(text, str) or not text.strip():
@@ -841,12 +824,47 @@ class StudioModule:
             paras = slides.paragraphs(text)
             title = title or (paras[0][:90] if paras else "Видео по статье")
             extra["source"] = source_id(scenario, text=text)
-            self._no_duplicate(extra["source"], force_new)
-            project = self.studio.create(scenario, title, settings, extra)
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
             (self.studio.project_dir(project["id"]) / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
         if payload.get("run"):
             self.studio.run(project["id"])
         return self.view(project["id"])
+
+    def create_unique(self, scenario: str, title: str, settings: dict, extra: dict, *, force_new: bool) -> dict:
+        """Проверка дубля по source и создание — под одним замком: двойной сабмит формы или
+        расписание вместе с ручным запуском не дают два выпуска на один материал (второй — 409)."""
+        with self._create_lock:
+            self._no_duplicate(extra["source"], force_new)
+            return self.studio.create(scenario, title, settings, extra)
+
+    def create_once(self, payload: object, key: str | None) -> dict:
+        """POST /projects с Idempotency-Key: повтор с тем же ключом отдаёт уже созданный выпуск."""
+        if not key:
+            return self.create(payload)
+        key = key.strip()[:200]
+        with self._idem_lock:
+            once = self._idem.get(key)
+            owner = once is None
+            if owner:
+                once = self._idem[key] = _Once()
+        if not owner:
+            once.done.wait(IDEMPOTENCY_WAIT_S)
+            if once.project_id and self.studio.get(once.project_id) is not None:
+                return self.view(once.project_id)
+            return self.create(payload)
+        try:
+            view = self.create(payload)
+            once.project_id = view["id"]
+            return view
+        except BaseException:
+            with self._idem_lock:
+                self._idem.pop(key, None)  # не создали — ключ свободен для нового захода
+            raise
+        finally:
+            once.done.set()
+            with self._idem_lock:
+                while len(self._idem) > IDEMPOTENCY_KEEP:
+                    self._idem.pop(next(iter(self._idem)))
 
     def _no_duplicate(self, source: str, force_new: bool) -> None:
         """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый)."""
@@ -1201,7 +1219,8 @@ class StudioModule:
         prompts = dict(steps.media_prompts(kind, self._plan(folder)))
         if n not in prompts:
             raise not_found(f"В плане нет слайда {n}, которому нужны {steps.MEDIA[kind][1]}.")
-        steps.save_slide_media(folder / kind, n, ext, data, prompts[n], kind)
+        with self.studio.idle(project_id, kind):  # шаг не стартует между проверкой и записью
+            steps.save_slide_media(folder / kind, n, ext, data, prompts[n], kind)
         have = sum(steps.slide_media(folder / kind, m, kind, p) is not None for m, p in prompts.items())
         note = f"Загружено вручную: {have} из {len(prompts)}."
         state = (self.studio.get(project_id) or {}).get("steps", {}).get(kind, {})
@@ -1237,9 +1256,8 @@ class StudioModule:
             except (json.JSONDecodeError, StudioError) as exc:
                 raise bad_request(f"Сценарий шортса не годится: {exc}") from exc
             text = json.dumps({"beats": beats}, ensure_ascii=False, indent=2)
-        self._guard(project_id)
-        path = folder / filename
-        path.write_text(text.strip() + "\n", encoding="utf-8")
+        with self.studio.idle(project_id):  # выпуск не запустится между проверкой и записью
+            atomic_write(folder / filename, text.strip() + "\n")
         if name == "short":
 
             def keep_script(project: dict) -> set[str]:
@@ -1263,10 +1281,15 @@ class StudioModule:
         self._guard_step(project_id, what)
         folder = self.studio.project_dir(project_id)
         stems = steps.IMAGE_EXT if what == "poster" else steps.AUDIO_EXT
-        for old in (folder / f"{what}{e}" for e in stems):
-            old.unlink(missing_ok=True)
-        (folder / f"{what}.{ext}").write_bytes(data)
-        (folder / f"{what}.json").unlink(missing_ok=True)  # постер больше не из задачи «Фото»
+        target = folder / f"{what}.{ext}"
+        with self.studio.idle(project_id, what):
+            # Сначала новый файл целиком, потом — прежний в другом формате: сбой между ними
+            # не оставит выпуск без постера или озвучки.
+            atomic_write(target, data)
+            for old in (folder / f"{what}{e}" for e in stems):
+                if old != target:
+                    old.unlink(missing_ok=True)
+            (folder / f"{what}.json").unlink(missing_ok=True)  # постер больше не из задачи «Фото»
         self.studio.mark_done(project_id, what, note="Загружено вручную.", resume=True)
         return self.view(project_id)
 
@@ -1350,7 +1373,8 @@ class StudioModule:
             case ("POST", ["projects", pid, "archive"]):
                 return req.send_json(self.archive(pid, req.json() or {}))
             case ("POST", ["projects"]):
-                return req.send_json(self.create(req.json(MAX_BODY)), HTTPStatus.CREATED)
+                key = req.headers.get("Idempotency-Key")
+                return req.send_json(self.create_once(req.json(MAX_BODY), key), HTTPStatus.CREATED)
             case ("GET", ["projects", pid]):
                 return req.send_json(self.view(pid))
             case ("POST", ["projects", pid, "settings"]):
@@ -1374,10 +1398,6 @@ class StudioModule:
                 return req.send_json(self.resolve_publish(pid, req.json()))
             case ("POST", ["projects", pid, "uploaded"]):
                 return req.send_json(self.uploaded(pid, req.json()))
-            case ("POST", ["channels"]):
-                return req.send_json(self.add_channel(req.json()), HTTPStatus.CREATED)
-            case ("POST", ["channels", channel_id, "delete"]):
-                return req.send_json(self.delete_channel(channel_id))
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):
