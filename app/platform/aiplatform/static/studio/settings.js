@@ -6,7 +6,7 @@ import { renderCreate } from "./create.js";
 import { publishPick } from "./publish.js";
 import { act, show } from "./app.js";
 
-function fieldsOf(values, prefix) {
+export function fieldsOf(values, prefix) {
   const cfg = state.config;
   const id = (name) => `${prefix}-${name}`;
   const radios = (name, options) =>
@@ -178,6 +178,17 @@ function fieldsOf(values, prefix) {
       h("label", { class: "field" }, h("span", { class: "hint" }, "Ссылка на оригинал статьи"), h("input", { type: "url", id: id("source_url"), value: values.source_url || "", placeholder: "https://…" })),
     source_author: () =>
       h("label", { class: "field" }, h("span", { class: "hint" }, "Автор оригинала"), h("input", { type: "text", id: id("source_author"), value: values.source_author || "", placeholder: "Имя автора или издание" })),
+    // Право на переработку (CMP-021): без него серия частями — полный пересказ — в канал не уходит.
+    source_license: () =>
+      select(
+        "source_license",
+        "Право на переработку — без него серия частями не публикуется",
+        [["none", "Нет права"], ["own", "Своя статья"], ["cc-by", "CC BY"], ["permission", "Разрешение автора"]].map(([v, label]) => [v, label, v === (values.source_license || "none")]),
+      ),
+    // Рекламная интеграция (CMP-019): без erid публикация не уйдёт; «Реклама. erid: …» — в конце подписи.
+    ad: () => check("ad", "Реклама", "Выпуск — рекламная интеграция: в подпись добавится «Реклама. erid: …» (38-ФЗ ст. 18.1).", values.ad),
+    erid: () =>
+      h("label", { class: "field" }, h("span", { class: "hint" }, "erid — токен от оператора рекламных данных (ОРД)"), h("input", { type: "text", id: id("erid"), value: values.erid || "", placeholder: "2Vtzqx…" })),
     review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
     draft: () =>
       check(
@@ -223,7 +234,7 @@ export function settingsForm(values, prefix) {
       group("Постер", f.poster_mode(), f.image_model()),
       group("Озвучка", f.voice_mode(), f.engine()),
       group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
-      group("Публикация", channelAdder(prefix), f.post_format(), f.tempo(), f.channels(), f.auto_publish()),
+      group("Публикация", channelAdder(prefix), f.post_format(), f.tempo(), f.channels(), f.auto_publish(), f.ad(), f.erid()),
       f.review_text(),
     );
   }
@@ -238,8 +249,8 @@ export function settingsForm(values, prefix) {
     group("Шортс", f.shorts()),
     group("Слайды", f.slide_s(), f.reading()),
     group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
-    group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish()),
-    scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author()) : null,
+    group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish(), f.ad(), f.erid()),
+    scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author(), f.source_license()) : null,
     f.review_text(),
   );
 }
@@ -247,18 +258,20 @@ export function settingsForm(values, prefix) {
 const SETTING_NAMES = [
   "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
   "voice_mode", "engine", "shorts", "review_text", "disclaimers", "ai_badge", "branding", "tempo", "frame", "auto_publish", "channels",
-  "post_format", "draft", "slide_s", "reading",
+  "post_format", "draft", "slide_s", "reading", "ad", "erid",
 ]; // prettier-ignore
 
 // Поля формы поста: остальные настройки у него не меняются.
 const POST_SETTINGS = [
   "poster_mode", "image_model", "voice_mode", "engine", "review_text", "disclaimers", "ai_badge", "branding", "tempo", "frame",
-  "auto_publish", "channels", "post_format",
+  "auto_publish", "channels", "post_format", "ad", "erid",
 ]; // prettier-ignore
 
 // Читает поля формы с этим префиксом; names — какие именно (engine читается вместе с голосом).
 // У статьи ещё источник: ссылка и автор оригинала.
-const ARTICLE_SETTINGS = [...SETTING_NAMES, "source_url", "source_author"];
+export const SOURCE_SETTINGS = ["source_url", "source_author", "source_license"];
+export const AD_SETTINGS = ["ad", "erid"];
+const ARTICLE_SETTINGS = [...SETTING_NAMES, ...SOURCE_SETTINGS];
 const DIGEST_SETTINGS = [...SETTING_NAMES, "poster_deadline"]; // срок своей обложки (PRD-002)
 
 export function readSettings(prefix, names = { post: POST_SETTINGS, article: ARTICLE_SETTINGS, digest: DIGEST_SETTINGS }[scenario] || SETTING_NAMES) {

@@ -1,7 +1,7 @@
 // Студия: шаг «Публикация» — выбор каналов, подтверждение и журнал отправок.
 import { busyClick, confirmPublish, h } from "/ui.js";
 import { API, state } from "./state.js";
-import { channelAdder } from "./settings.js";
+import { AD_SETTINGS, SOURCE_SETTINGS, channelAdder, fieldsOf, readSettings } from "./settings.js";
 import { editor } from "./media.js";
 import { act, alertBox } from "./app.js";
 
@@ -13,6 +13,26 @@ export function publishPick(project) {
   return state.publish[project.id];
 }
 
+// Источник статьи и реклама прямо в шаге «Публикация» (CMP-021, CMP-019): без источника выпуск
+// не уйдёт, без права на переработку — не уйдёт серия, реклама — только с erid.
+function sourceBox(p) {
+  const f = fieldsOf(p.settings, "step-source");
+  const names = p.scenario === "article" ? [...SOURCE_SETTINGS, ...AD_SETTINGS] : AD_SETTINGS;
+  return h(
+    "fieldset",
+    { class: "source-box" },
+    h("legend", {}, p.scenario === "article" ? "Источник статьи и реклама" : "Реклама"),
+    ...(p.scenario === "article" ? [f.source_url(), f.source_author(), f.source_license()] : []),
+    p.series_of && !["own", "cc-by", "permission"].includes(p.settings.source_license)
+      ? h("p", { class: "form-error" }, "Часть серии по чужой статье без права на переработку не публикуется — укажи право или сделай одно видео-аннотацию.")
+      : null,
+    f.ad(),
+    f.erid(),
+    p.settings.ad && !p.settings.erid ? h("p", { class: "form-error" }, "Реклама без erid не публикуется.") : null,
+    h("button", { type: "button", class: "btn btn--secondary", disabled: p.running, onclick: busyClick(() => act("settings", readSettings("step-source", names))) }, "Сохранить"),
+  );
+}
+
 // Тело шага «Публикация»: подпись, каналы, флаги повторной публикации и журнал отправок.
 export function publishBody() {
   const p = state.project;
@@ -21,6 +41,7 @@ export function publishBody() {
   const sentTo = new Set((p.published || []).filter((r) => r.sent).map((r) => r.channel));
   return [
     p.scenario === "post" ? null : editor("post", a.post, 5),
+    sourceBox(p),
     h(
       "div",
       { class: "publish-box" },
@@ -49,6 +70,8 @@ export function publishBody() {
             h("span", { class: "muted" }, c.format === "vertical" ? "9:16" : "16:9"),
             sentTo.has(c.id) ? h("span", { class: "chip tone-success" }, "уже опубликовано") : null,
             c.problem ? h("span", { class: "chip tone-danger" }, c.problem) : null,
+            // Порог 10 000 подписчиков: сведения в РКН (CMP-019).
+            c.audience_warning ? h("span", { class: "chip tone-warning", title: c.audience_warning }, "порог РКН") : null,
           ),
         ),
       ),

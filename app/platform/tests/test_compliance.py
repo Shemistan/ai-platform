@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from aiplatform.fakes import fake_narrate
-from aiplatform.studio import publish, steps
+from aiplatform.studio import publish, series, steps
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.render import VERTICAL, Renderer
 from aiplatform.updates import registry
@@ -332,6 +332,150 @@ class ArticleSourceTest(StudioCase):
         payload = {"scenario": "article", "text": ARTICLE, "settings": settings}
         status, _ = self.json("POST", "/api/studio/projects", payload)
         self.assertEqual(status, 400)
+
+
+@NEEDS_FFMPEG
+class SeriesLicenseTest(StudioCase):
+    """CMP-021: серия частями по чужой статье без права на переработку в канал не уходит."""
+
+    TEXT = (
+        "# Начало\n\nСборщик мусора стал быстрее. Паузы короче вдвое. Память освобождается раньше.\n\n"
+        "# Конец\n\nИтог простой. Обновляйтесь на новую версию. Тесты проходят быстрее."
+    )
+
+    def part(self, settings):
+        source = self.create(scenario="article", text=self.TEXT, title="Чужая", settings=settings)
+        split = series.split  # короткие части — короткий рендер
+        with mock.patch.object(series, "split", lambda text: split(text, 10)):
+            status, body = self.json("POST", f"/api/studio/projects/{source['id']}/split", {})
+        self.assertEqual(status, 201, body)
+        return body["projects"][0]["id"]
+
+    def test_series_without_license_is_not_published(self):
+        pid = self.part({"channels": ["download-16x9"], "auto_publish": True})
+        project = self.json("GET", f"/api/studio/projects/{pid}")[1]
+        self.assertEqual(project["settings"]["source_license"], "none")  # поле есть у выпуска и шага «Публикация»
+        self.json("POST", f"/api/studio/projects/{pid}/run", {})
+        done = self.settle(pid)
+        step = next(s for s in done["steps"] if s["id"] == "publish")
+        self.assertEqual(step["status"], "failed", done["log"])
+        self.assertIn("права на переработку нет", step["error"])
+        self.assertFalse((self.folder(pid) / "publish").exists())
+
+        status, _ = self.json("POST", f"/api/studio/projects/{pid}/settings", {"source_license": "own"})
+        self.assertEqual(status, 200)
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"]})
+        self.assertEqual(status, 202, view)
+        done = self.settle(pid)
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+
+    def test_bad_license(self):
+        payload = {"scenario": "article", "text": ARTICLE, "settings": {"source_license": "maybe"}}
+        self.assertEqual(self.json("POST", "/api/studio/projects", payload)[0], 400)
+
+    def test_source_editable_in_publish_step(self):
+        static = Path(publish.__file__).parents[1] / "static" / "studio"
+        js = (static / "publish.js").read_text(encoding="utf-8")
+        self.assertIn("sourceBox(p),", js)  # тело шага «Публикация»
+        self.assertIn("f.source_url(), f.source_author(), f.source_license()", js)
+        self.assertIn('readSettings("step-source", names)', js)
+        settings = (static / "settings.js").read_text(encoding="utf-8")
+        self.assertIn('SOURCE_SETTINGS = ["source_url", "source_author", "source_license"]', settings)
+
+
+@NEEDS_FFMPEG
+class NcVoicePublishTest(StudioCase):
+    """CMP-018: озвучку движком с некоммерческой лицензией (Silero) опубликовать нельзя."""
+
+    SETTINGS = {"channels": ["download-16x9"], "auto_publish": True, "draft": True}
+
+    def test_silero_voice_is_not_published(self):
+        project = self.create(scenario="article", text=ARTICLE, settings=self.SETTINGS | {"engine": "silero"}, run=True)
+        done = self.settle(project["id"])
+        step = next(s for s in done["steps"] if s["id"] == "publish")
+        self.assertEqual(step["status"], "failed", done["log"])
+        self.assertIn("Silero — его лицензия некоммерческая", step["error"])
+        self.assertIn("Выбери другой движок", step["error"])
+        self.assertFalse((self.folder(project["id"]) / "publish").exists())
+        self.assertEqual(next(s for s in done["steps"] if s["id"] == "voice")["engine"], "silero")
+
+        status, _ = self.json("POST", f"/api/studio/projects/{project['id']}/settings", {"engine": "higgs"})
+        self.assertEqual(status, 200)
+        self.json("POST", f"/api/studio/projects/{project['id']}/run", {})
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+
+    def test_other_engine_is_published(self):
+        project = self.create(scenario="article", text=ARTICLE, settings=self.SETTINGS | {"engine": "higgs"}, run=True)
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+
+    def test_engine_flag(self):
+        from aiplatform.audio import voices
+
+        # Silero — CC BY-NC, Fish — fish-audio-research (ADR 0010); Higgs — Creator Use Grant, не NC.
+        self.assertEqual(sorted(e.id for e in voices.ENGINES.values() if e.license_nc), ["fish", "silero"])
+        self.assertTrue(voices.ENGINES["silero"].public()["license_nc"])
+
+
+class RknThresholdTest(StudioCase):
+    """CMP-019: канал с 9 000+ подписчиков — предупреждение о подаче сведений в РКН."""
+
+    def test_big_channel_warns_in_api(self):
+        from aiplatform.studio import service as studio_service
+        from aiplatform.studio import stats
+
+        self.assertIsNone(stats.rkn_warning("К", 8999))
+        self.assertIn("близко к 10 000", stats.rkn_warning("К", 9000))
+        self.assertIn("больше 10 000", stats.rkn_warning("К", 12000))
+        with mock.patch.object(studio_service, "AUDIENCE_TTL_S", 0):
+            pid = self.create(scenario="post", post="Пост", settings={"channels": ["download-16x9"]})["id"]
+            record = {"channel": "download-16x9", "state": "sent", "sent": 1.0e9, "members_at_publish": 9500}
+            (self.folder(pid) / "published.json").write_text(json.dumps([record]), encoding="utf-8")
+            channels = {c["id"]: c for c in self.json("GET", "/api/channels/state")[1]["channels"]}
+            self.assertEqual(channels["download-16x9"]["members"], 9500)
+            self.assertIn("9 500 подписчиков", channels["download-16x9"]["audience_warning"])
+            self.assertIn("149-ФЗ", channels["download-16x9"]["audience_warning"])
+            others = [c for k, c in channels.items() if k != "download-16x9"]
+            self.assertTrue(all(c["audience_warning"] is None for c in others))
+            project = self.json("GET", f"/api/studio/projects/{pid}")[1]
+            warns = [x["text"] for x in project["preflight"] if x["level"] == "warn"]
+            self.assertTrue(any("9 500 подписчиков" in x for x in warns), warns)
+
+
+@NEEDS_FFMPEG
+class AdEridTest(StudioCase):
+    """CMP-019: реклама без erid не публикуется; с erid — «Реклама» и токен в подписи."""
+
+    SETTINGS = {"channels": ["download-16x9"], "auto_publish": True, "draft": True, "ad": True}
+
+    def test_ad_needs_erid(self):
+        project = self.create(scenario="article", text=ARTICLE, settings=self.SETTINGS, run=True)
+        done = self.settle(project["id"])
+        step = next(s for s in done["steps"] if s["id"] == "publish")
+        self.assertEqual(step["status"], "failed", done["log"])
+        self.assertIn("erid не указан", step["error"])
+        self.assertFalse((self.folder(project["id"]) / "publish").exists())
+
+        url = f"/api/studio/projects/{project['id']}"
+        status, _ = self.json("POST", f"{url}/settings", {"erid": "2VtzqxABC12"})
+        self.assertEqual(status, 200)
+        status, view = self.json("POST", f"{url}/publish", {"channels": ["download-16x9"]})
+        self.assertEqual(status, 202, view)
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+        description = (self.folder(project["id"]) / "publish" / "download-16x9" / "description.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Реклама. erid: 2VtzqxABC12", description)
+
+    def test_ad_line_survives_caption_cut(self):
+        caption = publish.caption(publish.with_ad(long_post(3000), "abc123"), "T")
+        self.assertTrue(caption.rstrip().endswith("Реклама. erid: abc123"))
+
+    def test_bad_erid(self):
+        payload = {"scenario": "post", "post": "Пост", "settings": {"erid": "две части"}}
+        self.assertEqual(self.json("POST", "/api/studio/projects", payload)[0], 400)
 
 
 if __name__ == "__main__":

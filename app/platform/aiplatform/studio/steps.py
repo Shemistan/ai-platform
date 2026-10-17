@@ -39,6 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from aiplatform.audio import voices
 from aiplatform.core import audit, disk, log, media, schema
 from aiplatform.core import settings as core_settings
 from aiplatform.core.fsutil import atomic_write
@@ -238,6 +239,7 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
     if settings.get("speed"):
         payload["speed"] = settings["speed"]
     entry = cache.entry_id("voice", **payload)
+    ctx.remember(engine=settings["engine"])  # чей голос в выпуске — публикация сверяет лицензию (CMP-018)
     if from_cache(ctx, entry, target, what):
         return target
     try:
@@ -653,6 +655,7 @@ def step_voice(ctx: StepContext) -> None:
         if existing is None:
             raise Waiting("Загрузи озвучку (mp3, wav или m4a) — например, из Gemini TTS.")
         ctx.log(f"озвучка загружена: {existing.name}")
+        ctx.remember(engine=None)  # своя озвучка — лицензия движков ни при чём
         return
     text = require_text(ctx)
     for old in (ctx.dir / f"voice{ext}" for ext in AUDIO_EXT):
@@ -1071,6 +1074,11 @@ def step_publish(ctx: StepContext) -> None:
     ctx.remember(registry_warning=stale or None)  # видно в состоянии шага; публикацию не держит
     if stale:
         ctx.log(stale)
+    if unlicensed := series_unlicensed(ctx):
+        raise StudioError(unlicensed)
+    vertical = any(c.format == VERTICAL for c in channels.values() if c.id in chosen)
+    if noncommercial := nc_voice(ctx, vertical):
+        raise StudioError(noncommercial)
     ai = ai_used(ctx.project)
     post = final_post(ctx.project, ctx.read, svc.config)
     links = post_links(ctx.project["scenario"], ctx.settings, ctx.read, post)
@@ -1351,6 +1359,47 @@ def post_links(scenario: str, settings: dict, read, post: str) -> dict:
     return {"domains": publish.link_domains(post), "foreign": foreign}
 
 
+# Право на переработку статьи — как `license` у статей narrator (CMP-005): own, cc-by, permission, none.
+LICENSES = ("own", "cc-by", "permission", "none")
+PUBLISHABLE = ("own", "cc-by", "permission")
+
+
+def series_unlicensed(ctx: StepContext) -> str:
+    """Часть серии по статье без права на переработку: целиком в канал не уходит (CMP-021)."""
+    if not ctx.project.get("series_of") or ctx.settings.get("source_license") in PUBLISHABLE:
+        return ""
+    return (
+        "Серия частями — это полный пересказ чужой статьи, а права на переработку нет. "
+        "Если оно есть (своя статья, CC BY или разрешение автора), выбери его в поле «Право на переработку» "
+        "в шаге «Публикация» и нажми «Опубликовать» снова; иначе опубликуй одно видео-аннотацию по статье."
+    )
+
+
+def nc_voice(ctx: StepContext, vertical: bool) -> str:
+    """Озвучка движком с некоммерческой лицензией (Silero, CC BY-NC) в канал не уходит (CMP-018).
+
+    Движок — из состояния шага озвучки; выпуски до CMP-018 его не помнят — тогда из настроек."""
+    used = []
+    for step_id in ("voice", "short") if vertical else ("voice",):
+        state = ctx.project["steps"].get(step_id) or {}
+        if state.get("status") != "done":
+            continue
+        if "engine" in state:
+            engine_id = state["engine"]
+        else:
+            engine_id = ctx.settings.get("engine") if ctx.settings.get("voice_mode") != "upload" else None
+        engine = voices.ENGINES.get(engine_id) if engine_id else None
+        if engine is not None and engine.license_nc and engine.label not in used:
+            used.append(engine.label)
+    if not used:
+        return ""
+    return (
+        f"Озвучка сделана движком {', '.join(used)} — его лицензия некоммерческая (CC BY-NC), "
+        "такой голос годится только для черновиков. Выбери другой движок в настройках выпуска "
+        "(раздел «Озвучка») и переозвучь выпуск или загрузи свою озвучку, затем нажми «Опубликовать» снова."
+    )
+
+
 def post_title(project: dict, read: Callable[[str], str]) -> str:
     """Заголовок публикации: из плана выпуска, иначе — название выпуска."""
     plan = read(PLAN)
@@ -1366,7 +1415,21 @@ def final_post(project: dict, read: Callable[[str], str], config: StudioConfig) 
     post = with_source(project, read(POST))
     if project["settings"].get("disclaimers", True):
         post = registry.with_footnotes(post, f"{post_title(project, read)}\n{read(TEXT)}", banned(config))
-    return publish.with_ai_line(post, ai_used(project))
+    post = publish.with_ai_line(post, ai_used(project))
+    return with_ad(project, post)
+
+
+def with_ad(project: dict, post: str) -> str:
+    """Реклама — только с токеном ЕРИР: «Реклама. erid: …» в хвосте подписи (38-ФЗ ст. 18.1, CMP-019)."""
+    settings = project["settings"]
+    if not settings.get("ad"):
+        return post
+    if not settings.get("erid"):
+        raise StudioError(
+            "Выпуск помечен как реклама, а erid не указан: получи токен у оператора рекламных данных "
+            "(ОРД), впиши его в поле «erid» в настройках выпуска и нажми «Опубликовать» снова."
+        )
+    return publish.with_ad(post, settings["erid"])
 
 
 def with_source(project: dict, post: str) -> str:

@@ -85,6 +85,10 @@ SETTING_STEPS = {
     # «Видео по статье»: источник — в конце поста и на последнем слайде (CMP-005).
     "source_url": ("render", "short"),
     "source_author": ("render", "short"),
+    "source_license": None,  # право на переработку: держит только публикацию серии (CMP-021)
+    # Рекламная интеграция: без erid не публикуется, «Реклама. erid: …» — в хвосте подписи (CMP-019).
+    "ad": None,
+    "erid": None,
 }
 # Правка файла на странице → (файл, шаг, чей это результат).
 ARTIFACTS = {
@@ -101,6 +105,7 @@ _FILE = re.compile(
 )
 _SLIDE = re.compile(r"^\d{2,3}$")  # ключ слайда — f"{n:02d}": 01…99, дальше 100…
 RATES_TTL_S = 60
+AUDIENCE_TTL_S = 30  # подписчики каналов для предупреждения о пороге РКН (CMP-019)
 IDEMPOTENCY_KEEP = 200  # сколько последних Idempotency-Key помним
 IDEMPOTENCY_WAIT_S = 30  # повтор ждёт, пока первый запрос с тем же ключом создаёт выпуск
 
@@ -287,6 +292,7 @@ class StudioModule:
         self.review = Review(self)  # превью и кнопки публикации в личке владельца (PRD-001)
         self.scheduler = schedule.Scheduler(self, self.config.data_dir, self.config.schedule_tick_s)
         self._rates: tuple[float, estimate_module.Rates] | None = None
+        self._audience: tuple[float, dict[str, float]] | None = None
         self._durations: dict[tuple[str, int], float] = {}
         self._stats_lock = threading.Lock()
         self._create_lock = threading.Lock()  # проверка дубля + создание выпуска (create_unique)
@@ -315,6 +321,7 @@ class StudioModule:
         channels = self.ctx.modules.get("channels")
         if channels is not None:  # нажатия кнопок бота приходят из `bot serve` этой вкладки
             channels.serve.on_update = self.review.handle
+            channels.audience = self.audience  # подписчики каналов — для предупреждения о пороге РКН
         self.scheduler.start()
         self._after_restart()
 
@@ -850,6 +857,22 @@ class StudioModule:
                 source="manual" if snapshot.get("manual") else "telegram",
             )
 
+    def audience(self) -> dict[str, float]:
+        """Последнее известное число подписчиков по id канала (из журналов публикаций).
+
+        Нужен view и describe на каждый опрос страницы — кэш на AUDIENCE_TTL_S."""
+        now = time.monotonic()
+        cached = self._audience
+        if cached is not None and now - cached[0] < AUDIENCE_TTL_S:
+            return cached[1]
+        facts = self._facts()
+        found = {c: v for c in facts.members if (v := facts.latest(c)) is not None}
+        self._audience = (now, found)
+        return found
+
+    def audience_warning(self, channel: publish.Channel) -> str | None:
+        return stats.rkn_warning(channel.label, self.audience().get(channel.id))
+
     def _facts(self) -> stats.Facts:
         """Подписчики и посты по каналам из всех выпусков, архивных тоже: прирост канала общий."""
         records: list[dict] = []
@@ -927,6 +950,9 @@ class StudioModule:
             "channels": [],
             "source_url": "",
             "source_author": "",
+            "source_license": "none",
+            "ad": False,
+            "erid": "",
         }
 
     def scenario_defaults(self, scenario: str) -> dict:
@@ -975,7 +1001,7 @@ class StudioModule:
             "engines": [e.public() for e in self.ctx.modules["audio"].config.engines().values()],
             "image_models": self.image_models(),
             "video_models": self.video_models(),
-            "channels": [c.public() for c in self.channels()],
+            "channels": [c.public() | {"audience_warning": self.audience_warning(c)} for c in self.channels()],
             "channels_file": str(self.config.channels_file),
             "llm": {
                 "cmd": self.config.llm_cmd[0] if not self.config.fake else "fake",
@@ -1108,6 +1134,14 @@ class StudioModule:
             out[key] = " ".join(value.split())
         if out["source_url"] and not re.fullmatch(r"https?://\S+", out["source_url"]):
             raise bad_request("Ссылка на источник — вида https://…")
+        if not isinstance(out.get("ad", False), bool):
+            raise bad_request("ad — true или false.")
+        erid = out.get("erid") or ""
+        if not isinstance(erid, str) or (erid.strip() and not publish.ERID.fullmatch(erid.strip())):
+            raise bad_request("erid — токен из ЕРИР: латиница и цифры, без пробелов.")
+        out["erid"] = erid.strip()
+        if out.get("source_license", "none") not in steps.LICENSES:
+            raise bad_request(f"source_license — одно из: {', '.join(steps.LICENSES)}.")
         known = {c.id for c in self.channels()}
         if not isinstance(out["channels"], list) or not all(isinstance(c, str) for c in out["channels"]):
             raise bad_request(malformed("channels — список id каналов."))
@@ -1508,6 +1542,8 @@ class StudioModule:
                     warn(f"«{channel.label}» ждёт шортс 9:16, а он выключен — включи «Шортс» или убери канал.")
             if channel.problem():
                 warn(f"«{channel.label}»: {channel.problem()}.")
+            if rkn := self.audience_warning(channel):
+                warn(rkn)
         if not settings.get("channels"):
             info("Каналы не выбраны — публикация будет ждать выбора.")
         elif stale := steps.registry_stale(self.config):

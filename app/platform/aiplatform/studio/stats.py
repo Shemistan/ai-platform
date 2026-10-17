@@ -25,6 +25,10 @@ from datetime import datetime
 
 from aiplatform.studio import publish
 
+# 149-ФЗ ст. 10.6: канал с 10 000+ подписчиков обязан подать сведения в РКН, иначе нельзя
+# размещать рекламу и делать репосты. Предупреждаем заранее — с 9 000 (CMP-019).
+RKN_LIMIT = 10_000
+RKN_WARN_AT = 9_000
 FULL_H = 168  # первые 7 суток снимки хранятся все, дальше — по одному на неделю (AN-004)
 EMBED = "https://t.me/{username}/{message_id}?embed=1"
 _VIEWS = re.compile(r'class="tgme_widget_message_views"[^>]*>([^<]+)<')
@@ -284,6 +288,22 @@ def _median(values: list[float]) -> float:
     return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def rkn_warning(label: str, members: int | float | None) -> str | None:
+    """Предупреждение о пороге РКН для канала с members подписчиками; ниже порога — None."""
+    if members is None or members < RKN_WARN_AT:
+        return None
+    count = f"{int(members):,}".replace(",", " ")
+    if members >= RKN_LIMIT:
+        return (
+            f"«{label}»: {count} подписчиков — больше {RKN_LIMIT:,}".replace(",", " ")
+            + ": нужны сведения о канале в РКН (149-ФЗ ст. 10.6), без них нельзя размещать рекламу и репосты."
+        )
+    return (
+        f"«{label}»: {count} подписчиков — близко к {RKN_LIMIT:,}".replace(",", " ")
+        + ": с этого порога нужно подать сведения о канале в РКН (149-ФЗ ст. 10.6)."
+    )
+
+
 class Facts:
     """Подписчики и посты по каналам из всех выпусков: подписчики — общие для канала,
     поэтому прирост поста считается по снимкам всех постов этого канала."""
@@ -308,6 +328,11 @@ class Facts:
             self.members[channel] = sorted(set(self.members[channel]))
         for channel in self.posts:
             self.posts[channel] = sorted(set(self.posts[channel]))
+
+    def latest(self, channel: str) -> float | None:
+        """Последнее известное число подписчиков канала; не знаем — None."""
+        points = self.members.get(channel) or []
+        return points[-1][1] if points else None
 
     def trend(self, channel: str, start: float) -> float | None:
         """Медиана прироста подписчиков в сутки за TREND_DAYS до поста по промежуткам без постов:

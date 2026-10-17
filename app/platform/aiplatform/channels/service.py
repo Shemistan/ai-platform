@@ -27,7 +27,7 @@ from aiplatform.core import narrator as narrator_module
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.studio import config as studio_config
-from aiplatform.studio import publish
+from aiplatform.studio import publish, stats
 
 PREFIX = "channels"
 TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"  # как narrator.telegram.TOKEN_FILE_ENV
@@ -156,6 +156,8 @@ class ChannelsModule:
         self.env = ctx.config.env
         self.serve = BotServe(self.narrator, None if self.narrator.fake else self.serve_lock())
         self.store = self.config.channel_store()
+        # Подписчики по id канала — даёт вкладка сценариев (bind): предупреждение о пороге РКН (CMP-019).
+        self.audience: Callable[[], dict[str, float]] | None = None
 
     def serve_lock(self) -> Path:
         """Замок `bot serve` в библиотеке движка (narrator.telegram.SERVE_LOCK)."""
@@ -204,7 +206,12 @@ class ChannelsModule:
 
     def channels_view(self) -> dict:
         try:
-            channels = [c.public() for c in self.config.channels()]
+            members = self.audience() if self.audience is not None else {}
+            channels = [
+                c.public()
+                | {"members": members.get(c.id), "audience_warning": stats.rkn_warning(c.label, members.get(c.id))}
+                for c in self.config.channels()
+            ]
             error = None
         except ValueError as exc:
             channels, error = [], str(exc)

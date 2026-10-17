@@ -30,7 +30,14 @@ function renderChannels() {
       {},
       h("td", {}, c.label, h("span", { class: "sub" }, c.type === "telegram" ? c.chat_id : "пакет для ручной загрузки")),
       h("td", {}, chip(FORMATS[c.format] || c.format, "info")),
-      h("td", {}, c.ready ? chip("готов", "ok") : h("span", { class: "chip tone-warning", title: c.problem }, c.problem.startsWith("нет токена") ? "нет токена" : "не настроен"), c.ready ? null : h("span", { class: "sub" }, c.problem)),
+      h(
+        "td",
+        {},
+        c.ready ? chip("готов", "ok") : h("span", { class: "chip tone-warning", title: c.problem }, c.problem.startsWith("нет токена") ? "нет токена" : "не настроен"),
+        c.ready ? null : h("span", { class: "sub" }, c.problem),
+        // Порог 10 000 подписчиков: сведения о канале в РКН, иначе нельзя рекламу и репосты (CMP-019).
+        c.audience_warning ? h("span", { class: "sub tone-warning" }, c.audience_warning) : null,
+      ),
       h(
         "td",
         { class: "num" },

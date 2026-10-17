@@ -299,7 +299,9 @@ function renderCard() {
 }
 
 async function makeVideo(c, text) {
-  const project = await api("POST", "/api/studio/projects", { scenario: "article", title: c.title, text: text || c.script });
+  // Источник и право на переработку — из карточки статьи (CMP-021): студия не спросит их заново.
+  const settings = { source_license: c.license || "none", ...(/^https?:\/\/\S+$/.test(c.url || "") ? { source_url: c.url } : {}) };
+  const project = await api("POST", "/api/studio/projects", { scenario: "article", title: c.title, text: text || c.script, settings });
   location.href = `/studio/?scenario=article&project=${project.id}`;
 }
 

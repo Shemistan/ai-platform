@@ -276,6 +276,7 @@ export const STEP_DATA = {
   short: (p) => [p.artifacts.short, p.files.short_video],
   publish: (p) => {
     const pick = publishPick(p);
-    return [p.artifacts.post, p.published, p.review, state.config.channels, [...pick.channels], pick.force, pick.ignoreVerdict];
+    const extra = ["source_url", "source_author", "source_license", "ad", "erid"].map((k) => p.settings[k]);
+    return [p.artifacts.post, p.published, p.review, state.config.channels, [...pick.channels], pick.force, pick.ignoreVerdict, p.series_of, p.running, ...extra];
   },
 };
