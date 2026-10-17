@@ -44,6 +44,55 @@ make run    # на настоящих моделях
 Python-зависимостей у сервиса нет; у движка `app/narrator` они свои (uv), первый
 `make check` в нём их ставит.
 
+Живость: `curl -s 127.0.0.1:8780/api/health` → `{"ok": true, "version", "uptime_s",
+"schedule"}`. Без внешних вызовов (ffmpeg и narrator не трогает); `schedule` —
+настройки дайджеста и итог последнего запуска по расписанию.
+
+### Автозапуск
+
+Расписание дайджеста живёт внутри процесса: нет процесса — нет выпуска. Чтобы
+сервис поднимался сам при входе в систему и после падения, поставь
+LaunchAgent. Один раз, в обычном терминале **из основного checkout** (агент
+запомнит этот каталог):
+
+```sh
+cd app/platform
+make install-agent    # ~/Library/LaunchAgents/com.aiplatform.server.plist + чекер дайджеста
+make agent-status     # состояние агентов и ответ /api/health
+make uninstall-agent  # убрать оба агента; процесс больше не перезапускается
+```
+
+- Сервис запускается как `make run` (берёт `local.mk`), `PATH` с brew, uv и
+  claude подставляется при установке: launchd не читает `.zshrc`. Поставил
+  новую команду в другой каталог — `make install-agent` ещё раз.
+- Упал или убит (`kill -9`) — launchd поднимет его через ≤30 с
+  (`ThrottleInterval`). Штатный выход с кодом 0 не перезапускается.
+- Перезапуск после обновления кода: `launchctl kickstart -k gui/$(id -u)/com.aiplatform.server`.
+- Логи: `~/Library/Logs/aiplatform/server.log` и `server.err.log` (трассировки
+  сбоев расписания — во втором), чекер — `digest-check.log`.
+- Mac спит в 07:00 — расписание не сработает. Будить его к выпуску:
+  `sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00` (снять — `sudo pmset repeat cancel`).
+
+**Внешний чекер дайджеста.** Алерты платформы шлёт её же процесс; если он
+мёртв, сказать некому. Второй агент `com.aiplatform.digest-check` раз в день
+(время дайджеста из настроек + 30 мин, по умолчанию 09:00; своё —
+`AIP_CHECK_AT=ЧЧ:ММ make install-agent`) запускает `tools/digest_check.py`:
+сервис не ответил — «Сервис недоступен», расписание включено, а дайджеста за
+день нет — «Дайджест не создан», выпуск упал — «Дайджест упал». Сообщение
+уходит ботом прямо в Telegram, мимо платформы. Токен бота и твой chat id —
+в Keychain, не в файлах:
+
+```sh
+security add-generic-password -U -s aiplatform-digest-check -a telegram-token -w '<токен бота>'
+security add-generic-password -U -s aiplatform-digest-check -a telegram-chat -w '<chat id>'
+make digest-check     # проверить вручную (или AIP_ALERT_TG_TOKEN / AIP_ALERT_TG_CHAT в env)
+```
+
+Поменял время дайджеста — `make install-agent` заново, чтобы сдвинулся чекер.
+По желанию — heartbeat-сервис (healthchecks.io): `AIP_HEARTBEAT_URL=<url>` в
+`local.mk`, платформа пингует его после каждого тика расписания, и сервис сам
+напишет, если пинги пропали.
+
 ### Переезд со старого narrator
 
 Один раз, в обычном терминале из основного checkout:
@@ -55,6 +104,27 @@ sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word
 Скрипт копирует `library/` (статьи, база новостей, подписчики бота),
 `telegram_tems.md` и `bot_token.md` и ничего не удаляет. Проверь «Статьи»,
 «Новости» и «Каналы» — после этого старый каталог можно удалить.
+
+### Если не работает при установке
+
+Грабли установки и разработки. Чего не хватает работающему сервису, он
+пишет сам — баннер «Проблемы» вверху страниц и строки `⚠` при `make run`.
+
+| Симптом | Причина | Что сделать |
+|---|---|---|
+| `SyntaxError` на `match` при `python3 -m aiplatform.server`, или `make run` останавливается с подсказкой про Python | системный `python3` на Mac — 3.9 из Xcode CLT, сервису нужен 3.11+ | `brew install python@3.12` (или `uv python install 3.12`), затем `make PYTHON=python3.12 run`; запускать через `make`, а не голым `python3` |
+| Баннер «Аудио: у движка по умолчанию … нет весов» или озвучка падает с «нет модели …» | `make models` в `app/narrator` не запускали, или веса лежат на неподключённом диске | `cd app/narrator && make models`; для MLX-движков — `make models-mlx E=higgs`; другой каталог — `NARRATOR_MODELS_DIR=~/local_models` |
+| Модели фото или видео нет в списке или задача падает без весов | `make models M=…` не запускали, `AIP_MODELS_DIR` указывает на неподключённый `/Volumes/External SSD` | подключить диск или `make models M=<id> AIP_MODELS_DIR=~/local_models`; что стоит — вкладка «Обновления» |
+| FLUX.2 падает: `MLX error: Failed to load the default metallib` | релиз Flux2CLI v3.1.0 идёт без `mlx.metallib`, а `setup-model.sh` его не докладывает | положить рядом с бинарником `mlx.metallib` из колеса `mlx-metal==0.31.1` (версия MLX у mlx-swift 0.31.6): `D=$(mktemp -d) && uv pip install --target "$D" mlx-metal==0.31.1 && cp "$D"/mlx/lib/mlx.metallib ~/.local/share/photogen/flux2cli-v3.1.0/`. Переустановка Flux2CLI возвращает ошибку — повторить |
+| Первая генерация FLUX.2 Klein долго «висит» на старте, на системном диске растёт `~/.cache/huggingface` | текстовый энкодер Klein (`Qwen3-8B-MLX-8bit`, ~8 ГБ) `setup-model.sh` не ставит — Flux2CLI качает его при первом запуске | подождать первый запуск (нужна сеть); руками Flux2CLI запускать с `HF_HOME="$AIP_MODELS_DIR/.photogen-cache/hf"`, иначе копия ляжет в `~/.cache` |
+| Дайджест или промпты слайдов падают: `claude: command not found` | claude CLI (Claude Code) не установлен или его нет в `PATH` процесса — у launchd `PATH` короче, чем в терминале | установить Claude Code, залогиниться, проверить `claude --version`; под launchd — полный путь в `AIP_LLM_CMD` и `CLAUDE=/полный/путь/claude` для `make news` движка |
+| Агент (Claude Code) не может скачать модели, `make check` движка падает на `uv`, нет GPU | sandbox агента: сети к Hugging Face и PyPI нет, GPU нет, `~/.cache/uv` закрыт на запись | модели и первую установку зависимостей — в обычном терминале (`make models`, `make check` в `app/narrator`); `./narrate` сам переносит кэш uv в `$TMPDIR`, для своих команд — `UV_CACHE_DIR=$TMPDIR/uv-cache` |
+| Шаг «Постер» дайджеста ждёт картинку, локальная модель обложку не рисует | так задумано: обложку дайджеста делают в ChatGPT по `image_prompt.md` выпуска — кириллические заголовки локальные модели рисуют хуже | сгенерировать в ChatGPT по промпту шага 2 и перетащить в шаг или положить `cover.*` в каталог выпуска narrator; локально — галочка «локальная модель» |
+| `git commit` не гоняет `./check`, сообщение коммита не проверяется | хуки репозитория не включены на этой машине | `sh bootstrap.sh` в корне репозитория |
+
+Эксплуатация живого сервиса — дайджест не вышел, GPU завис, диск не
+примонтирован, Telegram не принимает — не здесь: это runbook (задача
+REL-015). Системные ошибки агентов и предохранители — `docs/грабли.md`.
 
 ## Сценарии: как устроен выпуск
 
@@ -285,7 +355,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | `AIP_VIDEO_LTX_CMD`, `AIP_VIDEO_WAN_CMD`, `AIP_VIDEO_MODEL` | из PATH | пайплайны видео (или старые `VIDEOGEN_*`) |
 | `AIP_NARRATOR_DIR` | `app/narrator` | движок озвучки и новостей |
 | `AIP_NARRATE_CMD` | `$AIP_NARRATOR_DIR/narrate` | команда озвучки (`narrate say`) |
-| `AIP_AUDIO_ENGINE` | `higgs` | движок озвучки по умолчанию (голос — Charon) |
+| `AIP_AUDIO_ENGINE` | первый с весами: `higgs` → `espeech` → `silero` | движок озвучки по умолчанию; не задан — первый, чьи веса стоят (после одного `make models` — `espeech`, higgs ставит `make models-mlx E=higgs`). Нет весов у движка по умолчанию — баннер «Проблемы» с командой установки |
 | `AIP_LLM_CMD` | `claude -p --tools "" --setting-sources project --strict-mcp-config` | LLM для промптов и слайдов: промпт на stdin, ответ в stdout. Без инструментов, MCP и пользовательских настроек: модель читает чужой текст, prompt injection не должен дотянуться до файлов и сети |
 | `AIP_UPDATES_LLM_CMD` | `claude -p --tools WebSearch,WebFetch --setting-sources project --strict-mcp-config --settings '{"permissions": …}'` | LLM со свежим вебом для сверки списка запрещённых организаций: только поиск и чтение веба |
 | `AIP_NEWS_CMD` | `make -C {narrator} news-collect news-agent news-judge DAY={day}` | сбор дайджеста |
@@ -298,6 +368,23 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | `AIP_RENDER_SCALE` | `1` | доля от 1920×1080 (0.5 — быстрые черновики) |
 | `AIP_NOTIFY_CMD` | — | своя команда уведомлений (заголовок и текст — на stdin); без неё на Mac — osascript |
 | `AIP_SCHEDULE_TICK_S` | `30` | как часто расписание смотрит на часы; `0` — расписание выключено |
+| `AIP_BACKEND` | `real` | `real` — настоящие модели; `fake` — фейковые генераторы, TTS, LLM и новости (так запускает `make demo`) |
+| `AIP_VIDEO_MODELS_DIR` | `AIP_MODELS_DIR`, иначе каталог рядом с `AIP_VIDEO_MODEL` | веса видеомоделей, если они лежат отдельно от фото (или старый `VIDEOGEN_MODELS_DIR`) |
+| `AIP_VIDEO_WAN_STEPS` | `10` | шаги Wan 2.2 (или старый `VIDEOGEN_WAN_STEPS`); целое от 1 |
+| `AIP_TEST_GUARD` | — | ставят тесты (`tests/__init__.py`): с ним сервис отказывается работать на боевых `data/` и `data-demo/` |
+| `NARRATOR_ENGINE` | — | запасное имя для `AIP_AUDIO_ENGINE`; его же читает Makefile движка |
+| `NARRATOR_MODELS_DIR` | `/Volumes/External SSD/local_models` | папка моделей озвучки; читает движок `app/narrator` |
+| `AIP_TELEGRAM_TOKEN` (или другое имя) | — | токен бота канала: имя переменной задаёт `token_env` в `channels.json`, см. «Каналы публикации»; значение не в git |
+| `NARRATOR_TELEGRAM_TOKEN` | — | токен бота движка для каналов без своего `token_env`; значение не в git |
+| `NARRATOR_TELEGRAM_TOKEN_FILE` | `app/narrator/bot_token.md` | файл с токеном бота, если переменная выше пуста |
+| `NARRATOR_TELEGRAM_CHANNEL` | канал статей из `telegram_tems.md` | `off` — озвучка статей идёт подписчикам бота в личку, а не в канал |
+| `FAKE_NARRATOR_HOME`, `FAKE_NARRATOR_DELAY`, `FAKE_TTS_STEP_DELAY`, `FAKE_TTS_FAIL` | внутри данных платформы, `0.05`, `0.3`, — | только для демо и тестов: каталог фейкового движка, паузы шагов, падение озвучки на середине |
+
+Имена `NARRATOR_CHANNELS`, `NARRATOR_COVER`, `NARRATOR_COVER_EXT`,
+`NARRATOR_FOLDER`, `NARRATOR_PROMPT`, `NARRATOR_REVIEW`,
+`NARRATOR_TOKEN_ENV`, `NARRATOR_TOKEN_FILE`, `NARRATOR_TOKEN_FILE_ENV` в
+коде — константы (имена файлов и переменных выше), а не переменные
+окружения: задавать их не нужно.
 
 Старые `local.mk` от `setup-model.sh` прежних репозиториев photogen и videogen подходят как есть:
 платформа читает их `PHOTOGEN_*` / `VIDEOGEN_*`, если `AIP_*` не заданы.

@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +26,18 @@ FAKE = Path(__file__).resolve().parent.parent / "fakes" / "fake_narrate.py"
 FAKE_HOME_ENV = "FAKE_NARRATOR_HOME"
 BRIDGE_TIMEOUT_S = 120  # первый запуск uv собирает окружение — дольше обычного
 INSTALL_HINT = "Нужен движок app/narrator: `make models` в нём (или задай AIP_NARRATE_CMD)."
+# Версия контракта моста, с которой работает платформа (narrator.bridge.BRIDGE_API).
+EXPECTED_BRIDGE_API = 1
+CHECK_TTL_S = 60.0  # check() дёргают problems() всех вкладок и каждый /api/config
+_MISSING_CMD = re.compile(r"invalid choice: '?(bridge|version)\b")
+_checks: dict[tuple, tuple[float, str | None]] = {}
+_checks_lock = threading.Lock()
+
+
+def reset_checks() -> None:
+    """Забыть результаты check() — для тестов."""
+    with _checks_lock:
+        _checks.clear()
 
 
 class NarratorError(RuntimeError):
@@ -81,6 +96,44 @@ class Narrator:
             tail = (done.stderr or done.stdout).strip().splitlines()[-3:]
             raise NarratorError("Движок упал: " + (" ".join(tail) or f"код {done.returncode}"))
         return payload
+
+    def check(self) -> str | None:
+        """Совместим ли движок с платформой: None или текст проблемы для баннера.
+
+        Один вызов `bridge version` на движок раз в CHECK_TTL_S: результат общий
+        для всех вкладок (у каждой свой экземпляр Narrator с теми же полями).
+        """
+        key = (self.cmd, str(self.home), tuple(sorted(self.env.items())), self.fake)
+        now = time.monotonic()
+        with _checks_lock:
+            cached = _checks.get(key)
+        if cached and now - cached[0] < CHECK_TTL_S:
+            return cached[1]
+        problem = self._check()
+        with _checks_lock:
+            _checks[key] = (now, problem)
+        return problem
+
+    def _check(self) -> str | None:
+        where = f"Движок narrator по пути {self.home}"
+        fix = (
+            f"Укажи AIP_NARRATOR_DIR={DEFAULT_DIR} в app/platform/local.mk "
+            "или убери строку — по умолчанию берётся app/narrator."
+        )
+        if not self.available():
+            return f"Команда «{self.cmd[0]}» не найдена. {INSTALL_HINT}"
+        try:
+            got = self.bridge("version").get("bridge_api")
+        except NarratorError as exc:
+            missing = _MISSING_CMD.search(str(exc))
+            if missing and missing.group(1) == "bridge":
+                return f"{where} устарел: нет команды bridge. {fix}"
+            if missing:
+                return f"{where} устарел: нет bridge version, нужна версия {EXPECTED_BRIDGE_API}. {fix}"
+            return f"{where} не отвечает: {exc}"
+        if got != EXPECTED_BRIDGE_API:
+            return f"{where} несовместим: версия моста {got}, нужна {EXPECTED_BRIDGE_API}. {fix}"
+        return None
 
 
 def load(config: Config) -> Narrator:
