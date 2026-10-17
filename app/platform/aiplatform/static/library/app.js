@@ -1,5 +1,5 @@
 // Вкладка «Статьи»: библиотека статей движка — текст для озвучки, озвучка, проверка, канал.
-import { $, api, chip, fill, h, minutes, shortDate, taskCard } from "/ui.js";
+import { $, narratorApi as api, chip, fill, h, minutes, shortDate, taskCard } from "/ui.js";
 
 const API = "/api/library";
 const QUALITY = { verbatim: "текст дословно", pasted: "текст прислан", webfetch: "текст по пересказу WebFetch" };

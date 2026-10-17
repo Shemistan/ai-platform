@@ -1,5 +1,5 @@
 // Вкладка «Новости»: источники, главное за день, добор упавших, обзоры для YouTube.
-import { $, api, chip, copyButton, fill, followTask, h, modal, shortDate, taskCard } from "/ui.js";
+import { $, narratorApi as api, chip, copyButton, fill, followTask, h, modal, shortDate, taskCard } from "/ui.js";
 
 const API = "/api/news";
 const KINDS = {

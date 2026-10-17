@@ -2,7 +2,34 @@
 
 export const $ = (id) => document.getElementById(id);
 
-export async function api(method, path, body) {
+export const API_TIMEOUT_MS = 30000;
+
+// Ошибка запроса к API. kind: network — сервис не отвечает, timeout — не уложился в срок,
+// http — ответ с кодом ошибки, abort — запрос отменили сами (signal). status и data — у http.
+export class ApiError extends Error {
+  constructor(message, { kind, status = 0, data = {}, cause } = {}) {
+    super(message, cause ? { cause } : undefined);
+    this.name = "ApiError";
+    this.kind = kind;
+    this.status = status;
+    this.data = data;
+  }
+}
+
+// Текст ответа-ошибки без JSON: код и первая непустая строка (HTML-теги срезаны).
+function httpMessage(status, text) {
+  if (status === 413) return "Файл больше лимита.";
+  const line = String(text || "")
+    .replace(/<[^>]*>/g, " ")
+    .split("\n")
+    .map((s) => s.trim())
+    .find(Boolean);
+  return line ? `Ошибка ${status}: ${line.slice(0, 200)}` : `Ошибка ${status}`;
+}
+
+// api(метод, путь, тело, { signal, timeout }) → JSON ответа или ApiError.
+// timeout в мс: по умолчанию 30 с, у загрузок (тело — Blob/File) — без срока; 0 — без срока.
+export async function api(method, path, body, { signal, timeout } = {}) {
   const init = { method, headers: {} };
   if (body instanceof Blob) {
     init.body = body;
@@ -10,11 +37,46 @@ export async function api(method, path, body) {
     init.body = JSON.stringify(body);
     init.headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(path, init);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `Ошибка ${res.status}`), { status: res.status, data });
-  return data;
+  const limit = timeout ?? (body instanceof Blob ? 0 : API_TIMEOUT_MS);
+  const ctrl = new AbortController();
+  let timedOut = false;
+  const timer = limit ? setTimeout(() => ((timedOut = true), ctrl.abort()), limit) : null;
+  const relay = () => ctrl.abort();
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener("abort", relay, { once: true });
+  }
+  init.signal = ctrl.signal;
+  let res;
+  let text;
+  try {
+    res = await fetch(path, init);
+    text = await res.text();
+  } catch (err) {
+    if (timedOut) throw new ApiError(`Сервис не ответил за ${Math.round(limit / 1000)} с.`, { kind: "timeout", cause: err });
+    if (signal?.aborted) throw new ApiError("Запрос отменён.", { kind: "abort", cause: err });
+    throw new ApiError("Сервис не отвечает.", { kind: "network", cause: err });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", relay);
+  }
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    const message = data?.error || httpMessage(res.status, data ? "" : text);
+    throw new ApiError(message, { kind: "http", status: res.status, data: data || {} });
+  }
+  return data || {};
 }
+
+// Ответы, за которыми сервер ходит в движок narrator (bridge — до 120 с, скачивание статьи — до 180 с):
+// вкладки «Статьи», «Новости», «Каналы», «Аудио» зовут API с этим сроком вместо 30 с.
+export const NARRATOR_TIMEOUT_MS = 190000;
+export const narratorApi = (method, path, body, opts = {}) => api(method, path, body, { timeout: NARRATOR_TIMEOUT_MS, ...opts });
 
 // h("p", { class: "x", onclick: fn }, "текст", child, null) — null и false пропускаются.
 export function h(tag, attrs = {}, ...children) {

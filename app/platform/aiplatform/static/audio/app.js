@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, api, chip, debounce, fill, followTask, h, logBlock, modal, progressBar, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, narratorApi as api, chip, debounce, fill, followTask, h, logBlock, modal, progressBar, seconds, shortDate, statusChip, taskCard } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];

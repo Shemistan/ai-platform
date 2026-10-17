@@ -35,10 +35,12 @@ test: python-check
 	$(PYTHON) -W error::ResourceWarning -m unittest discover -s tests -t .
 
 # ruff и node не обязательны для работы сервиса — проверяем, если установлены.
+# node: синтаксис static/*.js и юнит-тесты фронтенда tests/js/*.test.mjs (node --test).
 lint:
 	@if command -v ruff >/dev/null 2>&1; then ruff check . && ruff format --check .; \
 	  else echo "ruff не установлен — линт пропущен"; fi
 	@if command -v node >/dev/null 2>&1; then for f in $$(find aiplatform/static -name '*.js'); do node --check $$f || exit 1; done; \
+	  node --test tests/js/ >/dev/null || node --test tests/js/; \
 	  else echo "node не установлен — проверка JS пропущена"; fi
 
 # Зовётся из корневого ./check (pre-commit, ./finish). Красный → коммит отменяется.
