@@ -72,7 +72,7 @@ class NarratorChannelsTest(unittest.TestCase):
         publish.save_channels(self.dir / "c.json", [*existing, channel])
         again = publish.load_channels(self.dir / "c.json")
         self.assertEqual([c.id for c in again], [*[c.id for c in existing], channel.id])
-        self.assertEqual(json.loads((self.dir / "c.json").read_text())[-1]["chat_id"], "-1003755616451_3")
+        self.assertEqual(json.loads((self.dir / "c.json").read_text())["channels"][-1]["chat_id"], "-1003755616451_3")
 
     def test_topic_goes_as_message_thread_id(self):
         video = self.dir / "v.mp4"
@@ -198,7 +198,7 @@ class PublishButtonTest(StudioCase):
         )
         self.assertEqual(status, 201, body)
         self.assertEqual(body["added"], "tg-my-shorts")
-        saved = json.loads(self.channels_file.read_text(encoding="utf-8"))
+        saved = json.loads(self.channels_file.read_text(encoding="utf-8"))["channels"]
         self.assertEqual([c["id"] for c in saved], ["tg", "tg-my-shorts"])
         self.assertEqual((saved[1]["format"], saved[1]["token_env"]), ("vertical", "AIP_TG_SHORTS"))
         _, cfg = self.json("GET", "/api/studio/config")

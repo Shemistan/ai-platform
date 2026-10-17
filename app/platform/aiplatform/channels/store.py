@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+from aiplatform.core import schema
 from aiplatform.studio import publish
 
 _GUARD = threading.Lock()
@@ -41,7 +42,10 @@ class ChannelStore:
             raise ChannelsBroken(str(exc)) from exc
 
     def _save(self, channels: list[publish.Channel]) -> None:
-        publish.save_channels(self.path, channels)
+        try:
+            publish.save_channels(self.path, channels)
+        except schema.TooNew as exc:  # файл новее кода — правки только в той версии (BE-008)
+            raise ChannelsBroken(str(exc)) from exc
 
     def add(self, payload: dict) -> publish.Channel:
         """Канал Telegram со страницы (label, chat_id, format, token_env); ValueError — неверный ввод."""

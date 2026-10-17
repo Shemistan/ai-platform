@@ -10,7 +10,7 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from aiplatform.studio import publish, stats
+from aiplatform.studio import publish, stats, steps
 from tests.test_studio_channels import TOKEN
 from tests.test_studio_flow import ARTICLE, StudioCase
 
@@ -233,7 +233,7 @@ class StatsHttpTest(StudioCase):
         self.assertEqual(
             rows["Сценарий"], [{"label": "Видео по статье", "posts": 1, "avg_views": 960, "avg_growth": 40.0}]
         )
-        saved = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        saved = steps.load_published(self.folder(pid))
         self.assertTrue(saved[1]["stats"][-1]["manual"])
 
 

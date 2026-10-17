@@ -15,6 +15,7 @@ mp4 + заголовок + описание в папке.
 
 from __future__ import annotations
 
+import contextlib
 import html
 import json
 import os
@@ -30,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from aiplatform.core import schema
 from aiplatform.core.fsutil import atomic_write_json
 from aiplatform.studio.llm import StudioError
 
@@ -155,6 +157,8 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"{path}: не читается как JSON ({exc})") from exc
     token_file = str(narrator_dir / NARRATOR_TOKEN_FILE) if narrator_dir else ""
+    if isinstance(raw, dict) and isinstance(raw.get("channels"), list):  # схема 1: {"schema", "channels"}
+        raw = raw["channels"]
     if not isinstance(raw, list):
         raise ValueError(f"{path}: ожидается список каналов")
     out = []
@@ -184,9 +188,20 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
     return out
 
 
+# Схема channels.json (core/schema.py, ADR 0009): 0 — голый список, 1 — {"schema": 1, "channels": [...]}.
+CHANNELS_SCHEMA = 1
+
+
 def save_channels(path: Path, channels: list[Channel]) -> None:
-    """Записать список целиком. Зовёт только ChannelStore — под своим замком (channels/store.py)."""
-    atomic_write_json(path, [c.stored() for c in channels])
+    """Записать список целиком. Зовёт только ChannelStore — под своим замком (channels/store.py).
+    Файл, записанный более новой версией, не перезаписываем: schema.TooNew."""
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        current = None
+    with contextlib.suppress(schema.Broken):
+        schema.upgrade(current, CHANNELS_SCHEMA, where=path.name)
+    atomic_write_json(path, schema.wrap([c.stored() for c in channels], "channels", CHANNELS_SCHEMA))
 
 
 def new_channel(existing: list[Channel], label: str, chat_id: str, fmt: str) -> Channel:

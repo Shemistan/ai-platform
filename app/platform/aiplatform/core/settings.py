@@ -15,9 +15,11 @@ import re
 import threading
 from pathlib import Path
 
+from aiplatform.core import schema
 from aiplatform.core.fsutil import atomic_write
 
 FILE = "settings.json"
+SCHEMA = 1  # схема settings.json (core/schema.py, ADR 0009); 1 — поле schema, формат как в схеме 0
 KINDS = ("photo", "video", "audio")  # модели фото, модели видео, движки озвучки
 _STORES: dict[Path, Settings] = {}
 _STORES_LOCK = threading.Lock()
@@ -137,6 +139,7 @@ def normalize(raw: object) -> dict:
 class Settings:
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.problem: str | None = None  # файл записан более новой версией — читаем, не пишем (BE-008)
         self._lock = threading.Lock()
         self._cache: tuple[tuple[int, int], dict] | None = None
 
@@ -152,10 +155,15 @@ class Settings:
         mtime = (stat.st_mtime_ns, stat.st_size)
         if self._cache and self._cache[0] == mtime:
             return json.loads(json.dumps(self._cache[1]))
+        self.problem = None
         try:
-            data = normalize(json.loads(self.path.read_text(encoding="utf-8")))
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            schema.upgrade(raw if isinstance(raw, dict) else {}, SCHEMA, where=FILE)
+        except schema.TooNew as exc:  # читаем как есть, но не пишем: правки — в той, новой версии
+            self.problem = f"Настройки: {exc}."
         except (OSError, ValueError):
-            data = _empty()
+            raw = None
+        data = normalize(raw)
         self._cache = (mtime, data)
         return json.loads(json.dumps(data))
 
@@ -169,8 +177,11 @@ class Settings:
         """apply(data) правит копию настроек; результат пишется атомарно и возвращается."""
         with self._lock:
             data = self._read()
+            if self.problem:
+                raise schema.TooNew(self.problem)
             apply(data)
             data = normalize(data)
-            atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+            text = json.dumps(schema.stamp(data, SCHEMA), ensure_ascii=False, indent=2)
+            atomic_write(self.path, text + "\n")
             self._cache = None
             return data

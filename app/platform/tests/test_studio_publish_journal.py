@@ -14,7 +14,7 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from aiplatform.studio import publish
+from aiplatform.studio import publish, steps
 from aiplatform.studio.llm import StudioError
 from tests.test_studio_channels import TOKEN
 from tests.test_studio_flow import ARTICLE, StudioCase, png_bytes
@@ -99,7 +99,7 @@ class JournalCase(StudioCase):
         return self.settle(pid)
 
     def journal(self, pid) -> dict:
-        data = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        data = steps.load_published(self.folder(pid))
         return {r["channel"]: r for r in data}
 
 

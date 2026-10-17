@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import cleanup, events, runner
+from aiplatform.core import cleanup, events, runner, schema
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.log import event as log_event
 from aiplatform.studio.llm import StudioError
@@ -152,6 +152,24 @@ class StepContext:
 
 StepFn = Callable[[StepContext], None]
 
+# Схема project.json (core/schema.py, ADR 0009). 1 — поле schema; формат как в схеме 0.
+PROJECT_SCHEMA = 1
+_PROJECT_FIELDS = schema.require("id", "scenario", "title", "created_at", "steps", types={"id": str, "steps": dict})
+
+
+def _project_check(folder_id: str) -> schema.Check:
+    def check(project: dict) -> str | None:
+        reason = _PROJECT_FIELDS(project)
+        if reason:
+            return reason
+        if project["id"] != folder_id:
+            return f"id {project['id']!r} не совпадает с каталогом"
+        if not all(isinstance(v, dict) and isinstance(v.get("status"), str) for v in project["steps"].values()):
+            return "шаг без статуса"
+        return None
+
+    return check
+
 
 class Studio:
     def __init__(
@@ -183,17 +201,25 @@ class Studio:
         folder = self.project_dir(project["id"])
         folder.mkdir(parents=True, exist_ok=True)
         project["updated_at"] = time.time()
-        atomic_write(folder / "project.json", json.dumps(project, ensure_ascii=False, indent=2))
+        data = schema.stamp(project, PROJECT_SCHEMA)
+        atomic_write(folder / "project.json", json.dumps(data, ensure_ascii=False, indent=2))
 
     def _load(self) -> None:
-        for path in self.root.glob("*/project.json"):
+        # Битый выпуск уходит в карантин (project.json.bad), выпуск новее кода — не тронут:
+        # и то и другое — в problems, остальные выпуски грузятся (BE-008).
+        self.load_problems: list[str] = []
+        for path in sorted(self.root.glob("*/project.json")):
             if not _ID.match(path.parent.name):
                 continue
-            try:
-                project = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            project, changed = schema.load_record(
+                path,
+                PROJECT_SCHEMA,
+                check=_project_check(path.parent.name),
+                problems=self.load_problems,
+                label=f"Выпуск {path.parent.name}",
+            )
+            if project is None:
                 continue
-            changed = False
             for step in STEPS:  # выпуск из версии, где этого шага ещё не было
                 if step.id not in project["steps"]:
                     # В старом выпуске настройка нового шага выключена: шаг сразу пропущен.

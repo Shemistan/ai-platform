@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from aiplatform.fakes import fake_narrate
-from aiplatform.studio import publish
+from aiplatform.studio import publish, steps
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.render import VERTICAL, Renderer
 from aiplatform.updates import registry
@@ -198,7 +198,7 @@ class DisclaimersOffTest(StudioCase):
 
         done, step = self.publish(pid, ignore_disclaimers="  новость о судебном решении,   согласовано  ")
         self.assertEqual(step["status"], "done", done["log"])
-        (record,) = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        (record,) = steps.load_published(self.folder(pid))
         off = record["disclaimers_off"]
         self.assertEqual(off["reason"], "новость о судебном решении, согласовано")
         self.assertEqual(off["mentions"], ["Meta"])
@@ -208,7 +208,7 @@ class DisclaimersOffTest(StudioCase):
         pid = self.ready_post("**Про Go**\n\nСборщик мусора стал быстрее.")
         done, step = self.publish(pid)
         self.assertEqual(step["status"], "done", done["log"])
-        (record,) = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
+        (record,) = steps.load_published(self.folder(pid))
         self.assertNotIn("disclaimers_off", record)
 
     def test_reason_must_be_text(self):
