@@ -120,6 +120,17 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 .bar { height: 8px; border-radius: 4px; background: var(--sunken); overflow: hidden; }
 .bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease; }
 @media (prefers-reduced-motion: reduce) { .bar-fill { transition: none; } }
+/* Задача в очереди: полосатая «ждущая» полоса вместо заполнения (jobProgress в ui.js). */
+.bar.waiting {
+  background: repeating-linear-gradient(-45deg, var(--sunken) 0 8px, var(--line) 8px 16px);
+  background-size: 200% 100%;
+  animation: bar-wait 12s linear infinite;
+}
+@keyframes bar-wait { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .bar.waiting { animation: none; } }
+.progress-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.stage .muted { font-weight: 400; }
+.status.demo { background: var(--warn-bg); color: var(--warn); }
 audio, video { width: 100%; border-radius: 8px; background: #000; }
 audio { background: transparent; }
 .log-wrap summary { cursor: pointer; color: var(--muted); font-size: 13px; }
@@ -284,6 +295,19 @@ blockquote.quote { margin: 0; padding: 6px 12px; border-left: 3px solid var(--li
 .data-table tbody tr.clickable:hover td { background: var(--sunken); }
 .data-table tr.current td { background: var(--info-bg); }
 .data-table .sub { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+/* Название в строке таблицы — кнопка без вида кнопки: строка открывается с клавиатуры. */
+.row-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.row-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.row-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.row-link[aria-current="true"] { font-weight: 600; }
 .segmented { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 999px; padding: 2px; gap: 2px; }
 .segmented button {
   border: 0;
@@ -295,6 +319,14 @@ blockquote.quote { margin: 0; padding: 6px 12px; border-left: 3px solid var(--li
   cursor: pointer;
 }
 .segmented button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+/* Тот же переключатель на радиокнопках (Фото, Видео): <label class="seg"><input type="radio"><span>…</span></label>. */
+.segmented--radio { justify-self: start; }
+.segmented--radio .seg { position: relative; display: flex; }
+.segmented--radio .seg input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.segmented--radio .seg span { padding: 4px 12px; border-radius: 999px; font-size: 13px; white-space: nowrap; }
+.segmented--radio .seg input:checked + span { background: var(--accent); color: var(--accent-text); }
+.segmented--radio .seg input:focus-visible { outline: none; }
+.segmented--radio .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tasks { display: grid; gap: 8px; }
 .task { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
 .task-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -309,3 +341,19 @@ blockquote.quote { margin: 0; padding: 6px 12px; border-left: 3px solid var(--li
 .wide details.settings-box summary { cursor: pointer; font-weight: 600; font-size: 14px; }
 .wide details.settings-box[open] summary { margin-bottom: 12px; }
 form.field { gap: 12px; }
+
+/* Видно только скринридеру: общая область объявлений #sr-status и подписи без места на экране. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* Главная кнопка необратимого действия в подтверждении. */
+.primary.danger { background: var(--bad); border-color: var(--bad); color: var(--panel); }
+.confirm-list { list-style: disc; padding-left: 18px; margin: 4px 0 0; }

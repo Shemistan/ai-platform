@@ -44,7 +44,17 @@ class BoardTest(StudioCase):
         item = next(p for p in board["projects"] if p["id"] == project["id"])
         self.assertEqual(item["group"], "attention")
         self.assertEqual(item["attention"]["step"], "publish")
-        self.assertEqual(item["channels"], [{"id": "download-16x9", "label": "Файл для YouTube / VK (16:9)"}])
+        self.assertEqual(
+            item["channels"], [{"id": "download-16x9", "label": "Файл для YouTube / VK (16:9)", "type": "manual"}]
+        )
+        # Для подтверждения публикации с доски — начало подписи.
+        self.assertTrue(item["caption"])
+        self.assertLessEqual(len(item["caption"]), 300)
+        # Перезапуск шага в студии показывает, что сбросится.
+        _, view = self.json("GET", f"/api/studio/projects/{project['id']}")
+        resets = {s["id"]: s["dependents"] for s in view["steps"]}
+        self.assertEqual(resets["voice"], ["render", "publish"])
+        self.assertEqual(resets["publish"], [])
         self.assertTrue(item["poster"].startswith(f"/api/studio/projects/{project['id']}/files/poster.png"))
         self.assertEqual(board["counts"]["attention"], 1)
         _, status = self.json("GET", "/api/status")

@@ -110,6 +110,8 @@ function renderList() {
     fill($("articles"), h("p", { class: "empty" }, empty));
     return;
   }
+  // Список перерисовывается целиком: фокус с клавиатуры возвращаем на ту же статью.
+  const focused = document.activeElement?.closest?.("#articles .row-link")?.dataset.article;
   fill(
     $("articles"),
     h(
@@ -124,11 +126,12 @@ function renderList() {
           ...shown.map((a) =>
             h(
               "tr",
+              // Клик по строке — для мыши; с клавиатуры статью открывает кнопка-название (клик всплывает к строке).
               { class: `clickable${a.id === state.selected ? " current" : ""}`, onclick: () => select(a.id) },
               h(
                 "td",
                 {},
-                a.title,
+                h("button", { type: "button", class: "row-link", "data-article": a.id, "aria-current": a.id === state.selected ? "true" : null }, a.title),
                 h("span", { class: "sub" }, [shortDate(a.added), a.duration_sec ? minutes(a.duration_sec) : "", a.engine ? engineLabel(a.engine) : ""].filter(Boolean).join(" · ")),
                 h("span", { class: "toolbar", style: "margin-top:6px" }, ...statusChips(a)),
               ),
@@ -138,6 +141,7 @@ function renderList() {
       ),
     ),
   );
+  if (focused) [...$("articles").querySelectorAll(".row-link")].find((b) => b.dataset.article === focused)?.focus();
 }
 
 // --- карточка ---

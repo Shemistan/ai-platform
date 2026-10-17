@@ -1,8 +1,8 @@
 // «Выпуски»: все выпуски всех сценариев по группам. У ждущего — что нужно и кнопка действия.
-import { $, api, fill, h, statusChip } from "/ui.js";
+import { $, announce, api, confirmPublish, fill, h, STATUS, statusChip } from "/ui.js";
 
 const API = "/api/studio";
-const state = { archived: false, timer: null, busy: new Set(), errors: {} };
+const state = { archived: false, timer: null, busy: new Set(), errors: {}, statuses: null };
 // Дополнения над группами (сводка отклика и т.п.): функции data → узел.
 const extras = [responsePanel];
 
@@ -26,6 +26,12 @@ async function act(project, path, body) {
   }
 }
 
+// Публикация с доски необратима: только после подтверждения с каналами, подписью и вердиктом.
+async function publish(p) {
+  const ok = await confirmPublish({ channels: p.channels, caption: p.caption || "", verdict: p.verdict });
+  if (ok) act(p, "publish", { channels: p.channels.map((c) => c.id) });
+}
+
 // Что можно сделать с выпуском прямо с доски.
 function actions(p) {
   const busy = state.busy.has(p.id) || p.running;
@@ -36,8 +42,8 @@ function actions(p) {
     out.unshift(
       h(
         "button",
-        { type: "button", class: "small-btn accent", disabled: busy, title: names, onclick: () => act(p, "publish", { channels: p.channels.map((c) => c.id) }) },
-        p.channels.length === 1 ? `Опубликовать: ${names}` : `Опубликовать в ${p.channels.length} канала`,
+        { type: "button", class: "small-btn accent", disabled: busy, title: names, onclick: () => publish(p) },
+        p.channels.length === 1 ? `Опубликовать: ${names}…` : `Опубликовать в ${p.channels.length} канала…`,
       ),
     );
   } else if (p.group === "drafts" || need?.status === "failed") {
@@ -151,6 +157,16 @@ function card(p) {
   );
 }
 
+// Скринридеру — только смена статуса выпуска, не каждая перерисовка доски.
+function announceChanges(data) {
+  const now = Object.fromEntries(data.projects.map((p) => [p.id, p.status]));
+  const before = state.statuses;
+  state.statuses = now;
+  if (!before) return;
+  const changed = data.projects.filter((p) => p.id in before && before[p.id] !== p.status);
+  if (changed.length) announce(changed.map((p) => `${p.title}: ${STATUS[p.status] || p.status}`).join(". "));
+}
+
 function render(data) {
   if (!data) return;
   state.data = data;
@@ -171,7 +187,9 @@ function render(data) {
 async function load() {
   clearTimeout(state.timer);
   try {
-    render(await api("GET", `${API}/board${state.archived ? "?archived=1" : ""}`));
+    const data = await api("GET", `${API}/board${state.archived ? "?archived=1" : ""}`);
+    announceChanges(data);
+    render(data);
     $("error").hidden = true;
   } catch (err) {
     $("error").textContent = `Доска не загрузилась: ${err.message}`;

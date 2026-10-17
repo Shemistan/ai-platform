@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Видео — AI Platform</title>
   <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,16 +13,16 @@
     <h1>Видео</h1>
     <span class="chip" id="model-chip">…</span>
   </header>
-  <div class="banner" id="banner" hidden></div>
+  <div class="banner" id="banner" role="status" hidden></div>
 
   <main class="layout">
    <div class="main-col">
-    <div class="tabs" role="tablist" aria-label="Режим">
-      <button type="button" class="tab" role="tab" id="tab-video" aria-controls="composer" aria-selected="true">Видео по промпту</button>
-      <button type="button" class="tab" role="tab" id="tab-living" aria-controls="living" aria-selected="false">Живое фото</button>
+    <div class="mode-tabs" role="tablist" aria-label="Режим">
+      <button type="button" class="mode-tab" role="tab" id="tab-video" aria-controls="composer" aria-selected="true">Видео по промпту</button>
+      <button type="button" class="mode-tab" role="tab" id="tab-living" aria-controls="living" aria-selected="false">Живое фото</button>
     </div>
 
-    <form class="panel composer" id="composer" role="tabpanel" aria-labelledby="tab-video" novalidate>
+    <form class="panel" id="composer" role="tabpanel" aria-labelledby="tab-video" novalidate>
       <h2>Новое видео</h2>
 
       <label class="field">
@@ -51,7 +52,7 @@
         </label>
         <fieldset class="field">
           <legend class="field-label">Длительность</legend>
-          <div class="segmented" id="durations"></div>
+          <div class="segmented segmented--radio" id="durations"></div>
         </fieldset>
         <label class="field">
           <span class="field-label">Размер кадра</span>
@@ -71,25 +72,25 @@
       <button type="submit" class="primary" id="submit">Сгенерировать</button>
     </form>
 
-    <form class="panel composer" id="living" role="tabpanel" aria-labelledby="tab-living" novalidate hidden>
+    <form class="panel" id="living" role="tabpanel" aria-labelledby="tab-living" novalidate hidden>
       <h2>Живое фото</h2>
       <p class="hint">Загрузи фото — оно оживёт, как портрет из «Гарри Поттера»: ролик на 8 секунд, где снимок стоит ровно посередине. Модель дорисует 4 секунды до него и 4 секунды после.</p>
 
       <div class="photo" id="living-photo"></div>
       <input type="file" id="living-input" accept="image/png,image/jpeg,image/webp" hidden>
 
-      <div class="settings wide">
+      <div class="settings settings-wide">
         <label class="field">
           <span class="field-label">Модель</span>
           <select id="living-model"></select>
         </label>
         <fieldset class="field">
           <legend class="field-label">Ориентация</legend>
-          <div class="segmented" id="living-orientations"></div>
+          <div class="segmented segmented--radio" id="living-orientations"></div>
         </fieldset>
         <fieldset class="field">
           <legend class="field-label">Качество</legend>
-          <div class="segmented" id="living-qualities"></div>
+          <div class="segmented segmented--radio" id="living-qualities"></div>
         </fieldset>
       </div>
       <p class="hint" id="living-note"></p>
@@ -106,9 +107,9 @@
    </div>
 
     <div class="side">
-      <section class="panel" id="job-panel" aria-live="polite">
+      <section class="panel" id="job-panel">
         <h2>Генерация</h2>
-        <div id="job"></div>
+        <div class="job" id="job"></div>
       </section>
       <section class="panel">
         <h2>История</h2>
