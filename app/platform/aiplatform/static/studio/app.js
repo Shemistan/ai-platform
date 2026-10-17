@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, api, debounce, h, logBlock, progressBar, seconds, statusChip } from "/ui.js";
+import { $, announce, api, confirmAction, confirmPublish, debounce, h, logBlock, progressBar, STATUS, statusChip } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -15,7 +15,9 @@ const HINTS = {
   article: "Вставь готовую статью → постер → слайды с картинками → озвучка → видео 16:9 (и шортс 9:16) → публикация.",
   post: "Свой постер, своя озвучка (или озвучка подписи) и подпись → одно видео с постером под звук или картинка с аудио → в каналы.",
 };
-const state = { config: null, projects: [], project: null, signature: "", drafts: {}, stepDrafts: {}, timer: null, publish: {} };
+// gen — поколение отрисовки: +1 заставляет перерисовать все блоки (после сохранения правки, нового канала).
+// expanded — раскрытие шагов руками: «id выпуска:id шага» → true/false, живёт между перерисовками.
+const state = { config: null, projects: [], project: null, gen: 0, drafts: {}, stepDrafts: {}, timer: null, publish: {}, expanded: {}, statuses: null };
 
 // --- настройки: поля по одному — из них собраны форма «нового выпуска», «настройки выпуска» и карточки шагов ---
 
@@ -152,12 +154,20 @@ function fieldsOf(values, prefix) {
                 c.label,
                 h("span", { class: "muted" }, c.format === "vertical" ? "9:16" : "16:9"),
                 c.problem ? h("span", { class: "status failed" }, c.problem) : null,
-                c.type === "telegram" ? h("button", { type: "button", class: "link danger", onclick: () => deleteChannel(c.id, prefix) }, "убрать") : null,
               ),
             ),
+            // Удаление канала затрагивает все сценарии — только на вкладке «Каналы», с подтверждением.
+            h("p", { class: "hint" }, "Убрать канал из списка — на вкладке ", h("a", { class: "link", href: "/channels/" }, "«Каналы»"), "."),
           )
         : h("p", { class: "hint" }, `Каналы не настроены: ${cfg.channels_file}`),
-    auto_publish: () => check("auto_publish", "Публиковать сразу, без моей проверки", null, values.auto_publish),
+    // Необратимое: выпуск уйдёт в каналы без просмотра — тумблер предупреждающего цвета, а не обычный флажок.
+    auto_publish: () =>
+      h(
+        "label",
+        { class: "check auto-publish" },
+        h("input", { type: "checkbox", role: "switch", id: id("auto_publish"), checked: values.auto_publish }),
+        h("span", {}, "Публиковать сразу, без моей проверки", h("span", { class: "hint warn" }, "Опубликуется без просмотра: выпуск уйдёт в каналы, как только соберётся.")),
+      ),
     post_format: () =>
       h(
         "div",
@@ -480,7 +490,7 @@ async function open(id) {
 
 function rerenderSettings(prefix) {
   if (prefix === "create") return renderCreate();
-  state.signature = "";
+  state.gen += 1;
   show(state.project);
 }
 
@@ -490,20 +500,12 @@ async function addChannel(prefix) {
   try {
     const res = await api("POST", `${API}/channels`, { label: get("new-label").value, chat_id: get("new-chat").value, format: get("new-format").value });
     state.config.channels = res.channels;
+    for (const name of ["new-label", "new-chat"]) get(name).value = ""; // иначе перерисовка вернёт набранное
     if (prefix === "step-publish") publishPick(state.project).channels.add(res.added); // канал из шага — сразу в выбранные
     rerenderSettings(prefix);
   } catch (err) {
     error.hidden = false;
     error.textContent = err.message;
-  }
-}
-
-async function deleteChannel(channelId, prefix) {
-  try {
-    state.config.channels = (await api("POST", `${API}/channels/${channelId}/delete`)).channels;
-    rerenderSettings(prefix);
-  } catch (err) {
-    alertBox(err.message);
   }
 }
 
@@ -513,8 +515,21 @@ function publishPick(project) {
   return state.publish[project.id];
 }
 
-async function publishNow(project) {
+// Публикация необратима: сначала подтверждение — каналы по названиям, начало подписи, вердикт судьи.
+async function publishNow() {
+  const project = state.project;
   const pick = publishPick(project);
+  const chosen = state.config.channels.filter((c) => pick.channels.has(c.id));
+  if (!chosen.length) return alertBox("Отметь хотя бы один канал в шаге «Публикация».");
+  const unsaved = state.drafts.post !== undefined && state.drafts.post !== project.artifacts.post;
+  const ok = await confirmPublish({
+    channels: chosen,
+    caption: project.artifacts.post || "",
+    verdict: project.review?.verdict,
+    review: project.review?.text,
+    note: unsaved ? "Правка подписи не сохранена — уйдёт сохранённая подпись." : null,
+  });
+  if (!ok) return;
   await act("publish", { channels: [...pick.channels], force: pick.force, ignore_verdict: pick.ignoreVerdict, ignore_disclaimers: pick.noDisclaimers });
   pick.force = false;
 }
@@ -564,10 +579,28 @@ function stepSettings(step) {
   );
 }
 
-async function rerunStep(step) {
+// Перезапуск сбрасывает все зависимые шаги — это десятки минут GPU, поэтому сначала спрашиваем.
+async function rerunStep(stepId) {
+  const project = state.project;
+  const step = project.steps.find((s) => s.id === stepId);
+  if (step.status !== "pending") {
+    const visible = visibleSteps(project);
+    const resets = visible.filter((s) => (step.dependents || []).includes(s.id) && s.status !== "pending");
+    const ok = await confirmAction({
+      title: `Перезапустить «${step.label}»?`,
+      body: resets.length
+        ? [h("p", {}, "Сбросятся и соберутся заново:"), h("ul", { class: "confirm-list" }, ...resets.map((s) => h("li", {}, `${visible.indexOf(s) + 1}. ${s.label}`)))]
+        : h("p", {}, "Другие шаги не затронуты."),
+      confirmLabel: "Перезапустить",
+      danger: resets.length > 0,
+    });
+    if (!ok) return;
+  }
   const names = STEP_FIELDS[step.id];
   const settings = names && document.getElementById(`step-${step.id}-settings`) ? readSettings(`step-${step.id}`, names) : undefined;
   if (await act("run", { step: step.id, settings })) delete state.stepDrafts[step.id];
+  state.gen += 1; // параметры шага — из сохранённых настроек, а не из набросков
+  show(state.project);
 }
 
 function alertBox(message) {
@@ -580,10 +613,10 @@ function alertBox(message) {
 
 async function saveArtifact(name, text) {
   try {
-    show(await api("POST", `${API}/projects/${state.project.id}/artifacts/${name}`, { text }));
+    const fresh = await api("POST", `${API}/projects/${state.project.id}/artifacts/${name}`, { text });
     delete state.drafts[name];
-    state.signature = "";
-    show(state.project);
+    state.gen += 1;
+    show(fresh);
   } catch (err) {
     alertBox(err.message);
   }
@@ -600,7 +633,8 @@ async function upload(what, file) {
 // --- отрисовка выпуска ---
 
 function editor(name, value, rows = 8, mono = false) {
-  const area = h("textarea", { rows, class: mono ? "mono" : null, oninput: (e) => (state.drafts[name] = e.target.value) });
+  // id — чтобы после перерисовки вернуть фокус и курсор; текст живёт в state.drafts.
+  const area = h("textarea", { id: `editor-${name}`, rows, class: mono ? "mono" : null, oninput: (e) => (state.drafts[name] = e.target.value) });
   area.value = state.drafts[name] ?? value ?? "";
   return h(
     "div",
@@ -684,9 +718,15 @@ function copyButton(text) {
       type: "button",
       class: "link",
       onclick: async (e) => {
-        await navigator.clipboard?.writeText(text);
-        e.target.textContent = "Скопировано";
-        setTimeout(() => (e.target.textContent = "Скопировать промпт"), 1500);
+        const btn = e.currentTarget;
+        try {
+          await navigator.clipboard.writeText(text);
+          btn.textContent = "Скопировано";
+        } catch {
+          btn.textContent = "Не вышло";
+        }
+        announce(btn.textContent);
+        setTimeout(() => (btn.textContent = "Скопировать промпт"), 1500);
       },
     },
     "Скопировать промпт",
@@ -791,7 +831,7 @@ function stepBody(step) {
       return a.poster_prompt
         ? [
             editor("poster_prompt", a.poster_prompt, 3),
-            h("button", { type: "button", class: "link", onclick: () => navigator.clipboard?.writeText(a.poster_prompt) }, "Скопировать промпт"),
+            copyButton(a.poster_prompt),
           ]
         : [];
     case "poster":
@@ -898,7 +938,7 @@ function stepBody(step) {
               )
             : null,
           channelAdder("step-publish"),
-          h("button", { type: "button", class: "primary", disabled: p.running, onclick: () => publishNow(p) }, "Опубликовать"),
+          h("button", { type: "button", class: "primary", disabled: p.running, onclick: publishNow }, "Опубликовать…"),
         ),
         p.published
           ? h(
@@ -921,93 +961,409 @@ function stepBody(step) {
   }
 }
 
+// --- шаги: свёрнутые готовые, раскрытые активные ---
+
+const visibleSteps = (project) => project.steps.filter((s) => !HIDDEN_STEPS[project.scenario]?.has(s.id));
+
+// Готовые и пропущенные шаги по умолчанию свёрнуты в строку; раскрытие руками помнится между опросами.
+function collapsed(step) {
+  const own = state.expanded[`${state.project.id}:${step.id}`];
+  if (own !== undefined) return !own;
+  return step.status === "done" || step.status === "skipped";
+}
+
+function toggleStep(stepId) {
+  const step = state.project.steps.find((s) => s.id === stepId);
+  state.expanded[`${state.project.id}:${stepId}`] = collapsed(step);
+  show(state.project);
+}
+
+// Прокрутить к шагу (раскрыв его) — из степпера и главной кнопки шапки.
+function goToStep(stepId) {
+  const step = state.project.steps.find((s) => s.id === stepId);
+  if (step && collapsed(step)) {
+    state.expanded[`${state.project.id}:${stepId}`] = true;
+    show(state.project);
+  }
+  const node = $(`step-${stepId}`);
+  if (!node) return;
+  node.scrollIntoView({ behavior: "smooth", block: "start" });
+  node.focus({ preventScroll: true });
+}
+
+const plural = (n, one, few, many) => {
+  const d = n % 10;
+  const dd = n % 100;
+  return `${n} ${d === 1 && dd !== 11 ? one : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many}`;
+};
+
+// Сводка свёрнутого шага одной строкой: «71 слайд, 26 с картинкой».
+function stepSummary(step) {
+  const p = state.project;
+  const a = p.artifacts;
+  const f = p.files;
+  if (step.status === "skipped") return step.note || "";
+  switch (step.id) {
+    case "text": {
+      const words = (p.scenario === "post" ? a.post : a.text)?.split(/\s+/).filter(Boolean).length || 0;
+      return [plural(words, "слово", "слова", "слов"), p.review?.verdict ? `судья: ${p.review.verdict}` : ""].filter(Boolean).join(" · ");
+    }
+    case "poster_prompt":
+      return a.poster_prompt ? `${a.poster_prompt.slice(0, 80)}${a.poster_prompt.length > 80 ? "…" : ""}` : "";
+    case "poster":
+      return f.poster ? "постер готов" : "";
+    case "plan": {
+      if (!a.plan) return "";
+      const n = a.plan.slides.length;
+      const withImage = a.plan.slides.filter((s) => (s.kind || (s.image_prompt ? "image" : "bullets")) === "image").length;
+      return `${plural(n, "слайд", "слайда", "слайдов")}, ${withImage} с картинкой`;
+    }
+    case "images":
+      return plural(Object.keys(f.images || {}).length, "картинка", "картинки", "картинок");
+    case "clips":
+      return plural(p.slides.filter((s) => s.clip).length, "ролик", "ролика", "роликов");
+    case "voice":
+      return f.voice ? "озвучка готова" : "";
+    case "render":
+      return f.video ? "видео собрано" : "";
+    case "short":
+      return f.short_video ? "шортс собран" : "";
+    case "publish": {
+      const sent = (p.published || []).filter((r) => r.sent).map((r) => r.label);
+      return sent.length ? `опубликовано: ${sent.join(", ")}` : "";
+    }
+    default:
+      return "";
+  }
+}
+
 function renderStep(step) {
   const p = state.project;
   const approveLabel = { text: "Продолжить", images: "Продолжить без недостающих", clips: "Продолжить без недостающих" }[step.id];
   const localMode = (step.id === "images" && p.settings.images_mode !== "upload") || (step.id === "clips" && p.settings.clips_mode !== "upload");
   const canApprove = step.status === "waiting" && approveLabel && !localMode;
+  const folded = collapsed(step);
+  const bodyId = `step-${step.id}-body`;
+  const head = h(
+    "div",
+    { class: "step-head" },
+    h("h3", {}, step.label),
+    statusChip(step.status),
+    folded ? h("span", { class: "step-summary muted small" }, stepSummary(step)) : null,
+    h("button", { type: "button", class: "link", "aria-expanded": String(!folded), "aria-controls": bodyId, onclick: () => toggleStep(step.id) }, folded ? "Развернуть" : "Свернуть"),
+    step.status !== "running"
+      ? step.status === "pending"
+        ? h("button", { type: "button", class: "link", disabled: p.running, onclick: () => rerunStep(step.id) }, "Выполнить шаг")
+        : h("button", { type: "button", class: "secondary small", disabled: p.running, onclick: () => rerunStep(step.id) }, "Перезапустить шаг")
+      : null,
+  );
+  const attrs = { class: `step ${step.status}${folded ? " collapsed" : ""}`, id: `step-${step.id}`, tabindex: "-1" };
+  if (folded) return h("article", attrs, head);
   return h(
     "article",
-    { class: `step ${step.status}` },
+    attrs,
+    head,
     h(
       "div",
-      { class: "step-head" },
-      h("h3", {}, step.label),
-      statusChip(step.status),
-      step.status !== "running"
-        ? h("button", { type: "button", class: "link", disabled: p.running, onclick: () => rerunStep(step) }, step.status === "pending" ? "Выполнить шаг" : "Перезапустить шаг")
+      { class: "step-main", id: bodyId },
+      step.status === "running" ? progressBar(step.progress || { stage: "…", percent: 0 }) : null,
+      step.error ? h("p", { class: "job-error" }, step.error) : null,
+      step.note ? h("p", { class: "step-note" }, step.note) : null,
+      step.status === "pending" && step.blocked_by.length
+        ? h("p", { class: "hint" }, `Начнётся, когда будет готово: ${step.blocked_by.join(", ")}.`)
         : null,
+      canApprove ? h("button", { type: "button", class: "primary", onclick: () => act("approve", { step: step.id }) }, approveLabel) : null,
+      stepSettings(step),
+      h("div", { class: "step-body" }, ...stepBody(step)),
     ),
-    step.status === "running" ? progressBar(step.progress || { stage: "…", percent: 0 }) : null,
-    step.error ? h("p", { class: "job-error" }, step.error) : null,
-    step.note ? h("p", { class: "step-note" }, step.note) : null,
-    step.status === "pending" && step.blocked_by.length
-      ? h("p", { class: "hint" }, `Начнётся, когда будет готово: ${step.blocked_by.join(", ")}.`)
-      : null,
-    canApprove ? h("button", { type: "button", class: "primary", onclick: () => act("approve", { step: step.id }) }, approveLabel) : null,
-    stepSettings(step),
-    h("div", { class: "step-body" }, ...stepBody(step)),
   );
+}
+
+// --- шапка: главное действие по состоянию выпуска, степпер ---
+
+const UPLOADS = {
+  poster: ["poster_mode", "Загрузить постер"],
+  images: ["images_mode", "Загрузить картинки"],
+  clips: ["clips_mode", "Загрузить ролики"],
+  voice: ["voice_mode", "Загрузить озвучку"],
+};
+
+// Что выпуску нужно дальше: { label, run, runAll } или null, если делать нечего.
+function nextAction(project) {
+  if (project.running) return null;
+  const steps = visibleSteps(project);
+  const need = steps.find((s) => s.status === "waiting" || s.status === "failed");
+  if (need?.status === "failed") return { label: `Повторить шаг ${steps.indexOf(need) + 1}: ${need.label}`, run: () => rerunStep(need.id) };
+  if (need) {
+    if (need.id === "publish") {
+      const blocked = project.review?.verdict === "не готово" && !publishPick(project).ignoreVerdict;
+      return blocked ? { label: "К публикации: судья против", run: () => goToStep("publish") } : { label: "Опубликовать…", run: publishNow };
+    }
+    if (need.id === "text" && project.settings.review_text) return { label: "Текст ок, продолжить", run: () => act("approve", { step: "text" }) };
+    const [mode, label] = UPLOADS[need.id] || [];
+    if (mode && project.settings[mode] === "upload") return { label, run: () => goToStep(need.id) };
+    return { label: `К шагу «${need.label}»`, run: () => goToStep(need.id) };
+  }
+  if (steps.some((s) => s.status === "pending")) return { label: "Запустить всё", run: () => act("run", {}), runAll: true };
+  return null;
+}
+
+function overallStatus(project) {
+  const steps = project.steps;
+  if (project.running) return "running";
+  if (steps.some((s) => s.status === "failed")) return "failed";
+  if (steps.some((s) => s.status === "waiting")) return "waiting";
+  return steps.every((s) => s.status === "done" || s.status === "skipped") ? "done" : "pending";
+}
+
+function renderHead(project) {
+  const running = project.running;
+  const next = nextAction(project);
+  return h(
+    "div",
+    { class: "panel project-head" },
+    h("h2", {}, project.title),
+    statusChip(overallStatus(project)),
+    running ? h("button", { type: "button", class: "secondary", onclick: () => act("cancel") }, "Остановить") : null,
+    next ? h("button", { type: "button", class: "primary", onclick: next.run }, next.label) : null,
+    // «Запустить всё» — главное действие, только когда выпуску больше ничего от тебя не нужно.
+    !running && !next?.runAll ? h("button", { type: "button", class: "secondary", onclick: () => act("run", {}) }, "Запустить всё") : null,
+    project.settings.draft ? h("span", { class: "status waiting" }, "черновик") : null,
+    project.settings.draft && !running
+      ? h("button", { type: "button", class: "secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: makeFinal }, "Сделать чистовик")
+      : null,
+    project.archived ? h("span", { class: "status skipped" }, "в архиве") : null,
+    running
+      ? null
+      : h("button", { type: "button", class: "link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: cloneProject }, "Копия выпуска"),
+    running
+      ? null
+      : h(
+          "button",
+          { type: "button", class: "link", onclick: async () => (await act("archive", { archived: !state.project.archived })) && loadProjects() },
+          project.archived ? "Вернуть из архива" : "В архив",
+        ),
+    h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
+  );
+}
+
+const MARKS = { done: "✓", skipped: "↷", running: "●", waiting: "!", failed: "×", pending: "○" };
+
+// Карта пайплайна: липкая строка шагов со статусами, клик — к шагу.
+function renderStepper(project) {
+  const steps = visibleSteps(project);
+  return h(
+    "nav",
+    { class: "stepper", "aria-label": "Шаги выпуска" },
+    h(
+      "ol",
+      {},
+      ...steps.map((s, i) =>
+        h(
+          "li",
+          {},
+          h(
+            "button",
+            { type: "button", class: `stepper-item ${s.status}`, title: STATUS[s.status] || s.status, onclick: () => goToStep(s.id) },
+            h("span", { class: "mark", "aria-hidden": "true" }, MARKS[s.status] || "○"),
+            h("span", {}, `${i + 1}. ${s.label}`),
+            h("span", { class: "sr-only" }, `: ${STATUS[s.status] || s.status}`),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function renderSettings(project) {
+  return h(
+    "details",
+    { class: "panel settings-box", id: "edit-settings" },
+    h("summary", {}, "Настройки выпуска"),
+    settingsForm(project.settings, "edit"),
+    h(
+      "div",
+      { class: "actions" },
+      h("button", { type: "button", class: "secondary", disabled: project.running, onclick: () => act("settings", readSettings("edit")) }, "Сохранить настройки"),
+      h("span", { class: "hint" }, "Изменённые настройки сбросят только затронутые шаги."),
+    ),
+  );
+}
+
+// --- отрисовка по блокам: опрос перерисовывает только изменившиеся блоки и шаги ---
+
+// Данные выпуска, от которых зависит тело шага (кроме самого шага, настроек и running).
+const STEP_DATA = {
+  text: (p) => [p.artifacts.text, p.artifacts.post, p.review],
+  poster_prompt: (p) => [p.artifacts.poster_prompt],
+  poster: (p) => [p.artifacts.poster_prompt, p.files.poster],
+  plan: (p) => [p.artifacts.plan, p.files.images],
+  images: (p) => [p.slides],
+  clips: (p) => [p.slides],
+  voice: (p) => [p.files.voice],
+  render: (p) => [p.files.video, p.files.poster, p.disclaimers],
+  short: (p) => [p.artifacts.short, p.files.short_video],
+  publish: (p) => {
+    const pick = publishPick(p);
+    return [p.artifacts.post, p.published, p.review, state.config.channels, [...pick.channels], pick.force, pick.ignoreVerdict];
+  },
+};
+
+const blockSig = new WeakMap();
+const TEXT_INPUTS = new Set(["text", "search", "url", "email", "number", "tel", "password", "date", "time", "datetime-local", "month", "week"]);
+const isEditable = (el) => Boolean(el) && (el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable || (el.tagName === "INPUT" && TEXT_INPUTS.has(el.type)));
+
+// В блоке фокус в поле, которое не вернуть после перерисовки (открытый список, поле без id) — блок подождёт.
+function holdsInput(node) {
+  const el = document.activeElement;
+  return node.contains(el) && isEditable(el) && (el.tagName === "SELECT" || el.isContentEditable || !el.id);
+}
+
+const fieldKey = (el) => (el.type === "radio" ? (el.name ? `${el.name}=${el.value}` : null) : el.id || null);
+
+// Несохранённые правки полей блока: чекбоксы, переключатели, списки и однострочные поля (тексты — в state.drafts).
+function editsOf(node) {
+  const out = new Map();
+  for (const el of node.querySelectorAll("input, select")) {
+    const key = fieldKey(el);
+    if (!key || el.type === "file") continue;
+    if (el.type === "checkbox" || el.type === "radio") {
+      if (el.checked !== el.defaultChecked) out.set(key, el.checked);
+    } else if (el.tagName === "SELECT") {
+      if ([...el.options].some((o) => o.selected !== o.defaultSelected)) out.set(key, el.value);
+    } else if (el.value !== el.defaultValue) out.set(key, el.value);
+  }
+  return out;
+}
+
+function applyEdits(node, edits) {
+  if (!edits.size) return;
+  for (const el of node.querySelectorAll("input, select")) {
+    const key = fieldKey(el);
+    if (!key || !edits.has(key)) continue;
+    if (el.type === "checkbox" || el.type === "radio") el.checked = edits.get(key);
+    else el.value = edits.get(key);
+  }
+}
+
+const detailsKey = (d) => d.id || (d.querySelector(":scope > summary")?.textContent || "").replace(/\d+/g, "#");
+
+// Перенести из старого узла блока в новый то, что человек уже сделал: правки полей, раскрытые <details>,
+// и сами медиа-элементы с тем же адресом — ролик в превью не начнётся сначала, плеер не собьётся.
+function carryOver(prev, node) {
+  applyEdits(node, editsOf(prev));
+  const opened = new Map([...prev.querySelectorAll("details")].map((d) => [detailsKey(d), d.open]));
+  for (const d of node.querySelectorAll("details")) if (opened.has(detailsKey(d))) d.open = opened.get(detailsKey(d));
+  const media = new Map();
+  for (const m of prev.querySelectorAll("video[src], audio[src], img[src]")) {
+    const key = `${m.tagName}:${m.getAttribute("src")}`;
+    if (!media.has(key)) media.set(key, m);
+  }
+  for (const m of node.querySelectorAll("video[src], audio[src], img[src]")) {
+    const key = `${m.tagName}:${m.getAttribute("src")}`;
+    const twin = media.get(key);
+    if (!twin) continue;
+    media.delete(key);
+    twin.className = m.className;
+    m.replaceWith(twin); // перенос в том же такте: браузер не ставит видео на паузу и не грузит заново
+  }
+}
+
+// items: [{ key, sig, build }] — узел с той же подписью остаётся как есть, изменившийся пересобирается.
+function reconcile(parent, items, projectId) {
+  const old = new Map();
+  for (const n of parent.children) if (n.dataset.key) old.set(n.dataset.key, n);
+  const nodes = items.map(({ key, sig, build }) => {
+    const prev = old.get(key);
+    if (prev && (blockSig.get(prev) === sig || holdsInput(prev))) return prev;
+    const node = build();
+    node.dataset.key = key;
+    node.dataset.project = projectId;
+    blockSig.set(node, sig);
+    if (prev && prev.dataset.project === projectId) carryOver(prev, node);
+    return node;
+  });
+  for (const n of [...parent.children]) if (!nodes.includes(n)) n.remove();
+  nodes.forEach((n, i) => {
+    if (parent.children[i] !== n) parent.insertBefore(n, parent.children[i] || null);
+  });
+}
+
+// Фокус и курсор в поле переживают перерисовку его блока.
+function captureFocus() {
+  const el = document.activeElement;
+  if (!el?.id || !$("project").contains(el)) return null;
+  let start = null;
+  let end = null;
+  try {
+    start = el.selectionStart;
+    end = el.selectionEnd;
+  } catch {
+    /* у чекбоксов и списков выделения нет */
+  }
+  return { el, id: el.id, start, end, scroll: el.scrollTop };
+}
+
+function restoreFocus(saved) {
+  if (!saved || saved.el.isConnected) return;
+  const twin = document.getElementById(saved.id);
+  if (!twin) return;
+  twin.focus({ preventScroll: true });
+  try {
+    if (saved.start !== null) twin.setSelectionRange(saved.start, saved.end);
+  } catch {
+    /* поле без выделения */
+  }
+  twin.scrollTop = saved.scroll;
+}
+
+// Скринридеру — только переходы шагов («готово», «ошибка», «ждёт вас»), не каждую перерисовку.
+function announceChanges(project) {
+  const now = Object.fromEntries(project.steps.map((s) => [s.id, s.status]));
+  const before = state.statuses?.id === project.id ? state.statuses.steps : null;
+  state.statuses = { id: project.id, steps: now };
+  if (!before) return;
+  const changed = visibleSteps(project).filter((s) => before[s.id] !== s.status && ["done", "failed", "waiting"].includes(s.status));
+  if (changed.length) announce(changed.map((s) => `Шаг «${s.label}»: ${STATUS[s.status]}`).join(". "));
 }
 
 function show(project) {
   state.project = project;
-  const signature = JSON.stringify(project);
-  if (signature === state.signature) return schedule();
-  state.signature = signature;
-  const running = project.running;
+  announceChanges(project);
+  const saved = captureFocus();
+  const base = [state.gen, project.id];
+  const sig = (...parts) => JSON.stringify([base, ...parts]);
+  const statuses = project.steps.map((s) => s.status);
   const check = checkBox(project, { done: !project.estimate?.parts?.length });
-  $("project").replaceChildren(
-    h(
-      "div",
-      { class: "panel project-head" },
-      h("h2", {}, project.title),
-      statusChip(running ? "running" : project.steps.some((s) => s.status === "failed") ? "failed" : project.steps.some((s) => s.status === "waiting") ? "waiting" : project.steps.every((s) => s.status === "done" || s.status === "skipped") ? "done" : "pending"),
-      running
-        ? h("button", { type: "button", class: "secondary", onclick: () => act("cancel") }, "Остановить")
-        : h("button", { type: "button", class: "primary", onclick: () => act("run", {}) }, "Запустить всё"),
-      project.settings.draft ? h("span", { class: "status waiting" }, "черновик") : null,
-      project.settings.draft && !running
-        ? h("button", { type: "button", class: "secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: makeFinal }, "Сделать чистовик")
+  const root = $("project");
+  reconcile(
+    root,
+    [
+      {
+        key: "head",
+        sig: sig(project.title, project.running, statuses, project.settings, project.archived, project.review?.verdict, publishPick(project).ignoreVerdict),
+        build: () => renderHead(project),
+      },
+      { key: "settings", sig: sig(project.settings, state.config.channels, project.running), build: () => renderSettings(project) },
+      check
+        ? { key: "check", sig: sig(project.estimate, project.preflight, project.summary, project.running, project.scenario), build: () => h("div", { class: "panel" }, check, longTextActions(project)) }
         : null,
-      project.archived ? h("span", { class: "status skipped" }, "в архиве") : null,
-      running
-        ? null
-        : h("button", { type: "button", class: "link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: cloneProject }, "Копия выпуска"),
-      running
-        ? null
-        : h(
-            "button",
-            { type: "button", class: "link", onclick: async () => (await act("archive", { archived: !project.archived })) && loadProjects() },
-            project.archived ? "Вернуть из архива" : "В архив",
-          ),
-      h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
-    ),
-    h(
-      "details",
-      { class: "panel settings-box" },
-      h("summary", {}, "Настройки выпуска"),
-      settingsForm(project.settings, "edit"),
-      h(
-        "div",
-        { class: "actions" },
-        h(
-          "button",
-          {
-            type: "button",
-            class: "secondary",
-            disabled: running,
-            onclick: () => act("settings", readSettings("edit")),
-          },
-          "Сохранить настройки",
-        ),
-        h("span", { class: "hint" }, "Изменённые настройки сбросят только затронутые шаги."),
-      ),
-    ),
-    check ? h("div", { class: "panel" }, check, longTextActions(project)) : null,
-    h("div", { class: "steps" }, ...project.steps.filter((s) => !HIDDEN_STEPS[project.scenario]?.has(s.id)).map(renderStep)),
-    h("div", { class: "panel" }, logBlock(project.log, "Журнал выпуска") || h("p", { class: "muted small" }, "Журнал пуст.")),
+      { key: "stepper", sig: sig(statuses), build: () => renderStepper(project) },
+      { key: "steps", sig: sig(), build: () => h("div", { class: "steps" }) },
+      { key: "log", sig: sig(project.log), build: () => h("div", { class: "panel" }, logBlock(project.log, "Журнал выпуска") || h("p", { class: "muted small" }, "Журнал пуст.")) },
+    ].filter(Boolean),
+    project.id,
   );
+  reconcile(
+    root.querySelector(':scope > [data-key="steps"]'),
+    visibleSteps(project).map((step) => ({
+      key: step.id,
+      sig: sig(step, project.running, project.settings, collapsed(step), STEP_DATA[step.id]?.(project)),
+      build: () => renderStep(step),
+    })),
+    project.id,
+  );
+  restoreFocus(saved);
   schedule();
 }
 
@@ -1023,18 +1379,27 @@ async function refresh() {
   try {
     if (state.project && Date.now() - (state.dragging || 0) < 1500) return schedule();
     if (state.project) {
-      const editing = document.activeElement?.tagName === "TEXTAREA" || document.activeElement?.tagName === "SELECT";
-      const fresh = await api("GET", `${API}/projects/${state.project.id}`);
-      if (!editing || fresh.running !== state.project.running) show(fresh);
-      else schedule();
-      if (fresh.running !== state.project.running) loadProjects();
+      const { id, running } = state.project;
+      const fresh = await api("GET", `${API}/projects/${id}`);
+      if (state.project.id !== id) return; // пока ждали ответ, открыли другой выпуск
+      // Блоки с полем в фокусе не пересобираются или возвращают фокус и курсор — см. reconcile.
+      show(fresh);
+      if (fresh.running !== running) loadProjects();
     }
   } catch {
     schedule();
   }
 }
 
+// Липкий степпер встаёт под шапку платформы: её высота зависит от ширины окна.
+function trackNavHeight() {
+  const nav = document.querySelector(".platform-nav");
+  if (nav) document.documentElement.style.setProperty("--nav-h", `${nav.offsetHeight}px`);
+}
+window.addEventListener("resize", debounce(trackNavHeight, 150));
+
 async function init() {
+  trackNavHeight();
   $("scenario-title").textContent = SCENARIO_TITLES[scenario];
   $("scenario-hint").textContent = HINTS[scenario];
   document.title = `${$("scenario-title").textContent} — AI Platform`;

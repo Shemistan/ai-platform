@@ -1,39 +1,6 @@
 // Вкладка «Фото» (перенос UI photogen): режим, промпт, исходное фото с маской или полями, запуск и результат. Без сборки и зависимостей.
 
-const $ = (id) => document.getElementById(id);
-
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (value === false || value == null) continue;
-    if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
-    else if (key === "class") el.className = value;
-    else if (key in el && key !== "list") el[key] = value;
-    else el.setAttribute(key, value === true ? "" : value);
-  }
-  for (const child of children.flat()) {
-    if (child != null && child !== false) el.append(child);
-  }
-  return el;
-}
-
-async function api(method, path, body) {
-  const init = { method };
-  if (body instanceof Blob) init.body = body;
-  else if (body !== undefined) {
-    init.body = JSON.stringify(body);
-    init.headers = { "Content-Type": "application/json" };
-  }
-  let resp;
-  try {
-    resp = await fetch(path, init);
-  } catch {
-    throw new Error("Сервис не отвечает. Проверь, что он запущен.");
-  }
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error || `Ошибка ${resp.status}`);
-  return data;
-}
+import { $, api, h, STATUS, jobProgress } from "/ui.js";
 
 const state = {
   config: null,
@@ -358,13 +325,6 @@ async function submit(event) {
 
 // ---------- задачи ----------
 
-const STATUS = {
-  queued: "В очереди",
-  running: "Генерируется",
-  done: "Готово",
-  failed: "Ошибка",
-  canceled: "Отменено",
-};
 const isActive = (job) => job.status === "queued" || job.status === "running";
 const isUpscale = (job) => job.mode === "upscale";
 const modeLabel = (id) =>
@@ -380,27 +340,6 @@ function fmtElapsed(total) {
   if (total < 60) return `${total.toFixed(1)} с`;
   const s = Math.round(total);
   return `${Math.floor(s / 60)} мин ${String(s % 60).padStart(2, "0")} с`;
-}
-
-function progressBlock(job) {
-  const p = job.progress;
-  const queued = job.status === "queued";
-  const stage = queued
-    ? job.queue_position > 0 ? `Ждёт очереди: впереди ${job.queue_position}` : "Сейчас начнётся"
-    : p.stage;
-  return h("div", { class: "progress" },
-    h("div", { class: "progress-head" },
-      h("span", { class: "stage" }, stage, p.steps ? h("span", { class: "muted" }, ` · шаг ${p.step} из ${p.steps}`) : null),
-      h("span", { class: "percent" }, queued ? "" : `${Math.round(p.percent)}%`),
-    ),
-    h("div", { class: `bar${queued ? " waiting" : ""}`, role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(p.percent)) },
-      h("div", { class: "bar-fill", style: `width:${queued ? 0 : p.percent}%` }),
-    ),
-    h("div", { class: "progress-foot" },
-      h("span", { class: "muted small" }, queued ? "" : `Прошло ${fmtElapsed(job.elapsed_s)}`),
-      h("button", { type: "button", class: "link danger", onclick: () => cancelJob(job.id) }, "Отменить"),
-    ),
-  );
 }
 
 function inputsBlock(job) {
@@ -483,9 +422,9 @@ function renderJob() {
       job.backend === "fake" ? h("span", { class: "status demo" }, "Демо — не модель") : null,
       h("span", { class: "muted small" }, jobMeta(job)),
     ),
-    h("p", { class: "job-prompt" }, job.prompt),
+    h("p", { class: "job-text" }, job.prompt),
   ];
-  if (isActive(job)) parts.push(progressBlock(job));
+  if (isActive(job)) parts.push(jobProgress(job, { onCancel: (j) => cancelJob(j.id), elapsed: fmtElapsed }));
   if (job.status === "done") {
     parts.push(
       h("a", { class: "result-link", href: job.image_url, target: "_blank", title: "Открыть в полном размере" },
@@ -530,7 +469,7 @@ function renderHistory() {
             ? h("img", { class: "history-thumb", src: thumb, alt: "", loading: "lazy" })
             : h("span", { class: "history-thumb text" }, "T"),
           h("span", { class: "history-text" },
-            h("span", { class: "history-prompt" }, job.prompt),
+            h("span", { class: "history-title" }, job.prompt),
             h("span", { class: "muted small" },
               [when, job.model_label, modeLabel(job.mode), job.status === "done" ? fmtElapsed(job.elapsed_s) : null].filter(Boolean).join(" · ")),
           ),
@@ -601,6 +540,7 @@ function setBanner(text, kind) {
   banner.hidden = !shown;
   if (!shown) return;
   banner.className = `banner ${shown.kind}`;
+  banner.setAttribute("role", shown.kind === "error" ? "alert" : "status"); // ошибку зачитать сразу
   banner.replaceChildren(...[].concat(shown.text));
 }
 

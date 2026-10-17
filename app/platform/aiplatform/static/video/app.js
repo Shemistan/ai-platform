@@ -1,39 +1,6 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
-const $ = (id) => document.getElementById(id);
-
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (value === false || value == null) continue;
-    if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
-    else if (key === "class") el.className = value;
-    else if (key in el && key !== "list") el[key] = value;
-    else el.setAttribute(key, value === true ? "" : value);
-  }
-  for (const child of children.flat()) {
-    if (child != null && child !== false) el.append(child);
-  }
-  return el;
-}
-
-async function api(method, path, body) {
-  const init = { method };
-  if (body instanceof Blob) init.body = body;
-  else if (body !== undefined) {
-    init.body = JSON.stringify(body);
-    init.headers = { "Content-Type": "application/json" };
-  }
-  let resp;
-  try {
-    resp = await fetch(path, init);
-  } catch {
-    throw new Error("Сервис не отвечает. Проверь, что он запущен.");
-  }
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error || `Ошибка ${resp.status}`);
-  return data;
-}
+import { $, api, h, STATUS, jobProgress } from "/ui.js";
 
 const state = {
   config: null,
@@ -155,7 +122,7 @@ function frameCard(frame, index, problem) {
   const count = state.frames.length;
   const timeInput = h("input", {
     type: "text",
-    inputMode: "decimal",
+    inputmode: "decimal",
     class: "time-input",
     value: seconds(frame.frameIdx).toFixed(2),
     disabled: index === 0,
@@ -165,8 +132,8 @@ function frameCard(frame, index, problem) {
   return h(
     "li",
     {
-      class: `card${problem ? " bad" : ""}${frame.uploading ? " busy" : ""}`,
-      draggable: true,
+      class: `frame-card${problem ? " bad" : ""}${frame.uploading ? " busy" : ""}`,
+      draggable: "true",
       ondragstart: (e) => {
         dragKey = frame.key;
         e.dataTransfer.effectAllowed = "move";
@@ -188,7 +155,7 @@ function frameCard(frame, index, problem) {
       h("span", { class: "badge" }, String(index + 1)),
       h("button", { type: "button", class: "icon remove", title: "Убрать кадр", "aria-label": `Убрать кадр ${index + 1}`, onclick: () => removeFrame(frame.key) }, "×"),
     ),
-    h("div", { class: "card-body" },
+    h("div", { class: "frame-card-body" },
       h("span", { class: "role" }, frame.uploading ? "Загрузка…" : roleOf(index)),
       h("label", { class: "time" }, timeInput, h("span", {}, "с")),
       h("div", { class: "order" },
@@ -449,13 +416,6 @@ const isLiving = (job) => job.kind === "living";
 // У живого фото промпт служебный и один на все снимки — вместо него показываем название режима.
 const jobTitle = (job) => (isLiving(job) ? "Живое фото" : job.prompt);
 
-const STATUS = {
-  queued: "В очереди",
-  running: "Генерируется",
-  done: "Готово",
-  failed: "Ошибка",
-  canceled: "Отменено",
-};
 const isActive = (job) => job.status === "queued" || job.status === "running";
 
 function upsertJob(job) {
@@ -485,27 +445,6 @@ function filmstrip(job) {
   return h("ol", { class: "filmstrip" }, items);
 }
 
-function progressBlock(job) {
-  const p = job.progress;
-  const queued = job.status === "queued";
-  const stage = queued
-    ? job.queue_position > 0 ? `Ждёт очереди: впереди ${job.queue_position}` : "Сейчас начнётся"
-    : p.stage;
-  return h("div", { class: "progress" },
-    h("div", { class: "progress-head" },
-      h("span", { class: "stage" }, stage, p.steps ? h("span", { class: "muted" }, ` · шаг ${p.step} из ${p.steps}`) : null),
-      h("span", { class: "percent" }, queued ? "" : `${Math.round(p.percent)}%`),
-    ),
-    h("div", { class: `bar${queued ? " waiting" : ""}`, role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(p.percent)) },
-      h("div", { class: "bar-fill", style: `width:${queued ? 0 : p.percent}%` }),
-    ),
-    h("div", { class: "progress-foot" },
-      h("span", { class: "muted small" }, queued ? "" : `Прошло ${fmtElapsed(job.elapsed_s)}`),
-      h("button", { type: "button", class: "link danger", onclick: () => cancelJob(job.id) }, "Отменить"),
-    ),
-  );
-}
-
 function logBlock(job, open) {
   if (!job.log || !job.log.length) return null;
   const pre = h("pre", { class: "log" }, job.log.join("\n"));
@@ -513,6 +452,13 @@ function logBlock(job, open) {
   details.addEventListener("toggle", () => (pre.scrollTop = pre.scrollHeight));
   queueMicrotask(() => (pre.scrollTop = pre.scrollHeight));
   return details;
+}
+
+// muted — свойство, а не атрибут: без него браузер не даст автозапуск созданному из JS плееру.
+function player(src) {
+  const video = h("video", { class: "player", src, controls: true, loop: true, autoplay: true, playsinline: true });
+  video.muted = true;
+  return video;
 }
 
 let jobSignature = "";
@@ -536,13 +482,13 @@ function renderJob() {
       job.backend === "fake" ? h("span", { class: "status demo" }, "Демо — не модель") : null,
       h("span", { class: "muted small" }, `${job.model_label ? `${job.model_label} · ` : ""}${job.width}×${job.height} · ${job.duration_s} с · seed ${job.seed}${job.audio ? "" : " · без звука"}`),
     ),
-    h("p", { class: "job-prompt" }, isLiving(job) ? "Живое фото: снимок стоит посередине ролика, до и после него — по половине." : job.prompt),
+    h("p", { class: "job-text" }, isLiving(job) ? "Живое фото: снимок стоит посередине ролика, до и после него — по половине." : job.prompt),
     filmstrip(job),
   ];
-  if (isActive(job)) parts.push(progressBlock(job));
+  if (isActive(job)) parts.push(jobProgress(job, { onCancel: (j) => cancelJob(j.id), elapsed: fmtElapsed }));
   if (job.status === "done") {
     parts.push(
-      h("video", { class: "player", src: job.video_url, controls: true, loop: true, autoplay: true, muted: true, playsInline: true }),
+      player(job.video_url),
       h("div", { class: "job-foot" },
         h("span", { class: "muted small" }, `Сгенерировано за ${fmtElapsed(job.elapsed_s)}`),
         h("a", { class: "link", href: job.video_url, download: `video-${job.id}.mp4` }, "Скачать mp4"),
@@ -579,7 +525,7 @@ function renderHistory() {
             ? h("img", { class: "history-thumb", src: job.frames[0].url, alt: "", loading: "lazy" })
             : h("span", { class: "history-thumb text" }, "T"),
           h("span", { class: "history-text" },
-            h("span", { class: "history-prompt" }, jobTitle(job)),
+            h("span", { class: "history-title" }, jobTitle(job)),
             h("span", { class: "muted small" },
               `${new Date(job.created_at * 1000).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · ${isLiving(job) ? `${job.duration_s} с` : job.frames.length ? `кадров: ${job.frames.length}` : "без кадров"}`),
           ),
@@ -650,6 +596,7 @@ function setBanner(text, kind) {
   banner.hidden = !shown;
   if (!shown) return;
   banner.className = `banner ${shown.kind}`;
+  banner.setAttribute("role", shown.kind === "error" ? "alert" : "status"); // ошибку зачитать сразу
   banner.replaceChildren(...[].concat(shown.text));
 }
 

@@ -15,6 +15,12 @@ if [ -f global/hooks/test_guard.py ]; then
   fi
 fi
 
+# --- секреты: токены ботов в отслеживаемых файлах (SEC-001) ---
+if [ -f tools/secret_scan.py ]; then
+  python3 tools/test_secret_scan.py 2>&1 | tail -1
+  python3 tools/secret_scan.py
+fi
+
 # --- документация: шапки спек/планов/ADR, связи, автоиндексы ---
 if [ -f tools/docs_gate.py ]; then
   python3 tools/docs_gate.py
