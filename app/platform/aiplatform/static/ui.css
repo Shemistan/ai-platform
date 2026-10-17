@@ -15,6 +15,18 @@ code { font: var(--fs-sm) var(--mono); }
 
 .page-head { max-width: var(--container); margin: 0 auto; padding: var(--sp-4) var(--sp-6) var(--sp-1); display: grid; gap: var(--sp-1); }
 .page-head h1 { font-size: var(--fs-xl); letter-spacing: -0.01em; }
+/* Заголовок со слотом для мета-чипа (модель на Фото и Видео): <div class="page-title"><h1>…</h1><span class="chip">…</span></div>. */
+.page-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
+/* Баннер состояния под шапкой страницы (готовность модели на Фото и Видео): ширина — как у содержимого. */
+.banner {
+  width: min(100% - 2 * var(--sp-6), var(--container) - 2 * var(--sp-6));
+  margin: var(--sp-2) auto 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--info-bg);
+}
+.banner:is(.tone-warning, .tone-danger) { background: var(--tone-bg); color: var(--tone); }
+.banner code { user-select: all; overflow-wrap: anywhere; }
 
 .layout {
   display: grid;
@@ -28,6 +40,7 @@ code { font: var(--fs-sm) var(--mono); }
 @media (max-width: 960px) {
   .layout { grid-template-columns: minmax(0, 1fr); padding-inline: var(--sp-4); }
   .page-head { padding-inline: var(--sp-4); }
+  .banner { width: calc(100% - 2 * var(--sp-4)); }
 }
 .side { display: grid; gap: var(--sp-5); min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-xl); padding: var(--pad-panel); min-width: 0; }

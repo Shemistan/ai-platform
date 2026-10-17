@@ -87,6 +87,27 @@ class ToastTest(unittest.TestCase):
         self.assertRegex(ui, r"\.toasts \{[^}]*z-index: var\(--z-toast\)")
 
 
+class PageHeadTest(unittest.TestCase):
+    """DS-015: одна шапка страницы (.page-head) и ширины контейнеров — только из токенов."""
+
+    def test_container_width_from_tokens(self):
+        self.assertEqual(offenders(r"max-width: *1\d{3}px"), [])
+
+    def test_one_page_head(self):
+        self.assertEqual(offenders(r"^\s*\.top\b"), [])
+        for tab in ("photo", "video"):
+            html = (STATIC / tab / "index.html").read_text(encoding="utf-8")
+            with self.subTest(tab=tab):
+                self.assertNotIn('class="top"', html)
+                self.assertRegex(html, r'<header class="page-head">\s*<div class="page-title">\s*<h1>')
+                self.assertIn('id="model-chip"', html)
+
+    def test_banner_defined_once(self):
+        where = offenders(r"^\.banner \{")
+        self.assertEqual(len(where), 1, where)
+        self.assertTrue(where[0].startswith("ui.css:"), where)
+
+
 class InlineStylesTest(unittest.TestCase):
     """DS-012: статических inline-стилей и <style> в страницах нет — только классы из CSS."""
 
