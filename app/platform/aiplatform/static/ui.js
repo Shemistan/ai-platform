@@ -520,6 +520,118 @@ export function busyClick(fn, key = null) {
   };
 }
 
+// --- Перерисовка блоков без потери ввода (студия, доска) ---
+
+const blockSig = new WeakMap();
+const TEXT_INPUTS = new Set(["text", "search", "url", "email", "number", "tel", "password", "date", "time", "datetime-local", "month", "week"]);
+const isEditable = (el) => Boolean(el) && (el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable || (el.tagName === "INPUT" && TEXT_INPUTS.has(el.type)));
+
+// В блоке фокус в поле, которое не вернуть после перерисовки (открытый список, поле без id) — блок подождёт.
+function holdsInput(node) {
+  const el = document.activeElement;
+  return node.contains(el) && isEditable(el) && (el.tagName === "SELECT" || el.isContentEditable || !el.id);
+}
+
+const fieldKey = (el) => (el.type === "radio" ? (el.name ? `${el.name}=${el.value}` : null) : el.id || null);
+
+// Несохранённые правки полей блока: чекбоксы, переключатели, списки и однострочные поля (тексты студия держит в state.drafts).
+function editsOf(node) {
+  const out = new Map();
+  for (const el of node.querySelectorAll("input, select")) {
+    const key = fieldKey(el);
+    if (!key || el.type === "file") continue;
+    if (el.type === "checkbox" || el.type === "radio") {
+      if (el.checked !== el.defaultChecked) out.set(key, el.checked);
+    } else if (el.tagName === "SELECT") {
+      if ([...el.options].some((o) => o.selected !== o.defaultSelected)) out.set(key, el.value);
+    } else if (el.value !== el.defaultValue) out.set(key, el.value);
+  }
+  return out;
+}
+
+function applyEdits(node, edits) {
+  if (!edits.size) return;
+  for (const el of node.querySelectorAll("input, select")) {
+    const key = fieldKey(el);
+    if (!key || !edits.has(key)) continue;
+    if (el.type === "checkbox" || el.type === "radio") el.checked = edits.get(key);
+    else el.value = edits.get(key);
+  }
+}
+
+const detailsKey = (d) => d.id || (d.querySelector(":scope > summary")?.textContent || "").replace(/\d+/g, "#");
+
+// Перенести из старого узла блока в новый то, что человек уже сделал: правки полей, раскрытые <details>,
+// и сами медиа-элементы с тем же адресом — ролик в превью не начнётся сначала, плеер не собьётся.
+function carryOver(prev, node) {
+  applyEdits(node, editsOf(prev));
+  const opened = new Map([...prev.querySelectorAll("details")].map((d) => [detailsKey(d), d.open]));
+  for (const d of node.querySelectorAll("details")) if (opened.has(detailsKey(d))) d.open = opened.get(detailsKey(d));
+  const media = new Map();
+  for (const m of prev.querySelectorAll("video[src], audio[src], img[src]")) {
+    const key = `${m.tagName}:${m.getAttribute("src")}`;
+    if (!media.has(key)) media.set(key, m);
+  }
+  for (const m of node.querySelectorAll("video[src], audio[src], img[src]")) {
+    const key = `${m.tagName}:${m.getAttribute("src")}`;
+    const twin = media.get(key);
+    if (!twin) continue;
+    media.delete(key);
+    twin.className = m.className;
+    m.replaceWith(twin); // перенос в том же такте: браузер не ставит видео на паузу и не грузит заново
+  }
+}
+
+// reconcile(родитель, [{ key, sig, build }], scope) — узел с той же подписью остаётся как есть, изменившийся
+// пересобирается (правки полей с id и раскрытые <details> переносятся, если scope тот же), лишние удаляются,
+// порядок — как в items. Блок с полем в фокусе, которое не вернуть (без id, открытый список), ждёт.
+export function reconcile(parent, items, scope = "") {
+  const old = new Map();
+  for (const n of parent.children) if (n.dataset.key) old.set(n.dataset.key, n);
+  const nodes = items.map(({ key, sig, build }) => {
+    const prev = old.get(key);
+    if (prev && (blockSig.get(prev) === sig || holdsInput(prev))) return prev;
+    const node = build();
+    node.dataset.key = key;
+    node.dataset.scope = scope;
+    blockSig.set(node, sig);
+    if (prev && prev.dataset.scope === scope) carryOver(prev, node);
+    return node;
+  });
+  for (const n of [...parent.children]) if (!nodes.includes(n)) n.remove();
+  nodes.forEach((n, i) => {
+    if (parent.children[i] !== n) parent.insertBefore(n, parent.children[i] || null);
+  });
+}
+
+// Фокус и курсор в поле с id внутри root переживают перерисовку его блока: captureFocus до, restoreFocus после.
+export function captureFocus(root) {
+  const el = document.activeElement;
+  if (!el?.id || !root?.contains(el)) return null;
+  let start = null;
+  let end = null;
+  try {
+    start = el.selectionStart;
+    end = el.selectionEnd;
+  } catch {
+    /* у чекбоксов и списков выделения нет */
+  }
+  return { el, id: el.id, start, end, scroll: el.scrollTop };
+}
+
+export function restoreFocus(saved) {
+  if (!saved || saved.el.isConnected) return;
+  const twin = document.getElementById(saved.id);
+  if (!twin) return;
+  twin.focus({ preventScroll: true });
+  try {
+    if (saved.start !== null) twin.setSelectionRange(saved.start, saved.end);
+  } catch {
+    /* поле без выделения */
+  }
+  twin.scrollTop = saved.scroll;
+}
+
 // --- Опрос ---
 
 export const POLL_MAX_BACKOFF_MS = 30000;

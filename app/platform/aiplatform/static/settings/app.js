@@ -1,5 +1,5 @@
 // Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены; расписание, уведомления, уборка.
-import { $, api, chip, fill, h } from "/ui.js";
+import { $, api, busyClick, chip, fill, h } from "/ui.js";
 
 const API = "/api/settings";
 
@@ -136,7 +136,7 @@ function renderSchedule(data) {
         h("span", { class: "hint" }, "Мой чат в Telegram (id или @username) — бот каналов пишет туда; сначала напиши боту /start"),
         h("input", { type: "text", value: data.notify.telegram_chat || "", placeholder: "123456789", onchange: (e) => section("notify", { telegram_chat: e.target.value.trim() }) }),
       ),
-      h("div", { class: "actions" }, h("button", { type: "button", class: "small-btn", onclick: () => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)) }, "Проверить уведомление")),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "small-btn", onclick: busyClick(() => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)), "notify-test") }, "Проверить уведомление")),
       data.notifications.length
         ? h("details", {}, h("summary", { class: "link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
         : null,
