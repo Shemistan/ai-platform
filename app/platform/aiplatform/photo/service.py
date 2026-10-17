@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from http import HTTPStatus
 
+from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import Request, bad_request, found, handle_uploads, not_found
 from aiplatform.photo import config as photo_config
 from aiplatform.photo import models, params, upscale
@@ -32,6 +33,7 @@ class PhotoModule:
             "runners": {b: self.config.runner_available(b) for b in backends},
             "models_dir": str(self.config.models_dir),
             "install_hint": INSTALL_HINT,
+            "upload_limits": uploads_module.limits(),
             "modes": [{"id": key, "label": label} for key, label in params.MODE_LABELS.items()],
             "sizes": [
                 {"id": key, "width": w, "height": h, "label": label} for key, (w, h, label) in params.SIZES.items()
@@ -82,7 +84,7 @@ class PhotoModule:
                     job = self.jobs.create(payload)
                 except params.ValidationError as exc:
                     raise bad_request(str(exc)) from exc
-                return req.send_json(job, HTTPStatus.CREATED)
+                return req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/photo/jobs/{job['id']}"})
             case ("GET", ["jobs", job_id]):
                 return req.send_json(found(self.jobs.get(job_id)))
             case ("POST", ["jobs", job_id, "cancel"]):
@@ -93,7 +95,7 @@ class PhotoModule:
                     job = found(self.jobs.upscale(job_id, payload))
                 except params.ValidationError as exc:
                     raise bad_request(str(exc)) from exc
-                return req.send_json(job, HTTPStatus.CREATED)
+                return req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/photo/jobs/{job['id']}"})
             case ("GET", ["jobs", job_id, "image"]):
                 path = self.jobs.image_path(job_id)
                 if path is None:

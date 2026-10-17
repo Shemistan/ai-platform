@@ -171,6 +171,13 @@ function renderServe() {
       { class: "card mb-3" },
       h("label", { class: "switch" }, toggle, "Принимать подписки", s.running ? chip(`идёт ${since}`, "ok") : chip("выключено")),
       h("p", { class: "hint" }, "Пока включено, бот отвечает на /start и /stop. Подписчикам озвучки статей идут в личку, когда канал статей выключен (NARRATOR_TELEGRAM_CHANNEL=off)."),
+      s.external
+        ? errorState({
+            title: "Бот слушает другой процесс",
+            reason: "«bot serve» запущен не платформой (например, из терминала): нажатия кнопок ревью выпуска в Telegram сюда не дойдут.",
+            help: "Останови его там (Ctrl+C) и включи приём подписок здесь.",
+          })
+        : null,
       s.error ? errorState({ title: "Приём подписок остановился", error: s.error }) : null,
       s.log.length ? h("pre", { class: "log" }, s.log.slice(-8).join("\n")) : null,
     ),
@@ -216,7 +223,7 @@ function renderUnsent() {
 async function loadSubscribers(sync = false) {
   $("subs-sync").disabled = true;
   try {
-    state.subscribers = await api("GET", `${API}/subscribers${sync ? "?sync=1" : ""}`);
+    state.subscribers = sync ? await api("POST", `${API}/subscribers/sync`) : await api("GET", `${API}/subscribers`);
     renderSubscribers();
   } catch (err) {
     fill($("subscribers"), errorState({ title: "Подписчики не загрузились", error: err, onRetry: () => loadSubscribers() }));

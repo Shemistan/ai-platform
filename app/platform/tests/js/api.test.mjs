@@ -59,6 +59,17 @@ test("ответ-ошибка без JSON — код и первая строк�
   assert.equal(err.message, "Ошибка 502: Bad Gateway");
 });
 
+test("ответ-ошибка с code — err.code; без JSON — null (BE-011)", async () => {
+  const body = { error: "Движок недоступен.", code: "engine_unavailable", kind: "unavailable" };
+  globalThis.fetch = async () => new Response(JSON.stringify(body), { status: 503 });
+  const err = await api("GET", "/api/x").catch((e) => e);
+  assert.equal(err.code, "engine_unavailable");
+  assert.equal(err.data.kind, "unavailable");
+  assert.equal(err.message, "Движок недоступен.");
+  globalThis.fetch = async () => new Response("oops", { status: 502 });
+  assert.equal((await api("GET", "/api/x").catch((e) => e)).code, null);
+});
+
 test("413 — «Файл больше лимита»", async () => {
   globalThis.fetch = async () => new Response("Request Entity Too Large", { status: 413 });
   const err = await api("POST", "/api/upload", new Blob(["x"])).catch((e) => e);

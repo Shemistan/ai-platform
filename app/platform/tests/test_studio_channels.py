@@ -10,9 +10,8 @@ from unittest import mock
 
 from aiplatform.studio import publish
 from aiplatform.studio.llm import StudioError
-from tests.test_studio_flow import ARTICLE, StudioCase
-
-TOKEN = "123456:" + "A" * 35
+from tests.fixtures import ARTICLE, TOKEN
+from tests.helpers import StudioCase
 
 
 class NarratorChannelsTest(unittest.TestCase):
@@ -163,7 +162,7 @@ class PublishButtonTest(StudioCase):
 
         def press(**body):
             status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", body)
-            self.assertEqual(status, 200, view)
+            self.assertEqual(status, 202, view)
             return self.settle(pid)
 
         with mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}), mock.patch.object(publish, "_http_post", fake_post):
@@ -184,7 +183,7 @@ class PublishButtonTest(StudioCase):
 
             forced = press(channels=["tg"], force=True)
             self.assertEqual(len(calls), 2)
-            self.assertNotIn("skipped", forced["published"][0])
+            self.assertNotIn("skipped", forced["published"][-1])
 
         for body in ({"channels": []}, {"channels": ["nope"]}, {"channels": ["tg"], "force": "да"}):
             self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/publish", body)[0], 400, body)

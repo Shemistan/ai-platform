@@ -6,11 +6,12 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from aiplatform.core import events
+from aiplatform.core import events, media
 from aiplatform.studio import backfill, pipeline
 from aiplatform.studio.llm import StudioError
-from tests.test_studio_publish_journal import JournalCase
+from tests.helpers import JournalCase
 
 
 def fake_steps(calls: list[str], fail: set[str] | None = None) -> dict:
@@ -186,6 +187,25 @@ class BackfillTest(Case):
         ]  # fmt: skip
         (folder / "published.json").write_text(json.dumps(published), encoding="utf-8")
         return created
+
+    def test_fill_dimensions_once(self):
+        # AN-006: media_s отправленного файла и формат для записей до него — разово, без повторов.
+        self.make_project()
+        folder = self.dir / "studio" / "projects" / "aaaaaaaaaaaa"
+        (folder / "short.mp4").write_bytes(b"y")
+        (folder / "video.mp4").write_bytes(b"x")
+        formats = {"tg": "vertical", "download-16x9": "landscape"}
+        with mock.patch.object(media, "duration", lambda path, *a: 40.0 if path.name == "short.mp4" else 300.0):
+            first = backfill.fill_dimensions(self.dir, formats)
+            again = backfill.fill_dimensions(self.dir, formats)
+        self.assertEqual((first, again["records"]), ({"projects": 1, "records": 2}, 0))
+        records = {r["channel"]: r for r in json.loads((folder / "published.json").read_text(encoding="utf-8"))}
+        tg = records["tg"]
+        self.assertEqual(
+            (tg["media_s"], tg["format"], tg["format_guessed"], tg["post_format"]), (40.0, "vertical", True, "video")
+        )
+        self.assertIn("weekday", tg)
+        self.assertEqual(records["download-16x9"]["media_s"], 300.0)
 
     def test_backfill_idempotent_and_ordered(self):
         created = self.make_project()

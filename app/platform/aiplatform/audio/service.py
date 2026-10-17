@@ -26,7 +26,9 @@ from aiplatform.audio.jobs import (
     build_spec,
     parse_tempo,
 )
+from aiplatform.core import audit
 from aiplatform.core import tasks as tasks_module
+from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, handle_uploads, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
 from aiplatform.core.uploads import AUDIO
@@ -50,6 +52,7 @@ class AudioModule:
         self.uploads = ctx.uploads
         self.jobs = AudioJobs(self.config, ctx.gate, URL_BASE)
         self.tasks = tasks_module.Tasks(self.config.data_dir / "tasks", ctx.gate)
+        self.audit = audit.AuditLog(ctx.config.data_dir / audit.FILE)  # запись голоса — в журнал комплаенса
         self._engines_lock = threading.Lock()
         self._engines: tuple[float, dict] | None = None
 
@@ -96,6 +99,7 @@ class AudioModule:
             "engines_error": info.get("error"),
             "models_hint": info.get("models_hint"),
             "install_hint": INSTALL_HINT,
+            "upload_limits": uploads_module.limits(),
         }
 
     def _installed(self) -> set[str] | None:
@@ -149,7 +153,7 @@ class AudioModule:
                     job = self.jobs.create(payload)
                 except ValidationError as exc:
                     raise bad_request(str(exc)) from exc
-                return req.send_json(job, HTTPStatus.CREATED)
+                return req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/audio/jobs/{job['id']}"})
             case ("POST", ["jobs", "batch"]):
                 return req.send_json(self.batch(req.json(MAX_FILE_BODY)), HTTPStatus.CREATED)
             case ("GET", ["jobs", job_id]):
@@ -266,8 +270,21 @@ class AudioModule:
         elif voice["record"] != "gemini":
             raise bad_request("Для этого голоса нужна своя запись и её текст.")
 
-        def done(_task: dict) -> None:
+        def done(task: dict) -> None:
             self.engines(fresh=True)  # появился образец — у клонов новый голос
+            self.audit.write(
+                "voice_record",
+                who=who,
+                voice=voice["voice"],
+                stem=stem,
+                source="upload" if upload else "gemini",
+                status=task.get("status"),
+                text_sha256=audit.sha256_text(text) if isinstance(text, str) and text.strip() else None,
+                upload_sha256=upload_sha256,
+            )
+
+        who = audit.actor()
+        upload_sha256 = audit.sha256_file(path) if upload else None  # до задачи: файл загрузки она заберёт
 
         spec = tasks_module.Spec(
             kind=VOICE_TASK,

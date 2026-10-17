@@ -1,11 +1,12 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, busy as busyRequest, busyClick, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reportError, safe, STATUS, statusChip, toast, toneOf } from "/ui.js";
+import { $, announce, api, busy as busyRequest, busyClick, captureFocus, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reconcile, reportError, restoreFocus, safe, STATUS, statusChip, toast, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const API = "/api/studio";
-const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
+// Сценарий из адреса; неизвестный — «article». Названия сценариев — из /api/studio/config (FE-007).
+const KNOWN_SCENARIOS = new Set(["digest", "article", "post"]);
 const wantedScenario = new URLSearchParams(location.search).get("scenario");
-const scenario = SCENARIO_TITLES[wantedScenario] ? wantedScenario : "article";
+const scenario = KNOWN_SCENARIOS.has(wantedScenario) ? wantedScenario : "article";
 // У поста нет слайдов: эти шаги всегда пропущены — их не показываем.
 const HIDDEN_STEPS = { post: new Set(["plan", "images", "clips", "short"]) };
 const CAPTION_LIMIT = 1024;
@@ -112,11 +113,18 @@ function fieldsOf(values, prefix) {
         "Первый кадр — обложка: постер притемнён, по центру плей, внизу крупная плашка; дальше плашка плавно уезжает в угол и остаётся до конца. Этот кадр — обложка видео в Telegram.",
         values.branding,
       ),
+    ai_badge: () =>
+      check(
+        "ai_badge",
+        "Плашка «ИИ» в углу видео",
+        "Мелкая метка в правом нижнем углу: озвучка и картинки сделаны нейросетью. Строка об ИИ в посте и метка в файле видео ставятся всегда.",
+        values.ai_badge,
+      ),
     disclaimers: () =>
       check(
         "disclaimers",
         "Помечать запрещённые в РФ организации",
-        h("span", {}, "Мелкий текст на слайдах, где упомянута, например, Meta, и строка в конце поста. Список — на вкладке ", h("a", { class: "link", href: "/updates/" }, "«Обновления»"), "."),
+        h("span", {}, "Мелкий текст на слайдах, где упомянута, например, Meta, и строка в конце поста. Список — на вкладке ", h("a", { class: "btn--link", href: "/updates/" }, "«Обновления»"), "."),
         values.disclaimers,
       ),
     tempo: () =>
@@ -157,7 +165,7 @@ function fieldsOf(values, prefix) {
               ),
             ),
             // Удаление канала затрагивает все сценарии — только на вкладке «Каналы», с подтверждением.
-            h("p", { class: "hint" }, "Убрать канал из списка — на вкладке ", h("a", { class: "link", href: "/channels/" }, "«Каналы»"), "."),
+            h("p", { class: "hint" }, "Убрать канал из списка — на вкладке ", h("a", { class: "btn--link", href: "/channels/" }, "«Каналы»"), "."),
           )
         : h("p", { class: "hint" }, `Каналы не настроены: ${cfg.channels_file}`),
     // Необратимое: выпуск уйдёт в каналы без просмотра — тумблер предупреждающего цвета, а не обычный флажок.
@@ -214,7 +222,7 @@ function channelAdder(prefix) {
       ),
     ),
     h("p", { class: "form-error", id: id("new-error"), hidden: true }),
-    h("button", { type: "button", class: "secondary", onclick: busyClick(() => addChannel(prefix)) }, "Добавить"),
+    h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => addChannel(prefix)) }, "Добавить"),
   );
 }
 
@@ -227,7 +235,7 @@ function settingsForm(values, prefix) {
       { class: "settings-form" },
       group("Постер", f.poster_mode(), f.image_model()),
       group("Озвучка", f.voice_mode(), f.engine()),
-      group("Оформление", f.frame(), f.branding(), f.disclaimers()),
+      group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
       group("Публикация", channelAdder(prefix), f.post_format(), f.tempo(), f.channels(), f.auto_publish()),
       f.review_text(),
     );
@@ -242,7 +250,7 @@ function settingsForm(values, prefix) {
     group("Озвучка", f.voice_mode(), f.engine()),
     group("Шортс", f.shorts()),
     group("Слайды", f.slide_s(), f.reading()),
-    group("Оформление", f.frame(), f.branding(), f.disclaimers()),
+    group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
     group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish()),
     scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author()) : null,
     f.review_text(),
@@ -251,12 +259,12 @@ function settingsForm(values, prefix) {
 
 const SETTING_NAMES = [
   "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
-  "voice_mode", "engine", "shorts", "review_text", "disclaimers", "branding", "tempo", "frame", "auto_publish", "channels",
+  "voice_mode", "engine", "shorts", "review_text", "disclaimers", "ai_badge", "branding", "tempo", "frame", "auto_publish", "channels",
   "post_format", "draft", "slide_s", "reading",
 ]; // prettier-ignore
 // Поля формы поста: остальные настройки у него не меняются.
 const POST_SETTINGS = [
-  "poster_mode", "image_model", "voice_mode", "engine", "review_text", "disclaimers", "branding", "tempo", "frame",
+  "poster_mode", "image_model", "voice_mode", "engine", "review_text", "disclaimers", "ai_badge", "branding", "tempo", "frame",
   "auto_publish", "channels", "post_format",
 ]; // prettier-ignore
 
@@ -412,9 +420,9 @@ async function create(event, forceNew = false) {
       ...(existing
         ? [
             " ",
-            h("button", { type: "button", class: "link", onclick: () => (existing.scenario === scenario ? open(existing.id) : (location.href = `?scenario=${existing.scenario}&project=${existing.id}`)) }, "Открыть"),
+            h("button", { type: "button", class: "btn btn--link", onclick: () => (existing.scenario === scenario ? open(existing.id) : (location.href = `?scenario=${existing.scenario}&project=${existing.id}`)) }, "Открыть"),
             " · ",
-            h("button", { type: "button", class: "link", onclick: busyClick(() => create(null, true)) }, "Создать новый"),
+            h("button", { type: "button", class: "btn btn--link", onclick: busyClick(() => create(null, true)) }, "Создать новый"),
           ]
         : []),
     );
@@ -435,9 +443,9 @@ function longTextActions(project) {
   return h(
     "div",
     { class: "actions" },
-    h("button", { type: "button", class: "secondary", disabled: project.running, onclick: busyClick(splitProject) }, "Разбить на серию"),
-    h("button", { type: "button", class: "secondary", disabled: summary.status === "running", onclick: busyClick(() => act("summary")) }, summary.status === "running" ? "Выжимка пишется…" : "Сделать выжимку"),
-    summary.status === "done" ? h("a", { class: "link", href: `?scenario=article&project=${summary.project}` }, "Открыть выжимку") : null,
+    h("button", { type: "button", class: "btn btn--secondary", disabled: project.running, onclick: busyClick(splitProject) }, "Разбить на серию"),
+    h("button", { type: "button", class: "btn btn--secondary", disabled: summary.status === "running", onclick: busyClick(() => act("summary")) }, summary.status === "running" ? "Выжимка пишется…" : "Сделать выжимку"),
+    summary.status === "done" ? h("a", { class: "btn--link", href: `?scenario=article&project=${summary.project}` }, "Открыть выжимку") : null,
     summary.status === "failed" ? h("span", { class: "job-error" }, summary.error) : null,
   );
 }
@@ -570,8 +578,8 @@ const STEP_FIELDS = {
   clips: ["clips", "clips_mode", "video_model"],
   voice: ["voice_mode", "engine"],
   plan: ["slide_s"],
-  render: ["draft", "frame", "tempo", "reading", "branding", "disclaimers"],
-  short: ["shorts", "tempo", "reading", "branding", "disclaimers"],
+  render: ["draft", "frame", "tempo", "reading", "branding", "disclaimers", "ai_badge"],
+  short: ["shorts", "tempo", "reading", "branding", "disclaimers", "ai_badge"],
 };
 
 const openSettings = new Set();
@@ -644,11 +652,13 @@ async function saveArtifact(name, text) {
   }
 }
 
+// Свой постер или озвучка: прогресс и «Отменить» — в лотке загрузок (uploadFile, FE-003).
+// Сервер принимает здесь до лимита медиа (озвучка); отмена возвращает шаг как был.
 async function upload(what, file) {
   try {
-    show(await api("POST", `${API}/projects/${state.project.id}/upload/${what}`, file));
+    show(await uploadFile(`${API}/projects/${state.project.id}/upload/${what}`, file, { limit: (state.config?.upload_limits || UPLOAD_LIMITS).media }));
   } catch (err) {
-    alertBox(err.message);
+    if (err.kind !== "abort") alertBox(err.message);
   }
 }
 
@@ -665,7 +675,7 @@ function editor(name, value, rows = 8, mono = false) {
     h(
       "div",
       { class: "actions" },
-      h("button", { type: "button", class: "secondary", disabled: state.project.running, onclick: busyClick(() => saveArtifact(name, area.value)) }, "Сохранить правку"),
+      h("button", { type: "button", class: "btn btn--secondary", disabled: state.project.running, onclick: busyClick(() => saveArtifact(name, area.value)) }, "Сохранить правку"),
       h("span", { class: "hint" }, "Правка сбросит шаги, которые от неё зависят."),
     ),
   );
@@ -674,17 +684,18 @@ function editor(name, value, rows = 8, mono = false) {
 function uploader(what, accept, label) {
   return h(
     "label",
-    { class: "upload secondary" },
+    { class: "upload btn btn--secondary" },
     label,
     h("input", { type: "file", accept, hidden: true, disabled: stepLocked(what), onchange: (e) => e.target.files[0] && upload(what, e.target.files[0]) }),
   );
 }
 
 async function uploadSlide(kind, key, file) {
+  const limits = (state.config?.upload_limits || UPLOAD_LIMITS);
   try {
-    show(await api("POST", `${API}/projects/${state.project.id}/upload/${kind}/${key}`, file));
+    show(await uploadFile(`${API}/projects/${state.project.id}/upload/${kind}/${key}`, file, { limit: kind === "clips" ? limits.media : limits.image }));
   } catch (err) {
-    alertBox(err.message);
+    if (err.kind !== "abort") alertBox(err.message);
   }
 }
 
@@ -738,7 +749,7 @@ function copyButton(text) {
     "button",
     {
       type: "button",
-      class: "link",
+      class: "btn btn--link",
       onclick: async (e) => {
         const btn = e.currentTarget;
         try {
@@ -802,7 +813,7 @@ const stepLocked = (id) => Boolean(state.project.steps.find((s) => s.id === id)?
 function jobLink(step) {
   if (!step.job) return null;
   const tab = { photo: "Фото", video: "Видео", audio: "Аудио" }[step.job.tab] || step.job.tab;
-  return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${tab}»`);
+  return h("a", { class: "btn--link", href: `/${step.job.tab}/` }, `задача на вкладке «${tab}»`);
 }
 
 const VERDICT_TONE = { готово: "success", "готово с оговорками": "warning", "не готово": "danger" };
@@ -903,14 +914,14 @@ function stepBody(step) {
       return [
         disclaimerBox(),
         ...(f.video
-          ? [h("video", { controls: true, src: f.video, preload: "metadata", poster: f.poster || null }), h("a", { class: "link", href: `${f.video.split("?")[0]}?download=1` }, "Скачать видео")]
+          ? [h("video", { controls: true, src: f.video, preload: "metadata", poster: f.poster || null }), h("a", { class: "btn--link", href: `${f.video.split("?")[0]}?download=1` }, "Скачать видео")]
           : []),
       ];
     case "short":
       return [
         a.short ? h("details", { class: "disclosure" }, h("summary", {}, `Сценарий шортса: ${a.short.beats.length} частей`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,
         f.short_video
-          ? h("div", {}, h("video", { class: "vertical-video", controls: true, src: f.short_video, preload: "metadata" }), h("p", {}, h("a", { class: "link", href: `${f.short_video.split("?")[0]}?download=1` }, "Скачать шортс 9:16")))
+          ? h("div", {}, h("video", { class: "vertical-video", controls: true, src: f.short_video, preload: "metadata" }), h("p", {}, h("a", { class: "btn--link", href: `${f.short_video.split("?")[0]}?download=1` }, "Скачать шортс 9:16")))
           : null,
       ];
     case "publish": {
@@ -921,6 +932,15 @@ function stepBody(step) {
         h(
           "div",
           { class: "publish-box" },
+          // Домены ссылок поста; не из исходника — красным: автопубликация их не пропустит (SEC-013).
+          p.links?.domains?.length
+            ? h(
+                "p",
+                { class: "post-links" },
+                "Ссылки ведут на: ",
+                ...p.links.domains.map((d) => h("span", { class: `chip ${p.links.foreign.includes(d) ? "tone-danger" : ""}`, title: p.links.foreign.includes(d) ? "Этого домена нет в исходном материале" : "" }, d)),
+              )
+            : null,
           h("strong", {}, "Куда опубликовать"),
           h(
             "div",
@@ -961,7 +981,7 @@ function stepBody(step) {
               )
             : null,
           channelAdder("step-publish"),
-          h("button", { type: "button", class: "primary", disabled: p.running, onclick: busyClick(publishNow) }, "Опубликовать…"),
+          h("button", { type: "button", class: "btn btn--primary", disabled: p.running, onclick: busyClick(publishNow) }, "Опубликовать…"),
         ),
         p.published
           ? h(
@@ -974,8 +994,8 @@ function stepBody(step) {
                 return h(
                   "li",
                   {},
-                  `${mark} ${r.label}: ${r.message} `,
-                  ...(r.files || []).filter((x) => x.endsWith(".mp4")).map((x) => h("a", { class: "link", href: `${API}/projects/${p.id}/files/${x}?download=1` }, "скачать")),
+                  `${mark} ${r.label}${r.republish ? " (повторно)" : ""}: ${r.message} `,
+                  ...(r.files || []).filter((x) => x.endsWith(".mp4")).map((x) => h("a", { class: "btn--link", href: `${API}/projects/${p.id}/files/${x}?download=1` }, "скачать")),
                   ...(unclear && !p.running
                     ? [
                         h("button", { type: "button", onclick: busyClick(() => act("publish/resolve", { channel: r.channel, posted: true })) }, "Пост есть"),
@@ -1082,11 +1102,11 @@ function renderStep(step) {
     h("h3", {}, step.label),
     statusChip(step.status),
     folded ? h("span", { class: "step-summary muted small" }, stepSummary(step)) : null,
-    h("button", { type: "button", class: "link", "aria-expanded": String(!folded), "aria-controls": bodyId, onclick: () => toggleStep(step.id) }, folded ? "Развернуть" : "Свернуть"),
+    h("button", { type: "button", class: "btn btn--link", "aria-expanded": String(!folded), "aria-controls": bodyId, onclick: () => toggleStep(step.id) }, folded ? "Развернуть" : "Свернуть"),
     step.status !== "running"
       ? step.status === "pending"
-        ? h("button", { type: "button", class: "link", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Выполнить шаг")
-        : h("button", { type: "button", class: "secondary small", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Перезапустить шаг")
+        ? h("button", { type: "button", class: "btn btn--link", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Выполнить шаг")
+        : h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Перезапустить шаг")
       : null,
   );
   const attrs = { class: `step ${step.status} tone-${toneOf(step.status)}${folded ? " collapsed" : ""}`, id: `step-${step.id}`, tabindex: "-1" };
@@ -1104,7 +1124,7 @@ function renderStep(step) {
       step.status === "pending" && step.blocked_by.length
         ? h("p", { class: "hint" }, `Начнётся, когда будет готово: ${step.blocked_by.join(", ")}.`)
         : null,
-      canApprove ? h("button", { type: "button", class: "primary", onclick: busyClick(() => act("approve", { step: step.id })) }, approveLabel) : null,
+      canApprove ? h("button", { type: "button", class: "btn btn--primary", onclick: busyClick(() => act("approve", { step: step.id })) }, approveLabel) : null,
       stepSettings(step),
       h("div", { class: "step-body" }, ...stepBody(step)),
     ),
@@ -1156,23 +1176,23 @@ function renderHead(project) {
     { class: "panel project-head" },
     h("h2", {}, project.title),
     statusChip(overallStatus(project)),
-    running ? h("button", { type: "button", class: "secondary", onclick: busyClick(() => act("cancel")) }, "Остановить") : null,
-    next ? h("button", { type: "button", class: "primary", onclick: busyClick(next.run) }, next.label) : null,
+    running ? h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => act("cancel")) }, "Остановить") : null,
+    next ? h("button", { type: "button", class: "btn btn--primary", onclick: busyClick(next.run) }, next.label) : null,
     // «Запустить всё» — главное действие, только когда выпуску больше ничего от тебя не нужно.
-    !running && !next?.runAll ? h("button", { type: "button", class: "secondary", onclick: busyClick(() => act("run", {})) }, "Запустить всё") : null,
+    !running && !next?.runAll ? h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => act("run", {})) }, "Запустить всё") : null,
     project.settings.draft ? h("span", { class: "chip tone-warning" }, "черновик") : null,
     project.settings.draft && !running
-      ? h("button", { type: "button", class: "secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: busyClick(makeFinal) }, "Сделать чистовик")
+      ? h("button", { type: "button", class: "btn btn--secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: busyClick(makeFinal) }, "Сделать чистовик")
       : null,
     project.archived ? h("span", { class: "chip tone-neutral" }, "в архиве") : null,
     running
       ? null
-      : h("button", { type: "button", class: "link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: busyClick(cloneProject) }, "Копия выпуска"),
+      : h("button", { type: "button", class: "btn btn--link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: busyClick(cloneProject) }, "Копия выпуска"),
     running
       ? null
       : h(
           "button",
-          { type: "button", class: "link", onclick: busyClick(async () => (await act("archive", { archived: !state.project.archived })) && reloadList()) },
+          { type: "button", class: "btn btn--link", onclick: busyClick(async () => (await act("archive", { archived: !state.project.archived })) && reloadList()) },
           project.archived ? "Вернуть из архива" : "В архив",
         ),
     h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
@@ -1216,7 +1236,7 @@ function renderSettings(project) {
     h(
       "div",
       { class: "actions" },
-      h("button", { type: "button", class: "secondary", disabled: project.running, onclick: busyClick(() => act("settings", readSettings("edit"))) }, "Сохранить настройки"),
+      h("button", { type: "button", class: "btn btn--secondary", disabled: project.running, onclick: busyClick(() => act("settings", readSettings("edit"))) }, "Сохранить настройки"),
       h("span", { class: "hint" }, "Изменённые настройки сбросят только затронутые шаги."),
     ),
   );
@@ -1241,114 +1261,6 @@ const STEP_DATA = {
   },
 };
 
-const blockSig = new WeakMap();
-const TEXT_INPUTS = new Set(["text", "search", "url", "email", "number", "tel", "password", "date", "time", "datetime-local", "month", "week"]);
-const isEditable = (el) => Boolean(el) && (el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable || (el.tagName === "INPUT" && TEXT_INPUTS.has(el.type)));
-
-// В блоке фокус в поле, которое не вернуть после перерисовки (открытый список, поле без id) — блок подождёт.
-function holdsInput(node) {
-  const el = document.activeElement;
-  return node.contains(el) && isEditable(el) && (el.tagName === "SELECT" || el.isContentEditable || !el.id);
-}
-
-const fieldKey = (el) => (el.type === "radio" ? (el.name ? `${el.name}=${el.value}` : null) : el.id || null);
-
-// Несохранённые правки полей блока: чекбоксы, переключатели, списки и однострочные поля (тексты — в state.drafts).
-function editsOf(node) {
-  const out = new Map();
-  for (const el of node.querySelectorAll("input, select")) {
-    const key = fieldKey(el);
-    if (!key || el.type === "file") continue;
-    if (el.type === "checkbox" || el.type === "radio") {
-      if (el.checked !== el.defaultChecked) out.set(key, el.checked);
-    } else if (el.tagName === "SELECT") {
-      if ([...el.options].some((o) => o.selected !== o.defaultSelected)) out.set(key, el.value);
-    } else if (el.value !== el.defaultValue) out.set(key, el.value);
-  }
-  return out;
-}
-
-function applyEdits(node, edits) {
-  if (!edits.size) return;
-  for (const el of node.querySelectorAll("input, select")) {
-    const key = fieldKey(el);
-    if (!key || !edits.has(key)) continue;
-    if (el.type === "checkbox" || el.type === "radio") el.checked = edits.get(key);
-    else el.value = edits.get(key);
-  }
-}
-
-const detailsKey = (d) => d.id || (d.querySelector(":scope > summary")?.textContent || "").replace(/\d+/g, "#");
-
-// Перенести из старого узла блока в новый то, что человек уже сделал: правки полей, раскрытые <details>,
-// и сами медиа-элементы с тем же адресом — ролик в превью не начнётся сначала, плеер не собьётся.
-function carryOver(prev, node) {
-  applyEdits(node, editsOf(prev));
-  const opened = new Map([...prev.querySelectorAll("details")].map((d) => [detailsKey(d), d.open]));
-  for (const d of node.querySelectorAll("details")) if (opened.has(detailsKey(d))) d.open = opened.get(detailsKey(d));
-  const media = new Map();
-  for (const m of prev.querySelectorAll("video[src], audio[src], img[src]")) {
-    const key = `${m.tagName}:${m.getAttribute("src")}`;
-    if (!media.has(key)) media.set(key, m);
-  }
-  for (const m of node.querySelectorAll("video[src], audio[src], img[src]")) {
-    const key = `${m.tagName}:${m.getAttribute("src")}`;
-    const twin = media.get(key);
-    if (!twin) continue;
-    media.delete(key);
-    twin.className = m.className;
-    m.replaceWith(twin); // перенос в том же такте: браузер не ставит видео на паузу и не грузит заново
-  }
-}
-
-// items: [{ key, sig, build }] — узел с той же подписью остаётся как есть, изменившийся пересобирается.
-function reconcile(parent, items, projectId) {
-  const old = new Map();
-  for (const n of parent.children) if (n.dataset.key) old.set(n.dataset.key, n);
-  const nodes = items.map(({ key, sig, build }) => {
-    const prev = old.get(key);
-    if (prev && (blockSig.get(prev) === sig || holdsInput(prev))) return prev;
-    const node = build();
-    node.dataset.key = key;
-    node.dataset.project = projectId;
-    blockSig.set(node, sig);
-    if (prev && prev.dataset.project === projectId) carryOver(prev, node);
-    return node;
-  });
-  for (const n of [...parent.children]) if (!nodes.includes(n)) n.remove();
-  nodes.forEach((n, i) => {
-    if (parent.children[i] !== n) parent.insertBefore(n, parent.children[i] || null);
-  });
-}
-
-// Фокус и курсор в поле переживают перерисовку его блока.
-function captureFocus() {
-  const el = document.activeElement;
-  if (!el?.id || !$("project").contains(el)) return null;
-  let start = null;
-  let end = null;
-  try {
-    start = el.selectionStart;
-    end = el.selectionEnd;
-  } catch {
-    /* у чекбоксов и списков выделения нет */
-  }
-  return { el, id: el.id, start, end, scroll: el.scrollTop };
-}
-
-function restoreFocus(saved) {
-  if (!saved || saved.el.isConnected) return;
-  const twin = document.getElementById(saved.id);
-  if (!twin) return;
-  twin.focus({ preventScroll: true });
-  try {
-    if (saved.start !== null) twin.setSelectionRange(saved.start, saved.end);
-  } catch {
-    /* поле без выделения */
-  }
-  twin.scrollTop = saved.scroll;
-}
-
 // Скринридеру — только переходы шагов («готово», «ошибка», «ждёт вас»), не каждую перерисовку.
 function announceChanges(project) {
   const now = Object.fromEntries(project.steps.map((s) => [s.id, s.status]));
@@ -1362,7 +1274,7 @@ function announceChanges(project) {
 function show(project) {
   state.project = project;
   announceChanges(project);
-  const saved = captureFocus();
+  const saved = captureFocus($("project"));
   const base = [state.gen, project.id];
   const sig = (...parts) => JSON.stringify([base, ...parts]);
   const statuses = project.steps.map((s) => s.status);
@@ -1431,10 +1343,10 @@ window.addEventListener("resize", debounce(trackNavHeight, 150));
 
 async function init() {
   trackNavHeight();
-  $("scenario-title").textContent = SCENARIO_TITLES[scenario];
   $("scenario-hint").textContent = HINTS[scenario];
-  document.title = `${$("scenario-title").textContent} — AI Platform`;
   state.config = await api("GET", `${API}/config`);
+  $("scenario-title").textContent = state.config.scenarios.find((s) => s.id === scenario)?.label || scenario;
+  document.title = `${$("scenario-title").textContent} — AI Platform`;
   renderCreate();
   $("create").addEventListener("submit", create);
   $("create").addEventListener("input", refreshCreateCheck);

@@ -5,7 +5,8 @@ import time
 import unittest
 
 from aiplatform.core.http import HttpError
-from tests.test_studio_flow import ARTICLE, StudioCase
+from tests.fixtures import ARTICLE
+from tests.helpers import StudioCase
 
 
 class UniqueCreateTest(StudioCase):

@@ -45,7 +45,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 
-from narrator import library, registry
+from narrator import audit, library, registry
 from narrator.library import Entry, article_id, audio_name, format_duration
 
 TOKEN_ENV = "NARRATOR_TELEGRAM_TOKEN"
@@ -86,6 +86,15 @@ WELCOME = (
 )
 GOODBYE = "Отписал. Чтобы снова получать озвучки, пришли /start."
 HINT = "Я только рассылаю озвучки статей. Команды: /start — подписаться, /stop — отписаться."
+NEED_INVITE = "Подписка по приглашению: пришли /start <код> или открой ссылку-приглашение."
+FULL = "Мест в рассылке пока нет."
+# Защита от флуда (SEC-012): одному чату — не больше ответа раз в REPLY_INTERVAL_S,
+# число подписчиков ограничено, подписку можно закрыть инвайт-кодом.
+REPLY_INTERVAL_ENV = "NARRATOR_BOT_REPLY_INTERVAL"
+REPLY_INTERVAL_S = 60.0
+MAX_SUBSCRIBERS_ENV = "NARRATOR_BOT_MAX_SUBSCRIBERS"  # 0 — без ограничения
+MAX_SUBSCRIBERS = 1000
+INVITE_ENV = "NARRATOR_BOT_INVITE"  # пусто — /start без кода
 
 
 class TelegramError(RuntimeError):
@@ -239,11 +248,10 @@ class State:
             merged = _merge(getattr(self, "_base", None) or State(), self, disk)
             tmp = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
             try:
-                tmp.write_text(
-                    json.dumps(asdict(merged), ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
-                )
-                os.chmod(tmp, 0o600)  # подписчики — личные данные
+                # Сразу 0600: подписчики — личные данные, без окна с правами по umask (SEC-010).
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(json.dumps(asdict(merged), ensure_ascii=False, indent=2) + "\n")
                 os.replace(tmp, path)
             except BaseException:
                 tmp.unlink(missing_ok=True)
@@ -523,19 +531,76 @@ def chat_name(chat: dict) -> str:
     return name or str(chat.get("id", "?"))
 
 
-def pull(bot: Bot, state: State, timeout: int = 0) -> list[Subscriber]:
+def _env_number(name: str, default: float) -> float:
+    try:
+        return max(float(os.environ.get(name, "") or default), 0.0)
+    except ValueError:
+        return default
+
+
+class ReplyLimiter:
+    """Не чаще одного ответа чату в interval секунд; память — только о недавних чатах."""
+
+    def __init__(self, interval: float | None = None, clock: Callable[[], float] | None = None):
+        if interval is None:
+            interval = _env_number(REPLY_INTERVAL_ENV, REPLY_INTERVAL_S)
+        self.interval = interval
+        self._clock = clock or time.monotonic
+        self._last: dict[int, float] = {}
+
+    def allow(self, chat_id: int) -> bool:
+        now = self._clock()
+        if len(self._last) > 10_000:  # флуд с тысяч чатов не раздувает память
+            self._last = {k: t for k, t in self._last.items() if now - t < self.interval}
+        last = self._last.get(chat_id)
+        if last is not None and now - last < self.interval:
+            return False
+        self._last[chat_id] = now
+        return True
+
+
+_LIMITER = ReplyLimiter()  # общий на процесс: bot serve зовёт pull в цикле
+
+
+def pull(
+    bot: Bot,
+    state: State,
+    timeout: int = 0,
+    limiter: ReplyLimiter | None = None,
+    max_subscribers: int | None = None,
+    invite: str | None = None,
+    on_update: Callable[[dict], None] | None = None,
+) -> list[Subscriber]:
     """Забирает накопившиеся сообщения и ведёт по ним список подписчиков.
 
     /start — подписка, /stop — отписка, остальное — подсказка. Возвращает тех,
     кто подписался в этот заход. Курсор getUpdates хранится в state.offset,
     поэтому одно и то же сообщение не обрабатывается дважды.
 
+    Флуд (SEC-012): ответ чату — не чаще раза в interval лимитера; повторный
+    /start уже подписанного — без ответа; сверх max_subscribers и без
+    инвайт-кода (`/start <код>`, если он задан) — не подписываем.
+
+    on_update — кому отдать нажатия кнопок (callback_query) и ответы на сообщения
+    бота: ревью выпуска платформы (PRD-001). Без него кнопки не запрашиваются.
+
     Пока работает `bot serve` в другом процессе, getUpdates не зовём: два опроса
     дают 409 и роняют serve. Подписки тогда забирает он.
     """
     if serve_running():
         return []
-    params = {"offset": state.offset, "allowed_updates": ["message"]}
+    limiter = limiter or _LIMITER
+    if max_subscribers is None:
+        max_subscribers = int(_env_number(MAX_SUBSCRIBERS_ENV, MAX_SUBSCRIBERS))
+    if invite is None:
+        invite = os.environ.get(INVITE_ENV, "").strip()
+
+    def reply(chat_id: int, text: str) -> None:
+        if limiter.allow(chat_id):
+            bot.request("sendMessage", {"chat_id": chat_id, "text": text})
+
+    kinds = ["message", "callback_query"] if on_update else ["message"]
+    params = {"offset": state.offset, "allowed_updates": kinds}
     if timeout:
         params["timeout"] = timeout
     updates = bot.call("getUpdates", params) or []
@@ -543,21 +608,34 @@ def pull(bot: Bot, state: State, timeout: int = 0) -> list[Subscriber]:
     for update in updates:
         state.offset = max(state.offset, int(update["update_id"]) + 1)
         msg = update.get("message") or {}
+        if on_update is not None and (update.get("callback_query") or msg.get("reply_to_message")):
+            on_update(update)  # кто нажал и можно ли — решает платформа
+            continue
         chat = msg.get("chat") or {}
         chat_id = chat.get("id")
         if chat_id is None:
             continue
-        text = (msg.get("text") or "").strip().lower()
-        command = text.split("@")[0].split()[0] if text else ""
+        words = (msg.get("text") or "").strip().split()
+        command = words[0].split("@")[0].lower() if words else ""
         if command == "/start":
-            if state.upsert(chat_id, chat_name(chat)):
+            sub = state.find(chat_id)
+            if sub is not None and sub.active:
+                continue  # уже подписан — молчим
+            code = words[1] if len(words) > 1 else ""
+            if invite and not secrets.compare_digest(code.encode(), invite.encode()):
+                reply(chat_id, NEED_INVITE)
+            elif max_subscribers and len(state.active()) >= max_subscribers:
+                reply(chat_id, FULL)
+            elif state.upsert(chat_id, chat_name(chat)):
                 fresh.append(state.find(chat_id))
-            bot.request("sendMessage", {"chat_id": chat_id, "text": WELCOME})
+                reply(chat_id, WELCOME)
         elif command == "/stop":
-            state.deactivate(chat_id, "отписался командой /stop")
-            bot.request("sendMessage", {"chat_id": chat_id, "text": GOODBYE})
+            sub = state.find(chat_id)
+            if sub is not None and sub.active:
+                state.deactivate(chat_id, "отписался командой /stop")
+                reply(chat_id, GOODBYE)
         else:
-            bot.request("sendMessage", {"chat_id": chat_id, "text": HINT})
+            reply(chat_id, HINT)
     return fresh
 
 
@@ -584,6 +662,7 @@ def describe(path: Path, entry: Entry, engine: str) -> str:
     tail = " · ".join(facts)
     if entry.url:
         tail += f'\n<a href="{html.escape(entry.url)}">Оригинал статьи</a>'
+    tail += f"\n{registry.ai_line(voice=True)}"  # озвучка narrator — всегда синтез (CMP-011)
     notes = registry.footnotes_html(spoken_text(path, entry), registry.load())
     head = f"<b>{html.escape(entry.title.strip())}</b>"
     # Лимит Telegram считает текст без разметки, так что запас тут с избытком.
@@ -639,7 +718,7 @@ def _send_annotation(
             Delivery(sub.chat_id, sub.name, reply.ok, "" if reply.ok else reply.description)
         )
     if any(d.ok for d in done):
-        mark_sent(state, path, engine, tag)
+        mark_sent(state, path, engine, tag, caption=text, done=done)
     return done
 
 
@@ -702,9 +781,32 @@ def unsent(state: State, root: Path) -> list[tuple[Path, Entry, str]]:
     return out
 
 
-def mark_sent(state: State, path: Path, engine: str, tag: str = "") -> None:
-    """Считать озвучку отправленной, ничего не посылая."""
+def mark_sent(
+    state: State,
+    path: Path,
+    engine: str,
+    tag: str = "",
+    *,
+    caption: str = "",
+    media: tuple[Path, ...] = (),
+    done: list[Delivery] | None = None,
+) -> None:
+    """Отметить озвучку отправленной и записать это в журнал комплаенса (CMP-015).
+
+    Без done — «считать отправленной, ничего не посылая» (`bot send --mark`)."""
     state.sent[sent_key(path, engine, tag)] = datetime.now().isoformat(timespec="seconds")
+    audit.write(
+        library.library_root(),
+        "publish" if done is not None else "mark_sent",
+        item=article_id(path) if path.parent.parent.parent.name.isdigit() else str(path),
+        engine=engine,
+        channel=tag or None,
+        recipients=[d.chat_id for d in done or [] if d.ok] or None,
+        caption_sha256=audit.sha256_text(caption) if caption else None,
+        media={p.name: audit.sha256_file(p) for p in media if p} or None,
+        footnotes=audit.footnotes(caption) or None,
+        registry=registry.checked(),
+    )
 
 
 @dataclass
@@ -765,7 +867,8 @@ def broadcast(
             for sub in people
         ]
         if any(d.ok for d in done):
-            mark_sent(state, path, engine, tag)
+            caption = digest_caption(path, entry)
+            mark_sent(state, path, engine, tag, caption=caption, media=(cover, audio), done=done)
         return done
 
     if entry.kind == "article" and annotation:
@@ -803,8 +906,12 @@ def broadcast(
         error = "" if reply.ok else reply.description
         done.append(Delivery(sub.chat_id, sub.name, reply.ok, error))
     if any(d.ok for d in done):
-        mark_sent(state, path, engine, tag)
+        mark_sent(state, path, engine, tag, caption=caption, media=(audio,), done=done)
     return done
+
+
+# Дайджест: озвучка — синтез (Gemini TTS или локальная модель), картинка — ChatGPT.
+DIGEST_AI = registry.ai_line(voice=True, images=True)
 
 
 def digest_caption(path: Path, entry: Entry) -> str:
@@ -817,7 +924,10 @@ def digest_caption(path: Path, entry: Entry) -> str:
     text = post.read_text(encoding="utf-8") if post.exists() else ""
     if not text.strip():
         text = f"**{entry.title.replace('*', '')}**\n\n{entry.summary.strip()}"
-    text = registry.with_footnotes(text, spoken_text(path, entry), registry.load())
+    entries = registry.load()
+    text = registry.with_footnotes(text, spoken_text(path, entry), entries)
+    text = registry.with_materials(text, registry.materials(digest_agents(path), entries))
+    text = registry.with_ai_line(text, DIGEST_AI)
     try:
         return registry.fit_caption(text, CAPTION_LIMIT)
     except registry.CaptionError as e:
@@ -866,9 +976,19 @@ def _send_digest(
 
 
 def audio_caption(path: Path, entry: Entry, title: str) -> str:
-    """Подпись к аудио дайджеста: аудио могут переслать отдельно — сноски и тут."""
-    notes = registry.footnotes_html(spoken_text(path, entry), registry.load())
-    return "\n\n".join(p for p in (html.escape(title), notes) if p)
+    """Подпись к аудио дайджеста: аудио могут переслать отдельно — сноски и маркировка тут же."""
+    entries = registry.load()
+    notes = registry.footnotes_html(spoken_text(path, entry), entries)
+    labels = "\n".join(html.escape(m) for m in registry.materials(digest_agents(path), entries))
+    ai = html.escape(DIGEST_AI)
+    return "\n\n".join(p for p in (labels, html.escape(title), notes, ai) if p)
+
+
+def digest_agents(path: Path) -> list[str]:
+    """Иноагенты, чьи материалы вошли в дайджест path (отметка в news.db при сборе, CMP-012)."""
+    from narrator.news.store import db_path, issue_agents
+
+    return issue_agents(db_path(library.library_root()), article_id(path))
 
 
 def send_digest_video(
@@ -918,7 +1038,10 @@ def send_digest_video(
         error = "" if reply.ok else reply.description
         done.append(Delivery(sub.chat_id, sub.name, reply.ok, error))
     if any(d.ok for d in done):
-        mark_sent(state, path, engine, sent_tag(entry, channel))
+        tag = sent_tag(entry, channel)
+        mark_sent(
+            state, path, engine, tag, caption=digest_caption(path, entry), media=(video,), done=done
+        )
     return done
 
 
@@ -1045,5 +1168,6 @@ def send_folder(
         error = "" if reply.ok else reply.description
         done.append(Delivery(sub.chat_id, sub.name, reply.ok, error))
     if any(d.ok for d in done):
-        mark_sent(state, path, FOLDER_ENGINE, tag)
+        files = tuple(p for p in (parcel.image, parcel.audio, video) if p)
+        mark_sent(state, path, FOLDER_ENGINE, tag, caption=caption, media=files, done=done)
     return done

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import struct
 import uuid
@@ -22,6 +23,11 @@ _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 class UploadError(ValueError):
     """Файл не принят; текст показывается пользователю."""
+
+
+def limits() -> dict[str, int]:
+    """Лимиты загрузки для /config модулей: страница сверяет размер файла до отправки (FE-003)."""
+    return {"image": MAX_UPLOAD_BYTES, "media": MAX_AUDIO_BYTES}
 
 
 def sniff(data: bytes) -> str | None:
@@ -55,6 +61,12 @@ def sniff_video(data: bytes) -> str | None:
     return None
 
 
+def head(path: Path, n: int = 64) -> bytes:
+    """Первые байты файла — для сигнатуры, не читая файл целиком."""
+    with path.open("rb") as fh:
+        return fh.read(n)
+
+
 def kind_of(ext: str) -> str:
     return IMAGE if ext in IMAGE_MIME else AUDIO
 
@@ -84,6 +96,27 @@ class UploadStore:
         upload_id = uuid.uuid4().hex
         atomic_write(self.root / f"{upload_id}.{ext}", data)
         return upload_id
+
+    def save_file(self, tmp: Path, kinds: tuple[str, ...] = (IMAGE,)) -> str:
+        """Загрузка, уже записанная на диск (body_to_file), — в хранилище переименованием.
+
+        Тип — по первым байтам, размер — по файлу; не принят — временный файл удаляется.
+        """
+        try:
+            size = tmp.stat().st_size
+            if not size:
+                raise UploadError("Пустой файл.")
+            ext = sniff(head(tmp))
+            if ext is None or kind_of(ext) not in kinds:
+                raise UploadError(_accepted(kinds))
+            limit = MAX_UPLOAD_BYTES if kind_of(ext) == IMAGE else MAX_AUDIO_BYTES
+            if size > limit:
+                raise UploadError(f"Файл больше {limit // 2**20} МБ.")
+            upload_id = uuid.uuid4().hex
+            os.replace(tmp, self.root / f"{upload_id}.{ext}")
+            return upload_id
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def path(self, upload_id: str) -> Path | None:
         if not isinstance(upload_id, str) or not _ID.match(upload_id):

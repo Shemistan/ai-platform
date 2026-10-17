@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from http import HTTPStatus
 
+from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import Request, bad_request, found, handle_uploads, not_found
 from aiplatform.video import config as video_config
 from aiplatform.video import living, models, timeline
@@ -32,6 +33,7 @@ class VideoModule:
             "runner_available": self.config.fake or self.config.runner_available(),
             "runner_cmd": self.config.ltx_cmd[0],
             "install_hint": INSTALL_HINT,
+            "upload_limits": uploads_module.limits(),
             "min_keyframe_gap": timeline.MIN_KEYFRAME_GAP,
             "default_duration_s": timeline.DEFAULT_DURATION_S,
             "presets": [
@@ -82,7 +84,7 @@ class VideoModule:
             job = create(payload)
         except timeline.ValidationError as exc:
             raise bad_request(str(exc)) from exc
-        req.send_json(job, HTTPStatus.CREATED)
+        req.send_json(job, HTTPStatus.CREATED, {"Location": f"/api/video/jobs/{job['id']}"})
 
     def close(self) -> None:
         self.jobs.close()

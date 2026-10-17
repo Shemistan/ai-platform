@@ -23,10 +23,21 @@ if [ -f tools/docs_gate.py ]; then
   python3 tools/docs_gate.py
 fi
 
+# --- справочник HTTP API (docs/api-routes.md) не отстал от маршрутов в коде (DX-005) ---
+if [ -f tools/api_routes.py ]; then
+  quiet_test tools/test_api_routes.py
+  python3 tools/api_routes.py --check
+fi
+
 # --- бэклог (backlog/ главного checkout, вне git): шапки задач, связи, индекс и журнал ---
 if [ -f tools/tasks_gate.py ]; then
   python3 tools/test_tasks_gate.py
   python3 tools/tasks_gate.py
+fi
+
+# --- сдвиг staging только fast-forward с compare-and-swap (грабли 3) ---
+if [ -f tools/advance-staging.sh ]; then
+  quiet_test tools/test_advance_staging.py
 fi
 
 # --- версия: одна во всех pyproject, __version__ и uv.lock; release-скрипт (DX-009) ---

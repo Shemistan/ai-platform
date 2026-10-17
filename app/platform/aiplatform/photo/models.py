@@ -162,14 +162,30 @@ def unknown(model_id: object, missing: str = "Неизвестная модел�
     return missing
 
 
+# Текстовый энкодер Klein: Flux2CLI качает его в HF_HOME при первой генерации
+# (repo = lmstudio-community/<имя>-MLX-<text_quant>); setup-model.sh ставит заранее.
+KLEIN_ENCODERS = {"klein-9b": "Qwen3-8B", "klein-4b": "Qwen3-4B"}
+
+
+def text_encoder(model: Model) -> str:
+    """Репозиторий Hugging Face с текстовым энкодером Flux2CLI или "" (не предзагружаем)."""
+    name = KLEIN_ENCODERS.get(model.variant) if model.backend == FLUX2 else None
+    return f"lmstudio-community/{name}-MLX-{model.text_quant}" if name else ""
+
+
 def setup_line(model: Model) -> str:
     """Строка для setup-model.sh: каталог моделей у скрипта и сервиса один.
 
-    Поля: id, пайплайн, каталог весов, файл-отметка, источник, квантизация трансформера.
+    Поля: id, пайплайн, каталог весов, файл-отметка, источник, квантизация трансформера,
+    текстовый энкодер для предзагрузки («-» — нет).
     """
     if model.backend == FLUX2:
-        return f"{model.id} {FLUX2} {FLUX2_DIR} {MARKER}-{model.variant} {model.variant} {model.transformer_quant}"
-    return f"{model.id} {MFLUX} {model.weights} {MARKER} mflux-community/{model.weights} -"
+        encoder = text_encoder(model) or "-"
+        return (
+            f"{model.id} {FLUX2} {FLUX2_DIR} {MARKER}-{model.variant} {model.variant} "
+            f"{model.transformer_quant} {encoder}"
+        )
+    return f"{model.id} {MFLUX} {model.weights} {MARKER} mflux-community/{model.weights} - -"
 
 
 if __name__ == "__main__":

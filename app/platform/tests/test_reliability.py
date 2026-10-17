@@ -22,7 +22,7 @@ from aiplatform.core import tasks as tasks_module
 from aiplatform.core.notify import Notifier
 from aiplatform.studio import pipeline, publish
 from tests import TMP_ROOT
-from tests.helpers import PlatformCase, isolated_config
+from tests.helpers import PlatformCase, isolated_config, poll, scaled
 
 PLATFORM = Path(__file__).resolve().parents[1]
 PY = sys.executable
@@ -41,12 +41,11 @@ def group_alive(pgid: int) -> bool:
 
 
 def wait_for(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return cond()
+    """Истинно ли cond() за timeout (×AIP_TEST_TIMEOUT_SCALE) — обёртка над helpers.poll."""
+    try:
+        return bool(poll(cond, bool, timeout, interval))
+    except AssertionError:
+        return False
 
 
 def all_done(_ctx):
@@ -201,9 +200,10 @@ class ShutdownTest(PlatformCase):
         begin = time.monotonic()
         self.app.stopping = False
         server_module.request_stop(self.server, self.app, "SIGTERM")
-        thread.join(15)
+        thread.join(scaled(15))
         self.assertTrue(wait_for(lambda: self.app.closed, timeout=15))
-        self.assertLess(time.monotonic() - begin, 15)
+        elapsed = time.monotonic() - begin
+        self.assertLess(elapsed, scaled(15))
         self.assertEqual(errors, ["canceled"], "остановка сервиса — отмена, а не сбой")
         self.assertFalse(group_alive(pgid))
         self.assertEqual(list((Path(self.tmp.name) / "run").glob("*.json")), [])
@@ -264,8 +264,9 @@ class SigtermProcessTest(unittest.TestCase):
             self.assertIn("ai-platform: http://", line)
             begin = time.monotonic()
             proc.send_signal(signal.SIGTERM)
-            self.assertEqual(proc.wait(15), 0)
-            self.assertLess(time.monotonic() - begin, 15)
+            self.assertEqual(proc.wait(scaled(15)), 0)
+            elapsed = time.monotonic() - begin
+            self.assertLess(elapsed, scaled(15))
         finally:
             if proc.poll() is None:
                 proc.kill()
@@ -284,7 +285,8 @@ class TimeoutTest(unittest.TestCase):
         begin = time.monotonic()
         with self.assertRaises(runner.RunFailed) as err:
             runner.run([PY, "-c", "import time; time.sleep(30)"], lambda _l: None, threading.Event(), timeout_s=0.5)
-        self.assertLess(time.monotonic() - begin, 10)
+        elapsed = time.monotonic() - begin
+        self.assertLess(elapsed, scaled(10), "лимит 0.5 с, а не 30 с сна")
         self.assertIn("Превышено", str(err.exception))
 
     def test_idle_timeout(self):

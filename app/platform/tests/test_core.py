@@ -7,6 +7,7 @@ import unittest
 
 from aiplatform.core import gate as gate_module
 from aiplatform.core import http, runner, uploads
+from tests.helpers import scaled
 
 
 class GateTest(unittest.TestCase):
@@ -119,10 +120,11 @@ class RunnerTest(unittest.TestCase):
         cancel = threading.Event()
         timer = threading.Timer(0.3, cancel.set)
         timer.start()
-        started = time.time()
+        started = time.monotonic()
         with self.assertRaises(runner.Canceled):
             runner.run([sys.executable, "-c", "import time; time.sleep(30)"], lambda _: None, cancel)
-        self.assertLess(time.time() - started, 10)
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, scaled(10), "отмена гасит процесс, а не ждёт 30 с")
         timer.cancel()
 
 

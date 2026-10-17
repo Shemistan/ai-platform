@@ -1,10 +1,13 @@
 """Уборка: место по областям, удаление старых задач вкладок, кэша, загрузок и архивных выпусков,
 промежуточные файлы и авто-архив опубликованных выпусков (REL-013)."""
 
+import json
 import os
 import time
 
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase
+from aiplatform.studio import history
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG
+from tests.helpers import StudioCase
 
 DAY = 86400
 MONTH_LATER = 31 * DAY
@@ -104,3 +107,47 @@ class CleanupTest(StudioCase):
 
     def test_auto_cleanup_on_by_default(self):
         self.assertIs(self.json("GET", "/api/settings/state")[1]["cleanup"]["auto"], True)
+
+
+class CleanupKeepsPublicationsTest(StudioCase):
+    """Уборка архивного выпуска: медиа удалены, публикации и снимки — в архиве аналитики (AN-008)."""
+
+    def test_publications_survive_cleanup(self):
+        pid = self.create(scenario="article", text=ARTICLE)["id"]
+        folder = self.folder(pid)
+        (folder / "video.mp4").write_bytes(b"x" * 50_000)
+        sent = time.time() - 3 * 86400
+        record = {
+            "channel": "tg-old",
+            "ok": True,
+            "state": "sent",
+            "sent": sent,
+            "message_id": 7,
+            "members_at_publish": 100,
+            "stats": [{"at": sent + 30 * 3600, "age_h": 30.0, "views": 300, "members": 120}],
+        }
+        (folder / "published.json").write_text(json.dumps([record]), encoding="utf-8")
+        self.json("POST", f"/api/studio/projects/{pid}/archive", {"archived": True})
+        cleaner = self.app.modules["settings"].cleaner
+        later = time.time() + MONTH_LATER
+
+        result = cleaner.run(30, dry=False, now=later)
+        self.assertEqual(result["archived"], 1)
+        self.assertGreaterEqual(result["bytes"], 50_000, "место освобождено")
+        self.assertFalse(folder.exists(), "медиа удалены вместе с выпуском")
+
+        studio = self.app.modules["studio"]
+        kept = history.load(studio.history_file)
+        self.assertEqual([k["project_id"] for k in kept], [pid])
+        self.assertEqual(kept[0]["published"][0]["stats"], record["stats"], "снимки отклика целы")
+        self.assertNotIn("log", kept[0]["project"])
+
+        board = self.json("GET", "/api/studio/board")[1]
+        rows = {d["dimension"]: d["rows"] for d in board["response"]}["Сценарий"]
+        self.assertEqual([(r["posts"], r["avg_views"]) for r in rows], [(1, 240)], "«Что работает» учитывает удалённый")
+        self.assertIn("tg-old", studio._facts().posts, "прирост канала — и по удалённым выпускам")
+
+        # Повторная запись того же выпуска не дублируется.
+        self.assertFalse(history.keep(studio.history_file, kept[0]["project"], kept[0]["published"]))
+        cleaner.run(30, dry=False, now=later)
+        self.assertEqual(len(history.load(studio.history_file)), 1)

@@ -51,6 +51,9 @@ DEFAULT_VOICE = "M1"
 VOICES = [f"{g}{n}" for g in "FM" for n in range(1, 6)]
 
 SILERO_MODEL = "v5_5_ru"
+# sha256 файла v5_5_ru.pt (models.silero.ai): torch.package исполняет код из файла,
+# подменённый файл не грузим (SEC-011). Та же сумма — в tools/fetch-models.sh.
+SILERO_SHA256 = "50081637b602126ee06cb3bc8a744d25651d2da149ee8864b9a379bfdd934437"
 SILERO_VOICES = ["eugene", "aidar", "baya", "kseniya", "xenia"]
 SILERO_SR = 48000
 # Silero не берёт текст длиннее ~1000 символов за вызов: абзац режем по
@@ -388,6 +391,24 @@ def silero_path() -> Path:
     return models.locate(f"{models.SILERO}/{SILERO_MODEL}.pt", legacy, "NARRATOR_SILERO_MODEL")
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def check_silero(path: Path) -> None:
+    """Сумма модели Silero до загрузки: PackageImporter исполняет код из файла."""
+    got = file_sha256(path)
+    if got != SILERO_SHA256:
+        raise ModelMissingError(
+            f"{path}: контрольная сумма не совпала ({got[:12]}… вместо {SILERO_SHA256[:12]}…) — "
+            "файл подменён или битый, удали его и скачай заново: make models"
+        )
+
+
 def sentence_groups(text: str, limit: int) -> list[str]:
     """Режет текст по предложениям на группы не длиннее limit (длинное предложение — целиком)."""
     import re
@@ -418,6 +439,7 @@ class SileroSynth(Synthesizer):
         path = silero_path()
         if not path.exists():
             raise ModelMissingError(f"нет модели Silero в {path}: {models.missing_hint()}")
+        check_silero(path)
         import torch
 
         self._model = torch.package.PackageImporter(str(path)).load_pickle("tts_models", "model")
@@ -637,13 +659,17 @@ def render(
     return total / sr
 
 
+# Синтетический голос — метка в ID3 (TXXX:AI_GENERATED, комментарий): EU AI Act ст. 50, CMP-011.
+AI_METADATA = ["-metadata", "comment=AI-generated: synthetic voice", "-metadata", "AI_GENERATED=1"]
+
+
 def encode_mp3(wav: Path, mp3: Path, title: str, bitrate: str = "64k") -> None:
     tmp = mp3.with_suffix(".tmp.mp3")
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav),
         "-ac", "1", "-codec:a", "libmp3lame", "-b:a", bitrate,
         "-metadata", f"title={title}", "-metadata", "album=Озвученные статьи",
-        "-metadata", "artist=narrator", str(tmp),
+        "-metadata", "artist=narrator", *AI_METADATA, str(tmp),
     ]  # fmt: skip
     subprocess.run(cmd, check=True)
     tmp.replace(mp3)
@@ -655,7 +681,7 @@ def retime_mp3(src: Path, dst: Path, tempo: float, bitrate: str = "64k") -> None
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
         "-filter:a", f"atempo={tempo:g}", "-ac", "1", "-codec:a", "libmp3lame",
-        "-b:a", bitrate, str(tmp),
+        "-b:a", bitrate, *AI_METADATA, str(tmp),
     ]  # fmt: skip
     subprocess.run(cmd, check=True)
     tmp.replace(dst)

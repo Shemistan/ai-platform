@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 import shutil
+import stat
 import threading
 import time
 import uuid
@@ -36,7 +38,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import disk, log, media
+from aiplatform.core import audit, disk, log, media
+from aiplatform.core import settings as core_settings
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.runner import Canceled
 from aiplatform.studio import cache, news, prompts, publish, render, slides
@@ -103,8 +106,18 @@ def ensure_space(ctx: StepContext, what: str) -> None:
 
 
 def find(folder: Path, stem: str, exts: tuple[str, ...]) -> Path | None:
-    found = [folder / f"{stem}{ext}" for ext in exts if (folder / f"{stem}{ext}").is_file()]
-    return max(found, key=lambda p: p.stat().st_mtime, default=None)
+    """Самый свежий из файлов stem.<ext>. Файл, который шаг удалил между проверкой и stat
+    (перезапуск постера, пока студия читает выпуск), — как будто его нет, а не 500."""
+    found: list[tuple[float, Path]] = []
+    for ext in exts:
+        path = folder / f"{stem}{ext}"
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            found.append((info.st_mtime, path))
+    return max(found, key=lambda x: x[0], default=(0.0, None))[1]
 
 
 def require_text(ctx: StepContext) -> str:
@@ -236,6 +249,7 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
         raise StudioError(f"{what}: mp3 не найден.")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
+    svc.renderer.tag_ai(target, ctx.cancel)  # синтетический голос — метка в ID3 (CMP-011)
     svc.cache.put(entry, target)
     return target
 
@@ -263,10 +277,17 @@ def slide_media(folder: Path, n: int, kind: str, prompt: str) -> Path | None:
     return path
 
 
-def save_slide_media(folder: Path, n: int, ext: str, data: bytes, prompt: str, kind: str) -> Path:
-    """Файл слайда от человека: прежний вариант (любого формата) заменяется."""
+def save_slide_media(folder: Path, n: int, ext: str, data: bytes | Path, prompt: str, kind: str) -> Path:
+    """Файл слайда от человека: прежний вариант (любого формата) заменяется.
+
+    data — байты или загрузка во временном файле на той же ФС (переносится os.replace)."""
     path = folder / f"{n:02d}.{ext}"
-    atomic_write(path, data)  # сначала новый файл целиком, потом — прежний в другом формате
+    # Сначала новый файл целиком, потом — прежний в другом формате.
+    if isinstance(data, Path):
+        folder.mkdir(parents=True, exist_ok=True)
+        os.replace(data, path)
+    else:
+        atomic_write(path, data)
     for old in (folder / f"{n:02d}{e}" for e in MEDIA[kind][0]):
         if old != path:
             old.unlink(missing_ok=True)
@@ -301,6 +322,13 @@ def uploads_ready(ctx: StepContext, kind: str, items: list[tuple[int, str]]) -> 
 
 def banned(config: StudioConfig) -> list[registry.Entry]:
     return registry.Registry(config.registry_file).entries()
+
+
+def registry_stale(config: StudioConfig) -> str:
+    """Предупреждение, если реестр сверяли дольше порога из настроек (CMP-013); пусто — свежий."""
+    checked = registry.Registry(config.registry_file).read()[1]
+    max_days = core_settings.at(config.registry_file.parent).load()["registry"]["max_age_days"]
+    return registry.stale_note(checked, max_days)
 
 
 def slide_notes(paras: list[str], plan: list[slides.Slide], entries: list[registry.Entry]) -> list[list[str]]:
@@ -758,7 +786,7 @@ def render_video(
 
 def renderer(ctx: StepContext) -> Renderer:
     """Черновик собирается в половинном кадре: быстро посмотреть структуру и ритм."""
-    base = services(ctx).renderer
+    base = dataclasses.replace(services(ctx).renderer, ai_badge=bool(ctx.settings.get("ai_badge", True)))
     return dataclasses.replace(base, scale=base.scale * DRAFT_SCALE) if ctx.settings.get("draft") else base
 
 
@@ -896,6 +924,10 @@ def step_short(ctx: StepContext) -> None:
 SENDING, SENT, UNKNOWN, SEND_FAILED = "sending", "sent", "unknown", "failed"
 UNCLEAR = (SENDING, UNKNOWN)  # ушёл ли пост — неизвестно: решает человек
 UNCLEAR_NOTE = "Статус неизвестен — проверь канал"
+# Публикация ждёт решения человека — на эти ожидания бот шлёт владельцу превью с кнопками (PRD-001).
+CHOOSE_NOTE = "Выбери каналы и нажми «Опубликовать»."
+APPROVE_NOTE = "Посмотри видео, выбери каналы и нажми «Опубликовать»."
+REVIEW_NOTES = (CHOOSE_NOTE, APPROVE_NOTE)
 
 
 # Пакет для ручной загрузки (YouTube, TikTok…): packaged — файлы готовы, uploaded — автор залил и
@@ -953,6 +985,30 @@ def resolve_record(record: dict, posted: bool) -> dict:
     return out | {"state": SEND_FAILED, "ok": False, "message": message}
 
 
+# Повторная публикация (force в канал, куда пост уже ушёл) — новая запись канала со следующим
+# attempt, а не замена прежней: у первой остаются message_id, stats и members_at_publish (AN-005).
+# Запись узнаётся по (channel, attempt); у записей до AN-005 attempt нет — это 1.
+
+
+def attempt_of(record: dict) -> int:
+    value = record.get("attempt")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 1
+
+
+def current_record(records: list[dict], channel_id: str) -> dict | None:
+    """Текущая (последняя) попытка канала: её продолжает повтор, по ней решают «Пост есть» и «Залил»."""
+    return next((r for r in reversed(records) if r["channel"] == channel_id), None)
+
+
+def first_live(records: list[dict], channel_id: str) -> dict | None:
+    """Первая вышедшая публикация канала: по ней метрики и «Что работает», повтор не считается."""
+    return next((r for r in records if r["channel"] == channel_id and is_live(r)), None)
+
+
+def next_attempt(records: list[dict], channel_id: str) -> int:
+    return max((attempt_of(r) for r in records if r["channel"] == channel_id), default=0) + 1
+
+
 class Journal:
     """published.json как журнал: файл переписывается атомарно при каждой смене состояния записи."""
 
@@ -961,20 +1017,27 @@ class Journal:
         self.records = read_published(ctx)
 
     def get(self, channel_id: str) -> dict | None:
-        return next((r for r in self.records if r["channel"] == channel_id), None)
+        return current_record(self.records, channel_id)
 
     def put(self, record: dict) -> dict:
         # Под замком выпуска журнал перечитывается: снимки отклика, дописанные «Обновить отклик»
         # во время публикации, не теряются, а он не затирает запись этого канала.
+        channel = record["channel"]
+
         def change(records: list[dict]) -> list[dict]:
-            # Запись канала — на своём месте, новый канал — в конец: порядок как в выборе каналов.
-            same = [n for n, r in enumerate(records) if r["channel"] == record["channel"]]
-            if same:
-                disk = records[same[0]]
+            nonlocal record
+            # Запись (канал, попытка) — на своём месте; новая попытка или новый канал — в конец (AN-005).
+            same = [n for n, r in enumerate(records) if r["channel"] == channel]
+            if "attempt" not in record:  # без явной попытки — продолжение текущей
+                record = record | {"attempt": attempt_of(records[same[-1]]) if same else 1}
+            record = record | {"publication_id": f"{self.ctx.project['id']}:{channel}:{record['attempt']}"}
+            match = [n for n in same if attempt_of(records[n]) == record["attempt"]]
+            if match:
+                disk = records[match[0]]
                 merged = record
                 if len(disk.get("stats") or []) > len(record.get("stats") or []):
                     merged = record | {"stats": disk["stats"]}
-                records[same[0]] = merged
+                records[match[0]] = merged
             else:
                 records.append(record)
             return records
@@ -987,27 +1050,38 @@ def step_publish(ctx: StepContext) -> None:
     svc = services(ctx)
     chosen = ctx.settings.get("channels") or []
     if not chosen:
-        raise Waiting("Выбери каналы и нажми «Опубликовать».")
+        raise Waiting(CHOOSE_NOTE)
     if not ctx.settings.get("auto_publish") and not ctx.state.get("approved"):
-        raise Waiting("Посмотри видео, выбери каналы и нажми «Опубликовать».")
+        raise Waiting(APPROVE_NOTE)
     if verdict(ctx.read(NARRATOR_REVIEW)) == NOT_READY and not ctx.state.get("ignore_verdict"):
         raise Waiting(
             "Судья сказал «не готово» — см. его отчёт в шаге «Текст». Поправь выпуск или включи "
             "«Опубликовать несмотря на вердикт» и нажми «Опубликовать»."
         )
     force = bool(ctx.state.get("force"))
+    approved = bool(ctx.state.get("approved"))
     # Подтверждение одноразовое: чем бы ни кончился шаг, «Запустить всё» или перезапуск
-    # без нового нажатия «Опубликовать» ничего не отправят.
-    ctx.remember(force=False, **({} if ctx.settings.get("auto_publish") else {"approved": False}))
+    # без нового нажатия «Опубликовать» ничего не отправят (и не пропустят чужие ссылки).
+    ctx.remember(force=False, approved=False)
     channels = {c.id: c for c in svc.config.channels()}
-    plan_title = ""
-    if ctx.read(PLAN):
-        plan_title = json.loads(ctx.read(PLAN)).get("title", "")
-    title = plan_title or ctx.project["title"]
+    title = post_title(ctx.project, ctx.read)
     off = disclaimers_off(ctx, title)
-    post = with_source(ctx, ctx.read(POST))
-    if ctx.settings.get("disclaimers", True):
-        post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
+    stale = registry_stale(svc.config)
+    ctx.remember(registry_warning=stale or None)  # видно в состоянии шага; публикацию не держит
+    if stale:
+        ctx.log(stale)
+    ai = ai_used(ctx.project)
+    post = final_post(ctx.project, ctx.read, svc.config)
+    links = post_links(ctx.project["scenario"], ctx.settings, ctx.read, post)
+    if links["domains"]:
+        ctx.log("ссылки в посте ведут на: " + ", ".join(links["domains"]))
+    # Автопубликация не пропускает ссылки, которых нет в исходнике: LLM мог их подменить (SEC-013).
+    if links["foreign"] and not approved:
+        raise Waiting(
+            "В посте ссылки на домены, которых нет в исходном материале: "
+            + ", ".join(links["foreign"])
+            + ". Проверь ссылки и нажми «Опубликовать», если всё верно."
+        )
     # Сначала все каналы: что не уйдёт — видно сразу, и ни один канал не получит выпуск наполовину.
     problems = []
     photo_post = ctx.settings.get("post_format") == "photo"
@@ -1037,22 +1111,33 @@ def step_publish(ctx: StepContext) -> None:
         if channel.type == publish.TELEGRAM and prev and send_state(prev) == SENT and not force:
             message = "уже опубликовано — включи «Опубликовать повторно», чтобы отправить ещё раз"
             ctx.log(f"{channel.label}: {message}")
-            journal.put(prev | {"label": channel.label, "skipped": True, "message": message})
+            # Запись без атрибутов (отмечена «Пост есть» или до AN-006) — дописать их сейчас.
+            dims = {} if "weekday" in prev else dimensions(ctx, channel, photo_post, title, prev)
+            journal.put(prev | dims | {"label": channel.label, "skipped": True, "message": message})
             continue
         ctx.progress(f"{channel.label} ({n} из {len(chosen)})", 100.0 * (n - 1) / len(chosen))
+        again = channel.type == publish.TELEGRAM and force and prev is not None and send_state(prev) == SENT
+        if again:  # повтор — новая запись, прежняя остаётся в журнале как была (без пометки «пропущено»)
+            journal.put({k: v for k, v in prev.items() if k not in ("skipped",)})
+            base = {"attempt": next_attempt(journal.records, channel_id), "republish": True}
+        else:  # продолжение текущей попытки (сбой, рестарт): номер и пометка повтора сохраняются
+            base = {k: prev[k] for k in ("attempt", "republish") if prev and k in prev}
         if channel.type == publish.TELEGRAM and photo_post:
-            record = publish_photo(ctx, journal, channel, title, post, None if force else prev)
+            record = publish_photo(ctx, journal, channel, title, post, None if force else prev, base)
         elif channel.type == publish.TELEGRAM:
-            record = publish_video(ctx, journal, channel, title, post)
+            record = publish_video(ctx, journal, channel, title, post, base)
         else:
             video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
-            result = publish.publish(channel, video=video, title=title, post=post, out_dir=ctx.path("publish"))
+            result = publish.publish(
+                channel, video=video, title=title, post=post, out_dir=ctx.path("publish"), synthetic=bool(ai)
+            )
             if prev and publication_state(prev) == UPLOADED:
                 # Уже залит: пакет пересобран, но ссылка и время публикации остаются.
                 record = journal.put(prev | {"files": result.get("files"), "label": channel.label})
             else:
                 fresh = {"state": PACKAGED, "at": time.time(), "attempt_id": uuid.uuid4().hex[:12]}
                 record = journal.put(result | {"label": channel.label} | fresh)
+        record = journal.put(record | dimensions(ctx, channel, photo_post, title, record))
         if off:  # осознанно без пометок: когда, почему и о ком — в записи публикации
             record = journal.put(record | {"disclaimers_off": off})
         ctx.log(f"{channel.label}: {record['message']}")
@@ -1064,8 +1149,73 @@ def step_publish(ctx: StepContext) -> None:
             message_id=record.get("message_id"),
             state=record.get("state"),
         )
-        again = channel.type == publish.TELEGRAM and force and prev is not None and send_state(prev) == SENT
         published_event(ctx, channel, record, again=again)
+        audit_publish(ctx, channel, record, post, off)
+
+
+def audit_publish(ctx: StepContext, channel: publish.Channel, record: dict, post: str, off: dict | None) -> None:
+    """Публикация в журнал комплаенса: что ушло, куда, с какими пометками и версией реестра (CMP-015)."""
+    if record.get("skipped"):
+        return
+    svc = services(ctx)
+    photo = channel.type == publish.TELEGRAM and ctx.settings.get("post_format") == "photo"
+    if photo:
+        media = [find(ctx.dir, "poster", IMAGE_EXT), find(ctx.dir, "voice", AUDIO_EXT)]
+    else:
+        media = [ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)]
+    log = ctx.studio.audit
+    fields = {"project_id": ctx.project["id"], "channel": channel.id, "registry": registry_checked(svc.config)}
+    log.write(
+        "publish",
+        **fields,
+        message_id=record.get("message_id"),
+        state=record.get("state"),
+        caption_sha256=audit.sha256_text(post),
+        media={p.name: audit.sha256_file(p) for p in media if p is not None},
+        footnotes=audit.footnotes(post),
+        ai=publish.AI_PREFIX in post,
+    )
+    if off:
+        log.write("disclaimers_off", **fields, reason=off.get("reason"), mentions=off.get("mentions"))
+
+
+def registry_checked(config: StudioConfig) -> str:
+    return registry.Registry(config.registry_file).read()[1]
+
+
+def when_fields(ts: float) -> dict:
+    """День недели (0 — понедельник) и час по местному времени — срезы «когда вышло»."""
+    local = time.localtime(ts)
+    return {"weekday": local.tm_wday, "hour": local.tm_hour}
+
+
+def dimensions(ctx: StepContext, channel: publish.Channel, photo_post: bool, title: str, record: dict) -> dict:
+    """Атрибуты контента в момент публикации (AN-006): срезы «Что работает» не зависят от того,
+    как потом поменяют канал или выпуск. media_s — длина отправленного файла: шортса у
+    вертикального канала, озвучки у поста «картинка и аудио». У пакета sent — время сборки."""
+    as_photo = channel.type == publish.TELEGRAM and photo_post
+    if as_photo:
+        sent_file = find(ctx.dir, "voice", AUDIO_EXT)
+        tempo = float(ctx.settings.get("tempo") or 1.0)
+        if sent_file is not None and tempo != 1.0:  # ушла озвучка в темпе из настроек (paced)
+            faster = sent_file.with_name(f"{sent_file.stem}-x{tempo:g}.mp3")
+            sent_file = faster if faster.is_file() else sent_file
+    else:
+        sent_file = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
+    seconds = None
+    if sent_file is not None and sent_file.is_file():
+        seconds = media.duration(sent_file, services(ctx).config.ffmpeg)
+    sent = record.get("published_at") or record.get("sent") or record.get("at") or time.time()
+    return {
+        "format": channel.format,
+        "post_format": "photo" if as_photo else "video",
+        "media_s": round(seconds, 1) if seconds else None,
+        "title": title,
+        "poster_design": {
+            k: ctx.settings.get(k) for k in ("poster_mode", "frame", "branding") if ctx.settings.get(k) is not None
+        },
+        "sent": record.get("sent") or sent,
+    } | when_fields(sent)
 
 
 def published_event(ctx: StepContext, channel: publish.Channel, record: dict, *, again: bool) -> None:
@@ -1137,7 +1287,9 @@ def journaled(journal: Journal, channel: publish.Channel, record: dict, part: st
     return mark(SENT, message_id=message_id)
 
 
-def publish_video(ctx: StepContext, journal: Journal, channel: publish.Channel, title: str, post: str) -> dict:
+def publish_video(
+    ctx: StepContext, journal: Journal, channel: publish.Channel, title: str, post: str, base: dict | None = None
+) -> dict:
     svc = services(ctx)
     video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
     width, height = media.video_size(video, svc.config.ffmpeg)
@@ -1168,7 +1320,7 @@ def publish_video(ctx: StepContext, journal: Journal, channel: publish.Channel, 
         "ok": False,
         "attempt_id": uuid.uuid4().hex[:12],
         "message": "Отправляется…",
-    }
+    } | (base or {})
     record = journaled(journal, channel, record, None, send)  # уже sent в журнале — дальше ничего не теряем
     return journal.put(record | result | {"ok": True, "state": SENT, "sent": time.time()} | audience(channel))
 
@@ -1179,11 +1331,48 @@ def source_line(ctx: StepContext) -> str:
     return f"Источник: {author} — {url}" if url and author else ""
 
 
-def with_source(ctx: StepContext, post: str) -> str:
+def link_sources(scenario: str, settings: dict, read) -> list[str]:
+    """Исходный материал выпуска, откуда законно берутся ссылки поста (SEC-013)."""
+    sources = [settings.get("source_url") or "", read(TEXT)]
+    folder = read(NARRATOR_FOLDER).strip() if scenario == "digest" else ""
+    if folder:  # дайджест: ссылки материалов из базы narrator и текст выпуска
+        for name in ("events.md", "text.md"):
+            path = Path(folder) / name
+            if path.is_file():
+                sources.append(path.read_text(encoding="utf-8"))
+    return sources
+
+
+def post_links(scenario: str, settings: dict, read, post: str) -> dict:
+    """Домены ссылок поста и те из них, которых нет в исходнике; пост «Пост в канал» пишет человек."""
+    foreign = [] if scenario == POST_SCENARIO else publish.foreign_domains(post, link_sources(scenario, settings, read))
+    return {"domains": publish.link_domains(post), "foreign": foreign}
+
+
+def post_title(project: dict, read: Callable[[str], str]) -> str:
+    """Заголовок публикации: из плана выпуска, иначе — название выпуска."""
+    plan = read(PLAN)
+    return (json.loads(plan).get("title", "") if plan else "") or project["title"]
+
+
+def final_post(project: dict, read: Callable[[str], str], config: StudioConfig) -> str:
+    """Пост ровно таким, каким он уйдёт в канал: тело + «Источник» (статья) + сноски реестра +
+    строка об ИИ (CMP-011).
+
+    Одна сборка на шаг публикации и превью в боте (PRD-016): владелец одобряет тот же текст,
+    что увидят подписчики. read — чтение файла выпуска по имени ('' — файла нет)."""
+    post = with_source(project, read(POST))
+    if project["settings"].get("disclaimers", True):
+        post = registry.with_footnotes(post, f"{post_title(project, read)}\n{read(TEXT)}", banned(config))
+    return publish.with_ai_line(post, ai_used(project))
+
+
+def with_source(project: dict, post: str) -> str:
     """Пост «Видео по статье» с источником в неудаляемом хвосте; без источника — отказ (CMP-005)."""
-    if ctx.project["scenario"] != "article":
+    if project["scenario"] != "article":
         return post
-    url, author = ctx.settings.get("source_url") or "", ctx.settings.get("source_author") or ""
+    settings = project["settings"]
+    url, author = settings.get("source_url") or "", settings.get("source_author") or ""
     if not url or not author:
         raise StudioError(
             "Видео по чужой статье публикуется только с источником: укажи ссылку на оригинал и автора "
@@ -1192,6 +1381,20 @@ def with_source(ctx: StepContext, post: str) -> str:
     if url in post:
         return post
     return f"{post.rstrip()}\n\nИсточник: {author.replace('*', '')} — [оригинал]({url})\n"
+
+
+def ai_used(project: dict) -> str:
+    """Строка об ИИ для подписи — по генераторам, которые выпуск правда использовал (CMP-011).
+
+    Загруженные человеком озвучка, постер, картинки и ролики ИИ-контентом не считаются."""
+    s = project["settings"]
+    post = project["scenario"] == POST_SCENARIO
+    draft = bool(s.get("draft"))
+    images = s.get("poster_mode") == "local" or (
+        not post and not draft and s.get("draw_images") and s.get("images_mode") == "local"
+    )
+    video = not post and not draft and bool(s.get("clips")) and s.get("clips_mode") == "local"
+    return publish.ai_line(voice=s.get("voice_mode") == "tts", images=bool(images), video=video)
 
 
 def disclaimers_off(ctx: StepContext, title: str) -> dict | None:
@@ -1218,7 +1421,13 @@ def audience(channel: publish.Channel) -> dict:
 
 
 def publish_photo(
-    ctx: StepContext, journal: Journal, channel: publish.Channel, title: str, post: str, prev: dict | None
+    ctx: StepContext,
+    journal: Journal,
+    channel: publish.Channel,
+    title: str,
+    post: str,
+    prev: dict | None,
+    base: dict | None = None,
 ) -> dict:
     """Вид поста «картинка и аудио»: постер с подписью, затем mp3 озвучки.
 
@@ -1236,7 +1445,7 @@ def publish_photo(
     if prev and done:
         record = {k: v for k, v in prev.items() if k != "skipped"} | {"parts": done}
     else:
-        record = {"channel": channel.id, "attempt_id": uuid.uuid4().hex[:12]}
+        record = {"channel": channel.id, "attempt_id": uuid.uuid4().hex[:12]} | (base or {})
     record |= {"label": channel.label, "ok": False, "message": "Отправляется…"}
     for part in publish.PHOTO_PARTS:
         if part in done:

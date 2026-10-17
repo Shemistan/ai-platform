@@ -1,6 +1,6 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
-import { $, api, chip, h, icon, iconButton, jobProgress, poller, STATUS, statusChip, toneOf } from "/ui.js";
+import { $, api, chip, h, icon, iconButton, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const state = {
   config: null,
@@ -82,8 +82,9 @@ async function addFiles(files) {
   await Promise.all(
     added.map(async (frame) => {
       try {
-        frame.uploadId = (await api("POST", "/api/video/uploads", frame.file)).id;
+        frame.uploadId = (await uploadFile("/api/video/uploads", frame.file, { limit: (state.config?.upload_limits || UPLOAD_LIMITS).image })).id;
       } catch (err) {
+        if (err.kind === "abort") return removeFrame(frame.key); // отменили — кадра как не было
         frame.error = err.message;
       }
       frame.uploading = false;
@@ -318,8 +319,9 @@ async function setLivingFile(file) {
   showLivingError("");
   renderLiving();
   try {
-    photo.uploadId = (await api("POST", "/api/video/uploads", file)).id;
+    photo.uploadId = (await uploadFile("/api/video/uploads", file, { limit: (state.config?.upload_limits || UPLOAD_LIMITS).image })).id;
   } catch (err) {
+    if (err.kind === "abort") return state.living === photo && clearLiving(); // отменили — как до выбора
     photo.error = err.message;
   }
   photo.uploading = false;

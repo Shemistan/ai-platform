@@ -41,6 +41,7 @@ LIMIT_KINDS = ("llm", "image", "render", "video", "audio", "news")  # виды �
 MAX_LIMIT_MIN = 24 * 60
 MAX_POLICY_DAYS = 3650  # trim_days / archive_days уборки
 MAX_FREE_GB = 10000  # cleanup.min_free_gb
+REGISTRY_MAX_AGE_DAYS = 14
 
 
 def _empty() -> dict:
@@ -54,6 +55,8 @@ def _empty() -> dict:
         # archive_days — когда опубликованный выпуск уходит в архив сам (0 — никогда);
         # min_free_gb — порог места до GPU-задач и сборки (None — 10 ГБ, в демо без проверки).
         "cleanup": {"auto": True, "days": 30, "trim_days": 14, "archive_days": 60, "min_free_gb": None},
+        # Реестр запрещённых организаций: ежедневная сверка в фоне и порог свежести, дни (CMP-013).
+        "registry": {"auto_check": True, "max_age_days": REGISTRY_MAX_AGE_DAYS},
         # Лимиты времени процессов по виду (runner.LIMITS), минуты: {"llm": {"total": 10, "idle": 5}}.
         "timeouts": {},
     }
@@ -120,6 +123,11 @@ def normalize(raw: object) -> dict:
             out["cleanup"][name] = int(cleanup[name])
     if _number(cleanup.get("min_free_gb"), MAX_FREE_GB):
         out["cleanup"]["min_free_gb"] = cleanup["min_free_gb"]
+    reg = _section(raw, "registry")
+    out["registry"]["auto_check"] = _flag(reg.get("auto_check"), True)
+    age = reg.get("max_age_days")
+    if isinstance(age, int) and not isinstance(age, bool) and 1 <= age <= 365:
+        out["registry"]["max_age_days"] = age
     disabled = raw.get("disabled") if isinstance(raw, dict) else None
     if not isinstance(disabled, dict):
         return out

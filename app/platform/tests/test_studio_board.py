@@ -6,7 +6,8 @@ from pathlib import Path
 
 from aiplatform.core import events
 from aiplatform.studio import pipeline, publish, service
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG
+from tests.helpers import StudioCase
 
 
 def project_with(statuses: dict, running=False) -> dict:
@@ -103,7 +104,7 @@ class BoardTest(StudioCase):
 
         # Публикация с доски — тем же запросом, что и кнопка шага.
         status, _ = self.json("POST", f"/api/studio/projects/{project['id']}/publish", {"channels": ["download-16x9"]})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 202)
         self.settle(project["id"])
         item = next(p for p in self.board()["projects"] if p["id"] == project["id"])
         # Пакет для ручной загрузки — ещё не публикация: файл до YouTube мог не дойти (AN-003).

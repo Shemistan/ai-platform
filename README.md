@@ -62,7 +62,9 @@ make run                                  # http://127.0.0.1:8780 — насто
 - Дайджест новостей и тексты слайдов пишет claude CLI (Claude Code): он
   должен быть в `PATH` и залогинен — `claude --version`.
 - Публикация в Telegram — [«Каналы публикации»](app/platform/README.md#каналы-публикации).
-- Все переменные окружения — [«Настройка»](app/platform/README.md#настройка).
+- Все переменные окружения — [`docs/configuration.md`](docs/configuration.md).
+- Как пользоваться вкладками и сценариями — [гид пользователя](docs/user-guide.md);
+  HTTP API — [`docs/api-routes.md`](docs/api-routes.md).
 - Не запускается — [«Если не работает при установке»](app/platform/README.md#если-не-работает-при-установке).
 
 ## Проверки и CI
