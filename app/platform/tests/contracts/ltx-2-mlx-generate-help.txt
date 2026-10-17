@@ -1,0 +1,256 @@
+# ltx-2-mlx-generate: --help через tools/stub_mlx_help.py: mlx без GPU не импортируется; снято 2026-10-17 (make contracts)
+usage: ltx-2-mlx generate [-h] --prompt PROMPT --output OUTPUT [--model MODEL]
+                          [--gemma GEMMA] [--seed SEED] [--quiet]
+                          [--stepwise-image-output-dir STEPWISE_IMAGE_OUTPUT_DIR]
+                          [--stepwise-interval STEPWISE_INTERVAL]
+                          [--stepwise-frames STEPWISE_FRAMES]
+                          [--stepwise-frame STEPWISE_FRAME] [--height HEIGHT]
+                          [--width WIDTH] [--frames FRAMES] --frame-rate
+                          FRAME_RATE [--tile-frames TILE_FRAMES]
+                          [--tile-spatial TILE_SPATIAL]
+                          [--tile-overlap TILE_OVERLAP] [--low-ram]
+                          [--num-generated-keyframes N] [--no-audio]
+                          [--video-decoder {conv,diffusion}]
+                          [--diffvae-tile FRAMES HEIGHT WIDTH]
+                          [--auto-duration MIN:MAX] [--image ARG [ARG ...]]
+                          [--segment ARG [ARG ...]]
+                          [--relay-epsilon RELAY_EPSILON]
+                          [--relay-strength RELAY_STRENGTH] [--steps STEPS]
+                          [--two-stage] [--two-stages-hq] [--distilled]
+                          [--one-stage] [--dfr]
+                          [--detailing-lora PATH_OR_REPO]
+                          [--spatial-upscalings {1,2}]
+                          [--temporal-upscalings {0,1,2}]
+                          [--temporal-upsampler-path PATH]
+                          [--stage1-steps STAGE1_STEPS]
+                          [--stage2-steps STAGE2_STEPS]
+                          [--cfg-scale CFG_SCALE]
+                          [--negative-prompt NEGATIVE_PROMPT]
+                          [--stg-scale STG_SCALE]
+                          [--dev-transformer DEV_TRANSFORMER]
+                          [--distilled-lora DISTILLED_LORA]
+                          [--distilled-lora-strength DISTILLED_LORA_STRENGTH]
+                          [--enable-teacache]
+                          [--teacache-thresh TEACACHE_THRESH]
+                          [--enhance-prompt] [--lora PATH STRENGTH]
+
+options:
+  -h, --help            show this help message and exit
+  --prompt PROMPT, -p PROMPT
+                        Text prompt
+  --output OUTPUT, -o OUTPUT
+                        Output video path (.mp4)
+  --model MODEL, -m MODEL
+                        Model weights (HF repo or path, default:
+                        dgrauet/ltx-2.3-mlx-q8)
+  --gemma GEMMA         Gemma model for text encoding (default: mlx-
+                        community/gemma-3-12b-it-4bit)
+  --seed SEED, -s SEED  Random seed (-1 = random)
+  --quiet, -q           Suppress progress output
+  --stepwise-image-output-dir STEPWISE_IMAGE_OUTPUT_DIR
+                        [EXPERIMENTAL] Every N denoising steps, decode a short
+                        window of latent frames from the in-progress
+                        prediction and write it to this directory as a self-
+                        contained animated WebP — a couple of seconds of real
+                        motion at the current denoise quality. One file per
+                        step, written once; play them back to back for the
+                        whole progression. Keeps the VAE decoder resident
+                        through denoising, which raises peak memory. May
+                        change in future versions.
+  --stepwise-interval STEPWISE_INTERVAL
+                        Preview every N denoising steps (default: 1). The
+                        final step is always previewed.
+  --stepwise-frames STEPWISE_FRAMES
+                        Latent frames decoded per preview (default: 8). The
+                        VAE upsamples time 8x, so N latent frames yield 8N-7
+                        pixel frames — the default gives 57, about 2.3 s at 25
+                        fps. Cost is linear in this and independent of the
+                        clip's length. Set to 1 for a single still and no
+                        motion.
+  --stepwise-frame STEPWISE_FRAME
+                        Latent frame the preview window is centred on
+                        (default: the middle of the clip). Negative values
+                        count from the end, so -1 is the last frame.
+  --height HEIGHT, -H HEIGHT
+                        Video height (default: 480)
+  --width WIDTH, -W WIDTH
+                        Video width (default: 704)
+  --frames FRAMES, -f FRAMES
+                        Number of frames. Default: auto-predicted from the
+                        prompt on packs with a DurationHead (LTX-2.5+);
+                        required explicitly otherwise. See --auto-duration.
+  --frame-rate FRAME_RATE
+                        Output frame rate (mandatory; matches upstream
+                        `frame_rate=` on every pipeline). LTX-2.3 was trained
+                        at 24; values far from that drift out of distribution.
+  --tile-frames TILE_FRAMES
+                        Number of temporal tiles for modality tiling (default:
+                        1 = no tiling). Each tile is denoised independently
+                        and blended back. Trades wall-clock for peak memory.
+                        Combine with --low-ram for max savings.
+  --tile-spatial TILE_SPATIAL
+                        Number of spatial tiles per axis (height and width). 2
+                        = 2x2 = 4 spatial tiles. Combined with --tile-frames N
+                        gives N*S*S tiles total. Default: 1.
+  --tile-overlap TILE_OVERLAP
+                        Token-grid overlap between adjacent tiles (default:
+                        2). Higher overlap = smoother blend but more redundant
+                        compute. Ignored when both --tile-frames and --tile-
+                        spatial are 1.
+  --low-ram             Stream transformer blocks from mmap'd safetensors via
+                        mx.compile + per-block sync + Metal heap release. Cuts
+                        transformer peak Metal ~75% (e.g. q8 ~10-12 GB -> ~2.8
+                        GB). Targets 16 GB Macs (q8) and 32 GB Macs (bf16).
+                        Supported on every generate mode (incl. --distilled
+                        and --dfr), a2v, keyframe, ic-lora, hdr-ic-lora,
+                        lipdub, retake, and extend. Compatible with generate's
+                        --lora flag via per-block BlockLoraSource bind-time
+                        fusion. Two-stage at LoRA strength 1.0 swaps to the
+                        pre-fused transformer-distilled.safetensors at the
+                        stage 1->2 transition; custom strengths trigger bind-
+                        time LoRA fusion (slower but supports any strength).
+  --num-generated-keyframes N
+                        Number of extra generated keyframes to place at evenly
+                        spaced interior frame positions (default: 0, off).
+                        Each keyframe relaxes the effective temporal
+                        compression at its position but costs a full latent
+                        frame of tokens while yielding one pixel frame, so N
+                        keyframes add roughly N / num_latent_frames to the
+                        stage-1 sequence length. Stage 1 only. Requires an LTX
+                        2.5 pack (use_keyframes_abs_pos_embedding); refused up
+                        front otherwise.
+  --no-audio            Skip audio decode + mux and write an mp4 with no audio
+                        track. Video generation is unchanged (audio latents
+                        are still produced jointly by the DiT); only the audio
+                        VAE / vocoder load and decode are skipped.
+  --video-decoder {conv,diffusion}
+                        [experimental] Video VAE decoder: 'conv' (default) or
+                        'diffusion' (LTX 2.5 NADiffusionDecoder, sharper,
+                        slower, tiled above the decode budget; needs
+                        vae_decoder_av.safetensors)
+  --diffvae-tile FRAMES HEIGHT WIDTH
+                        [experimental] Diffusion decoder tile size in pixel
+                        frames / pixels (multiples of 2 frames / 8 px; 0
+                        disables tiling on that axis, '0 0 0' forces one
+                        tile). Default: sized automatically from
+                        LTX2_VAE_DECODE_BUDGET_GB (or half of unified memory).
+                        Requires --video-decoder diffusion.
+  --auto-duration MIN:MAX
+                        Bounds (seconds) for auto-predicted duration, e.g.
+                        '2:10'. Only takes effect when --frames is not given
+                        and the checkpoint has DurationHead weights
+                        (LTX-2.5+); default bounds are 1:20. Ignored (with a
+                        warning) if --frames is also given.
+  --image ARG [ARG ...], -i ARG [ARG ...]
+                        Reference image for I2V. Form: PATH [FRAME_IDX
+                        STRENGTH [CRF]]. PATH alone defaults to FRAME_IDX=0
+                        STRENGTH=1.0 (legacy single-image I2V). Repeatable to
+                        anchor multiple frames (e.g. --image foo.jpg 0 1.0
+                        --image foo.jpg 96 1.0 to anchor both ends and
+                        preserve identity). FRAME_IDX is the pixel frame index
+                        (0-based); 0 replaces the first latent frame directly,
+                        others guide via VideoConditionByKeyframeIndex.
+                        FRAME_IDX may be 'last' or negative (counted from the
+                        end), so an end anchor follows the frame count --auto-
+                        duration picks. CRF (0 = no re-compression) defaults
+                        to the model's: 33 before LTX-2.4, 18 from 2.4.
+                        Mirrors upstream LTX_2_3 --image.
+  --segment ARG [ARG ...]
+                        Prompt Relay segment: a local prompt gated to a slice
+                        of the timeline. Form: TEXT [LEN_FRAMES] (LEN_FRAMES
+                        in latent frames; omit to auto-distribute evenly).
+                        Repeatable, in timeline order — e.g. --segment 'a red
+                        car' --segment 'a blue sky'. The global --prompt
+                        applies to all frames. Works on all generate modes
+                        (video cross-attention); on CFG modes the mask applies
+                        to the conditional pass only. Not compatible with
+                        modality tiling.
+  --relay-epsilon RELAY_EPSILON
+                        Prompt Relay falloff (smaller = sharper temporal
+                        gating). Default: 1e-3.
+  --relay-strength RELAY_STRENGTH
+                        Prompt Relay penalty multiplier (higher = stricter
+                        segment isolation). Default: 1.0.
+  --steps STEPS         Denoising steps for one-stage (default: 30)
+  --two-stage           Two-stage pipeline: dev model + CFG at half-res,
+                        upscale, distilled LoRA refine (needs a pack with the
+                        dev transformer and the distilled LoRA)
+  --two-stages-hq       HQ two-stage pipeline (res_2s sampler on both stages).
+                        Mirrors upstream TI2VidTwoStagesHQPipeline.
+  --distilled           Distilled two-stage pipeline (half-res distilled +
+                        upscale + distilled refine, no CFG). Mirrors upstream
+                        DistilledPipeline.
+  --one-stage           Dev model + CFG one-stage at full target resolution
+                        (no upsampler, no stage 2). Mirrors upstream
+                        TI2VidOneStagePipeline. Higher quality than
+                        --distilled at small resolutions; slower than --two-
+                        stage at large.
+  --dfr                 [experimental] DFR (Diffusion Fidelity Rendering) base
+                        path, LTX 2.5 packs only: distilled half-res stage
+                        with keyframe slots on a segment-aligned canvas, then
+                        a full-res detailing stage with the official detailing
+                        IC-LoRA guided by the stage-1 latent. Mirrors upstream
+                        DFRPipeline (see --spatial-upscalings / --temporal-
+                        upscalings). The detailing LoRA is a gated HuggingFace
+                        repo: accept its licence on the model page once before
+                        the first run.
+  --detailing-lora PATH_OR_REPO
+                        Detailing IC-LoRA for --dfr (local .safetensors or HF
+                        repo id). Default: the official LTX-2.5 detailing LoRA
+                        (Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-
+                        Upscaler, gated: accept its licence on HuggingFace
+                        once, or pass a local file).
+  --spatial-upscalings {1,2}
+                        DFR spatial epilogue: 1 = stage 2 at full resolution
+                        (default), 2 = stage 1 at H/4 and stage 2 + temporal
+                        rounds at H/2, then a full-res detailing epilogue
+                        (Lanczos-upsampled re-encoded keyframes, then a
+                        windowed denoise: one step on 2x2 spatial tiles, the
+                        rest on 4x4). Dims are floored to multiples of 128 px,
+                        with a warning. --dfr only; not compatible with
+                        --segment or --tile-*.
+  --temporal-upscalings {0,1,2}
+                        DFR temporal x2 refine rounds: 0 = base fps, 1 = 2x
+                        frames and fps (2 tiles), 2 = 4x (4 tiles). --dfr
+                        only.
+  --temporal-upsampler-path PATH
+                        Temporal x2 latent upsampler for --temporal-upscalings
+                        (default: the pack's
+                        temporal_upscaler_x2_v1_0.safetensors). --dfr only.
+  --stage1-steps STAGE1_STEPS
+                        Stage 1 steps (default: 30 standard, 15 HQ)
+  --stage2-steps STAGE2_STEPS
+                        Stage 2 steps (default: 3)
+  --cfg-scale CFG_SCALE
+                        CFG guidance scale (default: 3.0)
+  --negative-prompt NEGATIVE_PROMPT
+                        Negative prompt for CFG: what should not appear in the
+                        video. Default: the upstream DEFAULT_NEGATIVE_PROMPT
+                        (common artifacts and quality issues). An empty string
+                        encodes "" verbatim. CFG pipelines only: rejected by
+                        --distilled and --dfr.
+  --stg-scale STG_SCALE
+                        STG guidance scale (default: 1.0 standard, 0.0 HQ —
+                        upstream LTX_2_3_PARAMS)
+  --dev-transformer DEV_TRANSFORMER
+                        Dev transformer filename (default: transformer-
+                        dev.safetensors)
+  --distilled-lora DISTILLED_LORA
+                        Distilled LoRA filename for stage 2 (default: resolved
+                        from the pack — 2.3 -> ltx-2.3-22b-distilled-lora-384,
+                        2.5 -> ltx-2.5-22b-distilled-lora-450-bf16)
+  --distilled-lora-strength DISTILLED_LORA_STRENGTH
+                        Distilled LoRA strength for stage 2 (default: 1.0)
+  --enable-teacache     generate --two-stage / --two-stages-hq and a2v only
+                        (LTX-2.3 packs): enable TeaCache stage-1 acceleration
+                        (opt-in, ~1.46x speedup on Euler at default thresh;
+                        see CLAUDE.md)
+  --teacache-thresh TEACACHE_THRESH
+                        Override TeaCache rel_l1_thresh (default 0.5 on --two-
+                        stage and a2v, 1.0 on --two-stages-hq; higher = more
+                        skipping = faster but lossier). Ignored unless
+                        --enable-teacache is set.
+  --enhance-prompt      Enhance prompt using Gemma before generation
+  --lora PATH STRENGTH  LoRA weights and strength (repeatable). PATH can be a
+                        local .safetensors file or a HuggingFace repo ID.
+                        Example: --lora my_lora.safetensors 1.0
