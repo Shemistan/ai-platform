@@ -145,6 +145,32 @@ def default_modules(ctx: Context) -> list[Module]:
     ]
 
 
+# Группы вкладок шапки: между группами — разделитель. Модуль без записи — сам себе группа.
+NAV_GROUPS = {
+    "photo": "media",
+    "video": "media",
+    "audio": "media",
+    "library": "texts",
+    "news": "texts",
+    "channels": "service",
+    "updates": "service",
+    "settings": "service",
+}
+
+
+def nav_tabs(module: Module) -> list[dict]:
+    """Вкладки шапки от модуля — единственный список вкладок (FE-007): nav.js рисует его из /api/config.
+
+    По умолчанию — одна вкладка /<prefix>/; модуль с под-вкладками (студия) отдаёт свои через nav().
+    Поля: id, label, href, group; необязательные badge (счётчик в шапке) и default (активна, если в
+    адресе нет своего параметра).
+    """
+    own = getattr(module, "nav", None)
+    tabs = own() if own else [{"id": module.prefix, "label": module.label, "href": f"/{module.prefix}/"}]
+    group = NAV_GROUPS.get(module.prefix, module.prefix)
+    return [{"group": group} | tab for tab in tabs]
+
+
 class App:
     def __init__(self, config: Config, modules: ModulesFactory = default_modules) -> None:
         self.config = config
@@ -195,7 +221,7 @@ class App:
         return {
             "backend": self.config.backend,
             "version": __version__,
-            "tabs": [{"id": m.prefix, "label": m.label} for m in self.modules.values()],
+            "tabs": [tab for m in self.modules.values() for tab in nav_tabs(m)],
             "problems": self.problems(),
         }
 

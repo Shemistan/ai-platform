@@ -1,4 +1,5 @@
 .board-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.board-bar .new-links { display: contents; }
 .board-bar a { text-decoration: none; display: inline-flex; align-items: center; }
 .board-bar .archived-toggle { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 14px; }
 .board-group { display: grid; gap: 10px; }

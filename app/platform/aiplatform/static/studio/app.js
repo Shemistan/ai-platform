@@ -3,9 +3,10 @@
 import { $, announce, api, busy as busyRequest, busyClick, captureFocus, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reconcile, reportError, restoreFocus, safe, STATUS, statusChip, toneOf } from "/ui.js";
 
 const API = "/api/studio";
-const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
+// Сценарий из адреса; неизвестный — «article». Названия сценариев — из /api/studio/config (FE-007).
+const KNOWN_SCENARIOS = new Set(["digest", "article", "post"]);
 const wantedScenario = new URLSearchParams(location.search).get("scenario");
-const scenario = SCENARIO_TITLES[wantedScenario] ? wantedScenario : "article";
+const scenario = KNOWN_SCENARIOS.has(wantedScenario) ? wantedScenario : "article";
 // У поста нет слайдов: эти шаги всегда пропущены — их не показываем.
 const HIDDEN_STEPS = { post: new Set(["plan", "images", "clips", "short"]) };
 const CAPTION_LIMIT = 1024;
@@ -1317,10 +1318,10 @@ window.addEventListener("resize", debounce(trackNavHeight, 150));
 
 async function init() {
   trackNavHeight();
-  $("scenario-title").textContent = SCENARIO_TITLES[scenario];
   $("scenario-hint").textContent = HINTS[scenario];
-  document.title = `${$("scenario-title").textContent} — AI Platform`;
   state.config = await api("GET", `${API}/config`);
+  $("scenario-title").textContent = state.config.scenarios.find((s) => s.id === scenario)?.label || scenario;
+  document.title = `${$("scenario-title").textContent} — AI Platform`;
   renderCreate();
   $("create").addEventListener("submit", create);
   $("create").addEventListener("input", refreshCreateCheck);

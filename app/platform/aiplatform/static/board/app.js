@@ -213,9 +213,17 @@ const cardSig = (p) => JSON.stringify([p, state.busy.has(p.id), state.errors[p.i
 
 // Перерисовка по опросу не пересобирает неизменившиеся блоки, а у изменившихся переносит
 // набранное в полях и фокус: ввод просмотров и ссылки «Залил» переживает тики (FE-012).
+// Кнопки «новый выпуск» по сценариям — из ответа сервера: названия сценариев живут только там (FE-007).
+function renderNewLinks(data) {
+  const box = $("new-links");
+  if (box.childElementCount || !data.scenarios) return;
+  fill(box, ...data.scenarios.map((s, i) => h("a", { class: i ? "secondary" : "primary", href: `/studio/?scenario=${s.id}` }, s.label)));
+}
+
 function render(data) {
   if (!data) return;
   state.data = data;
+  renderNewLinks(data);
   const saved = captureFocus(document.body);
   reconcile(
     $("extra"),

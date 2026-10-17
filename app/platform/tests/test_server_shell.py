@@ -68,6 +68,25 @@ class IncompatibleNarratorTest(PlatformCase):
         self.assertIn("AIP_NARRATOR_DIR", found_[0])
 
 
+class NavTabsTest(PlatformCase):
+    """Шапка из /api/config (FE-007): каждый модуль сервера есть в навигации, группы не рвутся."""
+
+    def test_every_module_in_nav(self):
+        status, body = self.json("GET", "/api/config")
+        self.assertEqual(status, 200)
+        tabs = body["tabs"]
+        paths = {t["href"].split("?")[0] for t in tabs}
+        for prefix in self.app.modules:
+            self.assertIn(f"/{prefix}/", paths, prefix)
+        ids = [t["id"] for t in tabs]
+        self.assertEqual(len(ids), len(set(ids)))
+        groups = [g for i, g in enumerate(t["group"] for t in tabs) if not i or tabs[i - 1]["group"] != g]
+        self.assertEqual(len(groups), len(set(groups)), "группа вкладок разорвана другой")
+        self.assertEqual(ids[:4], ["photo", "video", "audio", "board"])
+        self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
+        self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention"])
+
+
 class ShellTest(PlatformCase):
     @staticmethod
     def modules(ctx):
@@ -82,7 +101,8 @@ class ShellTest(PlatformCase):
         status, headers, body = self.call("GET", "/nav.js")
         self.assertEqual(status, 200)
         self.assertIn("javascript", headers["Content-Type"])
-        self.assertIn(b"TABS", body)
+        self.assertIn(b"/api/config", body)
+        self.assertNotIn("Видео по статье".encode(), body, "вкладки шапки — только с сервера (FE-007)")
         status, _, _ = self.call("GET", "/../server.py")
         self.assertEqual(status, 404)
 
@@ -90,7 +110,7 @@ class ShellTest(PlatformCase):
         status, body = self.json("GET", "/api/config")
         self.assertEqual(status, 200)
         self.assertEqual(body["backend"], "fake")
-        self.assertEqual(body["tabs"], [{"id": "echo", "label": "Эхо"}])
+        self.assertEqual(body["tabs"], [{"group": "echo", "id": "echo", "label": "Эхо", "href": "/echo/"}])
         self.assertIn("эхо не настроено", body["problems"])
 
     def test_status(self):
@@ -244,7 +264,8 @@ class AuthTest(EchoCase):
             self.assertIn(part, cookie)
         status, _, body = self.request("GET", "/nav.js", {"Cookie": f"aip_auth={AUTH}"})
         self.assertEqual(status, 200)
-        self.assertIn(b"TABS", body)
+        self.assertIn(b"/api/config", body)
+        self.assertNotIn("Видео по статье".encode(), body, "вкладки шапки — только с сервера (FE-007)")
         post = {"Authorization": f"Bearer {AUTH}", "X-AIP": "1", "Content-Type": "application/json"}
         self.assertEqual(self.request("POST", "/api/echo/hello", post, b"{}")[0], 201)
         self.assertEqual(self.request("POST", "/api/echo/hello", {"X-AIP": "1"}, b"{}")[0], 401)
