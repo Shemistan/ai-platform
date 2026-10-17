@@ -34,6 +34,10 @@ class FindTokensTest(unittest.TestCase):
 
 class ScanRepoTest(unittest.TestCase):
     def setUp(self):
+        # Под pre-commit git задаёт GIT_INDEX_FILE / GIT_DIR настоящего репозитория:
+        # git во временном репо (и в secret_scan.scan) пошёл бы в чужой индекс.
+        for key in [k for k in os.environ if k.startswith("GIT_")]:
+            self.addCleanup(os.environ.__setitem__, key, os.environ.pop(key))
         self.tmp = tempfile.TemporaryDirectory()
         self.root = self.tmp.name
         self.git("init", "-q")
