@@ -428,11 +428,13 @@ def cmd_index(args) -> int:
 
 
 def report_delivery(done: list) -> None:
+    from narrator.telegram import mask
+
     ok = [d for d in done if d.ok]
     print(f"телеграм: озвучка отправлена {len(ok)} из {len(done)}")
     for d in done:
-        if not d.ok:
-            print(f"  не дошло {d.chat_id} {d.name}: {d.error}", file=sys.stderr)
+        if not d.ok:  # chat_id маской: вывод уходит в лог задачи платформы (CMP-007)
+            print(f"  не дошло {mask(d.chat_id)}: {d.error}", file=sys.stderr)
 
 
 def save_state(state, path: Path) -> int:
@@ -486,17 +488,42 @@ def cmd_bot_subscribers(args) -> int:
     try:
         if not args.no_sync:
             for sub in telegram.pull(bot, state):
-                print(f"новый подписчик: {sub.chat_id} {sub.name}")
+                print(f"новый подписчик: {telegram.mask(sub.chat_id)}")
     except telegram.TelegramError as e:
         print(f"телеграм: {e}", file=sys.stderr)
     if save_state(state, path):
         return 4
-    live = state.active()
-    print(f"подписчиков {len(live)}, отписалось {len(state.subscribers) - len(live)}")
+    print(f"подписчиков {len(state.subscribers)}")
     for s in state.subscribers:
-        note = f"с {s.added}" if s.active else f"неактивен: {s.note}"
-        print(f"  {s.chat_id:<12} {s.name:<28} {note}")
+        # Полный chat_id и имя — только по --names: нужен человеку для `bot forget`.
+        who = str(s.chat_id) if args.names else telegram.mask(s.chat_id)
+        name = f" {chat_title(bot, s.chat_id)}" if args.names else ""
+        print(f"  {who:<14} с {s.added}{name}")
     print(f"список: {path}")
+    return 0
+
+
+def chat_title(bot, chat_id: int) -> str:
+    """Имя чата из getChat на лету — в файл не пишется (CMP-007)."""
+    from narrator import telegram
+
+    try:
+        return telegram.chat_name(bot.call("getChat", {"chat_id": chat_id}) or {})
+    except telegram.TelegramError as e:
+        return f"(имя не узнать: {e})"
+
+
+def cmd_bot_forget(args) -> int:
+    """Удаляет подписчика по chat_id — по просьбе человека (CMP-006)."""
+    from narrator import telegram
+
+    path = telegram.state_path()
+    state = telegram.State.load(path)
+    if not state.remove(args.chat_id):
+        return fail(f"подписчика {telegram.mask(args.chat_id)} нет в {path}")
+    if save_state(state, path):
+        return 4
+    print(f"удалён {telegram.mask(args.chat_id)}: в {path} его больше нет")
     return 0
 
 
@@ -692,7 +719,7 @@ def _serve(bot, state, path: Path, args) -> int:
         while True:
             timeout = 0 if args.once else telegram.POLL_TIMEOUT
             for sub in telegram.pull(bot, state, timeout=timeout, on_update=on_update):
-                print(f"подписался: {sub.chat_id} {sub.name}", flush=True)
+                print(f"подписался: {telegram.mask(sub.chat_id)}", flush=True)
             if save_state(state, path):
                 return 4
             if args.once:
@@ -843,7 +870,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = bot.add_parser("subscribers", help="кто подписан на бота")
     b.add_argument("--no-sync", action="store_true", help="не забирать новые сообщения")
+    b.add_argument(
+        "--names", action="store_true", help="полный chat_id и имя из Telegram (не сохраняется)"
+    )
     b.set_defaults(func=cmd_bot_subscribers)
+
+    b = bot.add_parser("forget", help="удалить подписчика по chat_id (запрос на удаление)")
+    b.add_argument("chat_id", type=int)
+    b.set_defaults(func=cmd_bot_forget)
 
     b = bot.add_parser("send", help="отправить озвучку статьи в канал (или подписчикам)")
     b.add_argument("dir")

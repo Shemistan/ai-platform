@@ -94,7 +94,7 @@ class ChannelsTest(PlatformCase):
         _, bot = self.json("POST", "/api/channels/bot/check")
         self.assertEqual(bot["username"], "demo_narrator_bot")
         _, subs = self.json("POST", "/api/channels/subscribers/sync")
-        self.assertEqual((subs["active"], len(subs["subscribers"])), (2, 3))
+        self.assertEqual((subs["active"], len(subs["subscribers"])), (2, 2))
 
     def test_get_subscribers_never_syncs(self):
         # GET с ?sync=1 (например <img src> с чужого сайта) не трогает getUpdates (SEC-008).

@@ -244,9 +244,9 @@ def seed() -> dict:
     return {
         "articles": articles,
         "subscribers": [
-            {"chat_id": 1001, "name": "Аня", "added": day(30), "active": True, "note": "", "thread": None},
-            {"chat_id": 1002, "name": "Борис", "added": day(12), "active": True, "note": "", "thread": None},
-            {"chat_id": 1003, "name": "Вера", "added": day(9), "active": False, "note": "/stop", "thread": None},
+            # Как у narrator (CMP-006/007): только chat_id и дата, отписавшихся нет.
+            {"chat_id": 1001, "added": day(30), "thread": None},
+            {"chat_id": 1002, "added": day(12), "thread": None},
         ],
         "sources": [
             {
@@ -618,7 +618,7 @@ def bridge(args, state: dict) -> dict:
         case "subscribers":
             return {
                 "subscribers": state["subscribers"],
-                "active": sum(s["active"] for s in state["subscribers"]),
+                "active": len(state["subscribers"]),
                 "new": [],
                 "error": None,
                 "file": str(home() / "telegram.json"),
@@ -757,7 +757,7 @@ def cmd_bot(args, state: dict) -> int:
                 print(f"отмечено отправленными {len(todo)}, в телеграм ничего не ушло")
             save(state)
         case "subscribers":
-            print(f"подписчиков {sum(s['active'] for s in state['subscribers'])}")
+            print(f"подписчиков {len(state['subscribers'])}")
         case "serve":
             print("бот @demo_narrator_bot слушает подписки, выход — Ctrl+C", flush=True)
             signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
@@ -768,16 +768,7 @@ def cmd_bot(args, state: dict) -> int:
                 if n == 2:
                     fresh = load()
                     chat = 2000 + len(fresh["subscribers"])
-                    fresh["subscribers"].append(
-                        {
-                            "chat_id": chat,
-                            "name": "Новый читатель",
-                            "added": date.today().isoformat(),
-                            "active": True,
-                            "note": "",
-                            "thread": None,
-                        }
-                    )
+                    fresh["subscribers"].append({"chat_id": chat, "added": date.today().isoformat(), "thread": None})
                     save(fresh)
                     print(f"подписался: {chat} Новый читатель", flush=True)
                 if args.once:

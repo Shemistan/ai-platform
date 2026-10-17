@@ -145,10 +145,11 @@ def test_bot_without_token(capsys, monkeypatch, home):
 
 def test_subscribers_from_state(capsys, monkeypatch, home):
     state = telegram.State()
-    state.upsert(42, "Маша")
+    state.upsert(42)
     state.save(telegram.state_path())
     _, out = bridge(capsys, monkeypatch, "subscribers")
-    assert out["active"] == 1 and out["subscribers"][0]["name"] == "Маша"
+    assert out["active"] == 1 and out["subscribers"][0]["chat_id"] == 42
+    assert "name" not in out["subscribers"][0]  # имени не храним (CMP-007)
 
 
 def test_voices_from_package(capsys, monkeypatch, home):
