@@ -37,7 +37,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import disk, log, media
+from aiplatform.core import audit, disk, log, media
+from aiplatform.core import settings as core_settings
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.runner import Canceled
 from aiplatform.studio import cache, news, prompts, publish, render, slides
@@ -237,6 +238,7 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
         raise StudioError(f"{what}: mp3 не найден.")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
+    svc.renderer.tag_ai(target, ctx.cancel)  # синтетический голос — метка в ID3 (CMP-011)
     svc.cache.put(entry, target)
     return target
 
@@ -309,6 +311,13 @@ def uploads_ready(ctx: StepContext, kind: str, items: list[tuple[int, str]]) -> 
 
 def banned(config: StudioConfig) -> list[registry.Entry]:
     return registry.Registry(config.registry_file).entries()
+
+
+def registry_stale(config: StudioConfig) -> str:
+    """Предупреждение, если реестр сверяли дольше порога из настроек (CMP-013); пусто — свежий."""
+    checked = registry.Registry(config.registry_file).read()[1]
+    max_days = core_settings.at(config.registry_file.parent).load()["registry"]["max_age_days"]
+    return registry.stale_note(checked, max_days)
 
 
 def slide_notes(paras: list[str], plan: list[slides.Slide], entries: list[registry.Entry]) -> list[list[str]]:
@@ -766,7 +775,7 @@ def render_video(
 
 def renderer(ctx: StepContext) -> Renderer:
     """Черновик собирается в половинном кадре: быстро посмотреть структуру и ритм."""
-    base = services(ctx).renderer
+    base = dataclasses.replace(services(ctx).renderer, ai_badge=bool(ctx.settings.get("ai_badge", True)))
     return dataclasses.replace(base, scale=base.scale * DRAFT_SCALE) if ctx.settings.get("draft") else base
 
 
@@ -1049,9 +1058,15 @@ def step_publish(ctx: StepContext) -> None:
         plan_title = json.loads(ctx.read(PLAN)).get("title", "")
     title = plan_title or ctx.project["title"]
     off = disclaimers_off(ctx, title)
+    stale = registry_stale(svc.config)
+    ctx.remember(registry_warning=stale or None)  # видно в состоянии шага; публикацию не держит
+    if stale:
+        ctx.log(stale)
     post = with_source(ctx, ctx.read(POST))
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
+    ai = ai_used(ctx)
+    post = publish.with_ai_line(post, ai)
     links = post_links(ctx.project["scenario"], ctx.settings, ctx.read, post)
     if links["domains"]:
         ctx.log("ссылки в посте ведут на: " + ", ".join(links["domains"]))
@@ -1108,7 +1123,9 @@ def step_publish(ctx: StepContext) -> None:
             record = publish_video(ctx, journal, channel, title, post, base)
         else:
             video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
-            result = publish.publish(channel, video=video, title=title, post=post, out_dir=ctx.path("publish"))
+            result = publish.publish(
+                channel, video=video, title=title, post=post, out_dir=ctx.path("publish"), synthetic=bool(ai)
+            )
             if prev and publication_state(prev) == UPLOADED:
                 # Уже залит: пакет пересобран, но ссылка и время публикации остаются.
                 record = journal.put(prev | {"files": result.get("files"), "label": channel.label})
@@ -1128,6 +1145,37 @@ def step_publish(ctx: StepContext) -> None:
             state=record.get("state"),
         )
         published_event(ctx, channel, record, again=again)
+        audit_publish(ctx, channel, record, post, off)
+
+
+def audit_publish(ctx: StepContext, channel: publish.Channel, record: dict, post: str, off: dict | None) -> None:
+    """Публикация в журнал комплаенса: что ушло, куда, с какими пометками и версией реестра (CMP-015)."""
+    if record.get("skipped"):
+        return
+    svc = services(ctx)
+    photo = channel.type == publish.TELEGRAM and ctx.settings.get("post_format") == "photo"
+    if photo:
+        media = [find(ctx.dir, "poster", IMAGE_EXT), find(ctx.dir, "voice", AUDIO_EXT)]
+    else:
+        media = [ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)]
+    log = ctx.studio.audit
+    fields = {"project_id": ctx.project["id"], "channel": channel.id, "registry": registry_checked(svc.config)}
+    log.write(
+        "publish",
+        **fields,
+        message_id=record.get("message_id"),
+        state=record.get("state"),
+        caption_sha256=audit.sha256_text(post),
+        media={p.name: audit.sha256_file(p) for p in media if p is not None},
+        footnotes=audit.footnotes(post),
+        ai=publish.AI_PREFIX in post,
+    )
+    if off:
+        log.write("disclaimers_off", **fields, reason=off.get("reason"), mentions=off.get("mentions"))
+
+
+def registry_checked(config: StudioConfig) -> str:
+    return registry.Registry(config.registry_file).read()[1]
 
 
 def when_fields(ts: float) -> dict:
@@ -1309,6 +1357,20 @@ def with_source(ctx: StepContext, post: str) -> str:
     if url in post:
         return post
     return f"{post.rstrip()}\n\nИсточник: {author.replace('*', '')} — [оригинал]({url})\n"
+
+
+def ai_used(ctx: StepContext) -> str:
+    """Строка об ИИ для подписи — по генераторам, которые выпуск правда использовал (CMP-011).
+
+    Загруженные человеком озвучка, постер, картинки и ролики ИИ-контентом не считаются."""
+    s = ctx.settings
+    post = is_post(ctx)
+    draft = bool(s.get("draft"))
+    images = s.get("poster_mode") == "local" or (
+        not post and not draft and s.get("draw_images") and s.get("images_mode") == "local"
+    )
+    video = not post and not draft and bool(s.get("clips")) and s.get("clips_mode") == "local"
+    return publish.ai_line(voice=s.get("voice_mode") == "tts", images=bool(images), video=video)
 
 
 def disclaimers_off(ctx: StepContext, title: str) -> dict | None:
