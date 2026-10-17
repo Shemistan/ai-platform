@@ -10,7 +10,12 @@ export async function api(method, path, body) {
     init.body = JSON.stringify(body);
     init.headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(path, init);
+  let res;
+  try {
+    res = await fetch(path, init);
+  } catch {
+    throw Object.assign(new Error("Сервис не отвечает. Проверь, что он запущен."), { status: 0, data: {} });
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || `Ошибка ${res.status}`), { status: res.status, data });
   return data;
@@ -55,6 +60,38 @@ export function progressBar(progress) {
     { class: "progress" },
     h("div", { class: "progress-head" }, h("span", { class: "stage" }, progress?.stage || ""), h("span", { class: "percent" }, `${percent}%`)),
     h("div", { class: "bar" }, h("div", { class: "bar-fill", style: `width:${percent}%` })),
+  );
+}
+
+// Прогресс задачи генерации (Фото, Видео): в очереди — полосатая полоса и место в очереди,
+// дальше — этап, шаг, процент, сколько прошло и «Отменить», если передан onCancel.
+export function jobProgress(job, { onCancel, elapsed = seconds } = {}) {
+  const p = job.progress || {};
+  const percent = Math.round(p.percent || 0);
+  const queued = job.status === "queued";
+  const stage = queued
+    ? job.queue_position > 0 ? `Ждёт очереди: впереди ${job.queue_position}` : "Сейчас начнётся"
+    : p.stage || "";
+  return h(
+    "div",
+    { class: "progress" },
+    h(
+      "div",
+      { class: "progress-head" },
+      h("span", { class: "stage" }, stage, p.steps ? h("span", { class: "muted" }, ` · шаг ${p.step} из ${p.steps}`) : null),
+      h("span", { class: "percent" }, queued ? "" : `${percent}%`),
+    ),
+    h(
+      "div",
+      { class: `bar${queued ? " waiting" : ""}`, role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(percent) },
+      h("div", { class: "bar-fill", style: `width:${queued ? 0 : p.percent || 0}%` }),
+    ),
+    h(
+      "div",
+      { class: "progress-foot" },
+      h("span", { class: "muted small" }, queued || job.elapsed_s == null ? "" : `Прошло ${elapsed(job.elapsed_s)}`),
+      onCancel ? h("button", { type: "button", class: "link danger", onclick: () => onCancel(job) }, "Отменить") : null,
+    ),
   );
 }
 
