@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, plural, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -86,14 +86,6 @@ const refreshPreview = debounce(async () => {
     $("pronunciation").hidden = true;
   }
 }, 600);
-
-function plural(n, one, few, many) {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
-  return many;
-}
 
 function renderPreview(data) {
   const parts = [];

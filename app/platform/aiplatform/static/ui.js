@@ -1,4 +1,8 @@
 // Общие помощники страниц платформы: запросы к API и построение DOM без сборки и зависимостей.
+// Чистые форматтеры живут в core/format.js (тестируются без DOM) и реэкспортируются отсюда.
+import { seconds } from "./core/format.js";
+
+export { countLabel, minutes, plural, seconds, shortDate } from "./core/format.js";
 
 export const $ = (id) => document.getElementById(id);
 
@@ -196,12 +200,6 @@ export function logBlock(lines, title = "Лог") {
   return h("details", { class: "log-wrap" }, h("summary", {}, `${title} (${lines.length})`), h("pre", { class: "log" }, lines.join("\n")));
 }
 
-export function seconds(value) {
-  if (value === null || value === undefined) return "";
-  const s = Math.round(value);
-  return s >= 60 ? `${Math.floor(s / 60)} мин ${s % 60} с` : `${s} с`;
-}
-
 // --- Общие компоненты вкладок движка ---
 
 // fill(узел, ...дети) — как replaceChildren, но null и false пропускаются, как в h().
@@ -224,23 +222,6 @@ export function debounce(fn, ms) {
     clearTimeout(timer);
     timer = setTimeout(() => fn(...args), ms);
   };
-}
-
-// «12 окт.», с годом — если не этот.
-export function shortDate(value) {
-  if (!value) return "";
-  const d = new Date(value.length <= 10 ? `${value}T12:00:00` : value);
-  if (Number.isNaN(d.getTime())) return value;
-  const opts = { day: "numeric", month: "short" };
-  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
-  return d.toLocaleDateString("ru-RU", opts);
-}
-
-export function minutes(value) {
-  if (!value) return "";
-  const m = Math.floor(value / 60);
-  const s = Math.round(value % 60);
-  return m ? `${m}:${String(s).padStart(2, "0")}` : `${s} с`;
 }
 
 export function copyButton(getText, label = "Скопировать") {
