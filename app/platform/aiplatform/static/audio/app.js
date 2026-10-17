@@ -1,6 +1,7 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
 import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, plural, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { CONSENT_FORMS, voiceConsent } from "/core/consent.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -463,6 +464,7 @@ function renderVoices(data, content, taskBox, reload) {
         h("div", { class: "card-head" }, h("h3", {}, v.voice), h("span", { class: "toolbar" }, v.seconds ? h("span", { class: "muted small" }, `${v.seconds} с`) : null, chip(status, tone))),
         v.sample_url ? h("audio", { controls: true, preload: "none", src: v.sample_url }) : null,
         v.text ? h("blockquote", { class: "quote" }, v.text) : null,
+        v.consent_error ? h("p", { class: "job-error" }, v.consent_error) : null, // живой голос без согласия (CMP-009)
         record,
       );
     }),
@@ -495,8 +497,22 @@ function fileRecord(v, low, high, busy, taskBox, reload) {
   const file = h("input", { type: "file", accept: "audio/*,.wav,.mp3,.m4a" });
   const text = h("textarea", { rows: 2, placeholder: "Что сказано в записи — слово в слово, цифры словами" });
   const error = h("p", { class: "form-error", hidden: true });
+  // Чей голос и согласие владельца (CMP-010): без галочки кнопка выключена, сервер тоже ответит 400.
+  const owner = h("input", { type: "text", maxlength: 200, placeholder: "Чей это голос — имя владельца" });
+  const form = h("select", {}, ...Object.entries(CONSENT_FORMS).map(([value, label]) => h("option", { value }, label)));
+  const agree = h("input", { type: "checkbox" });
+  const button = h("button", { type: "button", class: "btn btn--secondary", disabled: true }, "Сохранить образец");
+  agree.addEventListener("change", () => {
+    button.disabled = busy || !agree.checked;
+  });
   const save = async () => {
     error.hidden = true;
+    const checked = voiceConsent({ confirmed: agree.checked, owner: owner.value, form: form.value });
+    if (checked.error) {
+      error.textContent = checked.error;
+      error.hidden = false;
+      return;
+    }
     if (!file.files[0] || !text.value.trim()) {
       error.textContent = "Нужны запись и её текст.";
       error.hidden = false;
@@ -504,22 +520,28 @@ function fileRecord(v, low, high, busy, taskBox, reload) {
     }
     try {
       const upload = await uploadFile(`${API}/uploads`, file.files[0], { limit: (state.config?.upload_limits || UPLOAD_LIMITS).media });
-      await startRecord(v.stem, { upload: upload.id, text: text.value }, taskBox, reload);
+      await startRecord(v.stem, { upload: upload.id, text: text.value, consent: checked.consent }, taskBox, reload);
     } catch (err) {
       if (err.kind === "abort") return; // отменили сами — форма как была
       error.textContent = err.message;
       error.hidden = false;
     }
   };
-  return h(
+  const box = h(
     "div",
     { class: "field mt-2" },
     h("span", { class: "hint" }, `Запись голоса ${v.voice}: ${low}–${high} с ровной речи, без музыки и шума.`),
     file,
     text,
+    owner,
+    form,
+    h("label", { class: "check" }, agree, h("span", {}, "Это мой голос или у меня есть письменное согласие владельца на его клонирование")),
+    h("span", { class: "hint" }, "Запись о согласии ляжет рядом с образцом, исходный файл после записи удаляется."),
     error,
-    h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: busyClick(save, `voice:${v.stem}`) }, "Сохранить образец")),
+    h("div", { class: "toolbar" }, button),
   );
+  button.addEventListener("click", busyClick(save, `voice:${v.stem}`));
+  return box;
 }
 
 async function startRecord(stem, payload, taskBox, reload) {

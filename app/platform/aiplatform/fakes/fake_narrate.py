@@ -419,6 +419,8 @@ def bridge(args, state: dict) -> dict:
                         "seconds": 6.0,
                         "text": (custom or {}).get("text") or REF_TEXT,
                         "custom": bool(custom),
+                        "consent": "synthetic" if stem in ("m1", "charon") else ("live" if custom else None),
+                        "consent_error": None,
                     }
                 )
             return {
@@ -803,12 +805,25 @@ def cmd_voice(args, state: dict) -> int:
         return fail(f"голоса {stem} в Gemini TTS нет: передай запись и её текст")
     if not args.source and not os.environ.get("GEMINI_API_KEY"):
         return fail("нет ключа Gemini: задай $GEMINI_API_KEY или передай файл записи", 2)
+    live = stem not in ("m1", "charon")  # как у narrator: живой голос — с согласием (CMP-009)
+    if live and not (args.owner and args.form):
+        return fail(f"голос {stem} — живой: только с согласием владельца — --owner «…» --form self|written")
     target = home() / "voices" / f"{stem}.wav"
     target.parent.mkdir(parents=True, exist_ok=True)
     if args.source:
         shutil.copyfile(args.source, target)
     else:
         write_wav(target, 6.0)
+    if live:
+        record = {
+            "version": 1,
+            "kind": "live",
+            "owner": args.owner,
+            "date": date.today().isoformat(),
+            "form": args.form,
+        }
+        record |= {"purposes": ["озвучка статей и дайджестов narrator"], "expires": None}
+        target.with_name(f"{stem}.consent.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     state["custom_voices"][stem] = {"text": (args.text or REF_TEXT).strip()}
     save(state)
     print(f"{target}  6.0 с")
@@ -979,6 +994,8 @@ def parser() -> argparse.ArgumentParser:
     voice.add_argument("name")
     voice.add_argument("--from", dest="source")
     voice.add_argument("--text")
+    voice.add_argument("--owner")
+    voice.add_argument("--form", choices=("self", "written"))
 
     make = sub.add_parser("make")
     make.add_argument("target")
