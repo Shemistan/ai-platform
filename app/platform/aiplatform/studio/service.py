@@ -8,6 +8,7 @@ import mimetypes
 import re
 import threading
 import time
+from dataclasses import dataclass, field
 from http import HTTPStatus
 
 from aiplatform.audio import voices
@@ -87,6 +88,18 @@ _FILE = re.compile(
 )
 _SLIDE = re.compile(r"^\d{2,3}$")  # ключ слайда — f"{n:02d}": 01…99, дальше 100…
 RATES_TTL_S = 60
+IDEMPOTENCY_KEEP = 200  # сколько последних Idempotency-Key помним
+IDEMPOTENCY_WAIT_S = 30  # повтор ждёт, пока первый запрос с тем же ключом создаёт выпуск
+
+
+@dataclass
+class _Once:
+    """Создание по Idempotency-Key: готово ли и какой выпуск вышел."""
+
+    done: threading.Event = field(default_factory=threading.Event)
+    project_id: str | None = None
+
+
 SUMMARY_WORDS = 900  # ~7 минут озвучки
 # Копия выпуска: что не переносится (итоги сборки и публикации) и чьи статусы переносятся.
 CLONE_SKIP = {
@@ -170,6 +183,9 @@ class StudioModule:
         self._rates: tuple[float, estimate_module.Rates] | None = None
         self._durations: dict[tuple[str, int], float] = {}
         self._stats_lock = threading.Lock()
+        self._create_lock = threading.Lock()  # проверка дубля + создание выпуска (create_unique)
+        self._idem_lock = threading.Lock()
+        self._idem: dict[str, _Once] = {}  # Idempotency-Key → создание (последние IDEMPOTENCY_KEEP)
         self._stats_thread: threading.Thread | None = None
         self.scheduler.daily["stats"] = self._daily_stats
 
@@ -589,8 +605,7 @@ class StudioModule:
             extra["source"] = source_id(scenario, day=extra["day"])
             title = title or f"Дайджест новостей за {day.strftime('%d.%m.%Y')}"
             extra["auto_title"] = False
-            self._no_duplicate(extra["source"], force_new)
-            project = self.studio.create(scenario, title, settings, extra)
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
         elif scenario == "post":
             post = payload.get("post")
             if not isinstance(post, str) or not post.strip():
@@ -601,8 +616,7 @@ class StudioModule:
             first = publish.plain_text(post).splitlines()[0] if publish.plain_text(post) else ""
             title = title or first[:90] or "Пост в канал"
             extra["source"] = source_id(scenario, text=f"{post}\n{text}")
-            self._no_duplicate(extra["source"], force_new)
-            project = self.studio.create(scenario, title, settings, extra)
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
             folder = self.studio.project_dir(project["id"])
             (folder / steps.POST).write_text(post.strip() + "\n", encoding="utf-8")
             if text.strip():
@@ -616,12 +630,47 @@ class StudioModule:
             paras = slides.paragraphs(text)
             title = title or (paras[0][:90] if paras else "Видео по статье")
             extra["source"] = source_id(scenario, text=text)
-            self._no_duplicate(extra["source"], force_new)
-            project = self.studio.create(scenario, title, settings, extra)
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
             (self.studio.project_dir(project["id"]) / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
         if payload.get("run"):
             self.studio.run(project["id"])
         return self.view(project["id"])
+
+    def create_unique(self, scenario: str, title: str, settings: dict, extra: dict, *, force_new: bool) -> dict:
+        """Проверка дубля по source и создание — под одним замком: двойной сабмит формы или
+        расписание вместе с ручным запуском не дают два выпуска на один материал (второй — 409)."""
+        with self._create_lock:
+            self._no_duplicate(extra["source"], force_new)
+            return self.studio.create(scenario, title, settings, extra)
+
+    def create_once(self, payload: object, key: str | None) -> dict:
+        """POST /projects с Idempotency-Key: повтор с тем же ключом отдаёт уже созданный выпуск."""
+        if not key:
+            return self.create(payload)
+        key = key.strip()[:200]
+        with self._idem_lock:
+            once = self._idem.get(key)
+            owner = once is None
+            if owner:
+                once = self._idem[key] = _Once()
+        if not owner:
+            once.done.wait(IDEMPOTENCY_WAIT_S)
+            if once.project_id and self.studio.get(once.project_id) is not None:
+                return self.view(once.project_id)
+            return self.create(payload)
+        try:
+            view = self.create(payload)
+            once.project_id = view["id"]
+            return view
+        except BaseException:
+            with self._idem_lock:
+                self._idem.pop(key, None)  # не создали — ключ свободен для нового захода
+            raise
+        finally:
+            once.done.set()
+            with self._idem_lock:
+                while len(self._idem) > IDEMPOTENCY_KEEP:
+                    self._idem.pop(next(iter(self._idem)))
 
     def _no_duplicate(self, source: str, force_new: bool) -> None:
         """Выпуск по тому же дню или тексту уже есть — предложить открыть его (force_new — создать новый)."""
@@ -1119,7 +1168,8 @@ class StudioModule:
             case ("POST", ["projects", pid, "archive"]):
                 return req.send_json(self.archive(pid, req.json() or {}))
             case ("POST", ["projects"]):
-                return req.send_json(self.create(req.json(MAX_BODY)), HTTPStatus.CREATED)
+                key = req.headers.get("Idempotency-Key")
+                return req.send_json(self.create_once(req.json(MAX_BODY), key), HTTPStatus.CREATED)
             case ("GET", ["projects", pid]):
                 return req.send_json(self.view(pid))
             case ("POST", ["projects", pid, "settings"]):
