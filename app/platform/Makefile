@@ -1,4 +1,4 @@
-.PHONY: run demo smoke test lint check
+.PHONY: run demo smoke test lint check install-agent uninstall-agent agent-status digest-check
 
 PYTHON ?= python3
 
@@ -14,6 +14,21 @@ run:
 # Демо без моделей и сети: фейковые генераторы, TTS, LLM и новости — те же страницы и статусы.
 demo:
 	AIP_BACKEND=fake AIP_DATA_DIR=data-demo $(PYTHON) -m aiplatform.server
+
+# Автозапуск через launchd (README «Автозапуск»): сервис при входе и после падения + внешний чекер дайджеста.
+# Запускать из основного checkout, не из worktree: агент запомнит этот каталог.
+install-agent:
+	sh tools/agent.sh install
+
+uninstall-agent:
+	sh tools/agent.sh uninstall
+
+agent-status:
+	sh tools/agent.sh status
+
+# Внешний чекер вручную: сервис жив, дайджест за день есть (иначе — сообщение в Telegram).
+digest-check:
+	$(PYTHON) tools/digest_check.py
 
 # Короткий прогон на настоящих моделях с замером времени: картинка, фраза озвучки, черновик статьи.
 smoke:

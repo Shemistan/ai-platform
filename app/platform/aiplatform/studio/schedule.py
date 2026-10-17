@@ -20,10 +20,12 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import urllib.request
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from aiplatform.config import pick
 from aiplatform.core.http import HttpError
 
 STATE = "schedule.json"
@@ -62,6 +64,19 @@ class Scheduler:
                 self.tick(datetime.now())
             except Exception:  # сбой расписания не роняет платформу, но виден в логе
                 log.exception("тик расписания упал")
+                continue
+            self._heartbeat()
+
+    def _heartbeat(self) -> None:
+        """Пинг внешнего heartbeat-сервиса (healthchecks.io) после удачного тика; URL — AIP_HEARTBEAT_URL."""
+        url = pick(self.module.ctx.config.env, "AIP_HEARTBEAT_URL")
+        if not url:
+            return
+        try:
+            with urllib.request.urlopen(url, timeout=10):  # noqa: S310 — адрес задаёт владелец
+                pass
+        except OSError as exc:  # сеть пропала — не повод ронять расписание; молчание заметит сам сервис
+            log.warning("heartbeat не ушёл: %s", type(exc).__name__)
 
     # --- состояние ---
 

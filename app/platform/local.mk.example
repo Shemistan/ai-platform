@@ -24,5 +24,8 @@ AIP_LLM_CMD=claude -p
 # Модель постера и картинок слайдов по умолчанию.
 AIP_STUDIO_IMAGE_MODEL=z-image-turbo
 
+# Пинг heartbeat-сервиса (healthchecks.io) после каждого тика расписания; пусто — выключено.
+# AIP_HEARTBEAT_URL=https://hc-ping.com/<uuid>
+
 # Экономия памяти для фото и видео (раскомментируй, если 16–24 ГБ).
 # AIP_LOW_RAM=1
