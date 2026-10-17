@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiplatform.core import runner
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
 
 ACTIVE = ("queued", "running")
@@ -149,9 +150,7 @@ class Tasks:
     # --- внутреннее ---
 
     def _save(self, task: dict) -> None:
-        tmp = self._folder / f"{task['id']}.json.tmp"
-        tmp.write_text(json.dumps(task, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self._folder / f"{task['id']}.json")
+        atomic_write(self._folder / f"{task['id']}.json", json.dumps(task, ensure_ascii=False))
 
     def _load(self) -> None:
         for path in self._folder.glob("*.json"):

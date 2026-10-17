@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from aiplatform.config import pick
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError
 
 STATE = "schedule.json"
@@ -94,10 +95,7 @@ class Scheduler:
     def _mark(self, name: str, value: str | dict) -> None:
         with self._lock_state:
             data = self.state() | {name: value}
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            tmp.replace(self.path)
+            atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
     def digest_run(self) -> dict:
         """Последний запуск дайджеста; старая запись строкой-датой считается удачной."""

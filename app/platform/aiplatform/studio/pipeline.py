@@ -20,7 +20,7 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -310,6 +310,19 @@ class Studio:
             project["steps"][step_id]["note"] = note
             self._save(project)
             return copy.deepcopy(project)
+
+    @contextlib.contextmanager
+    def idle(self, project_id: str, step_id: str | None = None) -> Iterator[None]:
+        """Запись файла выпуска под замком студии: ни выпуск (или шаг step_id и зависящие от него)
+        не стартует между проверкой «не выполняется» и записью. Внутри — только файлы, без вызовов студии."""
+        with self._lock:
+            project = self._require(project_id)
+            if step_id is None:
+                if project["running"]:
+                    raise Conflict("Проект сейчас выполняется — дождись или останови его.")
+            else:
+                self._check_idle(project, step_id)
+            yield
 
     def check_idle(self, project_id: str, step_id: str) -> None:
         with self._lock:

@@ -14,6 +14,7 @@ from http import HTTPStatus
 from aiplatform.audio import voices
 from aiplatform.core import media
 from aiplatform.core import uploads as uploads_module
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
@@ -618,9 +619,9 @@ class StudioModule:
             extra["source"] = source_id(scenario, text=f"{post}\n{text}")
             project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
             folder = self.studio.project_dir(project["id"])
-            (folder / steps.POST).write_text(post.strip() + "\n", encoding="utf-8")
+            atomic_write(folder / steps.POST, post.strip() + "\n")
             if text.strip():
-                (folder / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
+                atomic_write(folder / steps.TEXT, text.strip() + "\n")
         else:
             text = payload.get("text")
             if not isinstance(text, str) or not text.strip():
@@ -1019,7 +1020,8 @@ class StudioModule:
         prompts = dict(steps.media_prompts(kind, self._plan(folder)))
         if n not in prompts:
             raise not_found(f"В плане нет слайда {n}, которому нужны {steps.MEDIA[kind][1]}.")
-        steps.save_slide_media(folder / kind, n, ext, data, prompts[n], kind)
+        with self.studio.idle(project_id, kind):  # шаг не стартует между проверкой и записью
+            steps.save_slide_media(folder / kind, n, ext, data, prompts[n], kind)
         have = sum(steps.slide_media(folder / kind, m, kind, p) is not None for m, p in prompts.items())
         note = f"Загружено вручную: {have} из {len(prompts)}."
         state = (self.studio.get(project_id) or {}).get("steps", {}).get(kind, {})
@@ -1055,9 +1057,8 @@ class StudioModule:
             except (json.JSONDecodeError, StudioError) as exc:
                 raise bad_request(f"Сценарий шортса не годится: {exc}") from exc
             text = json.dumps({"beats": beats}, ensure_ascii=False, indent=2)
-        self._guard(project_id)
-        path = folder / filename
-        path.write_text(text.strip() + "\n", encoding="utf-8")
+        with self.studio.idle(project_id):  # выпуск не запустится между проверкой и записью
+            atomic_write(folder / filename, text.strip() + "\n")
         if name == "short":
 
             def keep_script(project: dict) -> set[str]:
@@ -1081,10 +1082,15 @@ class StudioModule:
         self._guard_step(project_id, what)
         folder = self.studio.project_dir(project_id)
         stems = steps.IMAGE_EXT if what == "poster" else steps.AUDIO_EXT
-        for old in (folder / f"{what}{e}" for e in stems):
-            old.unlink(missing_ok=True)
-        (folder / f"{what}.{ext}").write_bytes(data)
-        (folder / f"{what}.json").unlink(missing_ok=True)  # постер больше не из задачи «Фото»
+        target = folder / f"{what}.{ext}"
+        with self.studio.idle(project_id, what):
+            # Сначала новый файл целиком, потом — прежний в другом формате: сбой между ними
+            # не оставит выпуск без постера или озвучки.
+            atomic_write(target, data)
+            for old in (folder / f"{what}{e}" for e in stems):
+                if old != target:
+                    old.unlink(missing_ok=True)
+            (folder / f"{what}.json").unlink(missing_ok=True)  # постер больше не из задачи «Фото»
         self.studio.mark_done(project_id, what, note="Загружено вручную.", resume=True)
         return self.view(project_id)
 

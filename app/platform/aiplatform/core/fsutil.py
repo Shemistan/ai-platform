@@ -19,8 +19,9 @@ def tmp_path(path: Path) -> Path:
     return path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
 
 
-def atomic_write(path: Path, data: bytes | str, *, mode: int | None = None) -> None:
-    """Записать data в path целиком или не записать вовсе. mode — права файла (например, 0o600)."""
+def atomic_write(path: Path, data: bytes | str, *, mode: int | None = None, durable: bool = False) -> None:
+    """Записать data в path целиком или не записать вовсе. mode — права файла (например, 0o600);
+    durable — fsync до замены (переживёт и пропадание питания; дороже, для частых записей не нужен)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = tmp_path(path)
@@ -28,8 +29,9 @@ def atomic_write(path: Path, data: bytes | str, *, mode: int | None = None) -> N
     try:
         with open(tmp, "wb") as fh:
             fh.write(raw)
-            fh.flush()
-            os.fsync(fh.fileno())
+            if durable:
+                fh.flush()
+                os.fsync(fh.fileno())
         if mode is not None:
             os.chmod(tmp, mode)
         os.replace(tmp, path)
