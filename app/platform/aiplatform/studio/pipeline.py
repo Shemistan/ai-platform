@@ -165,6 +165,8 @@ class Studio:
         self.audit = audit.AuditLog(self.events.path.with_name(audit.FILE) if self.events.path else None)
         # Запуск закончился: (проект, статусы шагов на старте) — для уведомлений; зовётся вне замка.
         self.on_stop: Callable[[dict, dict[str, str]], None] | None = None
+        # Перед удалением выпуска уборкой (проект, каталог): сохранить то, что нужно аналитике.
+        self.before_delete: Callable[[dict, Path], None] | None = None
         self._before: dict[str, dict[str, str]] = {}
         self._lock = threading.Lock()
         self._projects: dict[str, dict] = {}
@@ -252,6 +254,8 @@ class Studio:
             project = self._require(project_id)
             if project["running"] or not project.get("archived"):
                 return 0
+            if self.before_delete is not None:  # сбой здесь — выпуск не удаляется: история дороже места
+                self.before_delete(copy.deepcopy(project), self.project_dir(project_id))
             del self._projects[project_id]
         self._emit(project, "project.deleted", actor=events.actor())
         self.audit.write("delete", project_id=project_id, title=project.get("title"))
