@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, busy as busyRequest, busyClick, captureFocus, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reconcile, reportError, restoreFocus, safe, STATUS, statusChip, toast, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { $, announce, api, busy as busyRequest, busyClick, captureFocus, confirmAction, confirmPublish, countLabel, debounce, h, logBlock, poller, progressBar, reconcile, reportError, restoreFocus, safe, STATUS, statusChip, toast, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const API = "/api/studio";
 // Сценарий из адреса; неизвестный — «article». Названия сценариев — из /api/studio/config (FE-007).
@@ -207,8 +207,8 @@ function channelAdder(prefix) {
   const id = (name) => `${prefix}-${name}`;
   return h(
     "details",
-    { class: "add-channel" },
-    h("summary", { class: "btn--link" }, "Добавить канал Telegram"),
+    { class: "disclosure add-channel" },
+    h("summary", {}, "Добавить канал Telegram"),
     h(
       "div",
       { class: "settings" },
@@ -321,7 +321,7 @@ function checkBox(data, { done = false } = {}) {
     "div",
     { class: "check-box" },
     head,
-    parts.length && !done ? h("details", {}, h("summary", { class: "btn--link" }, "Из чего складывается"), h("ul", { class: "small" }, ...parts.map((t) => h("li", {}, t))), h("p", { class: "hint" }, est.from_history ? `По истории задач этой машины (${est.from_history}).` : "Истории задач ещё нет — оценка по умолчанию.")) : null,
+    parts.length && !done ? h("details", { class: "disclosure" }, h("summary", {}, "Из чего складывается"), h("ul", { class: "small" }, ...parts.map((t) => h("li", {}, t))), h("p", { class: "hint" }, est.from_history ? `По истории задач этой машины (${est.from_history}).` : "Истории задач ещё нет — оценка по умолчанию.")) : null,
     items.length ? h("ul", { class: "preflight" }, ...items) : null,
   );
 }
@@ -390,8 +390,8 @@ function postFields() {
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Подпись к посту"), post, captionCounter(post)),
     h(
       "details",
-      {},
-      h("summary", { class: "btn--link" }, "Текст для озвучки — если озвучиваем здесь"),
+      { class: "disclosure" },
+      h("summary", {}, "Текст для озвучки — если озвучиваем здесь"),
       h("textarea", { id: "text", rows: 5, placeholder: "Пусто — озвучим подпись. С «Загружу свой mp3» не нужен." }),
     ),
     h("p", { class: "hint" }, "Постер и mp3 перетащишь в шаги выпуска после создания."),
@@ -593,13 +593,13 @@ function stepSettings(step) {
     "details",
     // Раскрытость и набросок правки живут между перерисовками, пока шаг не перезапустили.
     {
-      class: "step-settings",
+      class: "disclosure step-settings",
       id: `${prefix}-settings`,
       open: openSettings.has(step.id),
       ontoggle: (e) => (e.target.open ? openSettings.add(step.id) : openSettings.delete(step.id)),
       onchange: () => (state.stepDrafts[step.id] = readSettings(prefix, names)),
     },
-    h("summary", { class: "btn--link" }, "Параметры шага"),
+    h("summary", {}, "Параметры шага"),
     ...names.map((name) => f[name]()),
     h("p", { class: "hint" }, "Поменяй и нажми «Перезапустить шаг». Шаги после него сбросятся — «Запустить всё» соберёт их заново."),
   );
@@ -827,7 +827,7 @@ function verdictBox(review) {
     { class: "note verdict" },
     h("span", { class: `chip tone-${VERDICT_TONE[review.verdict] || "neutral"}` }, label),
     review.verdict === "не готово" ? h("span", { class: "hint" }, " Публикация ждёт: поправь выпуск или разреши её в шаге «Публикация».") : null,
-    h("details", {}, h("summary", { class: "btn--link" }, "Отчёт судьи"), h("pre", { class: "log" }, review.text)),
+    h("details", { class: "disclosure" }, h("summary", {}, "Отчёт судьи"), h("pre", { class: "log" }, review.text)),
   );
 }
 
@@ -857,7 +857,7 @@ function stepBody(step) {
           h("p", { class: "field-label" }, "Подпись к посту"),
           captionArea,
           captionCounter(captionArea.querySelector("textarea")),
-          h("details", {}, h("summary", { class: "btn--link" }, "Текст для озвучки"), editor("text", a.text, 6)),
+          h("details", { class: "disclosure" }, h("summary", {}, "Текст для озвучки"), editor("text", a.text, 6)),
         ];
       }
       return [verdictBox(p.review), a.text || step.status !== "pending" ? editor("text", a.text, 12) : h("p", { class: "muted" }, "Текст появится после сбора новостей.")];
@@ -896,7 +896,7 @@ function stepBody(step) {
         a.plan.title ? h("p", {}, h("span", { class: "muted" }, "Название: "), a.plan.title) : null,
         h("p", { class: "muted small" }, `${a.plan.slides.length} слайдов: ${a.plan.slides.length - dynamic} с картинкой, ${dynamic} динамических`),
         h("div", { class: "slides-list" }, ...cards),
-        h("details", {}, h("summary", { class: "btn--link" }, "Править план (JSON)"), editor("plan", JSON.stringify(a.plan, null, 2), 14, true)),
+        h("details", { class: "disclosure" }, h("summary", {}, "Править план (JSON)"), editor("plan", JSON.stringify(a.plan, null, 2), 14, true)),
       ];
     }
     case "images":
@@ -919,7 +919,7 @@ function stepBody(step) {
       ];
     case "short":
       return [
-        a.short ? h("details", {}, h("summary", { class: "btn--link" }, `Сценарий шортса: ${a.short.beats.length} частей`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,
+        a.short ? h("details", { class: "disclosure" }, h("summary", {}, `Сценарий шортса: ${a.short.beats.length} частей`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,
         f.short_video
           ? h("div", {}, h("video", { class: "vertical-video", controls: true, src: f.short_video, preload: "metadata" }), h("p", {}, h("a", { class: "btn--link", href: `${f.short_video.split("?")[0]}?download=1` }, "Скачать шортс 9:16")))
           : null,
@@ -1043,12 +1043,6 @@ function goToStep(stepId) {
   node.focus({ preventScroll: true });
 }
 
-const plural = (n, one, few, many) => {
-  const d = n % 10;
-  const dd = n % 100;
-  return `${n} ${d === 1 && dd !== 11 ? one : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many}`;
-};
-
 // Сводка свёрнутого шага одной строкой: «71 слайд, 26 с картинкой».
 function stepSummary(step) {
   const p = state.project;
@@ -1058,7 +1052,7 @@ function stepSummary(step) {
   switch (step.id) {
     case "text": {
       const words = (p.scenario === "post" ? a.post : a.text)?.split(/\s+/).filter(Boolean).length || 0;
-      return [plural(words, "слово", "слова", "слов"), p.review?.verdict ? `судья: ${p.review.verdict}` : ""].filter(Boolean).join(" · ");
+      return [countLabel(words, "слово", "слова", "слов"), p.review?.verdict ? `судья: ${p.review.verdict}` : ""].filter(Boolean).join(" · ");
     }
     case "poster_prompt":
       return a.poster_prompt ? `${a.poster_prompt.slice(0, 80)}${a.poster_prompt.length > 80 ? "…" : ""}` : "";
@@ -1068,12 +1062,12 @@ function stepSummary(step) {
       if (!a.plan) return "";
       const n = a.plan.slides.length;
       const withImage = a.plan.slides.filter((s) => (s.kind || (s.image_prompt ? "image" : "bullets")) === "image").length;
-      return `${plural(n, "слайд", "слайда", "слайдов")}, ${withImage} с картинкой`;
+      return `${countLabel(n, "слайд", "слайда", "слайдов")}, ${withImage} с картинкой`;
     }
     case "images":
-      return plural(Object.keys(f.images || {}).length, "картинка", "картинки", "картинок");
+      return countLabel(Object.keys(f.images || {}).length, "картинка", "картинки", "картинок");
     case "clips":
-      return plural(p.slides.filter((s) => s.clip).length, "ролик", "ролика", "роликов");
+      return countLabel(p.slides.filter((s) => s.clip).length, "ролик", "ролика", "роликов");
     case "voice":
       return f.voice ? "озвучка готова" : "";
     case "render":
@@ -1199,7 +1193,7 @@ function renderHead(project) {
   );
 }
 
-const MARKS = { done: "✓", skipped: "↷", running: "●", waiting: "!", failed: "×", pending: "○" };
+const MARKS = { done: "✓", skipped: "↷", running: "●", waiting: "!", failed: "✗", pending: "○" };
 
 // Карта пайплайна: липкая строка шагов со статусами, клик — к шагу.
 function renderStepper(project) {
@@ -1230,7 +1224,7 @@ function renderStepper(project) {
 function renderSettings(project) {
   return h(
     "details",
-    { class: "panel settings-box", id: "edit-settings" },
+    { class: "panel disclosure disclosure--title", id: "edit-settings" },
     h("summary", {}, "Настройки выпуска"),
     settingsForm(project.settings, "edit"),
     h(

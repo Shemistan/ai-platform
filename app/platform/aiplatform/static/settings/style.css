@@ -2,7 +2,7 @@
 .toggle-list { display: grid; }
 .toggle-row { display: flex; gap: var(--sp-3); align-items: flex-start; padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); }
 .toggle-row:last-child { border-bottom: 0; }
-.toggle-row input[type="checkbox"] { width: 34px; height: 20px; margin-top: 1px; accent-color: var(--accent); flex: none; cursor: pointer; }
+.toggle-row input[role="switch"] { margin-top: 2px; }
 .toggle-body { display: grid; gap: var(--sp-2); min-width: 0; flex: 1; }
 .toggle-title { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; font-weight: var(--fw-semibold); }
 .toggle-name { cursor: pointer; }

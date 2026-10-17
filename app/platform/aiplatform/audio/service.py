@@ -27,6 +27,7 @@ from aiplatform.audio.jobs import (
     parse_tempo,
 )
 from aiplatform.core import audit
+from aiplatform.core import jobs as core_jobs
 from aiplatform.core import tasks as tasks_module
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, handle_uploads, not_found
@@ -146,7 +147,7 @@ class AudioModule:
                 card = self._bridge("article", item_id)
                 return req.send_json({"id": item_id, "title": card.get("title", ""), "text": card.get("script", "")})
             case ("GET", ["jobs"]):
-                return req.send_json({"jobs": self.jobs.list()})
+                return req.send_json({"jobs": self.jobs.list(*core_jobs.list_args(req))})
             case ("POST", ["jobs"]):
                 payload = req.json(MAX_BODY)
                 try:

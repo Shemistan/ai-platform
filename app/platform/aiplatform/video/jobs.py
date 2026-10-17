@@ -14,6 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from aiplatform.core import cleanup, runner, schema
+from aiplatform.core import jobs as core_jobs
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
 from aiplatform.core.schema import JOB_FIELDS, JOB_SCHEMA
@@ -67,9 +68,10 @@ class JobManager:
             del self._jobs[job_id]
         return cleanup.remove_tree(self._dir(job_id))
 
-    def list(self) -> list[dict]:
+    def list(self, limit: int | None = None, since: float | None = None) -> list[dict]:
+        """Задачи, новые сверху; limit/since — выборка для опроса (core/jobs.select, BE-007)."""
         with self._lock:
-            jobs = sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)
+            jobs = core_jobs.select(self._jobs.values(), limit, since)
             # Лог отдаётся только в карточке одной задачи: список опрашивается раз в секунду.
             return [{k: v for k, v in self._view(j).items() if k != "log"} for j in jobs]
 
@@ -244,11 +246,12 @@ class JobManager:
     def _work(self) -> None:
         while (job_id := self._queue.get()) is not None:
             with self._lock:
-                job = self._jobs[job_id]
-                spec = self._specs.pop(job_id)
-                model = self._models.pop(job_id)
-                cancel = self._cancels[job_id]
-                if job["status"] != "queued":  # отменили, пока ждала в очереди
+                job = self._jobs.get(job_id)
+                spec = self._specs.pop(job_id, None)
+                model = self._models.pop(job_id, None)
+                cancel = self._cancels.get(job_id)
+                # Отменили, пока ждала в очереди, — или уже и забыли (уборка): пропустить, воркер жив (BE-007).
+                if job is None or spec is None or cancel is None or job["status"] != "queued":
                     self._cancels.pop(job_id, None)
                     continue
                 job["status"] = "running"
