@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiplatform.core import cleanup, events, runner
+from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.log import event as log_event
 from aiplatform.studio.llm import StudioError
 
@@ -145,10 +146,7 @@ class StepContext:
 
     def write(self, name: str, text: str) -> Path:
         path = self.dir / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(path)
+        atomic_write(path, text)  # уникальный tmp: два писателя одного файла не портят его друг другу
         return path
 
 
@@ -185,9 +183,7 @@ class Studio:
         folder = self.project_dir(project["id"])
         folder.mkdir(parents=True, exist_ok=True)
         project["updated_at"] = time.time()
-        tmp = folder / "project.json.tmp"
-        tmp.write_text(json.dumps(project, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(folder / "project.json")
+        atomic_write(folder / "project.json", json.dumps(project, ensure_ascii=False, indent=2))
 
     def _load(self) -> None:
         for path in self.root.glob("*/project.json"):
