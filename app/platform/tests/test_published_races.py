@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 from aiplatform.studio import stats, steps
-from tests.test_studio_flow import ARTICLE, StudioCase
+from tests.fixtures import ARTICLE
+from tests.helpers import StudioCase
 
 
 class UpdatePublishedTest(unittest.TestCase):
