@@ -113,11 +113,18 @@ function fieldsOf(values, prefix) {
         "Первый кадр — обложка: постер притемнён, по центру плей, внизу крупная плашка; дальше плашка плавно уезжает в угол и остаётся до конца. Этот кадр — обложка видео в Telegram.",
         values.branding,
       ),
+    ai_badge: () =>
+      check(
+        "ai_badge",
+        "Плашка «ИИ» в углу видео",
+        "Мелкая метка в правом нижнем углу: озвучка и картинки сделаны нейросетью. Строка об ИИ в посте и метка в файле видео ставятся всегда.",
+        values.ai_badge,
+      ),
     disclaimers: () =>
       check(
         "disclaimers",
         "Помечать запрещённые в РФ организации",
-        h("span", {}, "Мелкий текст на слайдах, где упомянута, например, Meta, и строка в конце поста. Список — на вкладке ", h("a", { class: "link", href: "/updates/" }, "«Обновления»"), "."),
+        h("span", {}, "Мелкий текст на слайдах, где упомянута, например, Meta, и строка в конце поста. Список — на вкладке ", h("a", { class: "btn--link", href: "/updates/" }, "«Обновления»"), "."),
         values.disclaimers,
       ),
     tempo: () =>
@@ -158,7 +165,7 @@ function fieldsOf(values, prefix) {
               ),
             ),
             // Удаление канала затрагивает все сценарии — только на вкладке «Каналы», с подтверждением.
-            h("p", { class: "hint" }, "Убрать канал из списка — на вкладке ", h("a", { class: "link", href: "/channels/" }, "«Каналы»"), "."),
+            h("p", { class: "hint" }, "Убрать канал из списка — на вкладке ", h("a", { class: "btn--link", href: "/channels/" }, "«Каналы»"), "."),
           )
         : h("p", { class: "hint" }, `Каналы не настроены: ${cfg.channels_file}`),
     // Необратимое: выпуск уйдёт в каналы без просмотра — тумблер предупреждающего цвета, а не обычный флажок.
@@ -201,7 +208,7 @@ function channelAdder(prefix) {
   return h(
     "details",
     { class: "add-channel" },
-    h("summary", { class: "link" }, "Добавить канал Telegram"),
+    h("summary", { class: "btn--link" }, "Добавить канал Telegram"),
     h(
       "div",
       { class: "settings" },
@@ -215,7 +222,7 @@ function channelAdder(prefix) {
       ),
     ),
     h("p", { class: "form-error", id: id("new-error"), hidden: true }),
-    h("button", { type: "button", class: "secondary", onclick: busyClick(() => addChannel(prefix)) }, "Добавить"),
+    h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => addChannel(prefix)) }, "Добавить"),
   );
 }
 
@@ -228,7 +235,7 @@ function settingsForm(values, prefix) {
       { class: "settings-form" },
       group("Постер", f.poster_mode(), f.image_model()),
       group("Озвучка", f.voice_mode(), f.engine()),
-      group("Оформление", f.frame(), f.branding(), f.disclaimers()),
+      group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
       group("Публикация", channelAdder(prefix), f.post_format(), f.tempo(), f.channels(), f.auto_publish()),
       f.review_text(),
     );
@@ -243,7 +250,7 @@ function settingsForm(values, prefix) {
     group("Озвучка", f.voice_mode(), f.engine()),
     group("Шортс", f.shorts()),
     group("Слайды", f.slide_s(), f.reading()),
-    group("Оформление", f.frame(), f.branding(), f.disclaimers()),
+    group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
     group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish()),
     scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author()) : null,
     f.review_text(),
@@ -252,12 +259,12 @@ function settingsForm(values, prefix) {
 
 const SETTING_NAMES = [
   "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
-  "voice_mode", "engine", "shorts", "review_text", "disclaimers", "branding", "tempo", "frame", "auto_publish", "channels",
+  "voice_mode", "engine", "shorts", "review_text", "disclaimers", "ai_badge", "branding", "tempo", "frame", "auto_publish", "channels",
   "post_format", "draft", "slide_s", "reading",
 ]; // prettier-ignore
 // Поля формы поста: остальные настройки у него не меняются.
 const POST_SETTINGS = [
-  "poster_mode", "image_model", "voice_mode", "engine", "review_text", "disclaimers", "branding", "tempo", "frame",
+  "poster_mode", "image_model", "voice_mode", "engine", "review_text", "disclaimers", "ai_badge", "branding", "tempo", "frame",
   "auto_publish", "channels", "post_format",
 ]; // prettier-ignore
 
@@ -314,7 +321,7 @@ function checkBox(data, { done = false } = {}) {
     "div",
     { class: "check-box" },
     head,
-    parts.length && !done ? h("details", {}, h("summary", { class: "link" }, "Из чего складывается"), h("ul", { class: "small" }, ...parts.map((t) => h("li", {}, t))), h("p", { class: "hint" }, est.from_history ? `По истории задач этой машины (${est.from_history}).` : "Истории задач ещё нет — оценка по умолчанию.")) : null,
+    parts.length && !done ? h("details", {}, h("summary", { class: "btn--link" }, "Из чего складывается"), h("ul", { class: "small" }, ...parts.map((t) => h("li", {}, t))), h("p", { class: "hint" }, est.from_history ? `По истории задач этой машины (${est.from_history}).` : "Истории задач ещё нет — оценка по умолчанию.")) : null,
     items.length ? h("ul", { class: "preflight" }, ...items) : null,
   );
 }
@@ -384,7 +391,7 @@ function postFields() {
     h(
       "details",
       {},
-      h("summary", { class: "link" }, "Текст для озвучки — если озвучиваем здесь"),
+      h("summary", { class: "btn--link" }, "Текст для озвучки — если озвучиваем здесь"),
       h("textarea", { id: "text", rows: 5, placeholder: "Пусто — озвучим подпись. С «Загружу свой mp3» не нужен." }),
     ),
     h("p", { class: "hint" }, "Постер и mp3 перетащишь в шаги выпуска после создания."),
@@ -413,9 +420,9 @@ async function create(event, forceNew = false) {
       ...(existing
         ? [
             " ",
-            h("button", { type: "button", class: "link", onclick: () => (existing.scenario === scenario ? open(existing.id) : (location.href = `?scenario=${existing.scenario}&project=${existing.id}`)) }, "Открыть"),
+            h("button", { type: "button", class: "btn btn--link", onclick: () => (existing.scenario === scenario ? open(existing.id) : (location.href = `?scenario=${existing.scenario}&project=${existing.id}`)) }, "Открыть"),
             " · ",
-            h("button", { type: "button", class: "link", onclick: busyClick(() => create(null, true)) }, "Создать новый"),
+            h("button", { type: "button", class: "btn btn--link", onclick: busyClick(() => create(null, true)) }, "Создать новый"),
           ]
         : []),
     );
@@ -436,9 +443,9 @@ function longTextActions(project) {
   return h(
     "div",
     { class: "actions" },
-    h("button", { type: "button", class: "secondary", disabled: project.running, onclick: busyClick(splitProject) }, "Разбить на серию"),
-    h("button", { type: "button", class: "secondary", disabled: summary.status === "running", onclick: busyClick(() => act("summary")) }, summary.status === "running" ? "Выжимка пишется…" : "Сделать выжимку"),
-    summary.status === "done" ? h("a", { class: "link", href: `?scenario=article&project=${summary.project}` }, "Открыть выжимку") : null,
+    h("button", { type: "button", class: "btn btn--secondary", disabled: project.running, onclick: busyClick(splitProject) }, "Разбить на серию"),
+    h("button", { type: "button", class: "btn btn--secondary", disabled: summary.status === "running", onclick: busyClick(() => act("summary")) }, summary.status === "running" ? "Выжимка пишется…" : "Сделать выжимку"),
+    summary.status === "done" ? h("a", { class: "btn--link", href: `?scenario=article&project=${summary.project}` }, "Открыть выжимку") : null,
     summary.status === "failed" ? h("span", { class: "job-error" }, summary.error) : null,
   );
 }
@@ -571,8 +578,8 @@ const STEP_FIELDS = {
   clips: ["clips", "clips_mode", "video_model"],
   voice: ["voice_mode", "engine"],
   plan: ["slide_s"],
-  render: ["draft", "frame", "tempo", "reading", "branding", "disclaimers"],
-  short: ["shorts", "tempo", "reading", "branding", "disclaimers"],
+  render: ["draft", "frame", "tempo", "reading", "branding", "disclaimers", "ai_badge"],
+  short: ["shorts", "tempo", "reading", "branding", "disclaimers", "ai_badge"],
 };
 
 const openSettings = new Set();
@@ -592,7 +599,7 @@ function stepSettings(step) {
       ontoggle: (e) => (e.target.open ? openSettings.add(step.id) : openSettings.delete(step.id)),
       onchange: () => (state.stepDrafts[step.id] = readSettings(prefix, names)),
     },
-    h("summary", { class: "link" }, "Параметры шага"),
+    h("summary", { class: "btn--link" }, "Параметры шага"),
     ...names.map((name) => f[name]()),
     h("p", { class: "hint" }, "Поменяй и нажми «Перезапустить шаг». Шаги после него сбросятся — «Запустить всё» соберёт их заново."),
   );
@@ -668,7 +675,7 @@ function editor(name, value, rows = 8, mono = false) {
     h(
       "div",
       { class: "actions" },
-      h("button", { type: "button", class: "secondary", disabled: state.project.running, onclick: busyClick(() => saveArtifact(name, area.value)) }, "Сохранить правку"),
+      h("button", { type: "button", class: "btn btn--secondary", disabled: state.project.running, onclick: busyClick(() => saveArtifact(name, area.value)) }, "Сохранить правку"),
       h("span", { class: "hint" }, "Правка сбросит шаги, которые от неё зависят."),
     ),
   );
@@ -677,7 +684,7 @@ function editor(name, value, rows = 8, mono = false) {
 function uploader(what, accept, label) {
   return h(
     "label",
-    { class: "upload secondary" },
+    { class: "upload btn btn--secondary" },
     label,
     h("input", { type: "file", accept, hidden: true, disabled: stepLocked(what), onchange: (e) => e.target.files[0] && upload(what, e.target.files[0]) }),
   );
@@ -742,7 +749,7 @@ function copyButton(text) {
     "button",
     {
       type: "button",
-      class: "link",
+      class: "btn btn--link",
       onclick: async (e) => {
         const btn = e.currentTarget;
         try {
@@ -806,7 +813,7 @@ const stepLocked = (id) => Boolean(state.project.steps.find((s) => s.id === id)?
 function jobLink(step) {
   if (!step.job) return null;
   const tab = { photo: "Фото", video: "Видео", audio: "Аудио" }[step.job.tab] || step.job.tab;
-  return h("a", { class: "link", href: `/${step.job.tab}/` }, `задача на вкладке «${tab}»`);
+  return h("a", { class: "btn--link", href: `/${step.job.tab}/` }, `задача на вкладке «${tab}»`);
 }
 
 const VERDICT_TONE = { готово: "success", "готово с оговорками": "warning", "не готово": "danger" };
@@ -820,7 +827,7 @@ function verdictBox(review) {
     { class: "note verdict" },
     h("span", { class: `chip tone-${VERDICT_TONE[review.verdict] || "neutral"}` }, label),
     review.verdict === "не готово" ? h("span", { class: "hint" }, " Публикация ждёт: поправь выпуск или разреши её в шаге «Публикация».") : null,
-    h("details", {}, h("summary", { class: "link" }, "Отчёт судьи"), h("pre", { class: "log" }, review.text)),
+    h("details", {}, h("summary", { class: "btn--link" }, "Отчёт судьи"), h("pre", { class: "log" }, review.text)),
   );
 }
 
@@ -850,7 +857,7 @@ function stepBody(step) {
           h("p", { class: "field-label" }, "Подпись к посту"),
           captionArea,
           captionCounter(captionArea.querySelector("textarea")),
-          h("details", {}, h("summary", { class: "link" }, "Текст для озвучки"), editor("text", a.text, 6)),
+          h("details", {}, h("summary", { class: "btn--link" }, "Текст для озвучки"), editor("text", a.text, 6)),
         ];
       }
       return [verdictBox(p.review), a.text || step.status !== "pending" ? editor("text", a.text, 12) : h("p", { class: "muted" }, "Текст появится после сбора новостей.")];
@@ -889,7 +896,7 @@ function stepBody(step) {
         a.plan.title ? h("p", {}, h("span", { class: "muted" }, "Название: "), a.plan.title) : null,
         h("p", { class: "muted small" }, `${a.plan.slides.length} слайдов: ${a.plan.slides.length - dynamic} с картинкой, ${dynamic} динамических`),
         h("div", { class: "slides-list" }, ...cards),
-        h("details", {}, h("summary", { class: "link" }, "Править план (JSON)"), editor("plan", JSON.stringify(a.plan, null, 2), 14, true)),
+        h("details", {}, h("summary", { class: "btn--link" }, "Править план (JSON)"), editor("plan", JSON.stringify(a.plan, null, 2), 14, true)),
       ];
     }
     case "images":
@@ -907,14 +914,14 @@ function stepBody(step) {
       return [
         disclaimerBox(),
         ...(f.video
-          ? [h("video", { controls: true, src: f.video, preload: "metadata", poster: f.poster || null }), h("a", { class: "link", href: `${f.video.split("?")[0]}?download=1` }, "Скачать видео")]
+          ? [h("video", { controls: true, src: f.video, preload: "metadata", poster: f.poster || null }), h("a", { class: "btn--link", href: `${f.video.split("?")[0]}?download=1` }, "Скачать видео")]
           : []),
       ];
     case "short":
       return [
-        a.short ? h("details", {}, h("summary", { class: "link" }, `Сценарий шортса: ${a.short.beats.length} частей`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,
+        a.short ? h("details", {}, h("summary", { class: "btn--link" }, `Сценарий шортса: ${a.short.beats.length} частей`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,
         f.short_video
-          ? h("div", {}, h("video", { class: "vertical-video", controls: true, src: f.short_video, preload: "metadata" }), h("p", {}, h("a", { class: "link", href: `${f.short_video.split("?")[0]}?download=1` }, "Скачать шортс 9:16")))
+          ? h("div", {}, h("video", { class: "vertical-video", controls: true, src: f.short_video, preload: "metadata" }), h("p", {}, h("a", { class: "btn--link", href: `${f.short_video.split("?")[0]}?download=1` }, "Скачать шортс 9:16")))
           : null,
       ];
     case "publish": {
@@ -974,7 +981,7 @@ function stepBody(step) {
               )
             : null,
           channelAdder("step-publish"),
-          h("button", { type: "button", class: "primary", disabled: p.running, onclick: busyClick(publishNow) }, "Опубликовать…"),
+          h("button", { type: "button", class: "btn btn--primary", disabled: p.running, onclick: busyClick(publishNow) }, "Опубликовать…"),
         ),
         p.published
           ? h(
@@ -988,7 +995,7 @@ function stepBody(step) {
                   "li",
                   {},
                   `${mark} ${r.label}${r.republish ? " (повторно)" : ""}: ${r.message} `,
-                  ...(r.files || []).filter((x) => x.endsWith(".mp4")).map((x) => h("a", { class: "link", href: `${API}/projects/${p.id}/files/${x}?download=1` }, "скачать")),
+                  ...(r.files || []).filter((x) => x.endsWith(".mp4")).map((x) => h("a", { class: "btn--link", href: `${API}/projects/${p.id}/files/${x}?download=1` }, "скачать")),
                   ...(unclear && !p.running
                     ? [
                         h("button", { type: "button", onclick: busyClick(() => act("publish/resolve", { channel: r.channel, posted: true })) }, "Пост есть"),
@@ -1095,11 +1102,11 @@ function renderStep(step) {
     h("h3", {}, step.label),
     statusChip(step.status),
     folded ? h("span", { class: "step-summary muted small" }, stepSummary(step)) : null,
-    h("button", { type: "button", class: "link", "aria-expanded": String(!folded), "aria-controls": bodyId, onclick: () => toggleStep(step.id) }, folded ? "Развернуть" : "Свернуть"),
+    h("button", { type: "button", class: "btn btn--link", "aria-expanded": String(!folded), "aria-controls": bodyId, onclick: () => toggleStep(step.id) }, folded ? "Развернуть" : "Свернуть"),
     step.status !== "running"
       ? step.status === "pending"
-        ? h("button", { type: "button", class: "link", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Выполнить шаг")
-        : h("button", { type: "button", class: "secondary small", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Перезапустить шаг")
+        ? h("button", { type: "button", class: "btn btn--link", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Выполнить шаг")
+        : h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Перезапустить шаг")
       : null,
   );
   const attrs = { class: `step ${step.status} tone-${toneOf(step.status)}${folded ? " collapsed" : ""}`, id: `step-${step.id}`, tabindex: "-1" };
@@ -1117,7 +1124,7 @@ function renderStep(step) {
       step.status === "pending" && step.blocked_by.length
         ? h("p", { class: "hint" }, `Начнётся, когда будет готово: ${step.blocked_by.join(", ")}.`)
         : null,
-      canApprove ? h("button", { type: "button", class: "primary", onclick: busyClick(() => act("approve", { step: step.id })) }, approveLabel) : null,
+      canApprove ? h("button", { type: "button", class: "btn btn--primary", onclick: busyClick(() => act("approve", { step: step.id })) }, approveLabel) : null,
       stepSettings(step),
       h("div", { class: "step-body" }, ...stepBody(step)),
     ),
@@ -1169,23 +1176,23 @@ function renderHead(project) {
     { class: "panel project-head" },
     h("h2", {}, project.title),
     statusChip(overallStatus(project)),
-    running ? h("button", { type: "button", class: "secondary", onclick: busyClick(() => act("cancel")) }, "Остановить") : null,
-    next ? h("button", { type: "button", class: "primary", onclick: busyClick(next.run) }, next.label) : null,
+    running ? h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => act("cancel")) }, "Остановить") : null,
+    next ? h("button", { type: "button", class: "btn btn--primary", onclick: busyClick(next.run) }, next.label) : null,
     // «Запустить всё» — главное действие, только когда выпуску больше ничего от тебя не нужно.
-    !running && !next?.runAll ? h("button", { type: "button", class: "secondary", onclick: busyClick(() => act("run", {})) }, "Запустить всё") : null,
+    !running && !next?.runAll ? h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => act("run", {})) }, "Запустить всё") : null,
     project.settings.draft ? h("span", { class: "chip tone-warning" }, "черновик") : null,
     project.settings.draft && !running
-      ? h("button", { type: "button", class: "secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: busyClick(makeFinal) }, "Сделать чистовик")
+      ? h("button", { type: "button", class: "btn btn--secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: busyClick(makeFinal) }, "Сделать чистовик")
       : null,
     project.archived ? h("span", { class: "chip tone-neutral" }, "в архиве") : null,
     running
       ? null
-      : h("button", { type: "button", class: "link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: busyClick(cloneProject) }, "Копия выпуска"),
+      : h("button", { type: "button", class: "btn btn--link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: busyClick(cloneProject) }, "Копия выпуска"),
     running
       ? null
       : h(
           "button",
-          { type: "button", class: "link", onclick: busyClick(async () => (await act("archive", { archived: !state.project.archived })) && reloadList()) },
+          { type: "button", class: "btn btn--link", onclick: busyClick(async () => (await act("archive", { archived: !state.project.archived })) && reloadList()) },
           project.archived ? "Вернуть из архива" : "В архив",
         ),
     h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
@@ -1229,7 +1236,7 @@ function renderSettings(project) {
     h(
       "div",
       { class: "actions" },
-      h("button", { type: "button", class: "secondary", disabled: project.running, onclick: busyClick(() => act("settings", readSettings("edit"))) }, "Сохранить настройки"),
+      h("button", { type: "button", class: "btn btn--secondary", disabled: project.running, onclick: busyClick(() => act("settings", readSettings("edit"))) }, "Сохранить настройки"),
       h("span", { class: "hint" }, "Изменённые настройки сбросят только затронутые шаги."),
     ),
   );

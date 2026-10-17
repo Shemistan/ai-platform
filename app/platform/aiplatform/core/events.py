@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import threading
 import time
 import uuid
@@ -39,6 +40,22 @@ FIELDS = (
     "source",
 )
 _LOCK = threading.Lock()  # один на процесс: журнал пишут студия, отклик и бэкфилл
+LOCK = _LOCK  # и журнал комплаенса (core/audit.py): один механизм записи
+
+
+def append_jsonl(path: Path, record: dict, mode: int | None = None) -> bool:
+    """Дописать строку JSON в конец файла под общим замком; mode — права нового файла (0600).
+    Ошибка записи — False, без исключения: журнал не роняет того, кто пишет."""
+    try:
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with _LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644 if mode is None else mode)
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
+                fh.write(line)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def actor(default: str = HUMAN) -> str:
@@ -73,12 +90,7 @@ class EventLog:
                 record["props"] = props
             if self.path is None:
                 return record
-            line = json.dumps(record, ensure_ascii=False) + "\n"
-            with _LOCK:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                with self.path.open("a", encoding="utf-8") as fh:
-                    fh.write(line)
-            return record
+            return record if append_jsonl(self.path, record) else None
         except Exception:  # noqa: BLE001 — журнал не должен ронять выпуск
             return None
 

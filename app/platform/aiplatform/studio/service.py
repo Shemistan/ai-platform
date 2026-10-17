@@ -70,6 +70,7 @@ SETTING_STEPS = {
     "auto_publish": "publish",
     "post_format": "publish",
     "disclaimers": ("render", "short"),
+    "ai_badge": ("render", "short"),  # плашка «ИИ» в углу видео (CMP-011)
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
     "slide_s": "plan",  # ориентир для LLM: сколько держится слайд
@@ -242,6 +243,12 @@ class StudioModule:
         self._idem: dict[str, _Once] = {}  # Idempotency-Key → создание (последние IDEMPOTENCY_KEEP)
         self._stats_thread: threading.Thread | None = None
         self.scheduler.daily["stats"] = self._daily_stats
+        self.scheduler.daily["audit"] = self._daily_audit
+
+    def _daily_audit(self) -> str | None:
+        """Ротация журнала комплаенса: записи старше года — в архив (CMP-015)."""
+        moved = self.studio.audit.rotate()
+        return f"журнал комплаенса: в архив {moved}" if moved else None
 
     def bind(self) -> None:
         """Соседние вкладки готовы — сценарии будут ставить задачи в их очереди."""
@@ -316,15 +323,26 @@ class StudioModule:
                 self.notify("Пакет готов — залей руками", project["title"], important=True)
             return
         need = attention(project)
-        if need and before.get(need["step"]) != need["status"]:
+        if not need:
+            return
+        fresh = before.get(need["step"]) != need["status"]
+        previewed = False
+        if need["step"] == "publish" and need["status"] == "failed":
+            # Упало после «Да» в боте — новое превью с «Повторить», даже если падает не впервые (PRD-016).
+            previewed = self._preview(project, failure=need["text"])
+        elif need["step"] == "publish" and fresh and need["text"] in steps.REVIEW_NOTES:
+            previewed = self._preview(project)
+        if fresh:
             head = "Выпуск упал" if need["status"] == "failed" else "Выпуск ждёт тебя"
-            previewed = need["step"] == "publish" and need["text"] in steps.REVIEW_NOTES and self._preview(project)
             text = f"{project['title']} — {need['label']}: {need['text']}".strip(" :")
             self.notify(head, text, important=True, telegram=not previewed)
 
-    def _preview(self, project: dict) -> bool:
-        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление."""
+    def _preview(self, project: dict, failure: str | None = None) -> bool:
+        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление.
+        failure — публикация упала: превью с «Повторить», только если «Да» нажимали в боте."""
         try:
+            if failure is not None:
+                return self.review.retry(project, failure)
             return self.review.preview(project)
         except Exception as exc:  # noqa: BLE001 — сеть, файлы выпуска: уведомление всё равно уйдёт
             log.event(
@@ -734,6 +752,7 @@ class StudioModule:
             "review_text": False,
             "draft": False,
             "disclaimers": True,
+            "ai_badge": True,
             "branding": False,
             "tempo": 1.0,
             "slide_s": slides.TARGET_SLIDE_S,
@@ -859,7 +878,10 @@ class StudioModule:
             raise bad_request("post_format — video или photo.")
         if out["upscale_images"] not in UPSCALE_CHOICES:
             raise bad_request("upscale_images — none, 2k или 4k.")
-        bools = ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding", "draft")
+        bools = (
+            "draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "ai_badge", "branding",
+            "draft",
+        )  # fmt: skip
         for key in bools:
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")
@@ -1258,6 +1280,8 @@ class StudioModule:
                 warn(f"«{channel.label}»: {channel.problem()}.")
         if not settings.get("channels"):
             info("Каналы не выбраны — публикация будет ждать выбора.")
+        elif stale := steps.registry_stale(self.config):
+            warn(stale)
         if not self.config.llm_available():
             warn(f"LLM-команда «{self.config.llm_cmd[0]}» не найдена — промпты и слайды не написать.")
         draws = settings.get("draw_images") and settings.get("images_mode") == "local" and not settings.get("draft")
