@@ -85,6 +85,41 @@ def test_registry_from_env_and_fallback(tmp_path, monkeypatch):
     assert registry.notes("Meta", registry.load()) == [META_NOTE]
 
 
+def own_registry(path: Path, disclaimer: str, checked: str = "2026-10-01") -> Path:
+    entry = {"id": "x", "name": "X", "status": "extremist", "aliases": ["Икс*"]}
+    entry["disclaimer"] = disclaimer
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"checked": checked, "entries": [entry]}), encoding="utf-8")
+    return path
+
+
+def test_platform_registry_without_env(tmp_path, monkeypatch):
+    # CMP-022: правку вкладки «Обновления» narrator видит из терминала, без NARRATOR_REGISTRY.
+    data = tmp_path / "platform-data"
+    monkeypatch.setenv("AIP_DATA_DIR", str(data))
+    # файла платформы нет — копия по умолчанию
+    assert registry.notes("Про Иксов", registry.load()) == []
+    own_registry(data / "registry.json", "X запрещена")
+    assert registry.notes("Про Иксов", registry.load()) == ["X запрещена."]
+    assert registry.checked() == "2026-10-01"
+    # Явный NARRATOR_REGISTRY главнее; битый — откат на файл платформы.
+    env = own_registry(tmp_path / "env.json", "X из env")
+    monkeypatch.setenv(registry.REGISTRY_ENV, str(env))
+    assert registry.notes("Про Иксов", registry.load()) == ["X из env."]
+    env.write_text("{битый", encoding="utf-8")
+    assert registry.notes("Про Иксов", registry.load()) == ["X запрещена."]
+
+
+def test_platform_registry_in_home(tmp_path, monkeypatch):
+    # Без AIP_DATA_DIR — каталог данных платформы по умолчанию:
+    # ~/Library/Application Support/aiplatform.
+    monkeypatch.delenv("AIP_DATA_DIR")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    own_registry(tmp_path / registry.PLATFORM_HOME / "registry.json", "X в HOME")
+    assert registry.platform_file() == tmp_path / registry.PLATFORM_HOME / "registry.json"
+    assert registry.notes("Про Иксов", registry.load()) == ["X в HOME."]
+
+
 def test_fit_caption_keeps_tail():
     sentence = "Компания Meta показала **очки** и [рассказала](https://e.x/a?b=1&c=2) о планах. "
     post = registry.with_footnotes(sentence * 25, "", registry.load())

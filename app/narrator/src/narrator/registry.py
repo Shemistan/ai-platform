@@ -6,8 +6,12 @@
 том, как реестр попадает в narrator, — ADR 0001 (docs/decisions).
 
 Откуда список: файл из `$NARRATOR_REGISTRY` (платформа передаёт свой
-data/registry.json — его правят на вкладке «Обновления»), иначе — копия
-списка платформы по умолчанию рядом, registry.json. Формат тот же, что у
+data/registry.json — его правят на вкладке «Обновления»), иначе — тот же
+registry.json в каталоге данных платформы (`$AIP_DATA_DIR`, без него — как
+у платформы: ~/Library/Application Support/aiplatform или старый
+app/platform/data), так что правка во вкладке видна и `./narrate` из
+терминала (CMP-022); иначе — копия списка платформы по умолчанию рядом,
+registry.json. Формат тот же, что у
 платформы: `{"checked": …, "entries": [{id, name, status, aliases,
 disclaimer}, …]}`. Испорченный файл из env — откат на копию по умолчанию.
 
@@ -39,6 +43,10 @@ from pathlib import Path
 
 REGISTRY_ENV = "NARRATOR_REGISTRY"
 DEFAULT_FILE = Path(__file__).with_name("registry.json")
+# Каталог данных платформы — как aiplatform.config.default_data_dir (CMP-022).
+PLATFORM_DATA_ENV = "AIP_DATA_DIR"
+PLATFORM_HOME = Path("Library/Application Support/aiplatform")
+PLATFORM_LEGACY = Path(__file__).resolve().parents[3] / "platform" / "data"  # app/platform/data
 STATUSES = ("extremist", "terrorist", "undesirable", "foreign_agent")
 FOREIGN_AGENT = "foreign_agent"
 KINDS = ("org", "person")
@@ -181,14 +189,26 @@ def parse(obj: object) -> list[Entry]:
     return out
 
 
-def load(path: Path | None = None) -> list[Entry]:
-    """Реестр: path, иначе $NARRATOR_REGISTRY, иначе копия по умолчанию."""
+def platform_file() -> Path:
+    """registry.json в каталоге данных платформы — его правит вкладка «Обновления»."""
+    if os.environ.get(PLATFORM_DATA_ENV):
+        return Path(os.environ[PLATFORM_DATA_ENV]).expanduser() / DEFAULT_FILE.name
+    home = Path(os.environ.get("HOME") or Path.home()) / PLATFORM_HOME
+    base = PLATFORM_LEGACY if not home.exists() and PLATFORM_LEGACY.is_dir() else home
+    return base / DEFAULT_FILE.name
+
+
+def sources(path: Path | None = None) -> list[Path]:
+    """Где искать реестр: path или $NARRATOR_REGISTRY, файл платформы, копия по умолчанию."""
     chosen = path or (
         Path(os.environ[REGISTRY_ENV]).expanduser() if os.environ.get(REGISTRY_ENV) else None
     )
-    for source in (chosen, DEFAULT_FILE):
-        if source is None:
-            continue
+    return [p for p in (chosen, platform_file(), DEFAULT_FILE) if p is not None]
+
+
+def load(path: Path | None = None) -> list[Entry]:
+    """Реестр: path, иначе $NARRATOR_REGISTRY, иначе файл платформы, иначе копия по умолчанию."""
+    for source in sources(path):
         try:
             return parse(json.loads(source.read_text(encoding="utf-8")))
         except (OSError, ValueError):
@@ -198,12 +218,7 @@ def load(path: Path | None = None) -> list[Entry]:
 
 def checked(path: Path | None = None) -> str:
     """Дата последней сверки реестра (версия для журнала комплаенса); нет — пусто."""
-    chosen = path or (
-        Path(os.environ[REGISTRY_ENV]).expanduser() if os.environ.get(REGISTRY_ENV) else None
-    )
-    for source in (chosen, DEFAULT_FILE):
-        if source is None:
-            continue
+    for source in sources(path):
         try:
             data = json.loads(source.read_text(encoding="utf-8"))
         except (OSError, ValueError):
