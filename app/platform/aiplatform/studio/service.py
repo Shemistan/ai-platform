@@ -184,6 +184,7 @@ class StudioModule:
             video=self.ctx.modules["video"].jobs,
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
             cache=MediaCache(self.config.cache_dir),
+            space=self.ctx.gate.check,
         )
         self.scheduler.start()
         self._after_restart()

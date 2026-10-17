@@ -31,10 +31,11 @@ import re
 import shutil
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import log, media
+from aiplatform.core import disk, log, media
 from aiplatform.core.runner import Canceled
 from aiplatform.studio import cache, news, prompts, publish, render, slides
 from aiplatform.studio.config import StudioConfig
@@ -81,10 +82,22 @@ class Services:
     video: object  # video.jobs.JobManager: create / get / cancel / video_path
     renderer: Renderer
     cache: cache.MediaCache  # готовые картинки, ролики и озвучка по входам генерации
+    space: Callable[[str], None] | None = None  # проверка места до сборки (GPU-замок: Gate.check)
 
 
 def services(ctx: StepContext) -> Services:
     return ctx.studio.services
+
+
+def ensure_space(ctx: StepContext, what: str) -> None:
+    """Мало места на диске данных — сборка не стартует: обрезанный ffmpeg-ом файл хуже ошибки."""
+    check = services(ctx).space
+    if check is None:
+        return
+    try:
+        check(what)
+    except disk.NoSpace as exc:
+        raise StudioError(str(exc)) from exc
 
 
 def find(folder: Path, stem: str, exts: tuple[str, ...]) -> Path | None:
@@ -669,6 +682,7 @@ def render_video(
     ctx: StepContext, *, text: str, plan: list[slides.Slide], audio: Path, out: Path, orientation: str, cycle: bool
 ) -> None:
     svc = services(ctx)
+    ensure_space(ctx, "Сборка видео")
     audio = paced(ctx, audio)
     audio_s = media.duration(audio, svc.config.ffmpeg)
     if audio_s <= 0:
@@ -766,6 +780,7 @@ def render_still(ctx: StepContext) -> None:
     audio = find(ctx.dir, "voice", AUDIO_EXT)
     if audio is None:
         raise StudioError("Нет озвучки — выполни шаг «Озвучка».")
+    ensure_space(ctx, "Сборка видео")
     audio = paced(ctx, audio)
     audio_s = media.duration(audio, svc.config.ffmpeg)
     if audio_s <= 0:

@@ -10,6 +10,11 @@ from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase, png_bytes
 class ScheduleTest(StudioCase):
     extra_env = {"AIP_RENDER_SCALE": "0.25", "AIP_SCHEDULE_TICK_S": "0"}  # часы двигает тест
 
+    def setUp(self):
+        super().setUp()
+        # Ежедневная уборка включена по умолчанию (REL-013); здесь тики проверяют расписание без неё.
+        self.section("cleanup", {"auto": False})
+
     def section(self, name, body):
         return self.json("POST", f"/api/settings/section/{name}", body)
 
