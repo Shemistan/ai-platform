@@ -15,7 +15,7 @@ from http import HTTPStatus
 from pathlib import Path
 
 from aiplatform.audio import voices
-from aiplatform.core import events, log, media
+from aiplatform.core import events, log, media, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
@@ -192,14 +192,20 @@ def video_seconds(project: dict) -> float | None:
 
 
 def _read_json_list(path) -> list[dict]:
+    """Записи published.json: голый список (схема 0) или обёртка {"schema", "records"} (BE-008)."""
     try:
-        data = json.loads(_read_text(path) or "[]")
-    except json.JSONDecodeError:
+        data = schema.unwrap(json.loads(_read_text(path) or "[]"), "records")
+    except (json.JSONDecodeError, schema.Broken):
         return []
-    return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
+    return [r for r in data if isinstance(r, dict) and r.get("channel")]
 
 
 TOO_BIG = "Файл больше 200 МБ."
+
+
+def _too_big() -> str:
+    """Текст 413 с лимитом в МБ — лимит читается при запросе (тесты его понижают)."""
+    return f"Файл больше {uploads_module.MAX_AUDIO_BYTES // 2**20} МБ."
 
 
 def place_upload(src: Path, target: Path) -> None:
@@ -808,6 +814,7 @@ class StudioModule:
             out.append(missing_cli(self.config.llm_cmd[0]))
         # Битый channels.json в баннер выносит вкладка «Каналы» — владелец файла (ChannelStore).
         out += [f"Дайджест: канал {c.label} — {c.problem()}." for c in self._digest_channels() if c.problem()]
+        out += self.studio.load_problems  # выпуски в карантине или записанные более новой версией (BE-008)
         return out
 
     def _digest_channels(self) -> list[publish.Channel]:
@@ -1203,6 +1210,8 @@ class StudioModule:
             "short_video": url(folder / steps.SHORT_VIDEO),
         }
         published = as_json(steps.PUBLISHED)
+        if isinstance(published, dict):  # схема 1: записи в обёртке (BE-008)
+            published = published.get("records")
         if isinstance(published, list):  # отклик в окнах 24ч/72ч/7д — рядом с записью, не поверх её полей
             facts = self._facts()
             published = [r | {"reach": stats.reach(r, facts)} if isinstance(r, dict) else r for r in published]
@@ -1461,9 +1470,15 @@ class StudioModule:
         kinds = {"poster": (uploads_module.IMAGE,), "voice": (uploads_module.AUDIO,)}.get(what)
         if kinds is None:
             raise not_found("Загружать можно poster или voice.")
-        ext = uploads_module.sniff(uploads_module.head(src)) if src.stat().st_size else None
+        size = src.stat().st_size
+        if not size:
+            raise bad_request("Пустой файл.")
+        ext = uploads_module.sniff(uploads_module.head(src))
         if ext is None or uploads_module.kind_of(ext) not in kinds:
             raise bad_request(uploads_module._accepted(kinds))
+        if what == "poster" and size > uploads_module.MAX_UPLOAD_BYTES:  # тело ограничено 200 МБ — под голос
+            limit_mb = uploads_module.MAX_UPLOAD_BYTES // 2**20
+            raise HttpError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"Картинка больше {limit_mb} МБ.")
         self._guard_step(project_id, what)
         folder = self.studio.project_dir(project_id)
         stems = steps.IMAGE_EXT if what == "poster" else steps.AUDIO_EXT
@@ -1596,10 +1611,10 @@ class StudioModule:
             case ("POST", ["projects", pid, "artifacts", name]):
                 return req.send_json(self.save_artifact(pid, name, req.json(MAX_BODY)))
             case ("POST", ["projects", pid, "upload", what]):
-                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, TOO_BIG)
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, _too_big())
                 return req.send_json(self.upload(pid, what, src))
             case ("POST", ["projects", pid, "upload", kind, key]):
-                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, TOO_BIG)
+                src = req.body_to_file(self._upload_dir(pid), uploads_module.MAX_AUDIO_BYTES, _too_big())
                 return req.send_json(self.upload_slide(pid, kind, key, src))
             case ("GET", ["projects", pid, "files", *rest]):
                 return self._send_file(req, pid, "/".join(rest))

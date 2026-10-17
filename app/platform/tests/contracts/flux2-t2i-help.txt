@@ -1,0 +1,60 @@
+# flux2-t2i: --help; снято 2026-10-17 (make contracts)
+OVERVIEW: Generate image from text prompt
+
+USAGE: flux2 t2i [<options>] <prompt>
+
+ARGUMENTS:
+  <prompt>                Text prompt for image generation
+
+OPTIONS:
+  -o, --output <output>   Output file path (default: output.png)
+  -w, --width <width>     Image width (default: 1024)
+  -h, --height <height>   Image height (default: 1024)
+  -s, --steps <steps>     Number of inference steps (default: 28 for Dev, 4 for
+                          Klein)
+  -g, --guidance <guidance>
+                          Guidance scale (default: 4.0 for Dev, 1.0 for Klein)
+  --seed <seed>           Random seed
+  --model <model>         Model variant: dev (32B), klein-4b (4B, Apache 2.0),
+                          klein-9b (9B), klein-9b-kv (9B, KV-cached I2I)
+                          (default: dev)
+  --text-quant <text-quant>
+                          Text encoder quantization: bf16, 8bit, 6bit, 4bit
+                          (default: 8bit)
+  --transformer-quant <transformer-quant>
+                          Transformer quantization: bf16, qint8, int4, mxfp8,
+                          mxfp4, nvfp4 (default: qint8)
+  --verbose               Show detailed logs (model loading, config, VLM
+                          interpretation)
+  --profile               Enable performance profiling
+  --beacon                Advertise activity to external monitors (writes a
+                          transient manifest in ~/Library/Application
+                          Support/ai-runtime-beacons/)
+  --upsample-prompt       Enhance prompt with more visual details before
+                          encoding
+  --interpret <interpret> Image to analyze with VLM and inject description into
+                          prompt (semantic interpretation)
+  --checkpoint <checkpoint>
+                          Save intermediate images at each N steps (e.g., 5
+                          saves every 5 steps)
+  --lora <lora>           LoRA adapter file (.safetensors) for style or
+                          capability adaptation
+  --lora-scale <lora-scale>
+                          LoRA scale factor (default: 1.0) (default: 1.0)
+  --lora-config-path <lora-config-path>
+                          LoRA config JSON file (alternative to --lora,
+                          includes scheduler overrides)
+  --vae-variant <vae-variant>
+                          VAE variant: small-decoder (default, distilled, ~1.4x
+                          faster), standard (default: small-decoder)
+  --memory-profile <memory-profile>
+                          Memory profile: auto (default), conservative,
+                          balanced, performance (default: auto)
+  --hf-token <hf-token>   HuggingFace token for gated models (or set HF_TOKEN
+                          env var)
+  --models-dir <models-dir>
+                          Custom models directory (for sandboxed apps or custom
+                          storage)
+  --version               Show the version.
+  -h, --help              Show help information.
+

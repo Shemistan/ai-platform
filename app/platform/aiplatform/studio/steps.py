@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
@@ -38,7 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import audit, disk, log, media
+from aiplatform.core import audit, disk, log, media, schema
 from aiplatform.core import settings as core_settings
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.runner import Canceled
@@ -1467,17 +1468,36 @@ def read_published(ctx: StepContext) -> list[dict]:
     return load_published(ctx.dir)
 
 
-def load_published(folder: Path) -> list[dict]:
+# Схема published.json (core/schema.py, ADR 0009): 0 — голый список записей,
+# 1 — {"schema": 1, "records": [...]}.
+PUBLISHED_SCHEMA = 1
+
+
+def _read_published(folder: Path) -> object:
     try:
-        data = json.loads((folder / PUBLISHED).read_text(encoding="utf-8"))
+        return json.loads((folder / PUBLISHED).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return None
+
+
+def load_published(folder: Path) -> list[dict]:
+    """Записи журнала; файл более новой версии читается как есть (только чтение)."""
+    data = _read_published(folder)
+    try:
+        records = schema.unwrap(data, "records") if data is not None else []
+    except schema.Broken:
         return []
-    return [r for r in data if isinstance(r, dict) and r.get("channel")] if isinstance(data, list) else []
+    return [r for r in records if isinstance(r, dict) and r.get("channel")]
 
 
 def save_published(folder: Path, records: list[dict]) -> None:
-    """Записать журнал целиком; read-modify-write — только под published_lock (см. update_published)."""
-    atomic_write(folder / PUBLISHED, json.dumps(records, ensure_ascii=False, indent=2) + "\n")
+    """Записать журнал целиком; read-modify-write — только под published_lock (см. update_published).
+    Журнал, записанный более новой версией, не перезаписываем: schema.TooNew."""
+    data = _read_published(folder)
+    with contextlib.suppress(schema.Broken):
+        schema.upgrade(data, PUBLISHED_SCHEMA, where=f"{folder.name}/{PUBLISHED}")
+    payload = schema.wrap(records, "records", PUBLISHED_SCHEMA)
+    atomic_write(folder / PUBLISHED, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 _PUBLISHED_GUARD = threading.Lock()

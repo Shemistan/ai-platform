@@ -202,7 +202,7 @@ function renderBatch() {
     h(
       "ol",
       { class: "list" },
-      ...batch.articles.map((a, n) => h("li", { class: "list-row", style: "cursor:default" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, `${a.words} слов`))),
+      ...batch.articles.map((a, n) => h("li", { class: "list-row list-row--static" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, `${a.words} слов`))),
     ),
     over ? h("p", { class: "form-error" }, `За раз — не больше ${max} статей.`) : null,
     h("p", { class: "hint" }, "Каждая статья встанет в очередь отдельной задачей с настройками ниже — по порядку."),
@@ -476,11 +476,11 @@ function recordControls(v, data, busy, taskBox, reload) {
     const text = h("textarea", { rows: 2, placeholder: `Свой текст образца — по желанию; иначе: «${data.default_text}»` });
     return h(
       "details",
-      { class: "inline" },
+      { class: "disclosure" },
       h("summary", {}, "Перезаписать образец"),
       h(
         "div",
-        { class: "field", style: "margin-top:var(--sp-2)" },
+        { class: "field mt-2" },
         h("p", { class: "hint" }, "Голос Charon есть в Gemini TTS: движок сам запишет образец по ключу GEMINI_API_KEY. Можно и своей записью — загрузи её ниже."),
         text,
         h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: busyClick(() => startRecord(v.stem, { text: text.value }, taskBox, reload), `voice:${v.stem}`) }, "Записать из Gemini TTS")),
@@ -488,7 +488,7 @@ function recordControls(v, data, busy, taskBox, reload) {
       ),
     );
   }
-  return h("details", { class: "inline" }, h("summary", {}, "Записать свой образец"), fileRecord(v, low, high, busy, taskBox, reload));
+  return h("details", { class: "disclosure" }, h("summary", {}, "Записать свой образец"), fileRecord(v, low, high, busy, taskBox, reload));
 }
 
 function fileRecord(v, low, high, busy, taskBox, reload) {
@@ -513,7 +513,7 @@ function fileRecord(v, low, high, busy, taskBox, reload) {
   };
   return h(
     "div",
-    { class: "field", style: "margin-top:var(--sp-2)" },
+    { class: "field mt-2" },
     h("span", { class: "hint" }, `Запись голоса ${v.voice}: ${low}–${high} с ровной речи, без музыки и шума.`),
     file,
     text,

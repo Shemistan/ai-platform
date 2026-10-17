@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from aiplatform.core import events, media
-from aiplatform.studio import backfill, pipeline
+from aiplatform.studio import backfill, pipeline, steps
 from aiplatform.studio.llm import StudioError
 from tests.helpers import JournalCase
 
@@ -199,7 +199,7 @@ class BackfillTest(Case):
             first = backfill.fill_dimensions(self.dir, formats)
             again = backfill.fill_dimensions(self.dir, formats)
         self.assertEqual((first, again["records"]), ({"projects": 1, "records": 2}, 0))
-        records = {r["channel"]: r for r in json.loads((folder / "published.json").read_text(encoding="utf-8"))}
+        records = {r["channel"]: r for r in steps.load_published(folder)}
         tg = records["tg"]
         self.assertEqual(
             (tg["media_s"], tg["format"], tg["format_guessed"], tg["post_format"]), (40.0, "vertical", True, "video")

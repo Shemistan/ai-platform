@@ -1,5 +1,5 @@
 // Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены; расписание, уведомления, уборка.
-import { $, api, busyClick, chip, fill, h, toast } from "/ui.js";
+import { $, api, busyClick, chip, fill, h, icon, toast } from "/ui.js";
 
 const API = "/api/settings";
 
@@ -30,12 +30,13 @@ function installedChip(item) {
   return null;
 }
 
-// Строка каталога: флажок «включено», название, пометки и под ними — extra (голоса движка).
-// Подпись связана с флажком через for/id, пояснение — через aria-describedby: имя флажка = название.
+// Строка каталога: переключатель «включено» (role=switch), название, пометки и под ними — extra (голоса движка).
+// Подпись связана с переключателем через for/id, пояснение — через aria-describedby: имя = название.
 function row(item, kind, note, extra = null) {
   const id = `t-${kind}-${String(item.id).replace(/[^\w-]/g, "_")}`;
   const box = h("input", {
     type: "checkbox",
+    role: "switch",
     id,
     checked: item.enabled,
     "aria-describedby": note ? `${id}-note` : null,
@@ -76,7 +77,8 @@ function voiceButtons(engine) {
           title: v.id === engine.default_voice ? "голос по умолчанию" : null,
           onclick: () => toggle({ kind: "voice", engine: engine.id, id: v.id, enabled: !v.enabled }),
         },
-        v.id === engine.default_voice ? `${v.id} ★` : v.id,
+        v.id,
+        v.id === engine.default_voice ? [icon("star"), h("span", { class: "sr-only" }, "голос по умолчанию")] : null,
       ),
     ),
   );
@@ -140,7 +142,7 @@ function renderSchedule(data) {
       ),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: busyClick(() => api("POST", `${API}/notify-test`).then(render).catch((e) => showError(e.message)), "notify-test") }, "Проверить уведомление")),
       data.notifications.length
-        ? h("details", {}, h("summary", { class: "btn btn--link" }, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
+        ? h("details", { class: "disclosure" }, h("summary", {}, `Последние уведомления (${data.notifications.length})`), h("ul", { class: "notes" }, ...data.notifications.map((n) => h("li", {}, h("span", { class: "muted small" }, n.at), ` ${n.title}: ${n.text}`))))
         : null,
     ),
   );
