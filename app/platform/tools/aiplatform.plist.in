@@ -23,6 +23,9 @@
 		<string>@PATH@</string>
 		<key>PYTHONUNBUFFERED</key>
 		<string>1</string>
+		<!-- Лог процесса (data/logs/platform.log) — ещё и в server.err.log. -->
+		<key>AIP_LOG_STDERR</key>
+		<string>1</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>

@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import json
+import logging
 import re
 import threading
 import time
@@ -25,11 +26,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiplatform.core import cleanup, runner
+from aiplatform.core.log import event as log_event
 from aiplatform.studio.llm import StudioError
 
 PENDING, RUNNING, DONE, FAILED, WAITING, SKIPPED = "pending", "running", "done", "failed", "waiting", "skipped"
 FINISHED = (DONE, SKIPPED)
 LOG_TAIL = 300
+INTERRUPTED = "Сервис был перезапущен во время шага."
+NO_AUTO_RESUME = ("publish",)  # повтор публикации — только руками (см. BE-001)
 _ID = re.compile(r"^[0-9a-f]{12}$")
 
 
@@ -66,6 +70,10 @@ class Skip(Exception):  # noqa: N818
 
 class Conflict(Exception):
     """Действие сейчас невозможно: проект уже запущен."""
+
+
+class ProjectNotFound(LookupError):  # noqa: N818
+    """Нет выпуска с таким id. Свой тип: KeyError из бага в коде не должен становиться 404."""
 
 
 def dependents(step_id: str) -> list[str]:
@@ -153,6 +161,9 @@ class Studio:
         self._projects: dict[str, dict] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._cancels: dict[str, threading.Event] = {}
+        # Шаги, которые выполнялись, когда сервис остановился: (проект, шаг) — см. resume_interrupted.
+        self.interrupted: list[tuple[str, str]] = []
+        self._closing = False  # close(): отмена от остановки сервиса, а не от человека
         root.mkdir(parents=True, exist_ok=True)
         self._load()
 
@@ -183,9 +194,10 @@ class Studio:
                     # В старом выпуске настройка нового шага выключена: шаг сразу пропущен.
                     project["steps"][step.id] = _fresh_state() | {"status": SKIPPED, "note": "Не было в этой версии."}
                     changed = True
-            for state in project["steps"].values():
+            for step_id, state in project["steps"].items():
                 if state["status"] == RUNNING:
-                    state.update(status=FAILED, error="Сервис был перезапущен во время шага.", progress=None)
+                    state.update(status=FAILED, error=INTERRUPTED, progress=None)
+                    self.interrupted.append((project["id"], step_id))
                     changed = True
             if project.get("running"):
                 project["running"] = False
@@ -344,6 +356,23 @@ class Studio:
             self._start(project, only)
             return copy.deepcopy(project)
 
+    def resume_interrupted(self, project_id: str, step_id: str) -> bool:
+        """После рестарта: один раз продолжить шаг, прерванный остановкой сервиса.
+
+        Только у выпуска, который шёл сам (auto), не в архиве и не шаг публикации; флаг
+        resumed в состоянии шага не даёт зациклиться, если сервис падает на этом шаге снова.
+        True — выпуск запущен."""
+        with self._lock:
+            project = self._projects.get(project_id)
+            if project is None or project["running"] or project.get("archived") or not project.get("auto"):
+                return False
+            state = project["steps"][step_id]
+            if step_id in NO_AUTO_RESUME or state.get("resumed") or state["status"] != FAILED:
+                return False
+            state.update(poke=True, resumed=True)
+            self._start(project, None)
+            return True
+
     def cancel(self, project_id: str) -> dict:
         with self._lock:
             project = self._require(project_id)
@@ -361,6 +390,7 @@ class Studio:
 
     def close(self) -> None:
         with self._lock:
+            self._closing = True
             events = list(self._cancels.values())
             threads = list(self._threads.values())
         for event in events:
@@ -373,7 +403,7 @@ class Studio:
     def _require(self, project_id: str) -> dict:
         project = self._projects.get(project_id)
         if project is None:
-            raise KeyError(project_id)
+            raise ProjectNotFound(project_id)
         return project
 
     def _check_idle(self, project: dict, step_id: str) -> None:
@@ -470,7 +500,7 @@ class Studio:
     def _run(self, project_id: str, only: str | None, cancel: threading.Event) -> None:
         step: Step | None = STEP_BY_ID[only] if only is not None else None
         try:
-            while not cancel.is_set():
+            while not cancel.is_set() and not self._shutting_down():
                 if only is None:
                     # Выбор шага и решение «больше нечего» — под замком: загрузка человека,
                     # пришедшая в этот момент, либо попадёт в выбор, либо поднимет новый запуск.
@@ -502,6 +532,30 @@ class Studio:
         self._save(project)
 
     def _run_step(self, project_id: str, step: Step, cancel: threading.Event) -> bool:
+        """Шаг с записью в лог процесса: старт и итог с длительностью."""
+        started = time.monotonic()
+        log_event("step.start", project=project_id, step=step.id)
+        try:
+            return self._run_step_body(project_id, step, cancel)
+        finally:
+            with self._lock:
+                current = self._projects[project_id]["steps"][step.id]
+                if current["status"] == DONE:  # шаг дошёл до конца — следующий рестарт снова можно продолжить
+                    current.pop("resumed", None)
+                state = dict(current)
+            log_event(
+                f"step.{state['status']}",
+                level=logging.WARNING if state["status"] == FAILED else logging.INFO,
+                project=project_id,
+                step=step.id,
+                duration_s=round(time.monotonic() - started, 1),
+                error=state.get("error") if state["status"] == FAILED else None,
+            )
+
+    def _shutting_down(self) -> bool:
+        return self._closing or runner.stopping()
+
+    def _run_step_body(self, project_id: str, step: Step, cancel: threading.Event) -> bool:
         """True — можно идти дальше."""
         project = self._set(
             project_id, step.id, status=RUNNING, error=None, note=None, progress=None, started_at=time.time()
@@ -518,19 +572,25 @@ class Studio:
             self._set(project_id, step.id, status=SKIPPED, note=str(exc), progress=None)
             self._log(project_id, f"↷ {step.label}: {exc}")
             return True
-        except runner.Canceled:
-            self._set(project_id, step.id, status=PENDING, note="Остановлено.", progress=None)
-            self._log(project_id, f"■ {step.label}: остановлено")
-            return False
-        except StudioError as exc:
-            self._set(project_id, step.id, status=FAILED, error=str(exc), progress=None)
-            self._log(project_id, f"✗ {step.label}: {exc}")
-            return False
         except Exception as exc:  # noqa: BLE001 — сбой шага не должен уронить поток проекта
-            self._set(project_id, step.id, status=FAILED, error=f"Внутренняя ошибка: {exc!r}", progress=None)
-            self._log(project_id, f"✗ {step.label}: {exc!r}")
+            if self._shutting_down():
+                # Остановка сервиса (SIGTERM): шаг остаётся «выполняется» — после рестарта
+                # он будет прерванным (уведомление и, для auto, продолжение), а не сломанным.
+                self._log(project_id, f"■ {step.label}: сервис останавливается")
+                return False
+            if isinstance(exc, runner.Canceled):
+                self._set(project_id, step.id, status=PENDING, note="Остановлено.", progress=None)
+                self._log(project_id, f"■ {step.label}: остановлено")
+            elif isinstance(exc, StudioError):
+                self._set(project_id, step.id, status=FAILED, error=str(exc), progress=None)
+                self._log(project_id, f"✗ {step.label}: {exc}")
+            else:
+                self._set(project_id, step.id, status=FAILED, error=f"Внутренняя ошибка: {exc!r}", progress=None)
+                self._log(project_id, f"✗ {step.label}: {exc!r}")
             return False
         if cancel.is_set():
+            if self._shutting_down():  # как выше: шаг прерван остановкой сервиса
+                return False
             self._set(project_id, step.id, status=PENDING, note="Остановлено.", progress=None)
             return False
         self._set(project_id, step.id, status=DONE, progress=None)

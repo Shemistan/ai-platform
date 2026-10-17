@@ -350,5 +350,24 @@ class ValidationTest(StudioCase):
         self.assertEqual(loaded["steps"]["plan"]["status"], "failed")
 
 
+class StudioErrorsTest(StudioCase):
+    """Нет проекта — 404; KeyError из бага в коде — 500, а не «Проект не найден» (BE-003)."""
+
+    def test_missing_project_is_404(self):
+        status, body = self.json("POST", "/api/studio/projects/nope/run", {})
+        self.assertEqual((status, body["error"]), (404, "Проект не найден."))
+
+    def test_bug_keyerror_is_not_404(self):
+        project = self.create(scenario="article", text=ARTICLE)
+
+        def broken(project_id):
+            return {}["steps"]
+
+        self.app.modules["studio"].view = broken
+        with self.assertLogs("aiplatform", "ERROR"):
+            status, body = self.json("GET", f"/api/studio/projects/{project['id']}")
+        self.assertEqual((status, body["code"]), (500, "internal"))
+
+
 if __name__ == "__main__":
     unittest.main()

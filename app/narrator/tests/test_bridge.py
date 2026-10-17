@@ -53,6 +53,7 @@ def test_split_limit(capsys, monkeypatch, home):
     text = "".join(f"# Статья {n}\n\nтекст\n\n" for n in range(101))
     code, out = bridge(capsys, monkeypatch, "split", stdin=text)
     assert code == 1 and "не больше 100" in out["error"]
+    assert out["kind"] == "invalid"
 
 
 def test_article_new_save_and_library(capsys, monkeypatch, home):
@@ -82,7 +83,7 @@ def test_article_new_needs_title_and_text(capsys, monkeypatch, home):
 
 def test_article_unknown(capsys, monkeypatch, home):
     code, out = bridge(capsys, monkeypatch, "article", "2026-01-01-nope")
-    assert code == 1 and "нет в библиотеке" in out["error"]
+    assert code == 1 and out["kind"] == "not_found" and out["error"]
 
 
 def test_library_marks_voiced_unsent_and_check(capsys, monkeypatch, home):

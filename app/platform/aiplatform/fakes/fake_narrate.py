@@ -996,8 +996,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "bridge":
         try:
             return emit(bridge(args, state))
-        except (ValueError, LookupError) as exc:
-            return emit({"error": str(exc).strip("'\"")}, 1)
+        except LookupError as exc:  # как BridgeError(kind="not_found") в движке
+            return emit({"error": str(exc).strip("'\""), "kind": "not_found"}, 1)
+        except ValueError as exc:
+            return emit({"error": str(exc).strip("'\""), "kind": "invalid"}, 1)
     try:
         match args.cmd:
             case "synth":

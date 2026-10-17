@@ -34,7 +34,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import media
+from aiplatform.core import log, media
 from aiplatform.core.runner import Canceled
 from aiplatform.studio import cache, news, prompts, publish, render, slides
 from aiplatform.studio.config import StudioConfig
@@ -1006,6 +1006,14 @@ def step_publish(ctx: StepContext) -> None:
         if off:  # осознанно без пометок: когда, почему и о ком — в записи публикации
             record = journal.put(record | {"disclaimers_off": off})
         ctx.log(f"{channel.label}: {record['message']}")
+        log.event(
+            "publication",
+            project=ctx.project["id"],
+            step=ctx.step,
+            channel=channel_id,
+            message_id=record.get("message_id"),
+            state=record.get("state"),
+        )
 
 
 def unclear_note(labels: list[str]) -> str:

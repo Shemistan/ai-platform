@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -27,6 +28,7 @@ from pathlib import Path
 
 from aiplatform.config import pick
 from aiplatform.core.http import HttpError
+from aiplatform.core.log import event as log_event
 
 STATE = "schedule.json"
 DEFAULT_TICK_S = 30.0
@@ -47,9 +49,12 @@ class Scheduler:
         self._lock_state = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.started_at: float | None = None
+        self.last_tick_at: float | None = None  # time.time() последнего тика потока
 
     def start(self) -> None:
         if self.tick_s > 0 and self._thread is None:
+            self.started_at = time.time()
             self._thread = threading.Thread(target=self._loop, name="studio-schedule", daemon=True)
             self._thread.start()
 
@@ -60,12 +65,21 @@ class Scheduler:
 
     def _loop(self) -> None:
         while not self._stop.wait(self.tick_s):
+            self.last_tick_at = time.time()  # поток жив — /api/ready смотрит на эту отметку
             try:
-                self.tick(datetime.now())
+                done = self.tick(datetime.now())
             except Exception:  # сбой расписания не роняет платформу, но виден в логе
-                log.exception("тик расписания упал")
+                log.exception("schedule.tick_failed")
                 continue
+            log_event("schedule.tick", result=done or "nothing")
             self._heartbeat()
+
+    def alive(self, now: float | None = None) -> bool:
+        """Поток расписания тикал не позже двух интервалов назад (до первого тика — по времени старта)."""
+        if self._thread is None or not self._thread.is_alive():
+            return False
+        last = self.last_tick_at or self.started_at or 0.0
+        return (now or time.time()) - last <= 2 * self.tick_s
 
     def _heartbeat(self) -> None:
         """Пинг внешнего heartbeat-сервиса (healthchecks.io) после удачного тика; URL — AIP_HEARTBEAT_URL."""
@@ -81,6 +95,13 @@ class Scheduler:
     # --- состояние ---
 
     def state(self) -> dict:
+        """Отметки из файла и, если поток уже тикал, last_tick_at (только в памяти)."""
+        data = self._read()
+        if self.last_tick_at:
+            data["last_tick_at"] = datetime.fromtimestamp(self.last_tick_at).isoformat(timespec="seconds")
+        return data
+
+    def _read(self) -> dict:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -93,7 +114,7 @@ class Scheduler:
 
     def _mark(self, name: str, value: str | dict) -> None:
         with self._lock_state:
-            data = self.state() | {name: value}
+            data = self._read() | {name: value}
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

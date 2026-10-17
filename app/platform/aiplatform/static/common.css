@@ -1,52 +1,10 @@
-/* Общие токены и шапка-вкладки платформы. Страницы вкладок подключают его первым. */
-:root {
-  color-scheme: light dark;
-  --bg: #f4f3ef;
-  --panel: #ffffff;
-  --sunken: #eceae4;
-  --line: #d9d6cd;
-  --text: #1c1b18;
-  --muted: #6b675e;
-  --accent: #2f5bd8;
-  --accent-text: #ffffff;
-  --ok: #1d7a46;
-  --warn: #9a5b00;
-  --bad: #b3261e;
-  --ok-bg: #e2f3e8;
-  --warn-bg: #fbeed3;
-  --bad-bg: #fbe4e2;
-  --info-bg: #e3eafb;
-  --radius: 10px;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #131416;
-    --panel: #1c1e21;
-    --sunken: #25282c;
-    --line: #34383d;
-    --text: #ecebe7;
-    --muted: #9b9a94;
-    --accent: #7ea2ff;
-    --accent-text: #0d1220;
-    --ok: #6fd39a;
-    --warn: #f0bd6a;
-    --bad: #ff8e85;
-    --ok-bg: #173324;
-    --warn-bg: #3a2c12;
-    --bad-bg: #3d1c1a;
-    --info-bg: #1b2744;
-  }
-}
-
+/* Основа страницы и шапка-вкладки платформы. Токены — в /tokens.css (подключается перед этим файлом). */
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--font); }
 
 .platform-nav {
   position: sticky;
   top: 0;
-  z-index: 50;
+  z-index: var(--z-nav);
   display: flex;
   align-items: center;
   gap: 4px 16px;
@@ -84,6 +42,17 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var
 .platform-nav .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 .platform-nav .gpu { margin-left: auto; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .platform-nav .gpu.busy { color: var(--warn); }
+/* Узкий экран: шапка в одну строку и не липнет — 13 вкладок прокручиваются вбок,
+   активная вкладка прокручена в видимую область (nav.js). */
+@media (max-width: 640px) {
+  .platform-nav { position: static; flex-wrap: nowrap; gap: 8px; padding: 6px 8px; }
+  .platform-nav .brand { display: none; }
+  .platform-nav .tabs { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .platform-nav .tabs::-webkit-scrollbar { display: none; }
+  .platform-nav .tabs > li { flex: none; }
+  .platform-nav .tabs a { padding: 6px 10px; }
+  .platform-nav .gpu { flex: none; max-width: 32vw; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+}
 .platform-problems {
   margin: 12px 16px 0;
   padding: 10px 14px;
