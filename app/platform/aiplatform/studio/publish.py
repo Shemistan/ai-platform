@@ -248,13 +248,79 @@ def plain_text(text: str) -> str:
     return _LINK.sub(r"\1 (\2)", text).replace("**", "").strip()
 
 
+# Неудаляемый хвост подписи: сноски реестра («* Компания … признана …») и строки об источнике.
+_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор)\b)")
+# Где можно резать тело: после конца предложения или абзаца; запасной вариант — по пробелу.
+_SENTENCE_END = re.compile(r"[.!?…»)](?=\s)|\n")
+_SPACE = re.compile(r"\s+")
+
+
+def split_tail(post: str) -> tuple[str, str]:
+    """(тело, хвост): хвост — последние абзацы из сносок и строк «Источник/Оригинал/Автор»."""
+    paras = re.split(r"\n\s*\n", post.strip())
+    cut = len(paras)
+    while cut > 0 and all(_TAIL_LINE.match(line.strip()) for line in paras[cut - 1].splitlines() if line.strip()):
+        cut -= 1
+    return "\n\n".join(paras[:cut]).strip(), "\n\n".join(paras[cut:]).strip()
+
+
+def visible_len(body: str) -> int:
+    """Сколько знаков подписи видит Telegram: без тегов, с раскрытыми сущностями."""
+    return len(html.unescape(re.sub(r"<[^>]+>", "", body)))
+
+
+def _spans(text: str) -> list[tuple[int, int]]:
+    """Где в тексте разметка: **жирный** и [ссылка](url) — внутри неё резать нельзя."""
+    return [(m.start(), m.end()) for rx in (_LINK, _BOLD) for m in rx.finditer(text)]
+
+
+def _cut_points(text: str) -> tuple[list[int], list[int]]:
+    """Позиции, где можно оборвать текст, не разрезав **жирный** или [ссылку](url): концы предложений и пробелы."""
+    inside = _spans(text)
+
+    def free(pos: int) -> bool:
+        return not any(a < pos < b for a, b in inside)
+
+    sentences = [m.end() for m in _SENTENCE_END.finditer(text) if free(m.end())]
+    words = [m.start() for m in _SPACE.finditer(text) if free(m.start())]
+    return sentences, words
+
+
 def caption(post: str, title: str) -> str:
-    """Подпись не длиннее лимита Telegram; не влезает — заголовок вместо поста."""
-    body = post_html(post) if post.strip() else f"<b>{html.escape(title)}</b>"
-    visible = len(html.unescape(re.sub(r"<[^>]+>", "", body)))
-    if visible <= CAPTION_LIMIT:
-        return body
-    return f"<b>{html.escape(title[: CAPTION_LIMIT - 10])}</b>"
+    """Подпись не длиннее лимита Telegram. Длинный пост режется по предложению, хвост (сноски
+    о запрещённых организациях, источник) остаётся целиком; не влезает и он — StudioError."""
+    if not post.strip():
+        return f"<b>{html.escape(title)}</b>"
+    full = post_html(post)
+    if visible_len(full) <= CAPTION_LIMIT:
+        return full
+    body, tail = split_tail(post)
+    tail_html = post_html(tail) if tail else ""
+    budget = CAPTION_LIMIT - (visible_len(tail_html) + 2 if tail_html else 0)
+    sentences, words = _cut_points(body)
+    spans = _spans(body)
+    hard = [n for n in range(min(len(body), budget), 0, -1) if n not in words]  # одно слово длиннее лимита
+    candidates = [(n, "") for n in sorted(sentences, reverse=True)]
+    candidates += [(n, "…") for n in sorted(words, reverse=True)] + [(n, "…") for n in hard]
+    for n, mark in candidates:
+        head = body[:n].rstrip()
+        if not head or any(a < n < b for a, b in spans):
+            continue
+        head_html = post_html(head) + mark
+        if visible_len(head_html) <= budget:
+            return f"{head_html}\n\n{tail_html}" if tail_html else head_html
+    raise StudioError(
+        f"Подпись не влезает в {CAPTION_LIMIT} знаков Telegram: сноски о запрещённых организациях "
+        "и источник занимают весь лимит — сократи пост или их текст."
+    )
+
+
+def audio_caption(post: str, title: str) -> str:
+    """Короткая подпись к аудио: заголовок и неудаляемый хвост поста (сноски, источник)."""
+    name = title.replace("*", "").strip()
+    tail = split_tail(post)[1]
+    head = f"**{name}**" if name else ""
+    return caption(f"{head}\n\n{tail}".strip(), title)
 
 
 # --- отправка ---
@@ -353,7 +419,8 @@ def publish_photo(
     photo = _send(
         channel, "sendPhoto", {"caption": caption(post, title), "parse_mode": "HTML"}, {"photo": poster}, http_post
     )
-    fields = {"title": title[:64]}
+    # Аудио могут переслать отдельно от картинки — сноски реестра и источник идут и в его подписи.
+    fields = {"title": title[:64], "caption": audio_caption(post, title), "parse_mode": "HTML"}
     if seconds:
         fields["duration"] = str(int(round(seconds)))
     sound = _send(channel, "sendAudio", fields, {"audio": audio}, http_post)
