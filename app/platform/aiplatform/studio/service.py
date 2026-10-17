@@ -20,7 +20,7 @@ from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
-from aiplatform.studio import news, prompts, publish, schedule, series, slides, stats, steps
+from aiplatform.studio import metrics, news, prompts, publish, schedule, series, slides, stats, steps
 from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError, complete, missing_cli
 from aiplatform.studio.pipeline import (
@@ -34,6 +34,7 @@ from aiplatform.studio.pipeline import (
     dependents,
 )
 from aiplatform.studio.render import Renderer
+from aiplatform.studio.review import Review
 from aiplatform.updates import registry
 from aiplatform.video import models as video_models
 
@@ -206,6 +207,7 @@ class StudioModule:
         self.studio = Studio(self.config.projects_dir, steps.STEPS, journal=self.events)
         self.studio.on_stop = self._on_stop
         ctx.notifier.telegram = self.owner_telegram
+        self.review = Review(self)  # превью и кнопки публикации в личке владельца (PRD-001)
         self.scheduler = schedule.Scheduler(self, self.config.data_dir, self.config.schedule_tick_s)
         self._rates: tuple[float, estimate_module.Rates] | None = None
         self._durations: dict[tuple[str, int], float] = {}
@@ -225,7 +227,11 @@ class StudioModule:
             video=self.ctx.modules["video"].jobs,
             renderer=Renderer(self.config.ffmpeg, self.config.font, self.config.render_scale),
             cache=MediaCache(self.config.cache_dir),
+            space=self.ctx.gate.check,
         )
+        channels = self.ctx.modules.get("channels")
+        if channels is not None:  # нажатия кнопок бота приходят из `bot serve` этой вкладки
+            channels.serve.on_update = self.review.handle
         self.scheduler.start()
         self._after_restart()
 
@@ -253,10 +259,11 @@ class StudioModule:
 
     # --- уведомления ---
 
-    def notify(self, title: str, text: str, *, important: bool) -> None:
-        """В журнал уведомлений всегда; показать — если важно и уведомления включены в настройках."""
+    def notify(self, title: str, text: str, *, important: bool, telegram: bool = True) -> None:
+        """В журнал уведомлений всегда; показать — если важно и уведомления включены в настройках.
+        telegram=False — владелец уже получил в Telegram превью выпуска, второе сообщение не нужно."""
         show = important and self.ctx.config.settings.load()["notify"]["enabled"]
-        self.ctx.notifier.send(title, text, show=show)
+        self.ctx.notifier.send(title, text, show=show, telegram=telegram)
 
     def owner_channel(self) -> publish.Channel | None:
         """Личный чат владельца из настроек как канал Telegram: токен — тем же путём, что у каналов."""
@@ -286,7 +293,19 @@ class StudioModule:
         need = attention(project)
         if need and before.get(need["step"]) != need["status"]:
             head = "Выпуск упал" if need["status"] == "failed" else "Выпуск ждёт тебя"
-            self.notify(head, f"{project['title']} — {need['label']}: {need['text']}".strip(" :"), important=True)
+            previewed = need["step"] == "publish" and need["text"] in steps.REVIEW_NOTES and self._preview(project)
+            text = f"{project['title']} — {need['label']}: {need['text']}".strip(" :")
+            self.notify(head, text, important=True, telegram=not previewed)
+
+    def _preview(self, project: dict) -> bool:
+        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление."""
+        try:
+            return self.review.preview(project)
+        except Exception as exc:  # noqa: BLE001 — сеть, файлы выпуска: уведомление всё равно уйдёт
+            log.event(
+                "review.failed", level=logging.WARNING, project=project["id"], error=f"{type(exc).__name__}: {exc}"
+            )
+            return False
 
     # --- описание ---
 
@@ -701,6 +720,13 @@ class StudioModule:
         """Каналы Telegram, куда по умолчанию публикуется дайджест."""
         chosen = set(self.scenario_defaults("digest").get("channels") or [])
         return [c for c in self.channels() if c.id in chosen and c.type == publish.TELEGRAM]
+
+    def health_stats(self) -> dict:
+        """«Здоровье» за 7 и 28 дней по журналу событий (REL-010): упавшие шаги, сборка, дайджест вовремя."""
+        deadline = self.ctx.config.env.get("AIP_DIGEST_DEADLINE") or metrics.DEFAULT_DEADLINE
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", deadline):
+            deadline = metrics.DEFAULT_DEADLINE
+        return metrics.report(self.events.read(), deadline=deadline) | {"file": str(self.events.path)}
 
     def ready_checks(self) -> list[dict]:
         """Для /api/ready: поток расписания жив, у каналов дайджеста есть токен, последний дайджест не упал."""
@@ -1395,6 +1421,8 @@ class StudioModule:
                 return req.send_json(self.refresh_stats(), HTTPStatus.ACCEPTED)
             case ("POST", ["projects", pid, "stats"]):
                 return req.send_json(self.manual_stats(pid, req.json()))
+            case ("GET", ["health", "stats"]):
+                return req.send_json(self.health_stats())
             case ("GET", ["board"]):
                 return req.send_json(self.board(archived=req.arg("archived") in ("1", "true")))
             case ("POST", ["projects", pid, "split"]):

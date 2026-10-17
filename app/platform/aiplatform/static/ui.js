@@ -186,7 +186,7 @@ export function jobProgress(job, { onCancel, elapsed = seconds } = {}) {
       "div",
       { class: "progress-foot" },
       h("span", { class: "muted small" }, queued || job.elapsed_s == null ? "" : `Прошло ${elapsed(job.elapsed_s)}`),
-      onCancel ? h("button", { type: "button", class: "link danger", onclick: busyClick(() => onCancel(job), `cancel:${job.id}`) }, "Отменить") : null,
+      onCancel ? h("button", { type: "button", class: "btn btn--link btn--danger", onclick: busyClick(() => onCancel(job), `cancel:${job.id}`) }, "Отменить") : null,
     ),
   );
 }
@@ -244,15 +244,16 @@ export function minutes(value) {
 }
 
 export function copyButton(getText, label = "Скопировать") {
-  const btn = h("button", { type: "button", class: "small-btn" }, label);
+  const btn = h("button", { type: "button", class: "btn btn--ghost btn--sm" }, label);
   btn.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(typeof getText === "function" ? getText() : getText);
       btn.textContent = "Скопировано";
+      toast("Скопировано");
     } catch {
       btn.textContent = "Не вышло";
+      toast("Не удалось скопировать: браузер не дал доступ к буферу обмена", "danger");
     }
-    announce(btn.textContent);
     setTimeout(() => (btn.textContent = label), 1500);
   });
   return btn;
@@ -276,8 +277,8 @@ export function modal(title, ...children) {
 export function confirmAction({ title, body = null, confirmLabel = "Да", cancelLabel = "Отмена", danger = false }) {
   return new Promise((resolve) => {
     let answer = false;
-    const yes = h("button", { type: "button", class: danger ? "primary danger" : "primary" }, confirmLabel);
-    const no = h("button", { type: "button", class: "small-btn" }, cancelLabel);
+    const yes = h("button", { type: "button", class: danger ? "btn btn--primary btn--danger" : "btn btn--primary" }, confirmLabel);
+    const no = h("button", { type: "button", class: "btn btn--ghost btn--sm" }, cancelLabel);
     const { dialog, close } = modal(title, ...[].concat(body), h("div", { class: "toolbar confirm-actions" }, yes, no));
     yes.addEventListener("click", () => ((answer = true), close()));
     no.addEventListener("click", () => close());
@@ -334,6 +335,28 @@ export function announce(text) {
   setTimeout(() => (box.textContent = text), 50);
 }
 
+export const TOAST_MS = 4000;
+
+// Подтверждение фонового действия («Сохранено», «Скопировано», «Запущено»): тост в правом нижнем углу.
+// tone — success | info | warning | danger. Ошибка (danger) висит до закрытия, остальные гаснут через TOAST_MS.
+// Скринридеру — через общую область announce(); сам стек не живая область, чтобы не читать дважды.
+export function toast(text, tone = "success") {
+  if (!text) return null;
+  let stack = document.getElementById("toasts");
+  if (!stack) {
+    stack = h("div", { id: "toasts", class: "toasts" });
+    document.body.append(stack);
+  }
+  const close = h("button", { type: "button", class: "icon-btn", "aria-label": "Скрыть" }, "×");
+  const item = h("div", { class: `toast tone-${tone}` }, h("span", {}, text), close);
+  const remove = () => item.remove();
+  close.addEventListener("click", remove);
+  stack.append(item);
+  announce(text);
+  if (tone !== "danger") setTimeout(remove, TOAST_MS);
+  return item;
+}
+
 // Карточка фоновой задачи вкладки: статус, этап, сколько идёт, последняя строка или лог.
 export function taskCard(task, { onCancel, full = false } = {}) {
   if (!task) return null;
@@ -349,7 +372,7 @@ export function taskCard(task, { onCancel, full = false } = {}) {
       statusChip(task.status),
       h("span", { class: "task-title" }, task.title),
       h("span", { class: "muted small" }, meta),
-      active && onCancel ? h("button", { type: "button", class: "link danger", onclick: busyClick(() => onCancel(task), `cancel:${task.id}`) }, "Отменить") : null,
+      active && onCancel ? h("button", { type: "button", class: "btn btn--link btn--danger", onclick: busyClick(() => onCancel(task), `cancel:${task.id}`) }, "Отменить") : null,
     ),
     task.error ? h("p", { class: "job-error" }, task.error) : null,
     full ? logBlock(task.log) : task.last && active ? h("div", { class: "task-last" }, task.last) : null,
@@ -417,8 +440,8 @@ export function errorState({ title = "Не удалось загрузить", e
     h("strong", { class: "error-title" }, title),
     note ? h("p", { class: "hint" }, note) : null,
     why ? h("p", {}, why) : null,
-    what || auto.engine ? h("p", { class: "hint" }, what || "", auto.engine ? [" ", h("a", { class: "link", href: "/settings/" }, "Открыть «Настройки»")] : null) : null,
-    onRetry ? h("div", { class: "toolbar" }, h("button", { type: "button", class: "small-btn", onclick: busyClick(onRetry) }, "Повторить")) : null,
+    what || auto.engine ? h("p", { class: "hint" }, what || "", auto.engine ? [" ", h("a", { class: "btn btn--link", href: "/settings/" }, "Открыть «Настройки»")] : null) : null,
+    onRetry ? h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: busyClick(onRetry) }, "Повторить")) : null,
     raw && raw !== why ? h("details", { class: "inline" }, h("summary", {}, "Подробности"), h("pre", { class: "log" }, raw)) : null,
   );
 }
