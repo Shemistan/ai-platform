@@ -1,5 +1,5 @@
 // Вкладка «Статьи»: библиотека статей движка — текст для озвучки, озвучка, проверка, канал.
-import { $, narratorApi as api, busyClick, chip, fill, h, minutes, poller, shortDate, taskCard } from "/ui.js";
+import { $, busyClick, chip, errorState, fill, h, loadLast, minutes, narratorApi as api, poller, saveLast, shortDate, stamp, taskCard } from "/ui.js";
 
 const API = "/api/library";
 const QUALITY = { verbatim: "текст дословно", pasted: "текст прислан", webfetch: "текст по пересказу WebFetch" };
@@ -294,7 +294,7 @@ async function select(id) {
     state.card = await api("GET", `${API}/articles/${encodeURIComponent(id)}`);
   } catch (err) {
     state.card = null;
-    fill($("card"), h("p", { class: "job-error" }, err.message));
+    fill($("card"), errorState({ title: "Статья не открылась", error: err, onRetry: () => select(id) }));
     return;
   }
   history.replaceState(null, "", `?article=${encodeURIComponent(id)}`);
@@ -328,11 +328,38 @@ async function addArticle(payload) {
 // при возврате на вкладку — сразу).
 const libraryPoll = poller({ run: (signal) => refresh(signal), fast: 1500, slow: Infinity, isActive: () => state.data?.tasks.some(isActive) });
 
+// Место над сводкой для ошибки загрузки (errorState): «Повторить», а при поломке движка —
+// последний удачный список из браузера с пометкой, от какого он времени.
+const problem = h("div", { class: "problem-slot" });
+
+function showProblem(err) {
+  if (err.kind === "abort") return;
+  let note = null;
+  if (!state.data) {
+    const last = loadLast("library");
+    if (last?.data) {
+      state.data = last.data;
+      state.stale = last.at;
+      renderStats();
+      renderList();
+    } else fill($("articles"), h("p", { class: "muted" }, "Список не загрузился — см. ошибку выше."));
+  }
+  if (state.stale) note = `Показаны данные от ${stamp(state.stale)}: свежие не пришли.`;
+  if (problem.dataset.error === err.message && problem.firstChild) return; // опрос повторил ту же ошибку — не мигаем
+  problem.dataset.error = err.message;
+  fill(problem, errorState({ title: "Библиотека не обновилась", error: err, note, onRetry: () => refresh().catch(() => {}) }));
+}
+
 async function refresh(signal) {
   try {
-    state.data = await api("GET", `${API}/state`, undefined, { signal });
+    const data = await api("GET", `${API}/state`, undefined, { signal });
+    state.data = data;
+    state.stale = null;
+    saveLast("library", data);
+    fill(problem);
+    delete problem.dataset.error;
   } catch (err) {
-    if (state.data && err.kind !== "abort") fill($("tasks"), h("p", { class: "job-error" }, `Нет связи с сервисом (${err.message}) — обновлю, когда он вернётся.`));
+    showProblem(err);
     throw err;
   }
   renderStats();
@@ -387,9 +414,10 @@ async function init() {
   } catch {
     state.audio = null;
   }
+  $("stats").before(problem);
   libraryPoll.start(Infinity);
   await refresh();
   if (params.get("article")) select(params.get("article"));
 }
 
-init().catch((err) => fill($("articles"), h("p", { class: "job-error" }, `Не удалось загрузить библиотеку: ${err.message}`)));
+init().catch((err) => problem.isConnected || fill($("articles"), errorState({ title: "Не удалось загрузить библиотеку", error: err, onRetry: () => location.reload() })));

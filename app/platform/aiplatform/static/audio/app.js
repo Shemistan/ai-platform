@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, narratorApi as api, busyClick, chip, debounce, fill, followTask, h, logBlock, modal, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -51,8 +51,22 @@ function fillVoices(saved = {}) {
   $("steps").placeholder = e.default_steps ? `${e.default_steps} по умолчанию` : "";
   $("voices-btn").hidden = !e.voices.includes("Charon");
   const note = $("engine-note");
-  note.textContent = e.problem ? `${e.note}. Не запустится: ${e.problem}` : e.note;
-  note.classList.toggle("warn", Boolean(e.problem));
+  note.textContent = e.note;
+  // Почему движок не запустится — понятной фразой, сырой вывод под «Подробностями».
+  let slot = $("engine-problem");
+  if (!slot) {
+    slot = h("div", { id: "engine-problem" });
+    note.after(slot);
+  }
+  const listError = state.config.engines_error;
+  fill(
+    slot,
+    e.problem
+      ? errorState({ title: `${e.label}: не запустится`, error: e.problem })
+      : listError
+        ? errorState({ title: "Движок не ответил — список движков может быть неполным", error: listError, onRetry: refreshConfig })
+        : null,
+  );
 }
 
 // --- произношение ---
@@ -112,7 +126,7 @@ async function openLibrary() {
   try {
     items = (await api("GET", `${API}/library`)).items;
   } catch (err) {
-    fill(list, h("p", { class: "job-error" }, err.message));
+    fill(list, errorState({ title: "Библиотека не загрузилась", error: err, onRetry: () => (close(), openLibrary()) }));
     return;
   }
   const render = () => {
@@ -437,7 +451,7 @@ async function openVoices() {
     try {
       renderVoices(await api("GET", `${API}/voices`), content, taskBox, reload);
     } catch (err) {
-      fill(content, h("p", { class: "job-error" }, err.message));
+      fill(content, errorState({ title: "Образцы не загрузились", error: err, onRetry: reload }));
     }
   };
   await reload();
@@ -581,7 +595,6 @@ async function init() {
   Object.assign($("steps"), { min: sLow, max: sHigh });
   $("verify-field").hidden = !state.config.verify_available;
   $("verify").checked = saved.verify ?? true;
-  if (state.config.engines_error) $("engine-note").textContent += ` (движок не ответил: ${state.config.engines_error})`;
 
   $("engine").addEventListener("change", () => (fillVoices(), remember()));
   for (const id of ["voice", "steps", "verify"]) $(id).addEventListener("change", remember);
@@ -602,5 +615,5 @@ async function init() {
 }
 
 init().catch((err) => {
-  fill($("job"), h("p", { class: "job-error" }, `Не удалось загрузить настройки: ${err.message}`));
+  fill($("job"), errorState({ title: "Не удалось загрузить настройки озвучки", error: err, onRetry: () => location.reload() }));
 });

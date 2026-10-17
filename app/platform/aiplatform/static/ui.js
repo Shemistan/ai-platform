@@ -354,6 +354,96 @@ export function taskCard(task, { onCancel, full = false } = {}) {
   );
 }
 
+// --- Понятные ошибки ---
+
+// Известные ошибки → человеческий текст: reason — что случилось, help — что делать.
+// engine — поломка движка narrator: она одна на все вкладки и подробно описана в баннере шапки,
+// поэтому на странице — коротко и со ссылкой на «Настройки». Формулировки уточняет TXT-003.
+const ENGINE_TEXT = /invalid choice|unrecognized arguments|usage: narrate|\bbridge\b|движок (упал|не ответил)|движок narrator|команда «[^»]+» не найдена|нужен движок/i;
+const KNOWN_ERRORS = [
+  {
+    test: (err) => err?.kind === "network",
+    reason: "Сервис платформы не отвечает.",
+    help: "Проверь, что он запущен (make run), и нажми «Повторить».",
+  },
+  {
+    test: (err) => err?.kind === "timeout",
+    reason: "Сервис не ответил вовремя.",
+    help: "Возможно, он занят тяжёлой задачей — повтори через минуту.",
+  },
+  {
+    test: (err, text) => err?.data?.kind === "unavailable" || ENGINE_TEXT.test(text),
+    engine: true,
+    reason: "Движок narrator недоступен или устарел.",
+    help: "Что именно не так — в баннере вверху страницы; путь к движку — в «Настройках».",
+  },
+  {
+    test: (_err, text) => /unauthorized|invalid token|bot token|токен (не принят|неверный)|\b401\b/i.test(text),
+    reason: "Telegram не принял токен бота.",
+    help: "Проверь NARRATOR_TELEGRAM_TOKEN или bot_token.md движка.",
+  },
+  {
+    test: (_err, text) => /network is unreachable|getaddrinfo|nodename nor servname|name or service not known|temporary failure in name resolution|connection refused|urlopen error/i.test(text),
+    reason: "Нет связи с внешним сервисом.",
+    help: "Проверь интернет и нажми «Повторить».",
+  },
+];
+
+// explainError(ошибка или текст) → { reason, help, details, engine }: details — сырой текст для
+// «Подробностей», если он не совпадает с reason. Неизвестная короткая однострочная ошибка сервера
+// уже написана для человека — показываем как есть; длинная или многострочная — общий текст.
+export function explainError(error) {
+  const text = String((typeof error === "string" ? error : error?.message) || "");
+  const known = KNOWN_ERRORS.find((k) => k.test(typeof error === "string" ? null : error, text));
+  const requestId = typeof error === "object" ? error?.data?.request_id : null;
+  if (known) return { reason: known.reason, help: known.help, details: text || null, engine: Boolean(known.engine) };
+  if (requestId) return { reason: "Внутренняя ошибка сервиса.", help: `Код для поиска в логе: ${requestId}.`, details: text, engine: false };
+  if (text && text.length <= 200 && !text.includes("\n")) return { reason: text, help: null, details: null, engine: false };
+  return { reason: "Что-то пошло не так.", help: "Нажми «Повторить»; если не поможет — пришли «Подробности».", details: text || null, engine: false };
+}
+
+// Блок ошибки загрузки: заголовок, одна фраза причины, «что делать», «Повторить» и сырой вывод
+// под «Подробностями». errorState({ title, error, onRetry }) — reason/help/details можно задать сами.
+export function errorState({ title = "Не удалось загрузить", error = null, reason, help, details, onRetry = null, note = null } = {}) {
+  const auto = explainError(error);
+  const why = reason ?? auto.reason;
+  const what = help ?? auto.help;
+  const raw = details ?? auto.details;
+  return h(
+    "div",
+    { class: "error-state", role: "alert" },
+    h("strong", { class: "error-title" }, title),
+    note ? h("p", { class: "hint" }, note) : null,
+    why ? h("p", {}, why) : null,
+    what || auto.engine ? h("p", { class: "hint" }, what || "", auto.engine ? [" ", h("a", { class: "link", href: "/settings/" }, "Открыть «Настройки»")] : null) : null,
+    onRetry ? h("div", { class: "toolbar" }, h("button", { type: "button", class: "small-btn", onclick: busyClick(onRetry) }, "Повторить")) : null,
+    raw && raw !== why ? h("details", { class: "inline" }, h("summary", {}, "Подробности"), h("pre", { class: "log" }, raw)) : null,
+  );
+}
+
+// Последний удачный ответ в браузере: при поломке страница показывает его с пометкой «данные от …».
+export function saveLast(key, data) {
+  try {
+    localStorage.setItem(`aip:last:${key}`, JSON.stringify({ at: Date.now(), data }));
+  } catch {
+    /* переполнено или запрещено — просто без запаса */
+  }
+}
+
+export function loadLast(key) {
+  try {
+    const raw = localStorage.getItem(`aip:last:${key}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+// «12 окт., 14:05» — когда сохранили запас.
+export function stamp(ms) {
+  return new Date(ms).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 // --- Ошибки обработчиков ---
 
 let toastTimer = null;

@@ -1,5 +1,5 @@
 // Вкладка «Обновления»: версии моделей и пайплайнов, реестр запрещённых организаций.
-import { $, api, busy, busyClick, chip, fill, followTask, h, NARRATOR_TIMEOUT_MS, poller, progressBar, reportError, taskCard } from "/ui.js";
+import { $, api, busy, busyClick, chip, errorState, fill, followTask, h, NARRATOR_TIMEOUT_MS, poller, progressBar, reportError, taskCard } from "/ui.js";
 
 const API = "/api/updates";
 const MODEL_STATUS = { update: "есть обновление", ok: "актуально", unknown: "не знаю", error: "ошибка" };
@@ -34,7 +34,7 @@ function renderModels(job) {
   const results = job.results || [];
   const head = [];
   if (running) head.push(progressBar({ stage: job.progress || "Проверяю…", percent: 0 }));
-  if (job.status === "failed") head.push(h("p", { class: "job-error" }, job.error));
+  if (job.status === "failed") head.push(errorState({ title: "Проверка обновлений не удалась", error: job.error }));
   if (job.status === "done") {
     head.push(
       h("p", { class: job.updates ? "note" : "hint" }, job.updates ? `Есть обновления: ${job.updates}. Проверено ${when(job.finished)}.` : `Всё актуально. Проверено ${when(job.finished)}.`),
@@ -98,7 +98,7 @@ function renderProposal(reg) {
   const check = reg.check || {};
   const box = [];
   if (check.status === "running") box.push(progressBar({ stage: check.progress || "Проверяю…", percent: 0 }));
-  if (check.status === "failed") box.push(h("p", { class: "job-error" }, check.error));
+  if (check.status === "failed") box.push(errorState({ title: "Сверка реестра не удалась", error: check.error }));
   if (check.status === "done" && !check.proposal) {
     const changed = check.diff && (check.diff.added.length || check.diff.changed.length || check.diff.removed.length);
     box.push(h("p", { class: "hint" }, changed ? `Предложение ${check.applied ? "применено" : "отклонено"}.` : `Изменений нет — проверено ${when(check.finished)}.`, check.notes ? ` ${check.notes}` : ""));
@@ -229,7 +229,7 @@ async function loadVoiceModels() {
     const active = data.tasks.find((t) => t.status === "queued" || t.status === "running");
     if (active && voice.active !== active.id) watchVoice(active);
   } catch (err) {
-    fill($("voice-models"), h("p", { class: "job-error" }, err.message));
+    fill($("voice-models"), errorState({ title: "Модели озвучки не загрузились", error: err, onRetry: loadVoiceModels }));
   }
 }
 
@@ -240,7 +240,7 @@ async function watchVoice(task) {
   try {
     await followTask(`${API}/tasks/${task.id}`, (t) => fill($("voice-task"), taskCard(t, { full: true, onCancel: cancel })));
   } catch (err) {
-    fill($("voice-task"), h("p", { class: "job-error" }, err.message));
+    fill($("voice-task"), errorState({ title: "Задача не выполнилась", error: err }));
   }
   voice.active = null;
   voice.picked.clear();
@@ -251,7 +251,7 @@ async function startVoice(action, body = {}) {
   try {
     watchVoice(await api("POST", `${API}/voice-models/${action}`, body));
   } catch (err) {
-    fill($("voice-task"), h("p", { class: "job-error" }, err.message));
+    fill($("voice-task"), errorState({ title: "Задача не выполнилась", error: err }));
   }
 }
 
