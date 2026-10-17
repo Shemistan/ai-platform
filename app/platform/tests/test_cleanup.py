@@ -1,10 +1,14 @@
-"""Уборка: место по областям, удаление старых задач вкладок, кэша и архивных выпусков."""
+"""Уборка: место по областям, удаление старых задач вкладок, кэша, загрузок и архивных выпусков,
+промежуточные файлы и авто-архив опубликованных выпусков (REL-013)."""
 
+import os
 import time
 
 from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase
 
-MONTH_LATER = 31 * 86400
+DAY = 86400
+MONTH_LATER = 31 * DAY
+POLICY = {"trim_days": 14, "archive_days": 60}
 
 
 @NEEDS_FFMPEG
@@ -18,7 +22,8 @@ class CleanupTest(StudioCase):
         self.settle(project["id"])
         status, body = self.json("GET", "/api/settings/cleanup")
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["found"], {"jobs": 0, "cache": 0, "archived": 0, "bytes": 0})  # всё свежее
+        fresh = {"jobs": 0, "cache": 0, "archived": 0, "uploads": 0, "trimmed": 0, "auto_archived": 0, "bytes": 0}
+        self.assertEqual(body["found"], fresh)  # всё свежее
         usage = {u["id"]: u["bytes"] for u in body["usage"]}
         self.assertGreater(usage["photo"], 0)
         self.assertGreater(usage["cache"], 0)
@@ -50,3 +55,52 @@ class CleanupTest(StudioCase):
         self.assertEqual((status, body["cleanup"]["days"], body["cleanup"]["auto"]), (200, 14, True))
         status, body = self.json("POST", "/api/settings/cleanup/run")
         self.assertEqual((status, body["done"], body["days"]), (200, True, 14))
+
+    def test_published_project_trimmed_then_auto_archived(self):
+        settings = {"shorts": True, "channels": ["download-16x9"]}
+        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
+        self.settle(project["id"])
+        self.json("POST", f"/api/studio/projects/{project['id']}/approve", {"step": "publish"})
+        self.assertEqual(self.statuses(self.settle(project["id"]))["publish"], "done")
+        folder = self.folder(project["id"])
+        self.assertTrue((folder / "images").is_dir() and (folder / "short").is_dir())
+        kept = ["video.mp4", "short.mp4", "project.json", "published.json", "text.md", "plan.json"]
+        self.assertTrue(all((folder / name).is_file() for name in kept))
+
+        # Раньше trim_days — ничего; после — без картинок слайдов и файлов шортса.
+        soon = self.cleaner.run(30, dry=False, now=time.time() + 5 * DAY, policy=POLICY)
+        self.assertEqual((soon["trimmed"], soon["auto_archived"]), (0, 0))
+        preview = self.cleaner.run(30, dry=True, now=time.time() + 15 * DAY, policy=POLICY)
+        self.assertEqual(preview["trimmed"], 1)
+        self.assertTrue((folder / "images").is_dir(), "dry ничего не удаляет")
+        result = self.cleaner.run(30, dry=False, now=time.time() + 15 * DAY, policy=POLICY)
+        self.assertEqual((result["trimmed"], result["auto_archived"]), (1, 0))
+        self.assertGreater(result["bytes"], 0)
+        self.assertFalse((folder / "images").exists())
+        self.assertFalse((folder / "short").exists())
+        self.assertTrue(all((folder / name).is_file() for name in kept), sorted(p.name for p in folder.iterdir()))
+        self.assertEqual(self.cleaner.run(30, dry=False, now=time.time() + 16 * DAY, policy=POLICY)["trimmed"], 0)
+
+        # Через archive_days — в архив сам; потом уборка архива его не удаляет.
+        later = self.cleaner.run(30, dry=False, now=time.time() + 61 * DAY, policy=POLICY)
+        self.assertEqual(later["auto_archived"], 1)
+        view = self.json("GET", f"/api/studio/projects/{project['id']}")[1]
+        self.assertTrue(view["archived"])
+        much_later = self.cleaner.run(30, dry=False, now=time.time() + 200 * DAY, policy=POLICY)
+        self.assertEqual(much_later["archived"], 0)
+        self.assertTrue((folder / "published.json").is_file())
+
+    def test_old_uploads_removed(self):
+        uploads = self.app.ctx.uploads.root
+        old, new = uploads / ("a" * 32 + ".png"), uploads / ("b" * 32 + ".png")
+        for path in (old, new):
+            path.write_bytes(b"x" * 100)
+        stamp = time.time() - MONTH_LATER
+        os.utime(old, (stamp, stamp))
+        result = self.cleaner.run(30, dry=False, policy=POLICY)
+        self.assertEqual(result["uploads"], 1)
+        self.assertFalse(old.exists())
+        self.assertTrue(new.exists())
+
+    def test_auto_cleanup_on_by_default(self):
+        self.assertIs(self.json("GET", "/api/settings/state")[1]["cleanup"]["auto"], True)

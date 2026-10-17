@@ -1,9 +1,10 @@
 # Настройка AI Platform
 
 Полный справочник конфигурации сервиса `app/platform`: доступ и защита,
-все переменные окружения, лог процесса, остановка и лимиты времени. Коротко
+все переменные окружения, лог процесса, остановка и лимиты времени,
+автозапуск, данные и бэкап, обновление и откат. Коротко
 и с командами — [README сервиса](../app/platform/README.md#настройка);
-эксплуатация живого сервиса — runbook (REL-015).
+эксплуатация живого сервиса — [runbook](runbook.md).
 
 ## Содержание
 
@@ -11,6 +12,8 @@
 - [Переменные окружения](#переменные-окружения)
 - [Лог, остановка, лимиты времени](#лог-остановка-лимиты-времени)
 - [Автозапуск: подробности](#автозапуск-подробности)
+- [Данные и бэкап](#данные-и-бэкап)
+- [Обновление и откат](#обновление-и-откат)
 
 ## Доступ и защита
 
@@ -52,7 +55,7 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `AIP_PORT`, `AIP_HOST` | `8780`, `127.0.0.1` | где слушать |
 | `AIP_AUTH_TOKEN` | — | токен доступа; без него сервер на не-loopback адресе не стартует |
 | `AIP_ALLOWED_HOSTS` | — | свои имена в Host через запятую (`box.local,10.0.0.5:8780`) |
-| `AIP_DATA_DIR` | `app/platform/data` | задачи, загрузки, выпуски |
+| `AIP_DATA_DIR` | `~/Library/Application Support/aiplatform`; пока его нет, а `app/platform/data` есть — старый путь | задачи, загрузки, выпуски, настройки, каналы (вне рабочей копии — см. [«Данные и бэкап»](#данные-и-бэкап)) |
 | `AIP_MODELS_DIR` | `/Volumes/External SSD/local_models` (у автора — внешний диск) | веса фото- и видеомоделей; диска нет — свой каталог, `~/local_models`, см. [«Если не работает при установке»](../app/platform/README.md#если-не-работает-при-установке) |
 | `AIP_LOW_RAM` | — | экономия памяти для фото и видео |
 | `AIP_PHOTO_MFLUX_BIN`, `AIP_PHOTO_FLUX2_CMD` | из PATH | пайплайны фото (или старые `PHOTOGEN_*`) |
@@ -66,13 +69,19 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `AIP_NEWS_WHERE` | `{narrator}/narrate news where --date {day}` | где лежит выпуск |
 | `AIP_STUDIO_IMAGE_MODEL` | `z-image-turbo` | модель постера и картинок по умолчанию |
 | `AIP_STUDIO_STICKER`, `AIP_STUDIO_PLAY` | `aiplatform/studio/assets/subscribe.png`, `play.png` | плашка «подпишись» и кнопка «плей» (PNG с прозрачностью) |
-| `AIP_CHANNELS` | `app/platform/channels.json` | каналы публикации; нет файла — каналы из `telegram_tems.md` narrator |
+| `AIP_CHANNELS` | `<data>/channels.json`; нет его, а есть `app/platform/channels.json` — старый | каналы публикации; нет файла — каналы из `telegram_tems.md` narrator |
+| `AIP_BACKUP_DIR` | — | куда `make backup` кладёт архивы (iCloud Drive, второй диск); задан — `make install-agent` ставит ежедневный бэкап |
+| `AIP_BACKUP_AGE_RECIPIENT` или `AIP_BACKUP_AGE_RECIPIENTS_FILE` | — | открытый ключ `age` (`age1…`) или файл с ключами, на которые шифруется бэкап |
+| `AIP_BACKUP_AGE_IDENTITY` | `~/.config/aiplatform/backup-key.txt` | закрытый ключ для `make restore` |
+| `AIP_BACKUP_KEEP_DAYS`, `AIP_BACKUP_AT`, `AIP_BACKUP_AGE` | `30`, `03:30`, `age` | срок хранения архивов, время ежедневного бэкапа, путь к `age` |
+| `AIP_LIVE_DIR`, `AIP_RELEASE_REMOTE` | `~/apps/aiplatform`, `origin` | живой checkout для `make deploy`; remote для тегов |
 | `AIP_FONT` | системный Arial Unicode | шрифт слайдов с кириллицей |
 | `AIP_FFMPEG` | `ffmpeg` | путь к ffmpeg |
 | `AIP_RENDER_SCALE` | `1` | доля от 1920×1080 (0.5 — быстрые черновики) |
 | `AIP_NOTIFY_CMD` | — | своя команда уведомлений (заголовок и текст — на stdin); без неё на Mac — osascript |
 | `AIP_SCHEDULE_TICK_S` | `30` | как часто расписание смотрит на часы; `0` — расписание выключено |
 | `AIP_MIN_FREE_GB` | `5` | меньше свободного на диске данных — `/api/ready` отвечает 503 |
+| `AIP_DIGEST_DEADLINE` | `12:00` | «Здоровье»: дайджест вовремя, если ушёл в канал до этого времени дня создания |
 | `AIP_LOG_STDERR` | — (`1` в LaunchAgent) | дублировать лог процесса в stderr |
 | `AIP_BACKEND` | `real` | `real` — настоящие модели; `fake` — фейковые генераторы, TTS, LLM и новости (так запускает `make demo`) |
 | `AIP_VIDEO_MODELS_DIR` | `AIP_MODELS_DIR`, иначе каталог рядом с `AIP_VIDEO_MODEL` | веса видеомоделей, если они лежат отдельно от фото (или старый `VIDEOGEN_MODELS_DIR`) |
@@ -145,3 +154,74 @@ GPU-замок: LLM — 10 мин, картинка — 15, сборка вид�
 По желанию — heartbeat-сервис (healthchecks.io): `AIP_HEARTBEAT_URL=<url>` в
 `local.mk`, платформа пингует его после каждого тика расписания, и сервис сам
 напишет, если пинги пропали.
+
+## Данные и бэкап
+
+Данные живут вне рабочей копии — в `~/Library/Application Support/aiplatform`
+(`AIP_DATA_DIR`): чистка рабочей копии, ветки и worktree агента их не
+трогают. Пока этого каталога нет, а старый `app/platform/data` есть,
+платформа работает со старым. Перенос — один раз, в обычном терминале:
+
+```sh
+make migrate-data          # копия data/ (и channels.json) в новый каталог; старое не удаляется
+launchctl kickstart -k gui/$(id -u)/com.aiplatform.server
+```
+
+Проверь доску и каналы — после этого `app/platform/data` можно удалить.
+Библиотека narrator (статьи, база новостей, подписчики бота) лежит в
+`<AIP_NARRATOR_DIR>/library` (сейчас — `~/my_track/07_offline_text-to-word/library`)
+или в `$NARRATOR_LIBRARY`.
+
+**Бэкап** — маленькие невосстановимые файлы: настройки, каналы,
+расписание, `project.json` / `published.json` / тексты выпусков, журнал
+запусков, `local.mk`, библиотека narrator без mp3/wav/mp4 и состояние бота
+(`telegram.json`). Без медиа, весов, задач вкладок и кэша; токен бота не
+кладётся. Архив шифруется [`age`](https://age-encryption.org) и кладётся в
+`AIP_BACKUP_DIR`; архивы старше 30 дней удаляются. Один раз:
+
+```sh
+brew install age
+mkdir -p ~/.config/aiplatform && age-keygen -o ~/.config/aiplatform/backup-key.txt
+# копию ключа — в менеджер паролей: без него архив не открыть
+# в local.mk:
+#   AIP_BACKUP_DIR=$(HOME)/Library/Mobile Documents/com~apple~CloudDocs/aiplatform-backups
+#   AIP_BACKUP_AGE_RECIPIENT=age1…   (строка «public key» из age-keygen)
+make backup                # первый архив; потом — каждый день агентом
+make install-agent         # ставит и com.aiplatform.backup (03:30, AIP_BACKUP_AT)
+make restore FILE=<архив> TO=~/aiplatform-restore   # только в пустой каталог
+```
+
+Возраст последнего бэкапа — в `/api/ready` (проверка `backup`; не настроен —
+не мешает, старше 48 ч — 503). Восстановление на живой сервис — в
+[runbook](runbook.md), сценарий 5.
+
+Тяжёлое и восстановимое — веса моделей, кэш генераций, `.venv` движка, кэш
+Hugging Face — исключить из Time Machine: `make tm-exclude` (`tmutil
+addexclusion` по каждому пути).
+
+## Обновление и откат
+
+Живой сервис работает не из рабочей копии (там агент делает ветки), а из
+отдельного checkout на теге релиза: `~/apps/aiplatform` (`AIP_LIVE_DIR`).
+Один раз:
+
+```sh
+git clone <url репозитория> ~/apps/aiplatform
+cp app/platform/local.mk ~/apps/aiplatform/app/platform/     # local.mk не в git
+make -C ~/apps/aiplatform/app/platform uninstall-agent install-agent   # агент запомнит живой каталог
+```
+
+После слияния PR в `main` — человек, из любого checkout `app/platform`:
+
+```sh
+make release-tag           # в main: тег v<версия> (версия-дата, DX-009), затем git push origin <тег>
+make deploy TAG=v2026.10.17   # бэкап → git fetch → checkout тега в живом checkout → перезапуск агента
+make deployed              # какой тег сейчас у живого сервиса
+```
+
+**Откат** — тот же `make deploy TAG=<прошлый тег>` (его печатает каждый
+деплой, история — `~/Library/Logs/aiplatform/deploy.log`). Выпуски
+(`project.json`) мигрируют только вперёд: выпуск, созданный или открытый
+новой версией, старый код может прочитать не так. После отката такие
+выпуски не перезапускай; нужно вернуть данные как были — восстанови бэкап,
+который `make deploy` сделал перед обновлением (runbook, сценарий 5).
