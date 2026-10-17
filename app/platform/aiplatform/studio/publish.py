@@ -291,7 +291,9 @@ def plain_text(text: str) -> str:
 # Неудаляемый хвост подписи: сноски реестра («* Компания … признана …»), строки об источнике
 # и строка об ИИ-контенте (CMP-011).
 AI_PREFIX = "ИИ-контент"
-_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор|ИИ-контент)\b)")
+_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор|ИИ-контент|Реклама)\b)")
+# Токен рекламы из ЕРИР (38-ФЗ ст. 18.1): латиница, цифры, без пробелов (CMP-019).
+ERID = re.compile(r"[0-9A-Za-z_-]{1,100}")
 SYNTHETIC_FLAG = (
     "Синтетический контент: да — при загрузке включи раскрытие ИИ («изменённый или синтетический контент»)."
 )
@@ -314,6 +316,19 @@ def ai_line(*, voice: bool = False, images: bool = False, video: bool = False) -
 def with_ai_line(post: str, line: str) -> str:
     """Пост со строкой об ИИ в неудаляемом хвосте (после сносок и источника)."""
     if not line or line in post:
+        return post
+    return f"{post.rstrip()}\n\n{line}\n" if post.strip() else f"{line}\n"
+
+
+def ad_line(erid: str) -> str:
+    """Пометка рекламы с токеном ЕРИР: «Реклама. erid: …» (38-ФЗ ст. 18.1)."""
+    return f"Реклама. erid: {erid}"
+
+
+def with_ad(post: str, erid: str) -> str:
+    """Пост с пометкой «Реклама» и erid в неудаляемом хвосте: при обрезке подписи не теряется."""
+    line = ad_line(erid)
+    if line in post:
         return post
     return f"{post.rstrip()}\n\n{line}\n" if post.strip() else f"{line}\n"
 

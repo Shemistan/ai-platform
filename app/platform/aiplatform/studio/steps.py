@@ -1075,6 +1075,13 @@ def step_publish(ctx: StepContext) -> None:
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
     ai = ai_used(ctx)
     post = publish.with_ai_line(post, ai)
+    if ctx.settings.get("ad"):  # реклама — только с токеном ЕРИР (38-ФЗ ст. 18.1, CMP-019)
+        if not ctx.settings.get("erid"):
+            raise StudioError(
+                "Выпуск помечен как реклама, а erid не указан: получи токен у оператора рекламных данных "
+                "(ОРД), впиши его в поле «erid» в настройках выпуска и нажми «Опубликовать» снова."
+            )
+        post = publish.with_ad(post, ctx.settings["erid"])
     links = post_links(ctx.project["scenario"], ctx.settings, ctx.read, post)
     if links["domains"]:
         ctx.log("ссылки в посте ведут на: " + ", ".join(links["domains"]))

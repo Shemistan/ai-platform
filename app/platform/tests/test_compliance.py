@@ -419,5 +419,65 @@ class NcVoicePublishTest(StudioCase):
         self.assertTrue(voices.ENGINES["silero"].public()["license_nc"])
 
 
+class RknThresholdTest(StudioCase):
+    """CMP-019: канал с 9 000+ подписчиков — предупреждение о подаче сведений в РКН."""
+
+    def test_big_channel_warns_in_api(self):
+        from aiplatform.studio import service as studio_service
+        from aiplatform.studio import stats
+
+        self.assertIsNone(stats.rkn_warning("К", 8999))
+        self.assertIn("близко к 10 000", stats.rkn_warning("К", 9000))
+        self.assertIn("больше 10 000", stats.rkn_warning("К", 12000))
+        with mock.patch.object(studio_service, "AUDIENCE_TTL_S", 0):
+            pid = self.create(scenario="post", post="Пост", settings={"channels": ["download-16x9"]})["id"]
+            record = {"channel": "download-16x9", "state": "sent", "sent": 1.0e9, "members_at_publish": 9500}
+            (self.folder(pid) / "published.json").write_text(json.dumps([record]), encoding="utf-8")
+            channels = {c["id"]: c for c in self.json("GET", "/api/channels/state")[1]["channels"]}
+            self.assertEqual(channels["download-16x9"]["members"], 9500)
+            self.assertIn("9 500 подписчиков", channels["download-16x9"]["audience_warning"])
+            self.assertIn("149-ФЗ", channels["download-16x9"]["audience_warning"])
+            others = [c for k, c in channels.items() if k != "download-16x9"]
+            self.assertTrue(all(c["audience_warning"] is None for c in others))
+            project = self.json("GET", f"/api/studio/projects/{pid}")[1]
+            warns = [x["text"] for x in project["preflight"] if x["level"] == "warn"]
+            self.assertTrue(any("9 500 подписчиков" in x for x in warns), warns)
+
+
+@NEEDS_FFMPEG
+class AdEridTest(StudioCase):
+    """CMP-019: реклама без erid не публикуется; с erid — «Реклама» и токен в подписи."""
+
+    SETTINGS = {"channels": ["download-16x9"], "auto_publish": True, "draft": True, "ad": True}
+
+    def test_ad_needs_erid(self):
+        project = self.create(scenario="article", text=ARTICLE, settings=self.SETTINGS, run=True)
+        done = self.settle(project["id"])
+        step = next(s for s in done["steps"] if s["id"] == "publish")
+        self.assertEqual(step["status"], "failed", done["log"])
+        self.assertIn("erid не указан", step["error"])
+        self.assertFalse((self.folder(project["id"]) / "publish").exists())
+
+        url = f"/api/studio/projects/{project['id']}"
+        status, _ = self.json("POST", f"{url}/settings", {"erid": "2VtzqxABC12"})
+        self.assertEqual(status, 200)
+        status, view = self.json("POST", f"{url}/publish", {"channels": ["download-16x9"]})
+        self.assertEqual(status, 202, view)
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+        description = (self.folder(project["id"]) / "publish" / "download-16x9" / "description.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Реклама. erid: 2VtzqxABC12", description)
+
+    def test_ad_line_survives_caption_cut(self):
+        caption = publish.caption(publish.with_ad(long_post(3000), "abc123"), "T")
+        self.assertTrue(caption.rstrip().endswith("Реклама. erid: abc123"))
+
+    def test_bad_erid(self):
+        payload = {"scenario": "post", "post": "Пост", "settings": {"erid": "две части"}}
+        self.assertEqual(self.json("POST", "/api/studio/projects", payload)[0], 400)
+
+
 if __name__ == "__main__":
     unittest.main()
