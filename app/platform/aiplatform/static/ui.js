@@ -3,7 +3,8 @@
 export const $ = (id) => document.getElementById(id);
 
 export async function api(method, path, body) {
-  const init = { method, headers: {} };
+  // X-AIP: 1 — признак запроса своей страницы: без него и без Origin сервер POST отклонит (SEC-002).
+  const init = { method, headers: { "X-AIP": "1" } };
   if (body instanceof Blob) {
     init.body = body;
   } else if (body !== undefined) {

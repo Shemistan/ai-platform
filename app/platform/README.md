@@ -334,6 +334,35 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 
 ## Настройка
 
+### Доступ и защита
+
+Аутентификации у платформы нет: кто достучался до порта, тот может публиковать
+в каналы, запускать агентов и удалять данные. Поэтому по умолчанию сервер
+слушает только `127.0.0.1`, а запросы проверяются так:
+
+- **Host** — только `127.0.0.1:<порт>`, `localhost:<порт>`, `[::1]:<порт>`,
+  адрес из `AIP_HOST` и `AIP_ALLOWED_HOSTS`; чужое имя (DNS rebinding) — 421;
+- **POST** — с `Origin` из того же списка или с заголовком `X-AIP: 1` (его
+  ставит `ui.js api()`); иначе 403. Скрипты и `curl` шлют `-H 'X-AIP: 1'`;
+- во всех ответах `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer` и `Content-Security-Policy` (только свои
+  скрипты, без встраивания в чужие фреймы).
+
+**Удалённый доступ** — не открывай порт наружу. Ходи через SSH-туннель
+(`ssh -L 8780:127.0.0.1:8780 мак`, затем http://127.0.0.1:8780) или Tailscale
+(`tailscale serve 8780`). Если всё же слушать сеть (`AIP_HOST=0.0.0.0` или
+адрес интерфейса), нужен `AIP_AUTH_TOKEN` — без него сервер не стартует:
+
+```sh
+export AIP_AUTH_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
+```
+
+Вход — по ссылке `http://box.local:8780/?token=<токен>`: сервер ставит cookie
+(HttpOnly, SameSite=Strict) и уводит на адрес без токена; скрипты шлют
+`Authorization: Bearer <токен>`. Без токена — 401 (страницы показывают форму
+входа). `GET /api/health` отвечает без токена.
+
 Переменные окружения — в `local.mk` рядом с Makefile (не в git) или в
 окружении. Пустое значение — значение по умолчанию. Готовый пример с путями,
 которые ставит `make models`: `cp local.mk.example local.mk`.
@@ -341,6 +370,8 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | Переменная | По умолчанию | Что это |
 |---|---|---|
 | `AIP_PORT`, `AIP_HOST` | `8780`, `127.0.0.1` | где слушать |
+| `AIP_AUTH_TOKEN` | — | токен доступа; без него сервер на не-loopback адресе не стартует |
+| `AIP_ALLOWED_HOSTS` | — | свои имена в Host через запятую (`box.local,10.0.0.5:8780`) |
 | `AIP_DATA_DIR` | `app/platform/data` | задачи, загрузки, выпуски |
 | `AIP_MODELS_DIR` | `/Volumes/External SSD/local_models` | веса фото- и видеомоделей |
 | `AIP_LOW_RAM` | — | экономия памяти для фото и видео |

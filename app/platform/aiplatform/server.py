@@ -5,15 +5,19 @@
 
 from __future__ import annotations
 
+import hmac
+import html
 import mimetypes
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http import HTTPStatus
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from aiplatform import __version__
 from aiplatform import config as config_module
@@ -26,6 +30,55 @@ from aiplatform.core.uploads import UploadStore
 
 STATIC_DIR = Path(__file__).with_name("static")
 HOME = "/photo/"
+AUTH_COOKIE = "aip_auth"
+# Служебный заголовок запросов страниц платформы (ui.js api()): чужой сайт поставить
+# его не может без CORS-preflight, а preflight сервер не пропускает (SEC-002).
+CSRF_HEADER = "X-AIP"
+CSP = "; ".join(
+    (
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",  # style="…" в разметке и h(…, {style})
+        "img-src 'self' blob: data:",
+        "media-src 'self' blob: data:",
+        "connect-src 'self'",
+        "font-src 'self' data:",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    )
+)
+SECURITY_HEADERS = (
+    ("X-Frame-Options", "DENY"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+    ("Content-Security-Policy", CSP),
+)
+NO_AUTH = (("GET", ("api", "health")),)  # проверка живости с этой машины — без токена
+LOGIN_PAGE = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вход — AI Platform</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:420px;margin:15vh auto;padding:0 16px">
+<h1>AI Platform</h1><p>Нужен токен доступа (AIP_AUTH_TOKEN).</p>
+<form method="get" action="{action}"><input type="password" name="token" autocomplete="current-password"
+ aria-label="Токен" style="width:100%;padding:8px" autofocus><p><button type="submit">Войти</button></p></form>
+</body></html>
+"""
+
+
+def allowed_hosts(config: Config, port: int) -> frozenset[str]:
+    """Допустимые значения Host: loopback, адрес из AIP_HOST и AIP_ALLOWED_HOSTS; без порта — свой порт."""
+    names = {"127.0.0.1", "localhost", "[::1]", *config.allowed_hosts}
+    if config.host and config.host not in ("0.0.0.0", "::"):
+        names.add(config.host)
+    out = set()
+    for name in names:
+        name = name.strip().lower()
+        if ":" in name and not name.startswith("[") and name.count(":") > 1:
+            name = f"[{name}]"  # голый IPv6
+        out.add(name if re.search(r":\d+$", name) else f"{name}:{port}")
+    return frozenset(out)
 
 
 class Module(Protocol):
@@ -142,6 +195,13 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "aiplatform"
     protocol_version = "HTTP/1.1"
     app: App  # задаётся в make_server
+    hosts: frozenset[str] = frozenset()  # задаётся в make_server, когда известен порт
+
+    def end_headers(self) -> None:
+        # Защитные заголовки — на всех ответах: JSON, статика, редиректы, ошибки (SEC-002).
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
+        super().end_headers()
 
     def log_message(self, fmt: str, *args: object) -> None:  # тишина: опрос статуса шумит
         pass
@@ -160,10 +220,11 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p for p in url.path.split("/") if p]
         req = Request(self, method, parts, parse_qs(url.query), head=head)
         try:
-            # Чужая страница в браузере не должна запускать генерацию на localhost.
-            origin = self.headers.get("Origin")
-            if method == "POST" and origin and urlsplit(origin).netloc != self.headers.get("Host"):
-                raise HttpError(HTTPStatus.FORBIDDEN, "Запрос с чужого сайта отклонён.")
+            self._check_host()
+            if not self._check_auth(req, method, url, parts):
+                return
+            if method == "POST":
+                self._check_origin()
             if parts[:1] != ["api"]:
                 if method != "GET":
                     raise HttpError(HTTPStatus.METHOD_NOT_ALLOWED, "Метод не поддерживается.")
@@ -183,6 +244,73 @@ class Handler(BaseHTTPRequestHandler):
             req.send_json({"error": exc.message, **exc.extra}, exc.status)
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
+
+    def _check_host(self) -> None:
+        """DNS rebinding: страница атакующего ходит к нам с его именем в Host — отказ."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host not in self.hosts:
+            raise HttpError(
+                HTTPStatus.MISDIRECTED_REQUEST,
+                "Неизвестный адрес в Host. Заходи по 127.0.0.1 или localhost; свой адрес — в AIP_ALLOWED_HOSTS.",
+            )
+
+    def _check_origin(self) -> None:
+        """Чужая страница в браузере не должна запускать генерацию и публикацию."""
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            parts = urlsplit(origin)
+            if parts.scheme not in ("http", "https") or parts.netloc.lower() not in self.hosts:
+                raise HttpError(HTTPStatus.FORBIDDEN, "Запрос с чужого сайта отклонён.")
+        elif self.headers.get(CSRF_HEADER) != "1":
+            raise HttpError(HTTPStatus.FORBIDDEN, f"Запрос без Origin и без заголовка {CSRF_HEADER}: 1 отклонён.")
+
+    def _token_ok(self, given: str) -> bool:
+        token = self.app.config.auth_token
+        return bool(given) and hmac.compare_digest(given.encode("utf-8"), token.encode("utf-8"))
+
+    def _check_auth(self, req: Request, method: str, url, parts: list[str]) -> bool:
+        """Токен доступа (AIP_AUTH_TOKEN): False — ответ уже отправлен (вход, редирект)."""
+        if not self.app.config.auth_token or (method, tuple(parts)) in NO_AUTH:
+            return True
+        query = parse_qs(url.query)
+        given = (query.get("token") or [""])[0]
+        if given and method == "GET" and parts[:1] != ["api"]:
+            if not self._token_ok(given):
+                self._login(req, HTTPStatus.UNAUTHORIZED)
+                return False
+            # Ссылка /?token=… ставит cookie и уводит на адрес без токена.
+            rest = urlencode([(k, v) for k, vs in query.items() if k != "token" for v in vs], doseq=True)
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", url.path + (f"?{rest}" if rest else ""))
+            self.send_header(
+                "Set-Cookie", f"{AUTH_COOKIE}={self.app.config.auth_token}; Path=/; HttpOnly; SameSite=Strict"
+            )
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+        bearer = self.headers.get("Authorization") or ""
+        if bearer.startswith("Bearer ") and self._token_ok(bearer[7:].strip()):
+            return True
+        try:
+            cookie = SimpleCookie(self.headers.get("Cookie") or "").get(AUTH_COOKIE)
+        except CookieError:
+            cookie = None
+        if cookie is not None and self._token_ok(cookie.value):
+            return True
+        if parts[:1] == ["api"]:
+            raise HttpError(HTTPStatus.UNAUTHORIZED, "Нужен токен доступа: Authorization: Bearer … или вход по ссылке.")
+        self._login(req, HTTPStatus.UNAUTHORIZED)
+        return False
+
+    def _login(self, req: Request, status: HTTPStatus) -> None:
+        data = LOGIN_PAGE.replace("{action}", html.escape(urlsplit(self.path).path, quote=True)).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if not req.head:
+            self.wfile.write(data)
 
     def _static(self, req: Request, path: str, parts: list[str]) -> None:
         if not parts:
@@ -207,11 +335,15 @@ def make_server(config: Config, modules: ModulesFactory = default_modules) -> tu
     handler = type("BoundHandler", (Handler,), {"app": app})
     server = ThreadingHTTPServer((config.host, config.port), handler)
     server.daemon_threads = True
+    handler.hosts = allowed_hosts(config, server.server_address[1])
     return server, app
 
 
 def main() -> None:
-    config = config_module.load()
+    try:
+        config = config_module.load()
+    except config_module.ConfigError as exc:
+        raise SystemExit(f"ai-platform не запущен: {exc}") from exc
     server, app = make_server(config)
     host, port = server.server_address[:2]
     print(f"ai-platform: http://{host}:{port}  (backend: {config.backend})")
