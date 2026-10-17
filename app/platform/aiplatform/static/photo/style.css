@@ -1,30 +1,5 @@
 /* Только своё для вкладки «Фото»: токены — в /tokens.css, общие элементы — в /ui.css. */
 
-.top {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-4) var(--sp-6) var(--sp-2);
-  max-width: var(--container);
-  margin: 0 auto;
-}
-.top h1 { font-size: var(--fs-xl); letter-spacing: -0.01em; }
-
-.banner {
-  max-width: calc(var(--container) - 48px);
-  margin: var(--sp-2) auto 0;
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--r-md);
-  background: var(--info-bg);
-}
-.banner:is(.tone-warning, .tone-danger) { background: var(--tone-bg); color: var(--tone); }
-.banner code { user-select: all; overflow-wrap: anywhere; }
-
-@media (max-width: 960px) {
-  .top { padding-inline: var(--sp-4); }
-  .banner { margin-inline: var(--sp-4); }
-}
-
 .field-label .muted { font-weight: var(--fw-regular); }
 
 /* --- режимы --- */
@@ -47,7 +22,6 @@
   cursor: pointer;
 }
 .drop:hover, .drop.over { border-color: var(--accent); background: var(--info-bg); }
-.plus { font-size: var(--fs-2xl); line-height: 1; }
 
 .stage-wrap {
   display: grid;
@@ -79,8 +53,7 @@
 
 /* --- параметры --- */
 
-.advanced summary { cursor: pointer; font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
-.advanced .settings { margin-top: var(--sp-3); align-items: start; }
+.advanced .settings { align-items: start; }
 .span-all { grid-column: 1 / -1; }
 
 /* --- результат --- */

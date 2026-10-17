@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from http import HTTPStatus
 
+from aiplatform.core import jobs as core_jobs
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.http import Request, bad_request, found, handle_uploads, not_found
 from aiplatform.video import config as video_config
@@ -60,7 +61,7 @@ class VideoModule:
             case ("GET", ["config"]):
                 return req.send_json(self.describe())
             case ("GET", ["jobs"]):
-                return req.send_json({"jobs": self.jobs.list()})
+                return req.send_json({"jobs": self.jobs.list(*core_jobs.list_args(req))})
             case ("POST", ["jobs"]):
                 return self._create(req, self.jobs.create)
             case ("POST", ["living"]):

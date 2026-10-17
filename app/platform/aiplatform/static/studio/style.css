@@ -13,14 +13,11 @@
 .project { display: grid; gap: var(--sp-4); min-width: 0; }
 .empty-state { min-height: 160px; display: grid; place-items: center; text-align: center; }
 
-.settings-box summary { cursor: pointer; font-weight: var(--fw-semibold); font-size: var(--fs-md); }
 .disclaimers { display: grid; gap: var(--sp-1); }
 .publish-box { display: grid; gap: var(--sp-2); justify-items: start; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .publish-channels { display: grid; gap: var(--sp-1); }
 .add-channel { display: grid; gap: var(--sp-2); }
-.add-channel[open] summary { margin-bottom: var(--sp-1); }
 .disclaimers ul { list-style: disc; padding-left: var(--sp-4); font-size: var(--fs-sm); }
-.settings-box[open] summary { margin-bottom: var(--sp-3); }
 .settings-form { display: grid; gap: var(--sp-3); }
 .settings-form fieldset { display: grid; gap: var(--sp-2); }
 .settings-form legend { font-weight: var(--fw-semibold); font-size: var(--fs-sm); margin-bottom: var(--sp-1); }
@@ -99,8 +96,6 @@
 .drop-zone img, .drop-zone video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .drop-hint { font-size: var(--fs-sm); color: var(--muted); }
 .step-settings { display: grid; gap: var(--sp-2); justify-items: start; padding: var(--sp-2) var(--sp-3); margin: var(--sp-2) 0; border: 1px dashed var(--line); border-radius: var(--r-lg); }
-.step-settings summary { cursor: pointer; }
-.step-settings[open] summary { margin-bottom: var(--sp-1); }
 .note.verdict { display: grid; gap: var(--sp-2); justify-items: start; margin-bottom: var(--sp-2); }
 .note.verdict details { width: 100%; }
 
@@ -154,28 +149,5 @@
 
 /* Автопубликация: необратимо — тумблер предупреждающего цвета. */
 .auto-publish { padding: var(--sp-2) var(--sp-2); border-radius: var(--r-md); background: var(--warn-bg); }
-.auto-publish input {
-  appearance: none;
-  position: relative;
-  width: 34px;
-  height: 20px;
-  margin-top: 1px;
-  border-radius: var(--r-pill);
-  background: var(--line);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.auto-publish input::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: var(--r-pill);
-  background: var(--switch-thumb);
-  transition: transform 0.15s;
-}
-.auto-publish input:checked { background: var(--warn); }
-.auto-publish input:checked::after { transform: translateX(14px); }
-.auto-publish input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Сам тумблер — общий input[role=switch] из ui.css; здесь только тон «включено». */
+.auto-publish input[role="switch"] { --switch-on: var(--warning); }
