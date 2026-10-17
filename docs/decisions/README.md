@@ -7,4 +7,5 @@
 <!-- gate:begin adr-index -->
 | № | Решение | Статус |
 |---|---------|--------|
+| [0001](0001-agent-config-templates.md) | Регламент агента: шаблоны .claude/ в репозитории, ставит bootstrap.sh | предложено |
 <!-- gate:end adr-index -->
