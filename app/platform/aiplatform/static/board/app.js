@@ -75,12 +75,28 @@ function reachRow(p, r) {
   if (spans.length) facts.push(spans.map(([k, v]) => `${k}: ${number(v)}`).join(", "));
   else if (known(r.views) && known(r.age_h)) facts.push("окно 24ч не закрыто");
   if (known(r.growth_24h_attr)) facts.push(`${signed(r.growth_24h_attr)} подп. за сутки${r.growth_trend ? "" : " (без тренда)"}`);
+  // Пакет для ручной загрузки опубликован, только когда автор залил его и дал ссылку на ролик.
+  if (r.state === "packaged") {
+    const link = h("input", { type: "url", class: "views-input", placeholder: "ссылка на ролик", "aria-label": `Ссылка на ролик: ${r.label}` });
+    return h(
+      "li",
+      {},
+      h("span", {}, `⇪ ${r.label}: пакет готов — залей и вставь ссылку`),
+      h(
+        "span",
+        { class: "manual-views" },
+        link,
+        h("button", { type: "button", class: "small-btn", onclick: () => link.value.trim() && act(p, "uploaded", { channel: r.channel, url: link.value.trim() }) }, "Залил"),
+      ),
+    );
+  }
   const manual = r.type === "manual" || (r.type === "telegram" && r.public === false);
   const input = h("input", { type: "number", min: "0", class: "views-input", placeholder: "просмотры", "aria-label": `Просмотры: ${r.label}` });
   return h(
     "li",
     {},
     h("span", {}, `✓ ${r.label}`),
+    r.external_url ? h("a", { class: "link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
     facts.length ? h("span", { class: "muted" }, ` · ${facts.join(" · ")}`) : null,
     manual
       ? h(

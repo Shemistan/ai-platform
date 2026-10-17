@@ -857,9 +857,28 @@ UNCLEAR = (SENDING, UNKNOWN)  # ушёл ли пост — неизвестно:
 UNCLEAR_NOTE = "Статус неизвестен — проверь канал"
 
 
+# Пакет для ручной загрузки (YouTube, TikTok…): packaged — файлы готовы, uploaded — автор залил и
+# дал ссылку на ролик. Опубликован только uploaded: пакет мог так и не дойти до площадки (AN-003).
+PACKAGED, UPLOADED = "packaged", "uploaded"
+
+
 def send_state(record: dict) -> str:
     """Состояние записи; записи до журнала — sent, если в них есть время отправки."""
     return record.get("state") or (SENT if record.get("sent") else SEND_FAILED)
+
+
+def publication_state(record: dict) -> str:
+    """Состояние записи с учётом пакетов: пакет без состояния (до AN-003) — packaged."""
+    if record.get("state") in (PACKAGED, UPLOADED):
+        return record["state"]
+    if record.get("files") and not record.get("message_id") and not record.get("state"):
+        return PACKAGED
+    return send_state(record)
+
+
+def is_live(record: dict) -> bool:
+    """Пост действительно вышел: ушёл в Telegram или залит руками со ссылкой."""
+    return publication_state(record) in (SENT, UPLOADED)
 
 
 def is_unclear(record: dict | None) -> bool:
@@ -978,7 +997,12 @@ def step_publish(ctx: StepContext) -> None:
         else:
             video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
             result = publish.publish(channel, video=video, title=title, post=post, out_dir=ctx.path("publish"))
-            record = journal.put(result | {"label": channel.label})
+            if prev and publication_state(prev) == UPLOADED:
+                # Уже залит: пакет пересобран, но ссылка и время публикации остаются.
+                record = journal.put(prev | {"files": result.get("files"), "label": channel.label})
+            else:
+                fresh = {"state": PACKAGED, "at": time.time(), "attempt_id": uuid.uuid4().hex[:12]}
+                record = journal.put(result | {"label": channel.label} | fresh)
         if off:  # осознанно без пометок: когда, почему и о ком — в записи публикации
             record = journal.put(record | {"disclaimers_off": off})
         ctx.log(f"{channel.label}: {record['message']}")
