@@ -2,18 +2,7 @@
 # Проектные проверки: зовутся pre-commit'ом и вручную (./check).
 set -e
 cd "$(dirname "$0")" || exit 1
-# --- скелет: тесты guard, commit_msg и docs_gate (в скопированных проектах их нет) ---
-if [ -f global/hooks/test_guard.py ]; then
-  python3 global/hooks/test_guard.py
-  python3 .githooks/test_commit_msg.py
-  python3 tools/test_docs_gate.py
-  # Установленный guard мог протухнуть относительно репозиторного.
-  if [ -f "$HOME/.claude/hooks/guard.py" ] && \
-     ! cmp -s global/hooks/guard.py "$HOME/.claude/hooks/guard.py"; then
-    echo "⚠ ~/.claude/hooks/guard.py отличается от global/hooks/guard.py —" >&2
-    echo "  запусти ./install-global.sh, иначе правила guard'а не активны." >&2
-  fi
-fi
+# PreToolUse-guard агента живёт вне репо (~/.claude/hooks) и здесь не проверяется.
 
 # --- секреты: токены ботов в отслеживаемых файлах (SEC-001) ---
 if [ -f tools/secret_scan.py ]; then
@@ -34,7 +23,7 @@ fi
 
 # --- код: `make check` в каждом сервисе app/<svc>/ с Makefile ---
 # В pre-commit — только сервисы с файлами в индексе; вручную и в ./finish — все.
-# Новый Go-сервис: mkdir -p app && cp -R templates/go-service app/<svc> (см. его README).
+# Новый сервис: каталог app/<svc>/ с Makefile и целью check.
 if [ -d app ]; then
   if [ -n "$GIT_INDEX_FILE" ]; then
     svcs=$(git diff --cached --name-only --diff-filter=ACMR -- app/ | \
