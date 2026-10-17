@@ -58,6 +58,19 @@ ENGINES: dict[str, Engine] = {
     )
 }
 DEFAULT_ENGINE = "higgs"  # голос по умолчанию у Higgs — Charon
+# Движок не задан явно — берётся первый с установленными весами в этом порядке:
+# higgs ставит `make models-mlx E=higgs`, espeech и silero — `make models`.
+FALLBACK_ORDER = ("higgs", "espeech", "silero")
+MLX_ENGINES = ("higgs", "fish", "moss", "qwen3", "chatterbox")  # веса ставит make models-mlx
+
+
+def models_command(engine_id: str) -> str:
+    """Какой командой поставить веса движка."""
+    if engine_id in MLX_ENGINES:
+        return f"cd app/narrator && make models-mlx E={engine_id}"
+    return "cd app/narrator && make models"
+
+
 SPEED_RANGE = (0.7, 2.0)  # как speed_arg в narrator/cli.py
 
 
