@@ -206,9 +206,15 @@ function renderUpkeep(data) {
           h("span", { class: "hint" }, "Удалять старше"),
           h("select", { onchange: (e) => section("cleanup", { days: Number(e.target.value) }).then(loadCleanup) }, ...data.cleanup.choices.map((d) => h("option", { value: d, selected: d === data.cleanup.days }, `${d} ${plural(d, "день", "дня", "дней")}`))),
         ),
+        h(
+          "label",
+          { class: "field" },
+          h("span", { class: "hint" }, "Брошенные выпуски — в архив через"),
+          h("select", { onchange: (e) => section("cleanup", { draft_days: Number(e.target.value) }) }, ...[...new Set([0, 3, 7, 14, 30, data.cleanup.draft_days ?? 7])].sort((a, b) => a - b).map((d) => h("option", { value: d, selected: d === (data.cleanup.draft_days ?? 7) }, d ? `${d} дн. без движения` : "никогда"))),
+        ),
       ),
       checkRow("Убирать раз в сутки сам", null, data.cleanup.auto, (v) => section("cleanup", { auto: v })),
-      h("p", { class: "hint" }, `Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша, загрузки и выпуски из архива. У опубликованных через ${data.cleanup.trim_days ?? 14} дн. убираются картинки слайдов и исходники клипов (видео и журнал публикаций остаются), через ${data.cleanup.archive_days ?? 60} дн. выпуск уходит в архив сам. Неопубликованные выпуски и идущие задачи не трогаются.`),
+      h("p", { class: "hint" }, `Удаляются только завершённые задачи вкладок «Фото», «Видео», «Аудио» (выпуски уже скопировали файлы к себе), давно не нужные записи кэша, загрузки и выпуски из архива. У опубликованных через ${data.cleanup.trim_days ?? 14} дн. убираются картинки слайдов и исходники клипов (видео и журнал публикаций остаются), через ${data.cleanup.archive_days ?? 60} дн. выпуск уходит в архив сам. Неопубликованный выпуск без движения уходит в архив по сроку выше (с уведомлением, файлы остаются); идущие задачи не трогаются.`),
       found ? h("p", {}, what.length ? `Сейчас под уборку: ${what.join(", ")} — ${mb(found.bytes)}.` : "Сейчас убирать нечего.") : null,
       h(
         "div",
@@ -223,10 +229,37 @@ function renderUpkeep(data) {
 
 const state = { data: null };
 
+// Каналы по умолчанию по сценариям (PRD-005): новый выпуск получает их сам, доска публикует в них
+// выпуски без выбранных каналов.
+function renderDefaults(data) {
+  const box = $("defaults");
+  if (!box) return;
+  if (!data.channels?.length) {
+    fill(box, h("p", { class: "hint" }, "Каналов публикации пока нет — добавь их во вкладке ", h("a", { href: "/channels/" }, "«Каналы»"), "."));
+    return;
+  }
+  const rows = (data.scenarios || []).map((s) => {
+    const current = new Set(s.channels);
+    const save = (id, on) => {
+      const next = data.channels.map((c) => c.id).filter((c) => (c === id ? on : current.has(c)));
+      section("default_channels", { [s.id]: next });
+    };
+    return h(
+      "div",
+      { class: "field" },
+      h("span", { class: "field-label" }, s.label),
+      h("div", { class: "inline-fields" }, ...data.channels.map((c) => h("label", { class: "check" }, h("input", { type: "checkbox", checked: current.has(c.id), onchange: (e) => save(c.id, e.target.checked) }), h("span", {}, c.label)))),
+      current.size ? null : h("p", { class: "hint" }, "Не заданы — каналы выбираются у каждого выпуска."),
+    );
+  });
+  fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Новый выпуск сразу получает каналы своего сценария; у выпусков без каналов доска предлагает опубликовать в них."), ...rows));
+}
+
 function render(data) {
   state.data = data;
   renderSchedule(data);
   renderUpkeep(data);
+  renderDefaults(data);
   const { photo, video, audio } = data.sections;
   fill($("photo"), h("div", { class: "toggle-list" }, ...photo.map((m) => row(m, "photo", m.note))));
   fill($("video"), h("div", { class: "toggle-list" }, ...video.map((m) => row(m, "video", m.note))));

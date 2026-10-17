@@ -31,9 +31,13 @@ async function act(project, path, body) {
 }
 
 // Публикация с доски необратима: только после подтверждения с каналами, подписью и вердиктом.
+// Каналы выпуска не выбраны — публикация в каналы по умолчанию его сценария (PRD-005).
+const targets = (p) => (p.channels.length ? p.channels : p.default_channels || []);
+
 async function publish(p) {
-  const ok = await confirmPublish({ channels: p.channels, caption: p.caption || "", verdict: p.verdict });
-  if (ok) act(p, "publish", { channels: p.channels.map((c) => c.id) });
+  const channels = targets(p);
+  const ok = await confirmPublish({ channels, caption: p.caption || "", verdict: p.verdict });
+  if (ok) act(p, "publish", { channels: channels.map((c) => c.id) });
 }
 
 // Что можно сделать с выпуском прямо с доски.
@@ -41,15 +45,13 @@ function actions(p) {
   const busy = state.busy.has(p.id) || p.running;
   const out = [h("a", { class: "btn--link", href: href(p) }, "Открыть")];
   const need = p.attention;
-  if (need?.step === "publish" && p.channels.length && p.verdict !== "не готово") {
-    const names = p.channels.map((c) => c.label).join(", ");
-    out.unshift(
-      h(
-        "button",
-        { type: "button", class: "btn btn--secondary btn--sm", disabled: busy, title: names, onclick: () => publish(p) },
-        p.channels.length === 1 ? `Опубликовать: ${names}…` : `Опубликовать в ${p.channels.length} ${plural(p.channels.length, "канал", "канала", "каналов")}…`,
-      ),
-    );
+  const to = targets(p);
+  if (need?.step === "publish" && to.length && p.verdict !== "не готово") {
+    const names = to.map((c) => c.label).join(", ");
+    const label = !p.channels.length ? `Опубликовать в ${names}…` : to.length === 1 ? `Опубликовать: ${names}…` : `Опубликовать в ${to.length} ${plural(to.length, "канал", "канала", "каналов")}…`;
+    out.unshift(h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: busy, title: names, onclick: () => publish(p) }, label));
+  } else if (need?.step === "publish" && !to.length) {
+    out.push(h("a", { class: "btn--link", href: "/settings/#defaults-panel", title: "Каналы по умолчанию — и кнопка публикации появится здесь" }, "Задать каналы по умолчанию"));
   } else if (p.group === "drafts" || need?.status === "failed") {
     out.unshift(h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: busy, onclick: () => act(p, "run", {}) }, "Запустить всё"));
   }
