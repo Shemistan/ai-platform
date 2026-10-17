@@ -2,6 +2,7 @@
 
 | Папка / файл | Что это |
 |---|---|
+| `context.md` | карта проекта для агента: подгружается в CLAUDE.md, полноту проверяет `tools/context_gate.py` |
 | `superpowers/specs/` | дизайн-спеки (superpowers:brainstorming) |
 | `superpowers/plans/` | планы реализации (superpowers:writing-plans) |
 | `decisions/` | ADR: одно решение = контекст → решение → последствия |
