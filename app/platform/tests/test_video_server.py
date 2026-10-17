@@ -11,7 +11,7 @@ from aiplatform import server as server_module
 from aiplatform.video import config as config_module
 from aiplatform.video import timeline
 from aiplatform.video.service import VideoModule
-from tests.helpers import PlatformCase
+from tests.helpers import PlatformCase, isolated_config
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 
@@ -21,7 +21,7 @@ def video_only(ctx):
 
 
 def load(env):
-    return config_module.load(platform_config.load(env))
+    return config_module.load(platform_config.load(isolated_config(env)))
 
 
 class ServerCase(PlatformCase):
@@ -104,7 +104,7 @@ class HappyPathTest(ServerCase):
 
     def test_empty_settings_fall_back_to_defaults(self):
         # make экспортирует VIDEOGEN_LTX_CMD и VIDEOGEN_MODEL пустыми, пока нет local.mk.
-        cfg = load({"VIDEOGEN_LTX_CMD": "", "VIDEOGEN_MODEL": ""})
+        cfg = load({"VIDEOGEN_LTX_CMD": "", "VIDEOGEN_MODEL": "", "VIDEOGEN_MODELS_DIR": ""})
         self.assertEqual((cfg.ltx_cmd, cfg.model), (("ltx-2-mlx",), ""))
         self.assertEqual(str(cfg.models_dir), platform_config.DEFAULT_MODELS_DIR)
 
@@ -219,7 +219,8 @@ class ModelsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             old, new = Path(tmp, "ltx-2.3-mlx-q4"), Path(tmp, "ltx-2.5-mlx-q4")
             old.mkdir()
-            found = self.resolve({"VIDEOGEN_MODEL": str(old)})  # local.mk до появления выбора модели
+            # local.mk до появления выбора модели: каталога моделей нет, только VIDEOGEN_MODEL
+            found = self.resolve({"VIDEOGEN_MODEL": str(old), "VIDEOGEN_MODELS_DIR": ""})
             self.assertEqual(found["ltx-2.3-q4"], (str(old), True))
             self.assertEqual(found["ltx-2.5-q4"], ("dgrauet/ltx-2.5-mlx-q4", False))
             self.assertFalse(found["wan-2.2-t2v-q4"][1])

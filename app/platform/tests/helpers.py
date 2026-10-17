@@ -12,6 +12,23 @@ import urllib.request
 
 from aiplatform import config as config_module
 from aiplatform import server as server_module
+from tests import MISSING_MODELS_DIR, TMP_ROOT
+
+
+def isolated_config(env: dict[str, str]) -> dict[str, str]:
+    """env для config.load без боевых путей.
+
+    Нет AIP_DATA_DIR — свой временный каталог (иначе прочитается app/platform/data
+    с чужими настройками). Не задан ни один каталог моделей (ключ *MODELS_DIR, хоть
+    пустой) — несуществующий AIP_MODELS_DIR, чтобы не увидеть внешний диск с весами.
+    Тест, проверяющий дефолт каталога моделей, передаёт его ключ пустым явно.
+    """
+    out = dict(env)
+    if not out.get("AIP_DATA_DIR"):
+        out["AIP_DATA_DIR"] = tempfile.mkdtemp(dir=TMP_ROOT)
+    if not any(key.endswith("MODELS_DIR") for key in out):
+        out["AIP_MODELS_DIR"] = MISSING_MODELS_DIR
+    return out
 
 
 class PlatformCase(unittest.TestCase):
@@ -34,7 +51,7 @@ class PlatformCase(unittest.TestCase):
                 self.addCleanup(os.environ.pop, key, None)
             else:
                 self.addCleanup(os.environ.__setitem__, key, old)
-        env = {"AIP_BACKEND": "fake", "AIP_DATA_DIR": self.tmp.name, "AIP_PORT": "0", **self.extra_env}
+        env = isolated_config({"AIP_BACKEND": "fake", "AIP_DATA_DIR": self.tmp.name, "AIP_PORT": "0", **self.extra_env})
         self.config = config_module.load(env)
         self.server, self.app = server_module.make_server(self.config, type(self).modules)
         self.port = self.server.server_address[1]

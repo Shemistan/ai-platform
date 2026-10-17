@@ -13,7 +13,7 @@ from aiplatform.fakes import fake_gen
 from aiplatform.photo import config as config_module
 from aiplatform.photo import models, params
 from aiplatform.photo.service import PhotoModule
-from tests.helpers import PlatformCase
+from tests.helpers import PlatformCase, isolated_config
 
 
 def png(width, height, seed=1):
@@ -28,7 +28,7 @@ def photo_only(ctx):
 
 
 def load(env):
-    return config_module.load(platform_config.load(env))
+    return config_module.load(platform_config.load(isolated_config(env)))
 
 
 class ServerCase(PlatformCase):

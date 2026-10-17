@@ -67,6 +67,22 @@ def default_font() -> str:
     return next((f for f in FONT_CANDIDATES if Path(f).is_file()), "")
 
 
+# Выставляет tests/__init__.py (и наследуют подпроцессы тестов): под ним боевые
+# каталоги данных запрещены — тест не должен читать чужие настройки и портить их.
+TEST_GUARD_ENV = "AIP_TEST_GUARD"
+SERVICE_DATA_DIRS = (SERVICE_DIR / "data", SERVICE_DIR / "data-demo")
+
+
+def _guard_tests(data_dir: Path) -> None:
+    if not flag(os.environ, TEST_GUARD_ENV):
+        return
+    if data_dir in {d.resolve() for d in SERVICE_DATA_DIRS}:
+        raise RuntimeError(
+            f"тесты не должны работать с боевым каталогом данных {data_dir}: "
+            "задай AIP_DATA_DIR во временный каталог (tests.helpers.isolated_config)"
+        )
+
+
 def load(env: Mapping[str, str] | None = None) -> Config:
     env = dict(os.environ if env is None else env)
     backend = pick(env, "AIP_BACKEND", default="real")
@@ -76,8 +92,10 @@ def load(env: Mapping[str, str] | None = None) -> Config:
     data_dir = Path(data).expanduser()
     if not data_dir.is_absolute():
         data_dir = SERVICE_DIR / data_dir
+    data_dir = data_dir.resolve()
+    _guard_tests(data_dir)
     return Config(
-        data_dir=data_dir.resolve(),
+        data_dir=data_dir,
         host=pick(env, "AIP_HOST", default="127.0.0.1"),
         port=int(pick(env, "AIP_PORT", default=str(DEFAULT_PORT))),
         backend=backend,
