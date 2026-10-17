@@ -24,6 +24,8 @@ from narrator.script import ACUTE
 from narrator.synth import MANIFEST
 
 WHISPER_MODEL = "small"
+# Коммит Systran/faster-whisper-small на huggingface.co (SEC-011); тот же — в tools/fetch-models.sh.
+WHISPER_REVISION = "536b0662742c02347bc0e980a01041f333bce120"
 DEFAULT_THRESHOLD = 0.85
 
 _WORD = re.compile(r"[a-zа-я0-9]+")
