@@ -22,6 +22,10 @@ from pathlib import Path
 from narrator import library, script
 from narrator.library import META_NAME, Entry
 
+# Версия контракта моста. Платформа сверяет её (`bridge version`) и при
+# несовпадении показывает баннер вместо мёртвых страниц. Меняй вместе с
+# EXPECTED_BRIDGE_API в app/platform/aiplatform/core/narrator.py.
+BRIDGE_API = 1
 SCRIPT = "script.txt"
 SOURCE = "source.md"
 CHECK = "check.md"
@@ -650,6 +654,8 @@ def _stdin_json() -> dict:
 
 def run(args) -> dict:
     match args.bridge_cmd:
+        case "version":
+            return {"bridge_api": BRIDGE_API}
         case "engines":
             return engines()
         case "voices":
@@ -708,6 +714,7 @@ def add_parser(sub) -> None:
     s = sub.add_parser("bridge", help="данные для страниц платформы: JSON в stdout")
     b = s.add_subparsers(dest="bridge_cmd", required=True)
     for name, help_ in (
+        ("version", "версия контракта моста: bridge_api"),
         ("engines", "движки: голоса, параметры, почему не запустится"),
         ("voices", "образцы голосов-клонов"),
         ("models", "модели озвучки на диске"),

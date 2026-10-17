@@ -1,6 +1,7 @@
 """Дайджест по расписанию, уведомления о выпусках и разделы настроек."""
 
 from datetime import date, datetime, time, timedelta
+from unittest import mock
 
 from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase, png_bytes
 
@@ -40,7 +41,8 @@ class ScheduleTest(StudioCase):
         self.assertEqual(len(projects), 1)
         self.settle(projects[0]["id"])
         self.assertEqual(self.studio.scheduler.tick(datetime.combine(today, time(10, 0))), [])
-        self.assertEqual(self.json("GET", "/api/settings/state")[1]["last_runs"]["digest"], today.isoformat())
+        run = self.json("GET", "/api/settings/state")[1]["last_runs"]["digest"]
+        self.assertEqual((run["day"], run["result"], run["attempts"]), (today.isoformat(), "ok", 1))
 
         # Вручную уже собранный день не пересоздаётся.
         self.studio.scheduler._mark("digest", "")
@@ -48,6 +50,70 @@ class ScheduleTest(StudioCase):
         self.assertEqual(again, [f"дайджест за {yesterday}: уже есть «{projects[0]['title']}»"])
         log = (self.folder("x").parents[2] / "notifications.log").read_text(encoding="utf-8")
         self.assertIn("Дайджест запущен по расписанию", log)
+
+    def test_digest_failure_is_reported_and_retried(self):
+        self.section("stats", {"auto": False})
+        self.section("schedule", {"enabled": True, "time": "07:00"})
+        today = date.today()
+        create = self.studio.create
+        calls = []
+
+        def flaky(body):
+            calls.append(body)
+            if len(calls) == 1:
+                raise OSError("No space left on device")
+            return create(body)
+
+        with mock.patch.object(self.studio, "create", flaky), self.assertLogs("aiplatform.schedule", "ERROR"):
+            done = self.studio.scheduler.tick(datetime.combine(today, time(9, 0)))
+            self.assertIn("OSError: No space left on device", done[0])
+            run = self.studio.scheduler.digest_run()
+            self.assertEqual((run["result"], run["attempts"]), ("failed", 1))
+            self.assertIn("No space left", run["error"])
+            note = self.json("GET", "/api/settings/state")[1]["notifications"][0]
+            self.assertEqual(note["title"], "Дайджест по расписанию не запустился")
+            self.assertIn("Попытка 1 из 3", note["text"])
+
+            # До паузы не повторяем, после — повтор в тот же день удаётся.
+            self.assertEqual(self.studio.scheduler.tick(datetime.combine(today, time(9, 10))), [])
+            done = self.studio.scheduler.tick(datetime.combine(today, time(9, 15)))
+        self.assertIn("запущен", done[0])
+        run = self.studio.scheduler.digest_run()
+        self.assertEqual((run["result"], run["attempts"], run["error"]), ("ok", 2, None))
+        self.settle(self.json("GET", "/api/studio/projects?scenario=digest")[1]["projects"][0]["id"])
+
+    def test_digest_gives_up_after_max_attempts(self):
+        self.section("stats", {"auto": False})
+        self.section("schedule", {"enabled": True, "time": "07:00"})
+        today = date.today()
+        boom = mock.Mock(side_effect=KeyError("schedule"))
+        with mock.patch.object(self.studio, "create", boom), self.assertLogs("aiplatform.schedule", "ERROR"):
+            for minute in (0, 15, 30, 45):
+                self.studio.scheduler.tick(datetime.combine(today, time(9, minute)))
+        self.assertEqual(boom.call_count, 3)
+        self.assertEqual(self.studio.scheduler.digest_run()["attempts"], 3)
+        note = self.json("GET", "/api/settings/state")[1]["notifications"][0]
+        self.assertIn("больше сегодня не пробую", note["text"])
+
+    def test_old_string_mark_counts_as_done(self):
+        self.section("stats", {"auto": False})
+        self.section("schedule", {"enabled": True, "time": "07:00"})
+        self.studio.scheduler._mark("digest", date.today().isoformat())
+        self.assertEqual(self.studio.scheduler.tick(datetime.combine(date.today(), time(9, 0))), [])
+
+    def test_daily_job_failure_is_visible(self):
+        self.section("stats", {"auto": False})
+
+        def broken():
+            raise RuntimeError("диск отвалился")
+
+        self.studio.scheduler.daily["boom"] = broken
+        with self.assertLogs("aiplatform.schedule", "ERROR") as logs:
+            done = self.studio.scheduler.tick(datetime.combine(date.today(), time(8, 0)))
+        self.assertIn("boom: сбой — RuntimeError: диск отвалился", done)
+        self.assertIn("Traceback", "\n".join(logs.output))
+        note = self.json("GET", "/api/settings/state")[1]["notifications"][0]
+        self.assertEqual(note["title"], "Ежедневная работа «boom» упала")
 
     def test_disabled_schedule_does_nothing(self):
         self.section("stats", {"auto": False})

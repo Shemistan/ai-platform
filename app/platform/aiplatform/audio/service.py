@@ -98,9 +98,8 @@ class AudioModule:
         }
 
     def problems(self) -> list[str]:
-        if self.config.runner_available():
-            return []
-        return [f"Аудио: команда «{self.config.narrate_cmd[0]}» не найдена. {INSTALL_HINT}"]
+        problem = self.narrator.check()  # нет команды, старый движок, другая версия моста
+        return [problem] if problem else []
 
     # --- маршруты ---
 

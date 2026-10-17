@@ -94,7 +94,8 @@ class ChannelsModule:
         return {"channels_file": str(self.config.channels_file)}
 
     def problems(self) -> list[str]:
-        return []
+        problem = self.narrator.check()
+        return [problem] if problem else []
 
     # --- данные ---
 

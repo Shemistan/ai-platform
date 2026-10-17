@@ -56,7 +56,8 @@ class LibraryModule:
         return {}
 
     def problems(self) -> list[str]:
-        return []
+        problem = self.narrator.check()  # кеш общий: одинаковый текст App.problems склеит
+        return [problem] if problem else []
 
     # --- маршруты ---
 

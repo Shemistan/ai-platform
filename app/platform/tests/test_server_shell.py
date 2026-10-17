@@ -2,6 +2,7 @@
 
 import unittest
 
+from aiplatform.core import narrator
 from aiplatform.core.http import found, not_found
 from tests.helpers import PlatformCase
 
@@ -34,6 +35,24 @@ class EchoModule:
 
     def close(self):
         self.closed = True
+
+
+class IncompatibleNarratorTest(PlatformCase):
+    """Движок с чужой версией моста → один баннер в /api/config, а не тишина."""
+
+    process_env = {"FAKE_BRIDGE_API": "7"}
+
+    def setUp(self):
+        narrator.reset_checks()
+        self.addCleanup(narrator.reset_checks)
+        super().setUp()
+
+    def test_config_reports_narrator_once(self):
+        status, body = self.json("GET", "/api/config")
+        self.assertEqual(status, 200)
+        found_ = [p for p in body["problems"] if "версия моста 7" in p]
+        self.assertEqual(len(found_), 1, body["problems"])
+        self.assertIn("AIP_NARRATOR_DIR", found_[0])
 
 
 class ShellTest(PlatformCase):
