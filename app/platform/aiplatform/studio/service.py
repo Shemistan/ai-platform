@@ -308,7 +308,12 @@ class StudioModule:
                 | {
                     "scenario_label": SCENARIOS.get(item["scenario"], item["scenario"]),
                     "group": board_group(item, project),
-                    "channels": [{"id": c, "label": channels.get(c, c)} for c in chosen],
+                    "channels": [
+                        {"id": c, "label": channels.get(c, c), "type": known[c].type if c in known else None}
+                        for c in chosen
+                    ],
+                    # Начало подписи — показать в подтверждении публикации с доски.
+                    "caption": _read_text(folder / steps.POST).strip()[:300],
                     "published": [
                         {
                             "channel": r["channel"],
@@ -788,6 +793,8 @@ class StudioModule:
                 # Чего шаг ждёт от других шагов и можно ли сейчас класть ему файлы.
                 "blocked_by": [LABELS[b] for b in blockers(project, s)],
                 "locked": any(raw[d]["status"] == "running" for d in [s, *dependents(s)]),
+                # Что сбросит перезапуск шага — для подтверждения «Перезапустить шаг».
+                "dependents": dependents(s),
             }
             for s in STEP_IDS
         ]

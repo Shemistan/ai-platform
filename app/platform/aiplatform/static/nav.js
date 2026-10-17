@@ -56,6 +56,10 @@ function render() {
   const gpu = el("span", { class: "gpu", id: "platform-gpu", title: "Тяжёлые модели идут по одной" }, "GPU: …");
   nav.append(gpu);
   document.body.prepend(nav);
+  // Одна область объявлений на страницу: announce() из ui.js пишет сюда только переходы («готово», «ошибка»).
+  if (!document.getElementById("sr-status")) {
+    document.body.append(el("div", { id: "sr-status", class: "sr-only", role: "status", "aria-live": "polite" }));
+  }
   return gpu;
 }
 
