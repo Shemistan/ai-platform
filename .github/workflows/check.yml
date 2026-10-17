@@ -1,0 +1,66 @@
+# Независимая проверка: тот же ./check, что гоняет pre-commit, но на чистой машине.
+# PR staging → main без зелёного статуса не сливать (required check — README, «CI»).
+name: check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Apple Silicon — как у автора: setup-model.sh, MLX-проверки и ffmpeg те же.
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      # Экстры narrator с моделями (espeech → torch) тесты не импортируют: не ставим.
+      NARRATOR_CHECK_EXTRAS: ""
+      PYTHON: python3.12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/platform/pyproject.toml
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: app/narrator/uv.lock
+
+      - name: ffmpeg и линтеры
+        run: |
+          brew install ffmpeg
+          python3.12 -m pip install ruff coverage
+
+      # Студийные тесты без ffmpeg тихо пропускаются (skipUnless) — здесь его наличие обязательно.
+      - name: окружение
+        run: |
+          ffmpeg -hide_banner -version | head -1
+          python3.12 --version
+          uv --version
+          ruff --version
+          node --version
+
+      - name: ./check
+        run: ./check
+
+      # Покрытие без порога (QA-022): итог — в лог джобы.
+      - name: покрытие платформы
+        if: success()
+        run: make -C app/platform cov
+
+      - name: покрытие narrator
+        if: success()
+        run: make -C app/narrator cov
