@@ -556,7 +556,7 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `NARRATOR_TELEGRAM_TOKEN` | — | токен бота движка для каналов без своего `token_env`; значение не в git |
 | `NARRATOR_TELEGRAM_TOKEN_FILE` | `app/narrator/bot_token.md` | файл с токеном бота, если переменная выше пуста |
 | `NARRATOR_TELEGRAM_CHANNEL` | канал статей из `telegram_tems.md` | `off` — озвучка статей идёт подписчикам бота в личку, а не в канал |
-| `FAKE_NARRATOR_HOME`, `FAKE_NARRATOR_DELAY`, `FAKE_TTS_STEP_DELAY`, `FAKE_TTS_FAIL` | внутри данных платформы, `0.05`, `0.3`, — | только для демо и тестов: каталог фейкового движка, паузы шагов, падение озвучки на середине |
+| `FAKE_NARRATOR_HOME`, `FAKE_NARRATOR_DELAY`, `FAKE_TTS_STEP_DELAY`, `FAKE_TTS_WORDS_PER_SECOND`, `FAKE_TTS_FAIL` | внутри данных платформы, `0.05`, `0.3`, `2.5`, — | только для демо и тестов: каталог фейкового движка, паузы шагов, темп фейковой речи (короче аудио — быстрее рендер в тестах), падение озвучки на середине |
 
 Имена `NARRATOR_CHANNELS`, `NARRATOR_COVER`, `NARRATOR_COVER_EXT`,
 `NARRATOR_FOLDER`, `NARRATOR_PROMPT`, `NARRATOR_REVIEW`,
@@ -634,7 +634,9 @@ claude CLI. Данные старого narrator (статьи, база нов�
 ## Проверка
 
 ```sh
-make check   # ruff (если стоит), node --check, unittest — всё на фейках
+make check   # ruff (если стоит), node --check, тесты — всё на фейках
+make test    # только тесты: параллельно, pytest-xdist по процессам (~1 мин; pytest — свой или через uv)
+make test-serial  # то же последовательно через unittest — для отладки
 make cov     # покрытие по модулям (худшие сверху) и html в tmp/cov/html, без порога
 make smoke   # на настоящих моделях: картинка, фраза озвучки, черновик статьи — с временем шагов
 ```

@@ -132,12 +132,10 @@ class RhythmTest(unittest.TestCase):
         )
         return out
 
-    def test_every_kind_changes_at_least_every_five_seconds(self):
-        for name, (kind, data, bullets) in SCENES.items():
-            for orientation in (render.LANDSCAPE, render.VERTICAL):
-                with self.subTest(name, orientation=orientation):
-                    video = self.render(name, kind, data, bullets, orientation)
-                    self.assertLessEqual(max(still_spans(video)), MAX_STILL_S)
+    def check_rhythm(self, name: str, orientation: str):
+        kind, data, bullets = SCENES[name]
+        video = self.render(name, kind, data, bullets, orientation)
+        self.assertLessEqual(max(still_spans(video)), MAX_STILL_S)
 
     def test_progress_bar_with_chapter(self):
         out = self.dir / "progress.mp4"
@@ -160,6 +158,20 @@ class RhythmTest(unittest.TestCase):
         video = self.render("image", "image", {}, ["Тезис"], image=image)
         self.assertLessEqual(max(still_spans(video)), MAX_STILL_S)
 
+
+# Каждый вид слайда — отдельный тест, а не subTest в одном: параллельный прогон (QA-016)
+# раскладывает их по воркерам, а не держит 22 рендера в одном.
+def _rhythm_test(name: str, orientation: str):
+    def test(self):
+        self.check_rhythm(name, orientation)
+
+    test.__doc__ = f"Слайд «{name}» ({orientation}) меняется не реже раза в {MAX_STILL_S:g} с."
+    return test
+
+
+for _name in SCENES:
+    for _orientation in (render.LANDSCAPE, render.VERTICAL):
+        setattr(RhythmTest, f"test_rhythm_{_name}_{_orientation}", _rhythm_test(_name, _orientation))
 
 if __name__ == "__main__":
     unittest.main()

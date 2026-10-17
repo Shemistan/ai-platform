@@ -21,6 +21,7 @@ ARTICLE = """Как устроен сборщик мусора в Go
 FAST = {
     "FAKE_GEN_STEP_DELAY": "0.005",
     "FAKE_TTS_STEP_DELAY": "0.01",
+    "FAKE_TTS_WORDS_PER_SECOND": "10",
     "FAKE_NEWS_DELAY": "0",
     "FAKE_LLM_FAIL": "",
     "FAKE_LLM_GARBAGE": "",
