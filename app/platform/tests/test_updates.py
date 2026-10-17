@@ -239,8 +239,13 @@ class DisclaimerFlowTest(StudioCase):
         settings = {"disclaimers": False, "channels": ["download-16x9"], "auto_publish": True}
         project = self.create(scenario="article", text=ARTICLE_META, settings=settings, run=True)
         done = self.settle(project["id"])
+        # Упоминание есть, пометки выключены — без причины не публикуется (CMP-004).
+        self.assertEqual(self.statuses(done)["publish"], "failed", done["log"])
+        body = {"channels": ["download-16x9"], "ignore_disclaimers": "проверка"}
+        self.json("POST", f"/api/studio/projects/{project['id']}/publish", body)
+        done = self.settle(project["id"])
         self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
-        self.assertNotIn("пометки", "\n".join(done["log"]))
+        self.assertNotIn("пометки о запрещённых организациях", "\n".join(done["log"]))
         description = (self.folder(project["id"]) / "publish" / "download-16x9" / "description.txt").read_text(
             encoding="utf-8"
         )
