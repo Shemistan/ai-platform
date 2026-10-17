@@ -15,7 +15,11 @@ from aiplatform.updates import registry
 
 FAKES = Path(__file__).resolve().parent.parent / "fakes"
 ASSETS = Path(__file__).resolve().parent / "assets"  # плашка «подпишись» и кнопка «плей», как у narrator
-DEFAULT_LLM_CMD = "claude -p"
+# Модель студии читает чужой текст (статьи, новости) — инструментов ей не даём вовсе:
+# --tools "" — ни одного встроенного, --strict-mcp-config — ни одного MCP,
+# --setting-sources project — без пользовательских прав и хуков из ~/.claude (SEC-004).
+LLM_ISOLATION = "--setting-sources project --strict-mcp-config"
+DEFAULT_LLM_CMD = f'claude -p --tools "" {LLM_ISOLATION}'
 DEFAULT_IMAGE_MODEL = "z-image-turbo"  # быстрая и лёгкая: картинок на ролик много
 # {narrator} и {day} подставляются; команда сбора — как `make news DAY=…` в narrator.
 DEFAULT_NEWS_CMD = "make -C {narrator} news-collect news-agent news-judge DAY={day}"

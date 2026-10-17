@@ -224,7 +224,7 @@ function syncControls() {
   const missing = cfg.models.filter((m) => !m.installed && m.modes.includes(state.mode));
   $("model-note").textContent = [
     model ? `${model.label}: ${model.note}.` : "Для этого режима нет установленной модели.",
-    missing.length ? `Установить: ${missing.map((m) => `./setup-model.sh ${m.id}`).join(", ")}.` : "",
+    missing.length ? `Установить: ${missing.map((m) => `make models M=${m.id}`).join(", ")}.` : "",
   ].filter(Boolean).join(" ");
   $("prompt-hint").textContent = model ? promptHint(model) : "";
 
@@ -585,7 +585,7 @@ function configureBanner(cfg) {
         "Ни одна модель не установлена — или не подключён диск с весами (",
         h("code", {}, cfg.models_dir),
         "). Установка: ",
-        h("code", {}, "./setup-model.sh z-image-turbo"),
+        h("code", {}, "make models M=z-image-turbo"),
         `. Подробнее: ${cfg.install_hint}.`,
       ],
     };

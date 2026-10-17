@@ -69,7 +69,7 @@ def load(config: Config) -> VideoConfig:
         raise ValueError("AIP_VIDEO_WAN_STEPS: нужно целое число от 1")
     model = pick(env, "AIP_VIDEO_MODEL", "VIDEOGEN_MODEL")
     # Каталог со всеми весами: задан явно либо это сосед каталога из VIDEOGEN_MODEL —
-    # так модель, доустановленная ./setup-model.sh, появляется в списке сама.
+    # так модель, доустановленная make models, появляется в списке сама.
     models_dir: Path | None
     explicit_dir = pick(env, "AIP_VIDEO_MODELS_DIR", "VIDEOGEN_MODELS_DIR", "AIP_MODELS_DIR")
     if explicit_dir:
