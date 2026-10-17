@@ -13,6 +13,6 @@
 .row-added td { background: var(--ok-bg); }
 .row-changed td { background: var(--warn-bg); }
 .row-removed td { background: var(--bad-bg); text-decoration: line-through; }
-.proposal { display: grid; gap: 10px; border: 1px solid var(--warn); border-radius: 10px; padding: 12px; }
+.proposal { display: grid; gap: 10px; border: 1px solid var(--warn); border-radius: var(--r-lg); padding: 12px; }
 .editor { display: grid; gap: 8px; }
 .editor[open] summary { margin-bottom: 8px; }

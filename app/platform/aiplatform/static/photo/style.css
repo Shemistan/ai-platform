@@ -14,7 +14,7 @@
   max-width: calc(var(--container) - 48px);
   margin: 8px auto 0;
   padding: 10px 14px;
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   background: var(--info-bg);
 }
 .banner:is(.tone-warning, .tone-danger) { background: var(--tone-bg); color: var(--tone); }
@@ -42,7 +42,7 @@
   padding: 16px;
   text-align: center;
   border: 1px dashed var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   background: var(--sunken);
   cursor: pointer;
 }
@@ -54,7 +54,7 @@
   place-items: center;
   padding: 12px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   background: var(--sunken);
 }
 .stage-wrap.over { border-color: var(--accent); background: var(--info-bg); }
@@ -74,7 +74,7 @@
 .tool {
   padding: 5px 12px;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--panel);
   cursor: pointer;
   font-size: 13px;
@@ -103,14 +103,14 @@
   max-width: 100%;
   max-height: 70vh;
   margin: 0 auto;
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   background: var(--sunken);
 }
 .job-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
 .took { font-weight: 600; font-variant-numeric: tabular-nums; }
 .download {
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   background: var(--accent);
   color: var(--accent-text);
   font-weight: 600;
@@ -120,7 +120,7 @@
 .upscale button {
   padding: 6px 12px;
   border: 1px solid var(--accent);
-  border-radius: 8px;
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--accent);
   font-weight: 600;
@@ -129,9 +129,9 @@
 .upscale button:hover { background: var(--info-bg); }
 .inputs { display: flex; flex-wrap: wrap; gap: 8px; }
 .inputs figure { margin: 0; display: grid; gap: 2px; justify-items: center; font-size: 11px; color: var(--muted); }
-.inputs img { height: 64px; max-width: 110px; object-fit: contain; border-radius: 6px; background: var(--sunken); }
+.inputs img { height: 64px; max-width: 110px; object-fit: contain; border-radius: var(--r-sm); background: var(--sunken); }
 
 /* --- история --- */
 
-.history-thumb { flex: none; width: 44px; height: 44px; object-fit: cover; border-radius: 5px; background: var(--sunken); }
+.history-thumb { flex: none; width: 44px; height: 44px; object-fit: cover; border-radius: var(--r-sm); background: var(--sunken); }
 .history-thumb.text { display: grid; place-items: center; color: var(--muted); font-weight: 700; }

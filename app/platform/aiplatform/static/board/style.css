@@ -12,7 +12,7 @@
   background: var(--panel);
   border: 1px solid var(--line);
   border-left: 4px solid var(--tone-line, var(--line));
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   min-width: 0;
 }
 /* Группа доски → тон полосы (те же переменные, что у .tone-* в ui.css). */
@@ -20,12 +20,12 @@
 .board-card.attention.failed { --tone-line: var(--danger); }
 .board-card.running { --tone-line: var(--info); }
 .board-card.published { --tone-line: var(--success); }
-.board-card .thumb { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; background: var(--sunken); }
+.board-card .thumb { width: 72px; height: 72px; border-radius: var(--r-md); object-fit: cover; background: var(--sunken); }
 .board-card .body { display: grid; gap: 6px; min-width: 0; }
 .board-card .title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
 .board-card .title:hover { text-decoration: underline; }
 .board-card .meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; color: var(--muted); }
-.board-card .need { font-size: 13px; padding: 6px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }
+.board-card .need { font-size: 13px; padding: 6px 10px; border-radius: var(--r-md); background: var(--warn-bg); color: var(--warn); }
 .board-card.failed .need { background: var(--bad-bg); color: var(--bad); }
 .board-card .actions { gap: 6px 12px; }
 .board-card .error { font-size: 13px; color: var(--bad); }
