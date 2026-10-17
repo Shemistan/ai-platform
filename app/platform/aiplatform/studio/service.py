@@ -216,6 +216,12 @@ class StudioModule:
         self._idem: dict[str, _Once] = {}  # Idempotency-Key → создание (последние IDEMPOTENCY_KEEP)
         self._stats_thread: threading.Thread | None = None
         self.scheduler.daily["stats"] = self._daily_stats
+        self.scheduler.daily["audit"] = self._daily_audit
+
+    def _daily_audit(self) -> str | None:
+        """Ротация журнала комплаенса: записи старше года — в архив (CMP-015)."""
+        moved = self.studio.audit.rotate()
+        return f"журнал комплаенса: в архив {moved}" if moved else None
 
     def bind(self) -> None:
         """Соседние вкладки готовы — сценарии будут ставить задачи в их очереди."""

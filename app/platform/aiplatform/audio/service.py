@@ -26,6 +26,7 @@ from aiplatform.audio.jobs import (
     build_spec,
     parse_tempo,
 )
+from aiplatform.core import audit
 from aiplatform.core import tasks as tasks_module
 from aiplatform.core.http import HttpError, Request, bad_request, found, handle_uploads, not_found
 from aiplatform.core.narrator import INSTALL_HINT, NarratorError, http_error
@@ -50,6 +51,7 @@ class AudioModule:
         self.uploads = ctx.uploads
         self.jobs = AudioJobs(self.config, ctx.gate, URL_BASE)
         self.tasks = tasks_module.Tasks(self.config.data_dir / "tasks", ctx.gate)
+        self.audit = audit.AuditLog(ctx.config.data_dir / audit.FILE)  # запись голоса — в журнал комплаенса
         self._engines_lock = threading.Lock()
         self._engines: tuple[float, dict] | None = None
 
@@ -266,8 +268,21 @@ class AudioModule:
         elif voice["record"] != "gemini":
             raise bad_request("Для этого голоса нужна своя запись и её текст.")
 
-        def done(_task: dict) -> None:
+        def done(task: dict) -> None:
             self.engines(fresh=True)  # появился образец — у клонов новый голос
+            self.audit.write(
+                "voice_record",
+                who=who,
+                voice=voice["voice"],
+                stem=stem,
+                source="upload" if upload else "gemini",
+                status=task.get("status"),
+                text_sha256=audit.sha256_text(text) if isinstance(text, str) and text.strip() else None,
+                upload_sha256=upload_sha256,
+            )
+
+        who = audit.actor()
+        upload_sha256 = audit.sha256_file(path) if upload else None  # до задачи: файл загрузки она заберёт
 
         spec = tasks_module.Spec(
             kind=VOICE_TASK,

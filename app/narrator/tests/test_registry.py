@@ -282,3 +282,34 @@ def test_ai_labels_in_caption_mp3_and_video(tmp_path, monkeypatch):
     audio.write_bytes(b"ID3")
     video.make_video(poster, frame, audio, tmp_path / "v.mp4", 3.0)
     assert "comment=AI-generated" in seen[0]
+
+
+def test_send_writes_audit_line(tmp_path, monkeypatch):
+    """CMP-015: отправка пишет в audit.jsonl sha256 подписи, сноски и версию реестра."""
+    import os
+
+    from narrator import audit
+
+    monkeypatch.setenv("NARRATOR_LIBRARY", str(tmp_path / "library"))
+    (tmp_path / telegram.CHANNELS_FILE).write_text("AUDIO=-1002099747713\n", encoding="utf-8")
+    folder = tmp_path / "f"
+    folder.mkdir()
+    (folder / "post.md").write_text("Facebook закрыл API.", encoding="utf-8")
+
+    def transport(method, params, files=None):
+        return {"ok": True, "result": {"message_id": 7}}
+
+    bot = telegram.Bot("t", transport)
+    telegram.send_folder(bot, telegram.State(), folder, "AUDIO")
+    (record,) = audit.read(tmp_path)
+    assert (record["action"], record["actor"]) == ("publish", "local")
+    assert len(record["caption_sha256"]) == 64
+    assert record["footnotes"] == [META_NOTE]
+    assert record["registry"] == registry.checked() != ""
+    assert record["recipients"] == [-1002099747713]
+    log = tmp_path / "audit.jsonl"
+    first = log.read_text(encoding="utf-8")
+    assert oct(os.stat(log).st_mode & 0o777) == "0o600"
+    telegram.mark_sent(telegram.State(), folder, "folder")
+    assert log.read_text(encoding="utf-8").startswith(first), "строки только дописываются"
+    assert audit.read(tmp_path)[-1]["action"] == "mark_sent"

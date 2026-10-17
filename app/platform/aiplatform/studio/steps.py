@@ -36,7 +36,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiplatform.core import disk, log, media
+from aiplatform.core import audit, disk, log, media
 from aiplatform.core import settings as core_settings
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.runner import Canceled
@@ -1083,6 +1083,37 @@ def step_publish(ctx: StepContext) -> None:
         )
         again = channel.type == publish.TELEGRAM and force and prev is not None and send_state(prev) == SENT
         published_event(ctx, channel, record, again=again)
+        audit_publish(ctx, channel, record, post, off)
+
+
+def audit_publish(ctx: StepContext, channel: publish.Channel, record: dict, post: str, off: dict | None) -> None:
+    """Публикация в журнал комплаенса: что ушло, куда, с какими пометками и версией реестра (CMP-015)."""
+    if record.get("skipped"):
+        return
+    svc = services(ctx)
+    photo = channel.type == publish.TELEGRAM and ctx.settings.get("post_format") == "photo"
+    if photo:
+        media = [find(ctx.dir, "poster", IMAGE_EXT), find(ctx.dir, "voice", AUDIO_EXT)]
+    else:
+        media = [ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)]
+    log = ctx.studio.audit
+    fields = {"project_id": ctx.project["id"], "channel": channel.id, "registry": registry_checked(svc.config)}
+    log.write(
+        "publish",
+        **fields,
+        message_id=record.get("message_id"),
+        state=record.get("state"),
+        caption_sha256=audit.sha256_text(post),
+        media={p.name: audit.sha256_file(p) for p in media if p is not None},
+        footnotes=audit.footnotes(post),
+        ai=publish.AI_PREFIX in post,
+    )
+    if off:
+        log.write("disclaimers_off", **fields, reason=off.get("reason"), mentions=off.get("mentions"))
+
+
+def registry_checked(config: StudioConfig) -> str:
+    return registry.Registry(config.registry_file).read()[1]
 
 
 def published_event(ctx: StepContext, channel: publish.Channel, record: dict, *, again: bool) -> None:

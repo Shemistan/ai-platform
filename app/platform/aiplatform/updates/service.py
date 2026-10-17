@@ -19,6 +19,7 @@ from http import HTTPStatus
 from pathlib import Path
 
 from aiplatform.config import Config, pick
+from aiplatform.core import audit
 from aiplatform.core import narrator as narrator_module
 from aiplatform.core import tasks as tasks_module
 from aiplatform.core.fsutil import atomic_write
@@ -152,6 +153,7 @@ class UpdatesModule:
         self.ctx = ctx
         self.config: Config = ctx.config
         self.registry = registry.Registry(ctx.config.data_dir / registry.FILE_NAME)
+        self.audit = audit.AuditLog(ctx.config.data_dir / audit.FILE)  # журнал комплаенса (CMP-015)
         self.cancel = threading.Event()
         folder = ctx.config.data_dir / "updates"
         self.models_job = Job(folder / "models.json")
@@ -263,8 +265,21 @@ class UpdatesModule:
         state = self.registry_job.snapshot()
         if state.get("status") != DONE or not state.get("proposal"):
             raise bad_request("Нет предложенного списка — запусти проверку.")
-        self.registry.save(registry.parse(state["proposal"]))
+        entries = registry.parse(state["proposal"])
+        self.registry.save(entries)
         self.registry_job.update(proposal=None, applied=time.time())
+        self.audit_registry("proposal", entries, state.get("diff"))
+
+    def audit_registry(self, how: str, entries: list[registry.Entry], change: dict | None) -> None:
+        """Применение реестра — в журнал комплаенса: как, версия (дата сверки), что изменилось."""
+        self.audit.write(
+            "registry_apply",
+            how=how,
+            registry=self.registry.read()[1],
+            entries=len(entries),
+            sha256=audit.sha256_text(json.dumps([e.stored() for e in entries], ensure_ascii=False, sort_keys=True)),
+            diff=change,
+        )
 
     def dismiss_proposal(self) -> None:
         self.registry_job.update(proposal=None)
@@ -278,7 +293,9 @@ class UpdatesModule:
             raise bad_request(f"Список не годится: {exc}") from exc
         if not entries:
             raise bad_request("Список пуст — пометки на видео пропадут. Удали записи по одной, если это нужно.")
+        before = self.registry.entries()
         self.registry.save(entries, self.registry.read()[1])
+        self.audit_registry("edit", entries, registry.diff(before, entries))
 
     # --- платформа ---
 
@@ -351,6 +368,7 @@ class UpdatesModule:
                 self.dismiss_proposal()
             case ("POST", ["registry", "reset"]):
                 self.registry.reset()
+                self.audit_registry("reset", self.registry.entries(), None)
             case ("POST", ["registry"]):
                 self.save_registry(req.json(MAX_BODY))
             case _:

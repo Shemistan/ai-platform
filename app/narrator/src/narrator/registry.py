@@ -196,6 +196,23 @@ def load(path: Path | None = None) -> list[Entry]:
     return []
 
 
+def checked(path: Path | None = None) -> str:
+    """Дата последней сверки реестра (версия для журнала комплаенса); нет — пусто."""
+    chosen = path or (
+        Path(os.environ[REGISTRY_ENV]).expanduser() if os.environ.get(REGISTRY_ENV) else None
+    )
+    for source in (chosen, DEFAULT_FILE):
+        if source is None:
+            continue
+        try:
+            data = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return str(data.get("checked") or "")
+    return ""
+
+
 def mentioned(text: str, entries: list[Entry]) -> list[Entry]:
     """Организации, которые упоминаются в тексте, в порядке реестра."""
     return [e for e in entries if e.mentioned_in(text)]

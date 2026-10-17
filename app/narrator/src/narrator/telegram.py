@@ -45,7 +45,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 
-from narrator import library, registry
+from narrator import audit, library, registry
 from narrator.library import Entry, article_id, audio_name, format_duration
 
 TOKEN_ENV = "NARRATOR_TELEGRAM_TOKEN"
@@ -640,7 +640,7 @@ def _send_annotation(
             Delivery(sub.chat_id, sub.name, reply.ok, "" if reply.ok else reply.description)
         )
     if any(d.ok for d in done):
-        mark_sent(state, path, engine, tag)
+        mark_sent(state, path, engine, tag, caption=text, done=done)
     return done
 
 
@@ -703,9 +703,32 @@ def unsent(state: State, root: Path) -> list[tuple[Path, Entry, str]]:
     return out
 
 
-def mark_sent(state: State, path: Path, engine: str, tag: str = "") -> None:
-    """Считать озвучку отправленной, ничего не посылая."""
+def mark_sent(
+    state: State,
+    path: Path,
+    engine: str,
+    tag: str = "",
+    *,
+    caption: str = "",
+    media: tuple[Path, ...] = (),
+    done: list[Delivery] | None = None,
+) -> None:
+    """Отметить озвучку отправленной и записать это в журнал комплаенса (CMP-015).
+
+    Без done — «считать отправленной, ничего не посылая» (`bot send --mark`)."""
     state.sent[sent_key(path, engine, tag)] = datetime.now().isoformat(timespec="seconds")
+    audit.write(
+        library.library_root(),
+        "publish" if done is not None else "mark_sent",
+        item=article_id(path) if path.parent.parent.parent.name.isdigit() else str(path),
+        engine=engine,
+        channel=tag or None,
+        recipients=[d.chat_id for d in done or [] if d.ok] or None,
+        caption_sha256=audit.sha256_text(caption) if caption else None,
+        media={p.name: audit.sha256_file(p) for p in media if p} or None,
+        footnotes=audit.footnotes(caption) or None,
+        registry=registry.checked(),
+    )
 
 
 @dataclass
@@ -766,7 +789,8 @@ def broadcast(
             for sub in people
         ]
         if any(d.ok for d in done):
-            mark_sent(state, path, engine, tag)
+            caption = digest_caption(path, entry)
+            mark_sent(state, path, engine, tag, caption=caption, media=(cover, audio), done=done)
         return done
 
     if entry.kind == "article" and annotation:
@@ -804,7 +828,7 @@ def broadcast(
         error = "" if reply.ok else reply.description
         done.append(Delivery(sub.chat_id, sub.name, reply.ok, error))
     if any(d.ok for d in done):
-        mark_sent(state, path, engine, tag)
+        mark_sent(state, path, engine, tag, caption=caption, media=(audio,), done=done)
     return done
 
 
@@ -936,7 +960,10 @@ def send_digest_video(
         error = "" if reply.ok else reply.description
         done.append(Delivery(sub.chat_id, sub.name, reply.ok, error))
     if any(d.ok for d in done):
-        mark_sent(state, path, engine, sent_tag(entry, channel))
+        tag = sent_tag(entry, channel)
+        mark_sent(
+            state, path, engine, tag, caption=digest_caption(path, entry), media=(video,), done=done
+        )
     return done
 
 
@@ -1063,5 +1090,6 @@ def send_folder(
         error = "" if reply.ok else reply.description
         done.append(Delivery(sub.chat_id, sub.name, reply.ok, error))
     if any(d.ok for d in done):
-        mark_sent(state, path, FOLDER_ENGINE, tag)
+        files = tuple(p for p in (parcel.image, parcel.audio, video) if p)
+        mark_sent(state, path, FOLDER_ENGINE, tag, caption=caption, media=files, done=done)
     return done
