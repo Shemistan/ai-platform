@@ -666,7 +666,18 @@ def cmd_bot_serve(args) -> int:
         me = bot.call("getMe") or {}
     except telegram.TelegramError as e:
         return fail(str(e), 4)
-    print(f"бот @{me.get('username', '?')} слушает подписки, выход — Ctrl+C")
+    # getUpdates — у одного процесса: второй serve выходит, остальные команды pull пропускают.
+    try:
+        with telegram.serving():
+            print(f"бот @{me.get('username', '?')} слушает подписки, выход — Ctrl+C")
+            return _serve(bot, state, path, args)
+    except telegram.TelegramError as e:  # _serve свои ошибки ловит сам — это занятый serve
+        return fail(str(e), 4)
+
+
+def _serve(bot, state, path: Path, args) -> int:
+    from narrator import telegram
+
     code = 0
     try:
         while True:
