@@ -13,7 +13,9 @@
 первые COVER_HOLD_S секунд — обложка (постер притемнён, по центру кнопка
 «плей», внизу крупная плашка «подпишись»; этот кадр Telegram показывает
 превью), затем притемнение и плей гаснут, а плашка плавно уезжает в правый
-верхний угол и остаётся там до конца ролика — на всех слайдах.
+верхний угол и остаётся там на всех слайдах. За OUTRO_S секунд до конца
+ролика кадр снова притемняется и плашка выезжает обратно — крупно вниз по
+центру, как на обложке.
 
 Тексты идут через textfile с expansion=none: ни кавычки, ни двоеточия, ни % в тексте
 не ломают фильтр. Горизонталь 1920×1080 и вертикаль 1080×1920 — одна сцена,
@@ -51,6 +53,7 @@ INTRO_S = 2.0
 INTRO_BRANDED_S = 3.0  # обложка, переезд плашки в угол и ещё немного чистого постера
 COVER_HOLD_S = 0.8  # обложка с плеем и крупной плашкой — первый кадр и превью в Telegram
 MOVE_S = 1.0  # плашка уезжает в угол
+OUTRO_S = 2.5  # концовка: плашка возвращается на место обложки и держится до конца
 FADE_S = 0.5  # притемнение и плей гаснут
 COVER_SHADE = 0.6  # притемнение обложки, чтобы плей не терялся в картинке
 PLAY_SHARE = 0.26  # кнопка — доля короткой стороны кадра, как у narrator
@@ -111,6 +114,16 @@ def sticker_boxes(lay: Layout, ratio: float) -> tuple[Box, Box]:
     corner = _even(w * STICKER_CORNER[shape(w, h)])
     bottom = Box(big, (w - big) // 2, h - round(big / ratio) - margin)
     return bottom, Box(corner, w - corner - margin, margin)
+
+
+def _lerp(a: int, b: int, e: str) -> str:
+    """От a к b по выражению e (0 → 1) — для координат и ширины плашки, в кавычках для фильтра."""
+    return f"'{a}+({b - a})*{e}'"
+
+
+def outro_start(seconds: float) -> float:
+    """С какой секунды последнего слайда плашка едет обратно: за OUTRO_S до конца, не раньше начала."""
+    return round(max(seconds - OUTRO_S, 0.0), 3)
 
 
 def _ease(start: float, seconds: float) -> str:
@@ -357,18 +370,14 @@ class Renderer:
             play = _even(min(w, h) * PLAY_SHARE)
             bottom, corner = sticker_boxes(lay, branding.ratio)
             e = _ease(COVER_HOLD_S, MOVE_S)
-
-            def lerp(a: int, b: int) -> str:
-                return f"'{a}+({b - a})*{e}'"
-
             fade = f"fade=t=out:st={COVER_HOLD_S}:d={FADE_S}:alpha=1"
             graph += [
                 f"color=c=black@{COVER_SHADE}:s={w}x{h}:r={FPS},format=rgba,{fade}[shade]",
                 "[base][shade]overlay=0:0:shortest=1[shaded]",
                 f"[1:v]format=rgba,scale={play}:-1,{fade}[play]",
                 "[shaded][play]overlay=(W-w)/2:(H-h)/2:shortest=1[played]",
-                f"[2:v]format=rgba,scale=w={lerp(bottom.width, corner.width)}:h=-1:eval=frame[sticker]",
-                f"[played][sticker]overlay=x={lerp(bottom.x, corner.x)}:y={lerp(bottom.y, corner.y)}"
+                f"[2:v]format=rgba,scale=w={_lerp(bottom.width, corner.width, e)}:h=-1:eval=frame[sticker]",
+                f"[played][sticker]overlay=x={_lerp(bottom.x, corner.x, e)}:y={_lerp(bottom.y, corner.y, e)}"
                 ":shortest=1[branded]",
             ]
             last = "branded"
@@ -411,9 +420,11 @@ class Renderer:
         kind: str = IMAGE,
         data: dict | None = None,
         progress: Progress | None = None,
+        outro: bool = False,
     ) -> Path:
         """Слайд. kind — вид из плана: картинка (без картинки и ролика — пункты на тёмном фоне)
-        или динамическая сцена; data — её данные. progress — полоса ролика с названием главы."""
+        или динамическая сцена; data — её данные. progress — полоса ролика с названием главы.
+        outro — последний слайд ролика: с оформлением плашка в конце возвращается как на обложке."""
         lay = layout(orientation, self.scale)
         work = out.with_suffix("")
         work.mkdir(parents=True, exist_ok=True)
@@ -424,10 +435,13 @@ class Renderer:
             note_file = work / "note.txt"
             note_file.write_text("\n".join(wrap(n, lay.note_chars, 4) for n in notes), encoding="utf-8")
         frames = max(int(seconds * FPS), 1)
+        # Концовка закрывает слайд плашкой — пункты и элементы сцены успевают показаться до неё.
+        ending = branding is not None and outro and outro_start(seconds) >= 1.0
+        shown = outro_start(seconds) if ending else seconds
         if kind in DYNAMIC or (image is None and clip is None):
             args, chain = _background(None, lay, frames)
             scene = (data or {}) | {"kind": kind if kind in DYNAMIC else "bullets", "title": title, "bullets": bullets}
-            text = self._dynamic(lay, work, scene, seconds, note_file, branding)
+            text = self._dynamic(lay, work, scene, shown, note_file, branding)
         else:
             title_file = work / "title.txt"
             title_file.write_text(wrap(title, lay.title_chars, 3), encoding="utf-8")
@@ -437,11 +451,27 @@ class Renderer:
                 path.write_text(wrap("• " + bullet, lay.bullet_chars, 2), encoding="utf-8")
                 bullet_files.append(path)
             args, chain = _background(image, lay, frames, clip)
-            text = slide_filter(lay, self.font, title_file, bullet_files, seconds, note_file)
+            text = slide_filter(lay, self.font, title_file, bullet_files, shown, note_file)
         if progress is not None:
             text = ",".join([text, *progress_parts(lay, self.font, work, progress, seconds)])
         graph = f"{chain},{text},format=yuv420p[v]"
-        if branding is not None:  # плашка «подпишись» в углу — весь слайд
+        if branding is not None and outro:  # концовка: притемнение и плашка из угла крупно вниз
+            args += ["-loop", "1", "-framerate", str(FPS), "-i", str(branding.sticker)]
+            bottom, corner = sticker_boxes(lay, branding.ratio)
+            start = outro_start(seconds)
+            e = _ease(start, MOVE_S)
+            graph = ";".join(
+                [
+                    f"{chain},{text}[base]",
+                    f"color=c=black@{COVER_SHADE}:s={lay.width}x{lay.height}:r={FPS},format=rgba,"
+                    f"fade=t=in:st={start}:d={FADE_S}:alpha=1[shade]",
+                    "[base][shade]overlay=0:0:shortest=1[shaded]",
+                    f"[1:v]format=rgba,scale=w={_lerp(corner.width, bottom.width, e)}:h=-1:eval=frame[sticker]",
+                    f"[shaded][sticker]overlay=x={_lerp(corner.x, bottom.x, e)}:y={_lerp(corner.y, bottom.y, e)}"
+                    ":shortest=1,format=yuv420p[v]",
+                ]
+            )
+        elif branding is not None:  # плашка «подпишись» в углу — весь слайд
             args += ["-loop", "1", "-framerate", str(FPS), "-i", str(branding.sticker)]
             _, corner = sticker_boxes(lay, branding.ratio)
             graph = (
@@ -529,6 +559,7 @@ class Renderer:
             done += 1
             if on_progress:
                 on_progress(done, total)
+        last = max((n for n, scene in enumerate(scenes, start=1) if scene["seconds"] > 0), default=0)
         for n, scene in enumerate(scenes, start=1):
             if scene["seconds"] <= 0:
                 continue
@@ -543,6 +574,7 @@ class Renderer:
                     kind=scene.get("kind") or IMAGE,
                     data=scene.get("data"),
                     progress=scene.get("progress"),
+                    outro=n == last,
                     out=work / f"{n:02d}.mp4",
                     seconds=scene["seconds"],
                     orientation=orientation,
