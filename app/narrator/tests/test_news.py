@@ -578,7 +578,8 @@ def test_digest_goes_to_news_channel_as_photo_then_audio(tmp_path, monkeypatch):
     assert '<a href="https://go.dev/x">Вышел Go 1.26</a>' in photo["caption"]
     _, params, files = fake.calls[1]
     assert params["chat_id"] == channel_id
-    assert params["caption"] == "Новости за 23 сентября"
+    assert params["caption"] == f"Новости за 23 сентября\n\n{telegram.DIGEST_AI}"  # CMP-011
+    assert photo["caption"].endswith(telegram.DIGEST_AI)
     assert params["title"] == "23 сентября" and params["duration"] == 95
     assert files == ["audio", "thumbnail"]
     assert not telegram.is_fresh(state, path, "gemini")

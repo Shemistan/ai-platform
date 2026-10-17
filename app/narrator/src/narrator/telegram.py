@@ -47,7 +47,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 
-from narrator import library, registry
+from narrator import audit, library, registry
 from narrator.library import Entry, article_id, audio_name, format_duration
 
 TOKEN_ENV = "NARRATOR_TELEGRAM_TOKEN"
@@ -701,6 +701,7 @@ def describe(path: Path, entry: Entry, engine: str) -> str:
     tail = " · ".join(facts)
     if entry.url:
         tail += f'\n<a href="{html.escape(entry.url)}">Оригинал статьи</a>'
+    tail += f"\n{registry.ai_line(voice=True)}"  # озвучка narrator — всегда синтез (CMP-011)
     notes = registry.footnotes_html(spoken_text(path, entry), registry.load())
     head = f"<b>{html.escape(entry.title.strip())}</b>"
     # Лимит Telegram считает текст без разметки, так что запас тут с избытком.
@@ -754,7 +755,7 @@ def _send_annotation(
             state.remove(sub.chat_id)  # бот заблокирован — данные удаляем (CMP-006)
         done.append(Delivery(sub.chat_id, reply.ok, "" if reply.ok else reply.description))
     if any(d.ok for d in done):
-        mark_sent(state, path, engine, tag)
+        mark_sent(state, path, engine, tag, caption=text, done=done)
     return done
 
 
@@ -817,9 +818,32 @@ def unsent(state: State, root: Path) -> list[tuple[Path, Entry, str]]:
     return out
 
 
-def mark_sent(state: State, path: Path, engine: str, tag: str = "") -> None:
-    """Считать озвучку отправленной, ничего не посылая."""
+def mark_sent(
+    state: State,
+    path: Path,
+    engine: str,
+    tag: str = "",
+    *,
+    caption: str = "",
+    media: tuple[Path, ...] = (),
+    done: list[Delivery] | None = None,
+) -> None:
+    """Отметить озвучку отправленной и записать это в журнал комплаенса (CMP-015).
+
+    Без done — «считать отправленной, ничего не посылая» (`bot send --mark`)."""
     state.sent[sent_key(path, engine, tag)] = datetime.now().isoformat(timespec="seconds")
+    audit.write(
+        library.library_root(),
+        "publish" if done is not None else "mark_sent",
+        item=article_id(path) if path.parent.parent.parent.name.isdigit() else str(path),
+        engine=engine,
+        channel=tag or None,
+        recipients=[d.chat_id for d in done or [] if d.ok] or None,
+        caption_sha256=audit.sha256_text(caption) if caption else None,
+        media={p.name: audit.sha256_file(p) for p in media if p} or None,
+        footnotes=audit.footnotes(caption) or None,
+        registry=registry.checked(),
+    )
 
 
 @dataclass
@@ -879,7 +903,8 @@ def broadcast(
             for sub in people
         ]
         if any(d.ok for d in done):
-            mark_sent(state, path, engine, tag)
+            caption = digest_caption(path, entry)
+            mark_sent(state, path, engine, tag, caption=caption, media=(cover, audio), done=done)
         return done
 
     if entry.kind == "article" and annotation:
@@ -917,8 +942,12 @@ def broadcast(
         error = "" if reply.ok else reply.description
         done.append(Delivery(sub.chat_id, reply.ok, error))
     if any(d.ok for d in done):
-        mark_sent(state, path, engine, tag)
+        mark_sent(state, path, engine, tag, caption=caption, media=(audio,), done=done)
     return done
+
+
+# Дайджест: озвучка — синтез (Gemini TTS или локальная модель), картинка — ChatGPT.
+DIGEST_AI = registry.ai_line(voice=True, images=True)
 
 
 def digest_caption(path: Path, entry: Entry) -> str:
@@ -931,7 +960,10 @@ def digest_caption(path: Path, entry: Entry) -> str:
     text = post.read_text(encoding="utf-8") if post.exists() else ""
     if not text.strip():
         text = f"**{entry.title.replace('*', '')}**\n\n{entry.summary.strip()}"
-    text = registry.with_footnotes(text, spoken_text(path, entry), registry.load())
+    entries = registry.load()
+    text = registry.with_footnotes(text, spoken_text(path, entry), entries)
+    text = registry.with_materials(text, registry.materials(digest_agents(path), entries))
+    text = registry.with_ai_line(text, DIGEST_AI)
     try:
         return registry.fit_caption(text, CAPTION_LIMIT)
     except registry.CaptionError as e:
@@ -980,9 +1012,19 @@ def _send_digest(
 
 
 def audio_caption(path: Path, entry: Entry, title: str) -> str:
-    """Подпись к аудио дайджеста: аудио могут переслать отдельно — сноски и тут."""
-    notes = registry.footnotes_html(spoken_text(path, entry), registry.load())
-    return "\n\n".join(p for p in (html.escape(title), notes) if p)
+    """Подпись к аудио дайджеста: аудио могут переслать отдельно — сноски и маркировка тут же."""
+    entries = registry.load()
+    notes = registry.footnotes_html(spoken_text(path, entry), entries)
+    labels = "\n".join(html.escape(m) for m in registry.materials(digest_agents(path), entries))
+    ai = html.escape(DIGEST_AI)
+    return "\n\n".join(p for p in (labels, html.escape(title), notes, ai) if p)
+
+
+def digest_agents(path: Path) -> list[str]:
+    """Иноагенты, чьи материалы вошли в дайджест path (отметка в news.db при сборе, CMP-012)."""
+    from narrator.news.store import db_path, issue_agents
+
+    return issue_agents(db_path(library.library_root()), article_id(path))
 
 
 def send_digest_video(
@@ -1032,7 +1074,10 @@ def send_digest_video(
         error = "" if reply.ok else reply.description
         done.append(Delivery(sub.chat_id, reply.ok, error))
     if any(d.ok for d in done):
-        mark_sent(state, path, engine, sent_tag(entry, channel))
+        tag = sent_tag(entry, channel)
+        mark_sent(
+            state, path, engine, tag, caption=digest_caption(path, entry), media=(video,), done=done
+        )
     return done
 
 
@@ -1159,5 +1204,6 @@ def send_folder(
         error = "" if reply.ok else reply.description
         done.append(Delivery(sub.chat_id, reply.ok, error))
     if any(d.ok for d in done):
-        mark_sent(state, path, FOLDER_ENGINE, tag)
+        files = tuple(p for p in (parcel.image, parcel.audio, video) if p)
+        mark_sent(state, path, FOLDER_ENGINE, tag, caption=caption, media=files, done=done)
     return done
