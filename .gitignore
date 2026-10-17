@@ -6,6 +6,7 @@ __pycache__/
 .env.*
 .mcp.json
 tmp/
+backlog/
 .claude/worktrees/
 .claude/settings.local.json
 .superpowers/
