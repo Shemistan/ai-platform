@@ -58,6 +58,7 @@ def article(tmp_path: Path, engine: str = "silero", size: int = 2048) -> tuple[P
         engine=engine,
         duration_sec=125.0,
         versions={engine: 125.0},
+        license="permission",  # право на переработку есть — полный пересказ уходит в канал
     )
     entry.save(path / "meta.json")
     (path / f"2026-09-18-triple-debt_{engine}.mp3").write_bytes(b"\0" * size)
@@ -719,9 +720,13 @@ def test_notify_survives_telegram_failure(tmp_path, bot_env, capsys):
 def second_article(tmp_path: Path) -> Path:
     path = tmp_path / "2026" / "09" / "19" / "second"
     path.mkdir(parents=True)
-    Entry(title="Вторая", added="2026-09-19", engine="silero", versions={"silero": 60.0}).save(
-        path / "meta.json"
-    )
+    Entry(
+        title="Вторая",
+        added="2026-09-19",
+        engine="silero",
+        versions={"silero": 60.0},
+        license="own",
+    ).save(path / "meta.json")
     (path / "2026-09-19-second_silero.mp3").write_bytes(b"\0" * 16)
     return path
 

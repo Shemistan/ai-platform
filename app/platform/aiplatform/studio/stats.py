@@ -6,8 +6,11 @@ Bot API не отдаёт просмотры сообщений, поэтому:
   только у публичных каналов; у приватных просмотров не будет.
 У пакетов для ручной загрузки (YouTube, TikTok…) просмотры вносятся руками.
 
-Снимки копятся в записи канала в published.json: `stats: [{at, views,
-members, manual?}]`, не больше KEEP последних.
+Снимки копятся в записи канала в published.json: `stats: [{at, age_h, views,
+members, manual?}]`, не больше KEEP последних. Сравнивать посты можно только в
+окнах: просмотры за 24ч/72ч/7д (интерполяция по возрасту поста, закрытое окно
+замораживается в записи) и прирост подписчиков за сутки после поста за вычетом
+базового тренда канала (AN-001).
 """
 
 from __future__ import annotations
@@ -51,22 +54,175 @@ def http_get(url: str) -> str:
         return ""
 
 
-def add_snapshot(record: dict, snapshot: dict) -> dict:
-    """Новый снимок в запись канала; пустой (ничего не узнали) не пишется."""
+def sent_at(record: dict) -> float | None:
+    """Когда пост вышел: залит руками (published_at) или отправлен в Telegram (sent)."""
+    value = record.get("published_at") or record.get("sent")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def add_snapshot(record: dict, snapshot: dict, now: float | None = None) -> dict:
+    """Новый снимок в запись канала; пустой (ничего не узнали) не пишется.
+    У снимка — возраст поста age_h; закрывшиеся окна просмотров замораживаются в записи."""
     if snapshot.get("views") is None and snapshot.get("members") is None:
         return record
-    history = [*record.get("stats", []), {"at": time.time(), **snapshot}]
-    return record | {"stats": history[-KEEP:]}
+    at = time.time() if now is None else now
+    entry = {"at": at, **snapshot}
+    start = sent_at(record)
+    if start is not None:
+        entry["age_h"] = round((at - start) / HOUR, 3)
+    history = [*record.get("stats", []), entry]
+    return freeze(record | {"stats": history[-KEEP:]})
 
 
 def latest(record: dict) -> dict:
-    """Последние известные просмотры и прирост подписчиков с момента публикации."""
+    """Последние известные просмотры и прирост подписчиков с момента публикации (сырые, без окон)."""
     stats = record.get("stats") or []
     views = next((s["views"] for s in reversed(stats) if s.get("views") is not None), None)
     members = next((s["members"] for s in reversed(stats) if s.get("members") is not None), None)
     start = record.get("members_at_publish")
     growth = members - start if members is not None and start is not None else None
     return {"views": views, "members": members, "growth": growth, "at": stats[-1]["at"] if stats else None}
+
+
+# --- окна: просмотры за 24ч/72ч/7д и прирост подписчиков за сутки после поста (AN-001) ---
+# Сырые «последние просмотры» и «подписчики сейчас − при публикации» копятся бесконечно: старый
+# пост всегда «выигрывает», а посты одной недели делят один прирост канала. Сравнимы только окна.
+
+HOUR, DAY = 3600.0, 86400.0
+WINDOWS = ((24, "views_24h"), (72, "views_72h"), (168, "views_7d"))
+TREND_DAYS = 7  # базовый тренд канала — медиана суточного прироста за неделю до поста
+
+
+def view_points(record: dict) -> list[tuple[float, float]]:
+    """(возраст поста в часах, просмотры) по снимкам; у снимков до age_h возраст — от времени поста."""
+    start = sent_at(record)
+    if start is None:
+        return []
+    points = []
+    for snap in record.get("stats") or []:
+        if snap.get("views") is None:
+            continue
+        age = snap.get("age_h")
+        if age is None and isinstance(snap.get("at"), (int, float)):
+            age = (snap["at"] - start) / HOUR
+        if age is not None and age >= 0:
+            points.append((float(age), float(snap["views"])))
+    return sorted(points)
+
+
+def interpolate(points: list[tuple[float, float]], x: float) -> float | None:
+    """Значение в x линейно между соседними точками; вне диапазона точек — None."""
+    after = next((p for p in points if p[0] >= x), None)
+    before = next((p for p in reversed(points) if p[0] <= x), None)
+    if after is None or before is None:
+        return None
+    if after[0] == before[0]:
+        return after[1]
+    return before[1] + (after[1] - before[1]) * (x - before[0]) / (after[0] - before[0])
+
+
+def window_views(points: list[tuple[float, float]], hours: float) -> float | None:
+    """Просмотры к возрасту hours: окно закрыто, только если есть снимок не раньше него.
+    В момент публикации просмотров 0 — от этой точки интерполяция, если ранних снимков нет."""
+    if not points or points[-1][0] < hours:
+        return None
+    return interpolate([(0.0, 0.0), *points], hours)
+
+
+def freeze(record: dict) -> dict:
+    """Закрывшиеся окна — в запись: дальше их не сдвинут ни новые снимки, ни обрезка истории до KEEP."""
+    points = view_points(record)
+    out = record
+    for hours, key in WINDOWS:
+        if out.get(key) is None:
+            value = window_views(points, hours)
+            if value is not None:
+                out = out | {key: round(value)}
+    return out
+
+
+def windows(record: dict, now: float | None = None) -> dict:
+    """Окна просмотров (замороженные или по снимкам) и возраст поста; незакрытое окно — None."""
+    frozen = freeze(record)
+    start = sent_at(record)
+    age = round(((time.time() if now is None else now) - start) / HOUR, 1) if start is not None else None
+    return {key: frozen.get(key) for _, key in WINDOWS} | {"age_h": age}
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+
+
+class Facts:
+    """Подписчики и посты по каналам из всех выпусков: подписчики — общие для канала,
+    поэтому прирост поста считается по снимкам всех постов этого канала."""
+
+    def __init__(self, records: list[dict]) -> None:
+        self.members: dict[str, list[tuple[float, float]]] = {}
+        self.posts: dict[str, list[float]] = {}
+        for record in records:
+            channel = record.get("channel")
+            start = sent_at(record)
+            if not channel:
+                continue
+            points = self.members.setdefault(channel, [])
+            if start is not None:
+                self.posts.setdefault(channel, []).append(start)
+                if record.get("members_at_publish") is not None:
+                    points.append((start, float(record["members_at_publish"])))
+            for snap in record.get("stats") or []:
+                if snap.get("members") is not None and isinstance(snap.get("at"), (int, float)):
+                    points.append((float(snap["at"]), float(snap["members"])))
+        for channel in self.members:
+            self.members[channel] = sorted(set(self.members[channel]))
+        for channel in self.posts:
+            self.posts[channel] = sorted(set(self.posts[channel]))
+
+    def trend(self, channel: str, start: float) -> float | None:
+        """Медиана прироста подписчиков в сутки за TREND_DAYS до поста по промежуткам без постов:
+        промежуток не годится, если пост был в нём или за сутки до его начала."""
+        posts = self.posts.get(channel, [])
+        points = [p for p in self.members.get(channel, []) if start - TREND_DAYS * DAY <= p[0] <= start]
+        rates = []
+        for (a_at, a_m), (b_at, b_m) in zip(points, points[1:], strict=False):
+            if b_at <= a_at or any(a_at - DAY < p <= b_at for p in posts):
+                continue
+            rates.append((b_m - a_m) / ((b_at - a_at) / DAY))
+        return _median(rates) if rates else None
+
+    def growth(self, record: dict) -> dict:
+        """growth_24h_attr: прирост за [пост, min(пост + 24ч, следующий пост канала)] минус базовый
+        тренд канала за это время. Нет тренда — без вычитания (growth_trend: false). Окно не закрыто
+        (нет снимка подписчиков после его конца) — None."""
+        empty = {"growth_24h_attr": None, "growth_24h": None, "growth_trend": None, "growth_window_h": None}
+        channel, start = record.get("channel"), sent_at(record)
+        if not channel or start is None:
+            return empty
+        later = [p for p in self.posts.get(channel, []) if p > start]
+        end = min(start + DAY, later[0]) if later else start + DAY
+        points = self.members.get(channel, [])
+        m1 = interpolate(points, end)
+        m0 = record.get("members_at_publish")
+        m0 = float(m0) if m0 is not None else interpolate(points, start)
+        if m0 is None or m1 is None:
+            return empty
+        hours = (end - start) / HOUR
+        trend = self.trend(channel, start)
+        delta = m1 - m0
+        attr = delta - trend * hours / 24 if trend is not None else delta
+        return {
+            "growth_24h_attr": round(attr, 1),
+            "growth_24h": round(delta, 1),
+            "growth_trend": trend is not None,
+            "growth_window_h": round(hours, 1),
+        }
+
+
+def reach(record: dict, facts: Facts, now: float | None = None) -> dict:
+    """Всё об отклике записи для API: сырые последние значения, окна просмотров и прирост за сутки."""
+    return latest(record) | windows(record, now) | facts.growth(record)
 
 
 class Refresher:
@@ -114,20 +270,21 @@ def _length(seconds: float | None) -> str | None:
 
 
 def summary(items: list[dict]) -> list[dict]:
-    """«Что работает»: средние просмотры и прирост подписчиков по сценарию, длине ролика и формату.
-    Считаются только публикации, у которых известны просмотры."""
+    """«Что работает»: средние просмотры за 24ч и прирост подписчиков за сутки после поста (за вычетом
+    тренда канала) по сценарию, длине ролика и формату. Считаются только публикации с закрытым окном
+    24ч: свежий пост с недобранными сутками и старый с накопленными просмотрами несравнимы."""
     posts = []
     for item in items:
         for record in item.get("published", []):
-            if record.get("views") is None:
+            if record.get("views_24h") is None:
                 continue
             posts.append(
                 {
                     "Сценарий": item.get("scenario_label"),
                     "Длина ролика": _length(item.get("video_s")),
                     "Формат": "вертикальный 9:16" if record.get("format") == publish.VERTICAL else "16:9 и квадрат",
-                    "views": record["views"],
-                    "growth": record.get("growth"),
+                    "views": record["views_24h"],
+                    "growth": record.get("growth_24h_attr"),
                 }
             )
     out = []

@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable
@@ -497,6 +498,42 @@ def publish_photo(
         for part in PHOTO_PARTS
     }
     return photo_result(channel, ids)
+
+
+_YOUTUBE_HOSTS = ("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be")
+_TIKTOK_HOSTS = ("tiktok.com", "www.tiktok.com", "vm.tiktok.com", "vt.tiktok.com", "m.tiktok.com")
+_YOUTUBE_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def external_video(url: object) -> dict:
+    """Ссылка на залитый руками ролик: {external_url, platform, external_id}. Неверная — ValueError.
+
+    YouTube (watch?v=, youtu.be/, /shorts/) и TikTok (/video/<id>) — с id ролика, прочие http(s) —
+    без него: площадок много, ссылку автор знает лучше нас."""
+    if not isinstance(url, str) or not url.strip() or len(url) > 2000:
+        raise ValueError("Вставь ссылку на ролик.")
+    url = url.strip()
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname or "." not in parts.hostname:
+        raise ValueError("Ссылка на ролик — адрес http(s)://…")
+    host = parts.hostname.lower()
+    path = [p for p in parts.path.split("/") if p]
+    if host in _YOUTUBE_HOSTS:
+        if host == "youtu.be":
+            video_id = path[0] if path else ""
+        elif path[:1] in (["shorts"], ["live"], ["embed"]):
+            video_id = path[1] if len(path) > 1 else ""
+        else:
+            video_id = (urllib.parse.parse_qs(parts.query).get("v") or [""])[0]
+        if not _YOUTUBE_ID.match(video_id):
+            raise ValueError("Не вижу id ролика YouTube в ссылке — скопируй ссылку на сам ролик.")
+        return {"external_url": url, "platform": "youtube", "external_id": video_id}
+    if host in _TIKTOK_HOSTS:
+        video_id = path[path.index("video") + 1] if "video" in path[:-1] else None
+        if video_id is not None and not video_id.isdigit():
+            raise ValueError("Не вижу id ролика TikTok в ссылке.")
+        return {"external_url": url, "platform": "tiktok", "external_id": video_id}
+    return {"external_url": url, "platform": "other", "external_id": None}
 
 
 def publish(

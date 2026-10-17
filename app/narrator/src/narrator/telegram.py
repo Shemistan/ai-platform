@@ -41,7 +41,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 
-from narrator import library
+from narrator import library, registry
 from narrator.library import Entry, article_id, audio_name, format_duration
 
 TOKEN_ENV = "NARRATOR_TELEGRAM_TOKEN"
@@ -382,8 +382,22 @@ def pull(bot: Bot, state: State, timeout: int = 0) -> list[Subscriber]:
     return fresh
 
 
+def spoken_text(path: Path, entry: Entry) -> str:
+    """Всё, что прозвучит и будет видно: заголовок, summary, текст озвучки и пост."""
+    parts = [entry.title, entry.summary]
+    for name in ("script.txt", "narration.md", "post.md"):
+        f = path / name
+        if f.exists():
+            parts.append(f.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def describe(path: Path, entry: Entry, engine: str) -> str:
-    """Подпись под аудио (HTML): название, о чём статья, сколько слушать, откуда."""
+    """Подпись под аудио (HTML): название, о чём статья, сколько слушать, откуда.
+
+    Упомянута организация из реестра запрещённых — в конце сноска; режется
+    только summary, сноска остаётся целиком.
+    """
     duration = entry.versions.get(engine, entry.duration_sec)
     facts = [f"🎧 {format_duration(duration)}"]
     if entry.author:
@@ -391,13 +405,63 @@ def describe(path: Path, entry: Entry, engine: str) -> str:
     tail = " · ".join(facts)
     if entry.url:
         tail += f'\n<a href="{html.escape(entry.url)}">Оригинал статьи</a>'
+    notes = registry.footnotes_html(spoken_text(path, entry), registry.load())
     head = f"<b>{html.escape(entry.title.strip())}</b>"
     # Лимит Telegram считает текст без разметки, так что запас тут с избытком.
-    room = CAPTION_LIMIT - len(head) - len(tail) - 4
+    room = CAPTION_LIMIT - len(head) - len(tail) - len(notes) - 6
+    if room < 0:
+        raise TelegramError("подпись не влезает в 1024 знака: длинные сноски реестра")
     summary = " ".join(entry.summary.split())
     if len(summary) > room:
         summary = summary[: max(room - 1, 0)].rstrip() + "…"
-    return "\n\n".join(part for part in (head, html.escape(summary), tail) if part)
+    return "\n\n".join(part for part in (head, html.escape(summary), tail, notes) if part)
+
+
+ANNOTATION_SHARE = 0.2  # аннотация без права на переработку — не больше пятой части статьи
+
+
+def no_license(path: Path, entry: Entry) -> str:
+    return (
+        f"{path.name}: license={entry.license} — права на переработку нет, полный пересказ"
+        " в канал не уходит (слушать локально можно). Есть право — license в meta.json:"
+        " own, cc-by или permission; иначе только аннотация: ./narrate bot send"
+        f" {path} --annotation"
+    )
+
+
+def annotation_text(path: Path, entry: Entry) -> str:
+    """Аннотация (HTML): заголовок, summary не длиннее 20 % статьи, автор и ссылка, сноски."""
+    found = next((f for f in (path / "source.md", path / "script.txt") if f.exists()), None)
+    body = found.read_text(encoding="utf-8") if found else ""
+    room = int(len(" ".join(body.split())) * ANNOTATION_SHARE) if body.strip() else 400
+    summary = " ".join(entry.summary.split())
+    if len(summary) > room:
+        summary = summary[: max(room - 1, 0)].rstrip() + "…"
+    facts = " · ".join(x for x in (entry.author,) if x)
+    link = f'<a href="{html.escape(entry.url)}">Оригинал статьи</a>' if entry.url else ""
+    notes = registry.footnotes_html(f"{entry.title}\n{summary}", registry.load())
+    head = f"<b>{html.escape(entry.title.strip())}</b>"
+    parts = (head, html.escape(summary), "\n".join(p for p in (facts, link) if p), notes)
+    return "\n\n".join(p for p in parts if p)
+
+
+def _send_annotation(
+    bot: Bot, state: State, path: Path, entry: Entry, engine: str, people, tag: str
+) -> list[Delivery]:
+    if not entry.url:
+        raise TelegramError(f"{path.name}: у аннотации нужна ссылка на оригинал — url в meta.json")
+    text = annotation_text(path, entry)
+    done = []
+    for sub in people:
+        reply = bot.request("sendMessage", {**sub.address(), "text": text, "parse_mode": "HTML"})
+        if not reply.ok and _is_gone(reply):
+            state.deactivate(sub.chat_id, reply.description)
+        done.append(
+            Delivery(sub.chat_id, sub.name, reply.ok, "" if reply.ok else reply.description)
+        )
+    if any(d.ok for d in done):
+        mark_sent(state, path, engine, tag)
+    return done
 
 
 def sent_tag(entry: Entry | None, channel: str | None) -> str:
@@ -488,8 +552,13 @@ def broadcast(
     engine: str,
     targets: list[Subscriber] | None = None,
     channel: str | None = None,
+    annotation: bool = False,
 ) -> list[Delivery]:
     """Шлёт озвучку статьи в канал или подписчикам (см. `recipients`).
+
+    Полный пересказ чужой статьи уходит, только если в meta.json есть право
+    на переработку (`license` из PUBLISHABLE); иначе TelegramError.
+    annotation — вместо озвучки аннотация (до 20 % объёма) со ссылкой на оригинал.
 
     channel — другой канал вместо обычного. Заблокировавших бота подписчиков
     помечает неактивными.
@@ -520,6 +589,10 @@ def broadcast(
             mark_sent(state, path, engine, tag)
         return done
 
+    if entry.kind == "article" and annotation:
+        return _send_annotation(bot, state, path, entry, engine, people, tag)
+    if entry.kind == "article" and entry.license not in library.PUBLISHABLE:
+        raise TelegramError(no_license(path, entry))
     caption = describe(path, entry, engine)
     duration = int(entry.versions.get(engine, entry.duration_sec) or 0)
     oversized = audio.stat().st_size > SIZE_LIMIT
@@ -556,16 +629,20 @@ def broadcast(
 
 
 def digest_caption(path: Path, entry: Entry) -> str:
-    """Подпись к картинке дайджеста: пост из post.md со ссылками на источники."""
-    from narrator.news.digest import post_html, visible_length
+    """Подпись к картинке дайджеста: пост из post.md со ссылками на источники.
 
+    Сноски о запрещённых организациях из пересказа и поста дописываются в
+    конец; длинный пост режется по предложению, сноски — никогда.
+    """
     post = path / "post.md"
-    body = post_html(post.read_text(encoding="utf-8")) if post.exists() else ""
-    if not body.strip():
-        body = f"<b>{html.escape(entry.title)}</b>\n\n{html.escape(entry.summary.strip())}"
-    if visible_length(body) > CAPTION_LIMIT:
-        body = f"<b>{html.escape(entry.title)}</b>"
-    return body
+    text = post.read_text(encoding="utf-8") if post.exists() else ""
+    if not text.strip():
+        text = f"**{entry.title.replace('*', '')}**\n\n{entry.summary.strip()}"
+    text = registry.with_footnotes(text, spoken_text(path, entry), registry.load())
+    try:
+        return registry.fit_caption(text, CAPTION_LIMIT)
+    except registry.CaptionError as e:
+        raise TelegramError(str(e)) from e
 
 
 def _send_digest(
@@ -597,7 +674,7 @@ def _send_digest(
                 "sendAudio",
                 {
                     **params,
-                    "caption": html.escape(f"Новости за {day}"),
+                    "caption": audio_caption(path, entry, f"Новости за {day}"),
                     "title": day,
                     "performer": "Дайджест разработчика",
                     "duration": int(entry.versions.get(engine, entry.duration_sec) or 0),
@@ -607,6 +684,12 @@ def _send_digest(
     if not reply.ok and _is_gone(reply):
         state.deactivate(sub.chat_id, reply.description)
     return Delivery(sub.chat_id, sub.name, reply.ok, "" if reply.ok else reply.description)
+
+
+def audio_caption(path: Path, entry: Entry, title: str) -> str:
+    """Подпись к аудио дайджеста: аудио могут переслать отдельно — сноски и тут."""
+    notes = registry.footnotes_html(spoken_text(path, entry), registry.load())
+    return "\n\n".join(p for p in (html.escape(title), notes) if p)
 
 
 def send_digest_video(
@@ -732,13 +815,17 @@ def send_folder(
     from narrator.news.video import video_size
 
     parcel = find_parcel(path)
-    caption = post_html(parcel.text()) if parcel.post else ""
+    # Сноски о запрещённых организациях — в конец поста, как у дайджеста.
+    text = registry.with_footnotes(parcel.text(), parcel.text(), registry.load())
+    caption = post_html(text) if parcel.post else ""
     if not (parcel.audio or parcel.image or caption):
         raise TelegramError(f"в {path} нечего слать: нужен mp3, картинка или *post.md")
     limit = CAPTION_LIMIT if parcel.audio or parcel.image else MESSAGE_LIMIT
     if visible_length(caption) > limit:
         raise TelegramError(
-            f"{parcel.post.name}: {visible_length(caption)} знаков, Telegram берёт до {limit}"
+            f"{parcel.post.name}: {visible_length(caption)} знаков"
+            f"{' вместе со сносками реестра' if text != parcel.text() else ''},"
+            f" Telegram берёт до {limit}"
         )
     if parcel.audio and parcel.audio.stat().st_size > SIZE_LIMIT:
         raise TelegramError(f"{parcel.audio.name} больше 50 МБ — Telegram такие от бота не берёт")
