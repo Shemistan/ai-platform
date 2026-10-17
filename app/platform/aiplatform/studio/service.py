@@ -318,15 +318,26 @@ class StudioModule:
                 self.notify("Пакет готов — залей руками", project["title"], important=True)
             return
         need = attention(project)
-        if need and before.get(need["step"]) != need["status"]:
+        if not need:
+            return
+        fresh = before.get(need["step"]) != need["status"]
+        previewed = False
+        if need["step"] == "publish" and need["status"] == "failed":
+            # Упало после «Да» в боте — новое превью с «Повторить», даже если падает не впервые (PRD-016).
+            previewed = self._preview(project, failure=need["text"])
+        elif need["step"] == "publish" and fresh and need["text"] in steps.REVIEW_NOTES:
+            previewed = self._preview(project)
+        if fresh:
             head = "Выпуск упал" if need["status"] == "failed" else "Выпуск ждёт тебя"
-            previewed = need["step"] == "publish" and need["text"] in steps.REVIEW_NOTES and self._preview(project)
             text = f"{project['title']} — {need['label']}: {need['text']}".strip(" :")
             self.notify(head, text, important=True, telegram=not previewed)
 
-    def _preview(self, project: dict) -> bool:
-        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление."""
+    def _preview(self, project: dict, failure: str | None = None) -> bool:
+        """Превью с кнопками владельцу в Telegram; сбой — в лог, тогда уйдёт обычное уведомление.
+        failure — публикация упала: превью с «Повторить», только если «Да» нажимали в боте."""
         try:
+            if failure is not None:
+                return self.review.retry(project, failure)
             return self.review.preview(project)
         except Exception as exc:  # noqa: BLE001 — сеть, файлы выпуска: уведомление всё равно уйдёт
             log.event(
