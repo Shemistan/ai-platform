@@ -46,7 +46,10 @@ class StatsUnitTest(unittest.TestCase):
             fresh = stats.Refresher({"tg": channel}, http_post=fake_post, get=get).record(record)
         self.assertEqual(pages, ["https://t.me/mychan/42?embed=1"])
         self.assertTrue(fresh["public"])
-        self.assertEqual(stats.latest(fresh) | {"at": None}, {"views": 1200, "members": 150, "growth": 30, "at": None})
+        self.assertEqual(
+            stats.latest(fresh) | {"at": None},
+            {"views": 1200, "members": 150, "growth": 30, "at": None, "manual": None},
+        )
         # Без токена или id сообщения — ничего не трогаем.
         self.assertEqual(stats.Refresher({"tg": channel}).record(record), record)
 
@@ -358,6 +361,65 @@ class StatsHttpTest(StudioCase):
         self.assertEqual((board["coverage"]["counted"], board["coverage"]["total"]), (1, 1))
         saved = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
         self.assertTrue(saved[1]["stats"][-1]["manual"])
+
+    def test_manual_metrics_with_measure_date(self):
+        """Ручной ввод (AN-010): метрики YouTube Studio и дата замера в прошлом → верный age_h."""
+        pid = self.create(scenario="article", text=ARTICLE)["id"]
+        published_at = time.time() - 5 * 86400
+        record = {"channel": "yt", "ok": True, "state": "uploaded", "published_at": published_at, "files": []}
+        (self.folder(pid) / "published.json").write_text(json.dumps([record]), encoding="utf-8")
+        measured = published_at + 48 * 3600
+        body = {"channel": "yt", "views": 500, "impressions": 4000, "ctr": 6.5, "avg_view_pct": 41, "subs_gained": 3}
+        status, view = self.json("POST", f"/api/studio/projects/{pid}/stats", body | {"at": measured})
+        self.assertEqual(status, 200, view)
+        # Снимок «сейчас» без даты — после него, порядок истории по времени замера.
+        self.assertEqual(
+            self.json("POST", f"/api/studio/projects/{pid}/stats", {"channel": "yt", "views": 900})[0], 200
+        )
+        # ISO-строка из формы (datetime-local, местное время) — раньше: встаёт первой.
+        early = time.strftime("%Y-%m-%dT%H:%M", time.localtime(published_at + 12 * 3600))
+        self.assertEqual(
+            self.json("POST", f"/api/studio/projects/{pid}/stats", {"channel": "yt", "views": 200, "at": early})[0], 200
+        )
+        saved = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))[0]
+        snaps = saved["stats"]
+        self.assertEqual([s["views"] for s in snaps], [200, 500, 900])
+        self.assertAlmostEqual(snaps[1]["age_h"], 48.0, places=2)
+        self.assertAlmostEqual(snaps[0]["age_h"], 12.0, delta=1 / 60)
+        self.assertEqual((snaps[1]["ctr"], snaps[1]["subs_gained"], snaps[1]["manual"]), (6.5, 3, True))
+        # Окна — по дате замера: первый замер (48ч) закрыл окно 24ч от нуля в момент публикации — 250;
+        # закрытое окно заморожено, поздний ввод более раннего замера его не сдвигает (AN-001).
+        self.assertEqual((saved["views_24h"], saved["views_72h"]), (250, 633), "72ч: 500 + 400·24/72")
+
+        board = self.json("GET", "/api/studio/board")[1]
+        yt = board["projects"][0]["published"][0]
+        self.assertEqual(
+            yt["manual"],
+            {"views": 500, "impressions": 4000, "ctr": 6.5, "avg_view_pct": 41.0, "subs_gained": 3, "at": measured},
+        )
+        self.assertEqual(yt["views"], 900, "последние просмотры — по времени замера")
+
+    def test_manual_metrics_validation(self):
+        pid = self.create(scenario="article", text=ARTICLE)["id"]
+        record = {"channel": "yt", "ok": True, "state": "uploaded", "published_at": time.time() - 3600, "files": []}
+        (self.folder(pid) / "published.json").write_text(json.dumps([record]), encoding="utf-8")
+        url = f"/api/studio/projects/{pid}/stats"
+        cases = [
+            ({"channel": "yt", "ctr": 120}, "CTR обложки"),
+            ({"channel": "yt", "avg_view_pct": -1}, "% досмотра"),
+            ({"channel": "yt", "impressions": 1.5}, "показы"),
+            ({"channel": "yt"}, "хотя бы одну"),
+            ({"channel": "yt", "views": 1, "at": "вчера"}, "дата замера"),
+            ({"channel": "yt", "views": 1, "at": time.time() + 86400}, "в будущем"),
+            ({"channel": "yt", "views": 1, "at": time.time() - 86400}, "раньше публикации"),
+        ]
+        for body, text in cases:
+            status, err = self.json("POST", url, body)
+            self.assertEqual(status, 400, body)
+            self.assertIn(text, json.dumps(err, ensure_ascii=False), body)
+        self.assertEqual(
+            self.json("POST", url, {"channel": "yt", "subs_gained": -2})[0], 200, "отписки с ролика — минус"
+        )
 
 
 if __name__ == "__main__":

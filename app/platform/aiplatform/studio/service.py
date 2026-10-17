@@ -578,12 +578,16 @@ class StudioModule:
         return f"отклик: обновлено выпусков {updated}"
 
     def manual_stats(self, project_id: str, payload: object) -> dict:
-        """Просмотры, внесённые руками: у пакетов для YouTube, TikTok и у приватных каналов."""
+        """Отклик, внесённый руками: у пакетов для YouTube, TikTok и у приватных каналов. Кроме просмотров —
+        показы, CTR обложки, % досмотра, подписки с ролика и дата замера (AN-010): возраст поста в снимке —
+        от публикации до этой даты, а не до момента ввода."""
         if not isinstance(payload, dict):
             raise bad_request("Тело запроса — не объект JSON.")
-        channel, views = payload.get("channel"), payload.get("views")
-        if isinstance(views, bool) or not isinstance(views, int) or views < 0:
-            raise bad_request("views — целое число от 0.")
+        channel = payload.get("channel")
+        try:  # формат полей — до поиска записи: ошибка ввода понятнее «не публиковался»
+            stats.manual_snapshot(payload, None)
+        except ValueError as exc:
+            raise bad_request(str(exc)) from exc
         if self.studio.get(project_id) is None:
             raise not_found("Проект не найден.")
         folder = self.studio.project_dir(project_id)
@@ -596,13 +600,21 @@ class StudioModule:
             found = found or (steps.current_record(records, channel) if isinstance(channel, str) else None)
             if found is None:
                 raise bad_request("В этот канал выпуск не публиковался.")
-            done["record"] = stats.add_snapshot(found, {"views": views, "members": None, "manual": True})
+            try:
+                snapshot, at = stats.manual_snapshot(payload, stats.sent_at(found))
+            except ValueError as exc:
+                raise bad_request(str(exc)) from exc
+            done["record"] = stats.add_snapshot(found, snapshot, now=at)
+            start = stats.sent_at(found)
+            done["snapshot"] = {"at": at, **snapshot} | (
+                {"age_h": round((at - start) / stats.HOUR, 3)} if start else {}
+            )
             return [done["record"] if r is found else r for r in records]
 
         steps.update_published(folder, add)
         record = done["record"]
         project = self.studio.get(project_id) or {}
-        self._snapshot_event(project, record, events.actor())
+        self._snapshot_event(project, record, events.actor(), done.get("snapshot"))
         return self.view(project_id)
 
     def uploaded(self, project_id: str, payload: object) -> dict:
@@ -647,10 +659,10 @@ class StudioModule:
         )
         return self.view(project_id)
 
-    def _snapshot_event(self, project: dict, record: dict, actor: str) -> None:
-        """Последний снимок отклика записи — в журнал событий, по событию на метрику."""
-        snapshot = (record.get("stats") or [{}])[-1]
-        for metric in ("views", "members"):
+    def _snapshot_event(self, project: dict, record: dict, actor: str, snapshot: dict | None = None) -> None:
+        """Снимок отклика записи (по умолчанию последний) — в журнал событий, по событию на метрику."""
+        snapshot = snapshot or (record.get("stats") or [{}])[-1]
+        for metric in ("members", *stats.MANUAL_METRICS):
             if snapshot.get(metric) is None:
                 continue
             self.events.emit(

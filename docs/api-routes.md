@@ -213,7 +213,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | GET | `/api/studio/projects` | ?scenario | JSON | — |
 | POST | `/api/studio/preflight` | JSON | JSON | Проверка и оценка для формы «Новый выпуск» — до создания |
 | POST | `/api/studio/stats/refresh` | — | JSON 202 | «Обновить отклик»: подписчики и просмотры в фоне — сеть бывает медленной |
-| POST | `/api/studio/projects/{pid}/stats` | JSON | JSON | Просмотры, внесённые руками: у пакетов для YouTube, TikTok и у приватных каналов |
+| POST | `/api/studio/projects/{pid}/stats` | JSON | JSON | Отклик, внесённый руками: у пакетов для YouTube, TikTok и у приватных каналов. Кроме просмотров — |
 | GET | `/api/studio/health/stats` | — | JSON | «Здоровье» за 7 и 28 дней по журналу событий (REL-010): упавшие шаги, сборка, дайджест вовремя |
 | GET | `/api/studio/board` | ?archived | JSON | Все выпуски всех сценариев по группам: ждёт тебя, идёт, опубликовано, черновики |
 | POST | `/api/studio/projects/{pid}/split` | JSON | JSON 201 | Серия: по выпуску на часть (по главам, ~8 мин), с теми же настройками. Исходный — в архив |

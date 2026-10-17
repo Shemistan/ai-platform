@@ -107,8 +107,8 @@ function reachRow(p, r) {
     );
   }
   const manual = r.type === "manual" || (r.type === "telegram" && r.public === false);
-  const id = fieldId("views", p, r);
-  const input = h("input", { type: "number", min: "0", id, class: "views-input", placeholder: "просмотры", "aria-label": `Просмотры: ${r.label}` });
+  const platform = platformFacts(r.manual);
+  if (platform) facts.push(platform);
   return h(
     "li",
     {},
@@ -116,14 +116,56 @@ function reachRow(p, r) {
     r.republish ? h("span", { class: "muted" }, " · опубликовано повторно") : null,
     r.external_url ? h("a", { class: "link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
     facts.length ? h("span", { class: "muted" }, ` · ${facts.join(" · ")}`) : null,
-    manual
-      ? h(
-          "span",
-          { class: "manual-views" },
-          input,
-          h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: () => input.value !== "" && submitField(p, "stats", id, { channel: r.channel, publication_id: r.publication_id, views: Number(input.value) }) }, "Сохранить"),
-        )
-      : null,
+    manual ? manualForm(p, r) : null,
+  );
+}
+
+// Ручные метрики площадки (AN-010): то, что показывает YouTube Studio, с датой замера.
+const MANUAL_FIELDS = [
+  ["views", "просмотры", { min: "0", step: "1" }],
+  ["impressions", "показы", { min: "0", step: "1" }],
+  ["ctr", "CTR, %", { min: "0", max: "100", step: "0.1" }],
+  ["avg_view_pct", "досмотр, %", { min: "0", max: "100", step: "0.1" }],
+  ["subs_gained", "подписки", { step: "1" }],
+];
+
+function platformFacts(m) {
+  if (!m) return null;
+  const out = [];
+  if (known(m.impressions)) out.push(`показы ${number(m.impressions)}`);
+  if (known(m.ctr)) out.push(`CTR ${m.ctr}%`);
+  if (known(m.avg_view_pct)) out.push(`досмотр ${m.avg_view_pct}%`);
+  if (known(m.subs_gained)) out.push(`${signed(m.subs_gained)} подп. с ролика`);
+  if (!out.length) return null;
+  return `${out.join(", ")}${known(m.at) ? ` (замер ${when(m.at)})` : ""}`;
+}
+
+// Форма ручного отклика: поля с id — перерисовка по опросу переносит набранное (FE-012).
+function manualForm(p, r) {
+  const inputs = MANUAL_FIELDS.map(([key, label, attrs]) =>
+    h("input", { type: "number", id: fieldId(key, p, r), class: "views-input", placeholder: label, title: label, "aria-label": `${label}: ${r.label}`, ...attrs }),
+  );
+  const at = h("input", { type: "datetime-local", id: fieldId("at", p, r), class: "views-input", title: "дата замера (пусто — сейчас)", "aria-label": `Дата замера: ${r.label}` });
+  const save = async () => {
+    const body = { channel: r.channel, publication_id: r.publication_id };
+    MANUAL_FIELDS.forEach(([key], i) => {
+      if (inputs[i].value !== "") body[key] = Number(inputs[i].value);
+    });
+    if (Object.keys(body).length === 2) return;
+    if (at.value) body.at = at.value;
+    if (await act(p, "stats", body)) {
+      for (const el of [...inputs, at]) {
+        const live = document.getElementById(el.id);
+        if (live) live.value = "";
+      }
+    }
+  };
+  return h(
+    "span",
+    { class: "manual-views" },
+    ...inputs,
+    at,
+    h("button", { type: "button", class: "btn btn--ghost btn--sm", onclick: save }, "Сохранить"),
   );
 }
 

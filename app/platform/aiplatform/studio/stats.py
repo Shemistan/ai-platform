@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from datetime import datetime
 
 from aiplatform.studio import publish
 
@@ -102,14 +103,72 @@ def sent_at(record: dict) -> float | None:
 def add_snapshot(record: dict, snapshot: dict, now: float | None = None) -> dict:
     """Новый снимок в запись канала; пустой (ничего не узнали) не пишется.
     У снимка — возраст поста age_h; закрывшиеся окна просмотров замораживаются в записи."""
-    if snapshot.get("views") is None and snapshot.get("members") is None:
+    if all(snapshot.get(key) is None for key in ("members", *MANUAL_METRICS)):
         return record
     at = time.time() if now is None else now
     entry = {"at": at, **snapshot}
     start = sent_at(record)
     if start is not None:
         entry["age_h"] = round((at - start) / HOUR, 3)
-    return with_history(record, [*record.get("stats", []), entry])
+    # Замер задним числом (ручной ввод с датой, AN-010) встаёт на своё место по времени.
+    history = sorted([*record.get("stats", []), entry], key=lambda s: s.get("at") or 0)
+    return with_history(record, history)
+
+
+# --- ручной ввод отклика (AN-010): то, что показывает YouTube Studio / TikTok, с датой замера ---
+# Целые: просмотры, показы обложки, подписки с ролика (могут быть и минусом — отписки). Проценты: 0..100.
+COUNTS = ("views", "impressions", "subs_gained")
+PERCENTS = ("ctr", "avg_view_pct")
+MANUAL_METRICS = (*COUNTS, *PERCENTS)
+PLATFORM = tuple(k for k in MANUAL_METRICS if k != "views")  # только у ручного ввода
+LABELS = {
+    "views": "просмотры",
+    "impressions": "показы",
+    "subs_gained": "подписки с ролика",
+    "ctr": "CTR обложки",
+    "avg_view_pct": "% досмотра",
+}
+
+
+def _when(value: object) -> float:
+    """Дата замера: unix-время или ISO-строка («2026-10-15T12:00», без пояса — местное время)."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.strip()).timestamp()
+        except ValueError:
+            pass
+    raise ValueError("at — дата замера: ISO-строка «2026-10-15T12:00» или unix-время.")
+
+
+def manual_snapshot(payload: dict, start: float | None, now: float | None = None) -> tuple[dict, float]:
+    """(снимок, время замера) из ручного ввода; ValueError — понятный текст для 400.
+    Дата по умолчанию — сейчас; не в будущем и не раньше публикации."""
+    now = time.time() if now is None else now
+    snapshot: dict = {"members": None, "manual": True}
+    for key in COUNTS:
+        value = payload.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or (key != "subs_gained" and value < 0):
+            raise ValueError(f"{key} ({LABELS[key]}) — целое число{'' if key == 'subs_gained' else ' от 0'}.")
+        snapshot[key] = value
+    for key in PERCENTS:
+        value = payload.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
+            raise ValueError(f"{key} ({LABELS[key]}) — процент от 0 до 100.")
+        snapshot[key] = round(float(value), 2)
+    if all(snapshot.get(key) is None for key in MANUAL_METRICS):
+        raise ValueError("Внеси хотя бы одну метрику: views, impressions, ctr, avg_view_pct или subs_gained.")
+    at = now if payload.get("at") in (None, "") else _when(payload["at"])
+    if at > now + 60:
+        raise ValueError("Дата замера — в будущем.")
+    if start is not None and at < start:
+        raise ValueError("Дата замера раньше публикации.")
+    return snapshot, at
 
 
 def with_history(record: dict, history: list[dict]) -> dict:
@@ -142,7 +201,15 @@ def latest(record: dict) -> dict:
     members = next((s["members"] for s in reversed(stats) if s.get("members") is not None), None)
     start = record.get("members_at_publish")
     growth = members - start if members is not None and start is not None else None
-    return {"views": views, "members": members, "growth": growth, "at": stats[-1]["at"] if stats else None}
+    out = {"views": views, "members": members, "growth": growth, "at": stats[-1]["at"] if stats else None}
+    # Ручные метрики площадки (AN-010): последний замер с ними и его дата — в карточку выпуска.
+    manual = next((s for s in reversed(stats) if any(s.get(k) is not None for k in PLATFORM)), None)
+    out["manual"] = (
+        {k: manual[k] for k in MANUAL_METRICS if manual.get(k) is not None} | {"at": manual.get("at")}
+        if manual
+        else None
+    )
+    return out
 
 
 # --- окна: просмотры за 24ч/72ч/7д и прирост подписчиков за сутки после поста (AN-001) ---
