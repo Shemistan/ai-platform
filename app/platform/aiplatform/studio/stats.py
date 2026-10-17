@@ -45,10 +45,15 @@ def views_from_embed(page: str) -> int | None:
     return parse_count(m[1]) if m else None
 
 
+MAX_PAGE_BYTES = 2 * 1024 * 1024  # embed-страница поста — десятки КБ; больше не читаем (SEC-009)
+
+
 def _open(url: str) -> str:
+    """Страница, но не больше MAX_PAGE_BYTES: больше — "" (отклик неизвестен), без повторов."""
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (ai-platform)"})
     with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", "replace")
+        body = resp.read(MAX_PAGE_BYTES + 1)
+    return "" if len(body) > MAX_PAGE_BYTES else body.decode("utf-8", "replace")
 
 
 def _retry_after(exc: urllib.error.HTTPError) -> float | None:

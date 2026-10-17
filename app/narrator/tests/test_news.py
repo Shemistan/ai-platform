@@ -1093,6 +1093,35 @@ def test_http_get_retries_cut_off_response(monkeypatch):
         feeds.http_get("https://x.test", attempts=1)
 
 
+def test_http_get_refuses_oversized_response(monkeypatch):
+    # SEC-009: лента больше лимита — ошибка источника, а не падение и не сотни МБ в памяти.
+    import http.client
+    import io
+
+    asked = []
+
+    class Response(io.BytesIO):
+        headers = http.client.HTTPMessage()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, n=-1):
+            asked.append(n)
+            return super().read(n)
+
+    big = b"x" * (feeds.MAX_RESPONSE_BYTES + 100)
+    monkeypatch.setattr(feeds.urllib.request, "urlopen", lambda *a, **k: Response(big))
+    with pytest.raises(FetchError, match="ответ больше"):
+        feeds.http_get("https://x.test")
+    assert asked == [feeds.MAX_RESPONSE_BYTES + 1]
+    monkeypatch.setattr(feeds.urllib.request, "urlopen", lambda *a, **k: Response(b"<rss/>"))
+    assert feeds.http_get("https://x.test") == "<rss/>"
+
+
 def test_ghsa_filters_by_severity_and_shows_epss():
     advisories = [
         {
