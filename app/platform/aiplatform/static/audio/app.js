@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, busyClick, chip, debounce, errorState, fill, followTask, h, logBlock, modal, narratorApi as api, plural, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { $, busyClick, chip, countLabel, debounce, errorState, fill, fmtNum, followTask, h, logBlock, modal, narratorApi as api, plural, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -98,7 +98,7 @@ function renderPreview(data) {
 }
 
 function updateCount() {
-  $("text-count").textContent = `${$("text").value.length.toLocaleString("ru-RU")} знаков из ${state.config.max_text.toLocaleString("ru-RU")}`;
+  $("text-count").textContent = `${countLabel($("text").value.length, "знак", "знака", "знаков")} из ${fmtNum(state.config.max_text)}`;
 }
 
 function setText(text) {
@@ -202,9 +202,9 @@ function renderBatch() {
     h(
       "ol",
       { class: "list" },
-      ...batch.articles.map((a, n) => h("li", { class: "list-row list-row--static" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, `${a.words} слов`))),
+      ...batch.articles.map((a, n) => h("li", { class: "list-row list-row--static" }, h("span", {}, `${n + 1}. ${a.title || "Без названия"}`), h("span", { class: "muted small" }, countLabel(a.words, "слово", "слова", "слов")))),
     ),
-    over ? h("p", { class: "form-error" }, `За раз — не больше ${max} статей.`) : null,
+    over ? h("p", { class: "form-error" }, `За раз — не больше ${max} ${plural(max, "статьи", "статей", "статей")}.`) : null,
     h("p", { class: "hint" }, "Каждая статья встанет в очередь отдельной задачей с настройками ниже — по порядку."),
     h(
       "div",
@@ -348,7 +348,7 @@ function renderJob(job) {
     return;
   }
   const active = job.status === "queued" || job.status === "running";
-  const meta = [job.engine_label, job.voice, job.speed ? `×${job.speed}` : "", job.steps ? `${job.steps} шагов` : "", `${job.chars} знаков`].filter(Boolean).join(" · ");
+  const meta = [job.engine_label, job.voice, job.speed ? `×${job.speed}` : "", job.steps ? countLabel(job.steps, "шаг", "шага", "шагов") : "", countLabel(job.chars, "знак", "знака", "знаков")].filter(Boolean).join(" · ");
   fill(box, 
     h(
       "div",

@@ -118,7 +118,7 @@ function stepBody(step) {
       const dynamic = a.plan.slides.filter((s) => (s.kind || (s.image_prompt ? "image" : "bullets")) !== "image").length;
       return [
         a.plan.title ? h("p", {}, h("span", { class: "muted" }, "Название: "), a.plan.title) : null,
-        h("p", { class: "muted small" }, `${a.plan.slides.length} слайдов: ${a.plan.slides.length - dynamic} с картинкой, ${dynamic} динамических`),
+        h("p", { class: "muted small" }, `${countLabel(a.plan.slides.length, "слайд", "слайда", "слайдов")}: ${a.plan.slides.length - dynamic} с картинкой, ${dynamic} динамических`),
         h("div", { class: "slides-list" }, ...cards),
         h("details", { class: "disclosure" }, h("summary", {}, "Править план (JSON)"), editor("plan", JSON.stringify(a.plan, null, 2), 14, true)),
       ];
@@ -143,7 +143,7 @@ function stepBody(step) {
       ];
     case "short":
       return [
-        a.short ? h("details", { class: "disclosure" }, h("summary", {}, `Сценарий шортса: ${a.short.beats.length} частей`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,
+        a.short ? h("details", { class: "disclosure" }, h("summary", {}, `Сценарий шортса: ${countLabel(a.short.beats.length, "часть", "части", "частей")}`), editor("short", JSON.stringify(a.short, null, 2), 10, true)) : null,
         f.short_video
           ? h("div", {}, h("video", { class: "vertical-video", controls: true, src: f.short_video, preload: "metadata" }), h("p", {}, h("a", { class: "btn--link", href: `${f.short_video.split("?")[0]}?download=1` }, "Скачать шортс 9:16")))
           : null,

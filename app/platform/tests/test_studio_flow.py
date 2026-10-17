@@ -1,12 +1,14 @@
 """Сценарии целиком через HTTP: фейковые фото, TTS, LLM и новости, настоящий ffmpeg."""
 
 import json
+import logging
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from aiplatform.core import media
+from aiplatform.core import http, media
 from tests.fixtures import ARTICLE, FAST, NEEDS_FFMPEG, SOURCE, png_bytes  # noqa: F401 — и для старых импортов
 from tests.helpers import StudioCase
 
@@ -189,7 +191,7 @@ class LlmGarbageTest(StudioCase):
         done = self.settle(project["id"])
         plan = next(s for s in done["steps"] if s["id"] == "plan")
         self.assertEqual(plan["status"], "failed")
-        self.assertIn("не JSON", plan["error"])
+        self.assertIn("неверном формате", plan["error"])
         # Человек правит план руками — шаг готов.
         fixed = {"slides": [{"para": 0, "title": "Свой слайд"}]}
         status, view = self.json(
@@ -252,8 +254,8 @@ class ValidationTest(StudioCase):
             ({"scenario": "x"}, "digest, article или post"),
             ({"scenario": "article", "text": "  "}, "текст"),
             ({"scenario": "digest", "day": "2999-01-01"}, "не наступил"),
-            ({"scenario": "article", "text": "т", "settings": {"poster_mode": "x"}}, "poster_mode"),
-            ({"scenario": "article", "text": "т", "settings": {"nope": 1}}, "Неизвестная настройка"),
+            ({"scenario": "article", "text": "т", "settings": {"poster_mode": "x"}}, "Некорректный запрос"),
+            ({"scenario": "article", "text": "т", "settings": {"nope": 1}}, "Некорректный запрос"),
             ({"scenario": "article", "text": "т", "settings": {"channels": ["nope"]}}, "Нет таких каналов"),
             ({"scenario": "article", "text": "т", "settings": {"engine": "silero", "voice": "Charon"}}, "нет голоса"),
             ({"scenario": "article", "text": "т", "settings": {"image_model": "nope"}}, "модель картинок"),
@@ -263,6 +265,17 @@ class ValidationTest(StudioCase):
                 status, body = self.json("POST", "/api/studio/projects", payload)
                 self.assertEqual(status, 400, body)
                 self.assertIn(message, body["error"])
+
+    def test_malformed_settings_hide_field_name(self):
+        # TXT-008: имя поля и допустимые значения — в лог сервиса, человеку — общий текст.
+        with mock.patch.object(http.log, "event") as event:
+            status, body = self.json(
+                "POST", "/api/studio/projects", {"scenario": "article", "text": "т", "settings": {"poster_mode": "x"}}
+            )
+        self.assertEqual(status, 400, body)
+        self.assertEqual(body["error"], http.MALFORMED)
+        self.assertNotIn("poster_mode", body["error"])
+        event.assert_any_call("request.malformed", level=logging.WARNING, error="poster_mode — local или upload.")
 
     def test_files_and_unknowns(self):
         project = self.create(scenario="article", text="Один абзац.")

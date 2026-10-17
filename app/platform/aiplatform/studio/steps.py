@@ -1282,7 +1282,8 @@ def journaled(journal: Journal, channel: publish.Channel, record: dict, part: st
         raise
     except Exception as exc:
         # Сбой уже после начала отправки: ушёл ли пост — неизвестно, повтор сам не шлём.
-        mark(UNKNOWN, message=f"Сбой при отправке: {exc!r}.")
+        log.internal_error(exc, step="publish", channel=channel.id)
+        mark(UNKNOWN, message="Сбой при отправке — неизвестно, ушёл ли пост. Проверь канал; подробности — в журнале.")
         failed(UNKNOWN, exc)
         raise Waiting(unclear_note([channel.label])) from exc
     return mark(SENT, message_id=message_id)

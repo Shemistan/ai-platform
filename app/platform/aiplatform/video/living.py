@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from aiplatform.core.http import malformed
 from aiplatform.video import models, timeline
 from aiplatform.video.timeline import GenerationSpec, Keyframe, ValidationError
 
@@ -45,7 +46,7 @@ def suitable(available: list[models.Available]) -> list[models.Available]:
 def pick_model(available: list[models.Available], model_id: object = None) -> models.Available:
     """Модель по id из запроса; пусто — первая установленная из подходящих."""
     if model_id is not None and not isinstance(model_id, str):
-        raise ValidationError("model должен быть строкой — id модели.")
+        raise ValidationError(malformed("model должен быть строкой — id модели."))
     fitting = suitable(available)
     if not model_id:
         model = models.default(fitting) if any(m.installed for m in fitting) else None
