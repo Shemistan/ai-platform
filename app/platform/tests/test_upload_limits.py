@@ -1,122 +1,148 @@
-"""Лимиты загрузки: 413 с размером в МБ, пустое тело, неверный Content-Length (QA-015).
+"""Лимиты памяти и потоков (SEC-009): загрузки потоком на диск, потолок загрузок и обработчиков,
+ограничение ответов внешних страниц."""
 
-Лимиты понижены патчем (настоящие — 25 и 200 МБ), тело сверх лимита не отправляется вовсе:
-ответ 413 приходит по одному заголовку, значит сервер не читает тело в память.
-"""
-
-import http.client
-import json
+import io
 import socket
+import tempfile
+import threading
 import time
+import unittest
+from http import HTTPStatus
+from pathlib import Path
 from unittest import mock
 
-from aiplatform.core import uploads
-from tests.fixtures import ARTICLE, PNG_STUB
-from tests.helpers import StudioCase, scaled
-
-MB = 2**20
-IMAGE_LIMIT = 1 * MB
-AUDIO_LIMIT = 2 * MB
-MP3 = b"ID3\x04" + b"\x00" * 60
+from aiplatform.core import http, uploads
+from aiplatform.studio import stats
+from tests.fixtures import png
+from tests.helpers import PlatformCase
 
 
-class UploadLimitsTest(StudioCase):
+class CountingReader(io.RawIOBase):
+    """rfile: отдаёт size байт и запоминает, сколько просили за раз."""
+
+    def __init__(self, size: int, payload: bytes = b"\x89PNG\r\n\x1a\n", cut: int | None = None):
+        self.size, self.payload, self.cut = size, payload, cut
+        self.pos, self.asked = 0, []
+
+    def read(self, n=-1):
+        self.asked.append(n)
+        end = self.size if self.cut is None else self.cut
+        if n is None or n < 0:
+            n = end - self.pos
+        n = max(min(n, end - self.pos), 0)
+        if not n:
+            return b""
+        head = self.payload[self.pos : self.pos + n] if self.pos < len(self.payload) else b""
+        out = head + b"\0" * (n - len(head))
+        self.pos += n
+        return out
+
+
+def request(length: int, rfile) -> http.Request:
+    handler = mock.Mock()
+    handler.headers = {"Content-Length": str(length)}
+    handler.rfile = rfile
+    handler.close_connection = False
+    return http.Request(handler, "POST", ["uploads"], {})
+
+
+class BodyToFileTest(unittest.TestCase):
     def setUp(self):
-        super().setUp()
-        for name, value in (("MAX_UPLOAD_BYTES", IMAGE_LIMIT), ("MAX_AUDIO_BYTES", AUDIO_LIMIT)):
-            patcher = mock.patch.object(uploads, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
 
-    def send(self, path, body=b"", *, length=None, hold=False):
-        """POST сырым сокетом: свой Content-Length; hold — не закрывать запись (клиент «замолчал»).
+    def test_too_big_rejected_without_reading_body(self):
+        rfile = CountingReader(300 * 2**20)
+        with self.assertRaises(http.HttpError) as caught:
+            request(300 * 2**20, rfile).body_to_file(self.dir, 200 * 2**20)
+        self.assertEqual(caught.exception.status, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+        self.assertEqual(rfile.asked, [], "тело не читалось")
+        self.assertEqual(list(self.dir.iterdir()), [])
 
-        Возвращает (статус, JSON-ответ, секунды до ответа)."""
-        sock = socket.create_connection(("127.0.0.1", self.port), timeout=scaled(5))
-        self.addCleanup(sock.close)
-        size = len(body) if length is None else length
-        head = (
-            f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nX-AIP: 1\r\n"
-            f"Content-Type: application/octet-stream\r\nContent-Length: {size}\r\n\r\n"
-        )
-        started = time.monotonic()
-        sock.sendall(head.encode() + body)
-        if not hold:
-            sock.shutdown(socket.SHUT_WR)
-        resp = http.client.HTTPResponse(sock)
-        resp.begin()
-        payload = json.loads(resp.read() or b"{}")
-        resp.close()
-        return resp.status, payload, time.monotonic() - started
+    def test_streams_in_chunks(self):
+        size = 5 * http.CHUNK + 123
+        rfile = CountingReader(size)
+        tmp = request(size, rfile).body_to_file(self.dir, 200 * 2**20)
+        self.assertEqual(tmp.stat().st_size, size)
+        self.assertTrue(all(0 < n <= http.CHUNK for n in rfile.asked), rfile.asked)
+        self.assertEqual(tmp.stat().st_mode & 0o077, 0, "загрузка — только владельцу")
 
-    def project(self) -> str:
-        return self.create(scenario="article", text=ARTICLE)["id"]
+    def test_broken_upload_leaves_no_temp_file(self):
+        rfile = CountingReader(10 * http.CHUNK, cut=3 * http.CHUNK)
+        with self.assertRaises(http.HttpError) as caught:
+            request(10 * http.CHUNK, rfile).body_to_file(self.dir, 200 * 2**20)
+        self.assertEqual(caught.exception.status, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(list(self.dir.iterdir()), [])
 
-    # --- POST …/uploads модулей ---
+    def test_upload_slots(self):
+        taken = [http._upload_slots.acquire(blocking=False) for _ in range(http.UPLOAD_SLOTS)]
+        self.assertTrue(all(taken))
+        try:
+            with self.assertRaises(http.HttpError) as caught:
+                request(10, CountingReader(10)).body_to_file(self.dir, 100)
+            self.assertEqual(caught.exception.status, HTTPStatus.SERVICE_UNAVAILABLE)
+        finally:
+            for _ in taken:
+                http._upload_slots.release()
+        request(10, CountingReader(10)).body_to_file(self.dir, 100)  # слоты вернулись
 
-    def test_module_upload_over_limit_is_413_without_reading_body(self):
-        cases = (
-            ("/api/photo/uploads", IMAGE_LIMIT, "Файл больше 1 МБ."),
-            ("/api/video/uploads", IMAGE_LIMIT, "Файл больше 1 МБ."),
-            ("/api/audio/uploads", AUDIO_LIMIT, "Файл больше 2 МБ."),
-        )
-        for path, limit, text in cases:
-            with self.subTest(path):
-                # Тело не шлём вовсе: ответ по одному заголовку — сервер тело не ждёт и не читает.
-                status, body, _ = self.send(path, length=limit + 1, hold=True)
-                self.assertEqual((status, body["code"]), (413, "too_large"), body)
-                self.assertEqual(body["error"], text)
+    def test_store_rejects_bad_file_and_cleans_up(self):
+        store = uploads.UploadStore(self.dir / "store")
+        bad = self.dir / "store" / ".upload-x.part"
+        bad.write_bytes(b"hello")
+        with self.assertRaises(uploads.UploadError):
+            store.save_file(bad, (uploads.IMAGE,))
+        self.assertFalse(bad.exists())
+        good = self.dir / "store" / ".upload-y.part"
+        good.write_bytes(png(8, 8))
+        upload_id = store.save_file(good, (uploads.IMAGE,))
+        self.assertEqual(store.path(upload_id).suffix, ".png")
+        self.assertEqual(sorted(p.name for p in (self.dir / "store").iterdir()), [f"{upload_id}.png"])
 
-    def test_module_upload_at_limit_is_accepted(self):
-        status, body, _ = self.send("/api/photo/uploads", PNG_STUB + b"\x00" * (IMAGE_LIMIT - len(PNG_STUB)))
+
+class UploadServerTest(PlatformCase):
+    def test_upload_works_and_leaves_no_parts(self):
+        status, body = self.json("POST", "/api/photo/uploads", png(64, 48))
         self.assertEqual(status, 201, body)
-        status, body, _ = self.send("/api/audio/uploads", MP3)
-        self.assertEqual(status, 201, body)
+        self.assertEqual((body["width"], body["height"]), (64, 48))
+        status, _ = self.json("POST", "/api/photo/uploads", b"not an image")
+        self.assertEqual(status, 400)
+        parts = list(self.config.uploads_dir.glob(".upload-*"))
+        self.assertEqual(parts, [], "временные файлы загрузок удалены")
 
-    def test_empty_body_is_400_with_text(self):
-        for path in ("/api/photo/uploads", "/api/audio/uploads"):
-            with self.subTest(path):
-                status, body, _ = self.send(path, b"")
-                self.assertEqual((status, body["error"]), (400, "Пустой файл."), body)
 
-    def test_content_length_shorter_than_body_is_an_error_not_a_hang(self):
-        # Сервер читает ровно Content-Length: 4 байта PNG — не картинка, ответ сразу.
-        status, body, seconds = self.send("/api/photo/uploads", PNG_STUB, length=4)
-        self.assertEqual(status, 400, body)
-        self.assertIn("PNG", body["error"])
-        self.assertLess(seconds, scaled(2))
+class HandlerCapTest(PlatformCase):
+    def test_connections_over_cap_get_503(self):
+        self.server._slots = threading.BoundedSemaphore(1)
+        held = socket.create_connection(("127.0.0.1", self.port))  # держит единственный слот
+        self.addCleanup(held.close)
+        time.sleep(0.2)
+        with socket.create_connection(("127.0.0.1", self.port), timeout=5) as extra:
+            extra.sendall(b"GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            answer = extra.recv(4096)
+        self.assertTrue(answer.startswith(b"HTTP/1.1 503"), answer[:80])
+        held.close()
+        time.sleep(0.3)
+        status, _ = self.json("GET", "/api/health")
+        self.assertEqual(status, 200, "слот вернулся после закрытия соединения")
 
-    def test_body_cut_short_is_400(self):
-        # Content-Length больше, чем пришло, клиент закрыл запись — обрыв посреди тела.
-        status, body, seconds = self.send("/api/photo/uploads", PNG_STUB, length=1000)
-        self.assertEqual(status, 400, body)
-        self.assertIn("оборвался", body["error"])
-        self.assertLess(seconds, scaled(2))
 
-    def test_silent_client_is_dropped_by_socket_timeout(self):
-        # Клиент прислал часть тела и замолчал, соединение держит: поток сервера не висит вечно.
-        self.server.RequestHandlerClass.timeout = 0.3  # у каждого сервера свой класс обработчика
-        status, body, seconds = self.send("/api/photo/uploads", PNG_STUB, length=1000, hold=True)
-        self.assertEqual(status, 400, body)
-        self.assertIn("оборвался", body["error"])
-        self.assertLess(seconds, scaled(2))
+class ClientLimitTest(unittest.TestCase):
+    def test_stats_page_over_limit_is_empty(self):
+        class Resp(io.BytesIO):
+            def __enter__(self):
+                return self
 
-    # --- студия: постер и голос ---
+            def __exit__(self, *exc):
+                return False
 
-    def test_studio_poster_over_image_limit_is_413(self):
-        pid = self.project()
-        big = PNG_STUB + b"\x00" * IMAGE_LIMIT
-        status, body, _ = self.send(f"/api/studio/projects/{pid}/upload/poster", big)
-        self.assertEqual((status, body["error"]), (413, "Картинка больше 1 МБ."), body)
+        big = Resp(b"x" * (stats.MAX_PAGE_BYTES + 10))
+        with mock.patch("urllib.request.urlopen", return_value=big):
+            self.assertEqual(stats.http_get("https://t.me/x/1?embed=1"), "")
+        with mock.patch("urllib.request.urlopen", return_value=Resp(b"<b>12K views</b>")):
+            self.assertEqual(stats.http_get("https://t.me/x/1?embed=1"), "<b>12K views</b>")
 
-    def test_studio_voice_over_audio_limit_is_413(self):
-        pid = self.project()
-        status, body, _ = self.send(f"/api/studio/projects/{pid}/upload/voice", length=AUDIO_LIMIT + 1, hold=True)
-        self.assertEqual((status, body["error"]), (413, "Файл больше 2 МБ."), body)
 
-    def test_studio_empty_upload_is_400(self):
-        pid = self.project()
-        for what in ("poster", "voice"):
-            with self.subTest(what):
-                status, body, _ = self.send(f"/api/studio/projects/{pid}/upload/{what}", b"")
-                self.assertEqual((status, body["error"]), (400, "Пустой файл."), body)
+if __name__ == "__main__":
+    unittest.main()

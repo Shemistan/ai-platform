@@ -7,7 +7,7 @@ Bot API не отдаёт просмотры сообщений, поэтому:
 У пакетов для ручной загрузки (YouTube, TikTok…) просмотры вносятся руками.
 
 Снимки копятся в записи канала в published.json: `stats: [{at, age_h, views,
-members, manual?}]`, не больше KEEP последних. Сравнивать посты можно только в
+members, manual?}]`: первые 7 суток — все, дальше — по одному в неделю (AN-004). Сравнивать посты можно только в
 окнах: просмотры за 24ч/72ч/7д (интерполяция по возрасту поста, закрытое окно
 замораживается в записи) и прирост подписчиков за сутки после поста за вычетом
 базового тренда канала (AN-001).
@@ -24,7 +24,7 @@ from collections.abc import Callable
 
 from aiplatform.studio import publish
 
-KEEP = 60
+FULL_H = 168  # первые 7 суток снимки хранятся все, дальше — по одному на неделю (AN-004)
 EMBED = "https://t.me/{username}/{message_id}?embed=1"
 _VIEWS = re.compile(r'class="tgme_widget_message_views"[^>]*>([^<]+)<')
 _COUNT = re.compile(r"^\s*([\d.,]+)\s*([KMkм]?)\s*$")
@@ -45,10 +45,15 @@ def views_from_embed(page: str) -> int | None:
     return parse_count(m[1]) if m else None
 
 
+MAX_PAGE_BYTES = 2 * 1024 * 1024  # embed-страница поста — десятки КБ; больше не читаем (SEC-009)
+
+
 def _open(url: str) -> str:
+    """Страница, но не больше MAX_PAGE_BYTES: больше — "" (отклик неизвестен), без повторов."""
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (ai-platform)"})
     with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", "replace")
+        body = resp.read(MAX_PAGE_BYTES + 1)
+    return "" if len(body) > MAX_PAGE_BYTES else body.decode("utf-8", "replace")
 
 
 def _retry_after(exc: urllib.error.HTTPError) -> float | None:
@@ -88,8 +93,9 @@ def http_get(url: str, opener: HttpGet | None = None) -> str:
 
 
 def sent_at(record: dict) -> float | None:
-    """Когда пост вышел: залит руками (published_at) или отправлен в Telegram (sent)."""
-    value = record.get("published_at") or record.get("sent")
+    """Когда пост вышел: залит руками (published_at) или отправлен в Telegram (sent).
+    У пакета, ещё не залитого руками, sent — время сборки пакета, а не выхода поста (AN-003, AN-006)."""
+    value = record.get("published_at") or (record.get("sent") if record.get("state") != "packaged" else None)
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
@@ -103,8 +109,30 @@ def add_snapshot(record: dict, snapshot: dict, now: float | None = None) -> dict
     start = sent_at(record)
     if start is not None:
         entry["age_h"] = round((at - start) / HOUR, 3)
-    history = [*record.get("stats", []), entry]
-    return freeze(record | {"stats": history[-KEEP:]})
+    return with_history(record, [*record.get("stats", []), entry])
+
+
+def with_history(record: dict, history: list[dict]) -> dict:
+    """Запись с новой историей снимков: окна замораживаются по полной истории, потом — разреживание."""
+    frozen = freeze(record | {"stats": history})
+    return frozen | {"stats": thin(history, sent_at(record))}
+
+
+def thin(history: list[dict], start: float | None) -> list[dict]:
+    """Разреживание снимков (AN-004): первые 7 суток после публикации — все (по ним окна 24/72ч и
+    кривая набора), дальше — последний снимок каждой недели. Возраст — от публикации, без неё —
+    от первого снимка. За год ежедневных снимков — не больше недели снимков плюс ~52."""
+    if not history:
+        return history
+    base = start if start is not None else min(s["at"] for s in history if isinstance(s.get("at"), (int, float)))
+    early, weekly = [], {}
+    for snap in history:
+        age = (snap["at"] - base) / HOUR if isinstance(snap.get("at"), (int, float)) else 0.0
+        if age < FULL_H:
+            early.append(snap)
+        else:
+            weekly[int(age // FULL_H)] = snap  # в неделе остаётся последний
+    return early + [weekly[k] for k in sorted(weekly)]
 
 
 def latest(record: dict) -> dict:
@@ -163,7 +191,7 @@ def window_views(points: list[tuple[float, float]], hours: float) -> float | Non
 
 
 def freeze(record: dict) -> dict:
-    """Закрывшиеся окна — в запись: дальше их не сдвинут ни новые снимки, ни обрезка истории до KEEP."""
+    """Закрывшиеся окна — в запись: дальше их не сдвинут ни новые снимки, ни разреживание истории."""
     points = view_points(record)
     out = record
     for hours, key in WINDOWS:
@@ -293,6 +321,7 @@ class Refresher:
         return add_snapshot(record | {"public": bool(chat["username"])}, {"views": views, "members": chat["members"]})
 
 
+LIVE = (None, "sent", "uploaded")  # состояния вышедшего поста (steps.SENT/UPLOADED); None — записи до журнала
 LENGTHS = ((180, "до 3 мин"), (480, "3–8 мин"), (900, "8–15 мин"), (float("inf"), "длиннее 15 мин"))
 
 
@@ -302,20 +331,36 @@ def _length(seconds: float | None) -> str | None:
     return next(label for limit, label in LENGTHS if seconds <= limit)
 
 
+def _format(record: dict) -> str | None:
+    if record.get("post_format") == "photo":
+        return "картинка и аудио"
+    if not record.get("format"):
+        return None
+    return "вертикальный 9:16" if record["format"] == publish.VERTICAL else "16:9 и квадрат"
+
+
 def summary(items: list[dict]) -> list[dict]:
     """«Что работает»: средние просмотры за 24ч и прирост подписчиков за сутки после поста (за вычетом
     тренда канала) по сценарию, длине ролика и формату. Считаются только публикации с закрытым окном
     24ч: свежий пост с недобранными сутками и старый с накопленными просмотрами несравнимы."""
     posts = []
     for item in items:
+        seen: set[str] = set()
         for record in item.get("published", []):
+            # Канал выпуска — один раз: первая вышедшая публикация, повтор не считается (AN-005).
+            channel = record.get("channel")
+            if record.get("state") not in LIVE or (channel and channel in seen):
+                continue
+            seen.add(channel)
             if record.get("views_24h") is None:
                 continue
             posts.append(
                 {
                     "Сценарий": item.get("scenario_label"),
-                    "Длина ролика": _length(item.get("video_s")),
-                    "Формат": "вертикальный 9:16" if record.get("format") == publish.VERTICAL else "16:9 и квадрат",
+                    # Срезы — по полям, записанным в момент публикации (AN-006): длина отправленного
+                    # файла (шортса у вертикального канала), формат канала тогда, вид поста.
+                    "Длина ролика": _length(record.get("media_s")),
+                    "Формат": _format(record),
                     "views": record["views_24h"],
                     "growth": record.get("growth_24h_attr"),
                 }
