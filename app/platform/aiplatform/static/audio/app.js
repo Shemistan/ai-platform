@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, narratorApi as api, chip, debounce, fill, followTask, h, logBlock, modal, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
+import { $, narratorApi as api, busyClick, chip, debounce, fill, followTask, h, logBlock, modal, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard } from "/ui.js";
 
 const API = "/api/audio";
 const TEMPOS = [1, 1.25, 1.5, 1.75, 2];
@@ -134,11 +134,11 @@ async function openLibrary() {
             {
               type: "button",
               class: "row-btn",
-              onclick: async () => {
+              onclick: busyClick(async () => {
                 const data = await api("GET", `${API}/library/${encodeURIComponent(item.id)}`);
                 close();
                 setText(data.text);
-              },
+              }),
             },
             h("span", {}, item.title),
             h("span", { class: "muted small" }, shortDate(item.added)),
@@ -203,7 +203,7 @@ function renderBatch() {
     h(
       "div",
       { class: "toolbar" },
-      h("button", { type: "button", class: "primary", disabled: over, onclick: submitBatch }, `Все в очередь (${batch.articles.length})`),
+      h("button", { type: "button", class: "primary", disabled: over, onclick: busyClick(submitBatch, "batch") }, `Все в очередь (${batch.articles.length})`),
       h("button", { type: "button", class: "small-btn", onclick: () => ((state.batch = null), renderBatch()) }, "Отмена"),
     ),
   );
@@ -361,7 +361,7 @@ function renderJob(job) {
         job.duration_s ? h("span", { class: "muted small" }, `Длительность ${seconds(job.duration_s)}`) : null,
         job.elapsed_s ? h("span", { class: "muted small" }, `Озвучка заняла ${seconds(job.elapsed_s)}`) : null,
         job.text ? h("button", { type: "button", class: "link", onclick: () => setText(job.text) }, "Текст в редактор") : null,
-        active ? h("button", { type: "button", class: "link danger", onclick: safe(() => cancel(job.id)) }, "Отменить") : null,
+        active ? h("button", { type: "button", class: "link danger", onclick: busyClick(() => cancel(job.id), `cancel:${job.id}`) }, "Отменить") : null,
       ),
       checkBlock(job.check),
       logBlock(job.log),
@@ -477,7 +477,7 @@ function recordControls(v, data, busy, taskBox, reload) {
         { class: "field", style: "margin-top:8px" },
         h("p", { class: "hint" }, "Голос Charon есть в Gemini TTS: движок сам запишет образец по ключу GEMINI_API_KEY. Можно и своей записью — загрузи её ниже."),
         text,
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: () => startRecord(v.stem, { text: text.value }, taskBox, reload) }, "Записать из Gemini TTS")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: busyClick(() => startRecord(v.stem, { text: text.value }, taskBox, reload), `voice:${v.stem}`) }, "Записать из Gemini TTS")),
         fileRecord(v, low, high, busy, taskBox, reload),
       ),
     );
@@ -511,7 +511,7 @@ function fileRecord(v, low, high, busy, taskBox, reload) {
     file,
     text,
     error,
-    h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: save }, "Сохранить образец")),
+    h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: busy, onclick: busyClick(save, `voice:${v.stem}`) }, "Сохранить образец")),
   );
 }
 

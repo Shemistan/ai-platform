@@ -1,5 +1,5 @@
 // «Выпуски»: все выпуски всех сценариев по группам. У ждущего — что нужно и кнопка действия.
-import { $, announce, api, confirmPublish, fill, h, poller, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, busyClick, confirmPublish, fill, h, poller, STATUS, statusChip } from "/ui.js";
 
 const API = "/api/studio";
 const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
@@ -13,6 +13,7 @@ function when(ts) {
 }
 
 async function act(project, path, body) {
+  if (state.busy.has(project.id)) return; // запрос по выпуску уже идёт — второй POST не шлём
   state.busy.add(project.id);
   delete state.errors[project.id];
   render(state.data);
@@ -49,7 +50,7 @@ function actions(p) {
   } else if (p.group === "drafts" || need?.status === "failed") {
     out.unshift(h("button", { type: "button", class: "small-btn", disabled: busy, onclick: () => act(p, "run", {}) }, "Запустить всё"));
   }
-  if (p.running) out.push(h("button", { type: "button", class: "link", onclick: () => act(p, "cancel") }, "Остановить"));
+  if (p.running) out.push(h("button", { type: "button", class: "link", disabled: state.busy.has(p.id), onclick: () => act(p, "cancel") }, "Остановить"));
   else
     out.push(
       h(
@@ -95,7 +96,7 @@ function responsePanel(data) {
       type: "button",
       class: "small-btn",
       disabled: s.running,
-      onclick: async () => {
+      onclick: busyClick(async () => {
         try {
           await api("POST", `${API}/stats/refresh`);
         } catch (err) {
@@ -103,7 +104,7 @@ function responsePanel(data) {
           $("error").hidden = false;
         }
         boardPoll.now();
-      },
+      }, "stats-refresh"),
     },
     s.running ? "Обновляю…" : "Обновить отклик",
   );

@@ -1,5 +1,5 @@
 // Вкладка «Каналы»: каналы публикации, бот движка, подписчики и приём подписок.
-import { $, narratorApi as api, chip, fill, h, modal, poller, safe, shortDate } from "/ui.js";
+import { $, narratorApi as api, busy, busyClick, chip, fill, h, modal, poller, reportError, safe, shortDate } from "/ui.js";
 
 const API = "/api/channels";
 const FORMATS = { landscape: "Видео 16:9", vertical: "Шортс 9:16" };
@@ -47,7 +47,7 @@ function renderChannels() {
   const tools = $("channel-tools");
   fill(tools, 
     data.importable.length
-      ? h("button", { type: "button", class: "small-btn accent", title: data.importable.map((c) => c.label).join(", "), onclick: importNarrator }, `Взять каналы движка (${data.importable.length})`)
+      ? h("button", { type: "button", class: "small-btn accent", title: data.importable.map((c) => c.label).join(", "), onclick: busyClick(importNarrator, "import") }, `Взять каналы движка (${data.importable.length})`)
       : null,
   );
 }
@@ -75,7 +75,7 @@ function editChannel(channel) {
     h("div", { class: "field" }, h("span", { class: "field-label" }, "Что уходит"), formats),
     channel.type === "telegram" ? h("label", { class: "field" }, h("span", { class: "field-label" }, "Переменная с токеном бота"), token, h("span", { class: "hint" }, "Свой бот у канала — имя переменной окружения с его токеном. Сам токен в файлы не пишется.")) : null,
     error,
-    h("div", { class: "toolbar" }, h("button", { type: "button", class: "primary", onclick: save }, "Сохранить")),
+    h("div", { class: "toolbar" }, h("button", { type: "button", class: "primary", onclick: busyClick(save) }, "Сохранить")),
   );
 }
 
@@ -91,11 +91,11 @@ async function removeChannel(channel) {
         {
           type: "button",
           class: "primary",
-          onclick: async () => {
+          onclick: busyClick(async () => {
             state.data = { ...state.data, ...(await api("POST", `${API}/channels/${channel.id}/delete`)) };
             renderChannels();
             close();
-          },
+          }, `delete:${channel.id}`),
         },
         "Убрать",
       ),
@@ -243,7 +243,10 @@ async function pollServe(signal) {
 
 async function init() {
   segmented($("add-format"), "landscape", (v) => (state.addFormat = v));
-  $("add-form").addEventListener("submit", addChannel);
+  $("add-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    busy(e.submitter || $("add-form").querySelector("[type=submit]"), () => addChannel(e), "add-channel").catch(reportError);
+  });
   $("bot-check").addEventListener("click", async () => {
     $("bot-check").disabled = true;
     try {

@@ -358,6 +358,9 @@ form.field { gap: 12px; }
 .primary.danger { background: var(--bad); border-color: var(--bad); color: var(--panel); }
 .confirm-list { list-style: disc; padding-left: 18px; margin: 4px 0 0; }
 
+/* Кнопка, чей запрос ещё идёт (busy в ui.js): второй клик не проходит. */
+button[aria-busy="true"] { pointer-events: none; opacity: 0.55; cursor: progress; }
+
 /* Ошибка обработчика без своего места на странице (reportError в ui.js). */
 .platform-toast {
   position: fixed;

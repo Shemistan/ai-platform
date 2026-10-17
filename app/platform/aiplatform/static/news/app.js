@@ -1,5 +1,5 @@
 // Вкладка «Новости»: источники, главное за день, добор упавших, обзоры для YouTube.
-import { $, narratorApi as api, chip, copyButton, fill, followTask, h, modal, shortDate, taskCard } from "/ui.js";
+import { $, narratorApi as api, busyClick, chip, copyButton, fill, followTask, h, modal, shortDate, taskCard } from "/ui.js";
 
 const API = "/api/news";
 const KINDS = {
@@ -100,7 +100,7 @@ async function showSources() {
       h("td", { class: "num" }, s.authority.toFixed(2)),
       h("td", {}, ...lastRun(s)),
       h("td", {}, usefulness(s)),
-      h("td", { class: "num" }, s.enabled ? h("button", { type: "button", class: "small-btn", onclick: () => runTask(`${API}/sources/collect`, { only: s.id }, taskBox) }, "Собрать") : null),
+      h("td", { class: "num" }, s.enabled ? h("button", { type: "button", class: "small-btn", onclick: busyClick(() => runTask(`${API}/sources/collect`, { only: s.id }, taskBox), "sources/collect") }, "Собрать") : null),
     ),
   );
   fill(
@@ -109,7 +109,7 @@ async function showSources() {
       "div",
       { class: "card-head" },
       segmentedButtons(filters, state.sourceFilter, (v) => ((state.sourceFilter = v), showSources())),
-      h("button", { type: "button", class: "secondary", onclick: () => runTask(`${API}/sources/collect`, {}, taskBox) }, "Собрать все"),
+      h("button", { type: "button", class: "secondary", onclick: busyClick(() => runTask(`${API}/sources/collect`, {}, taskBox), "sources/collect") }, "Собрать все"),
     ),
     h("p", { class: "hint", style: "margin:10px 0" }, `Вес — авторитет источника в оценке важности. «Мало пользы» — разобрано от ${data.useless_after} материалов, а в выпуски не попало ничего: понизить вес или выключить в config/news-sources.toml движка.`),
     taskBox,
@@ -195,7 +195,7 @@ async function showFailed() {
       { class: "toolbar", style: "margin-top:12px" },
       h("span", { class: "field-label" }, "Материалы за"),
       day,
-      h("button", { type: "button", class: "secondary", disabled: !data.failed.length, onclick: () => runTask(`${API}/failed/rescue`, { day: day.value }, taskBox) }, "Добрать агентом"),
+      h("button", { type: "button", class: "secondary", disabled: !data.failed.length, onclick: busyClick(() => runTask(`${API}/failed/rescue`, { day: day.value }, taskBox), "failed/rescue") }, "Добрать агентом"),
     ),
     taskBox,
   );
@@ -235,10 +235,10 @@ async function showReviews() {
     h(
       "div",
       { class: "toolbar", style: "margin:12px 0" },
-      h("button", { type: "button", class: "secondary", onclick: () => runTask(`${API}/reviews/weekly`, {}, taskBox) }, "Обзор недели"),
+      h("button", { type: "button", class: "secondary", onclick: busyClick(() => runTask(`${API}/reviews/weekly`, {}, taskBox), "reviews/weekly") }, "Обзор недели"),
       h("span", { class: "muted" }, "или"),
       month,
-      h("button", { type: "button", class: "secondary", onclick: () => runTask(`${API}/reviews/monthly`, { month: month.value }, taskBox) }, "Обзор месяца"),
+      h("button", { type: "button", class: "secondary", onclick: busyClick(() => runTask(`${API}/reviews/monthly`, { month: month.value }, taskBox), "reviews/monthly") }, "Обзор месяца"),
     ),
     taskBox,
     data.reviews.length

@@ -67,7 +67,9 @@ export async function api(method, path, body, { signal, timeout } = {}) {
     data = null;
   }
   if (!res.ok) {
-    const message = data?.error || httpMessage(res.status, data ? "" : text);
+    let message = data?.error || httpMessage(res.status, data ? "" : text);
+    // 500 от сервера несёт request_id — по нему ошибку находят в логе.
+    if (data?.request_id) message = `${message.replace(/\.$/, "")}. Код для поиска в логе: ${data.request_id}`;
     throw new ApiError(message, { kind: "http", status: res.status, data: data || {} });
   }
   return data || {};
@@ -147,7 +149,7 @@ export function jobProgress(job, { onCancel, elapsed = seconds } = {}) {
       "div",
       { class: "progress-foot" },
       h("span", { class: "muted small" }, queued || job.elapsed_s == null ? "" : `Прошло ${elapsed(job.elapsed_s)}`),
-      onCancel ? h("button", { type: "button", class: "link danger", onclick: () => onCancel(job) }, "Отменить") : null,
+      onCancel ? h("button", { type: "button", class: "link danger", onclick: busyClick(() => onCancel(job), `cancel:${job.id}`) }, "Отменить") : null,
     ),
   );
 }
@@ -307,7 +309,7 @@ export function taskCard(task, { onCancel, full = false } = {}) {
       statusChip(task.status),
       h("span", { class: "task-title" }, task.title),
       h("span", { class: "muted small" }, meta),
-      active && onCancel ? h("button", { type: "button", class: "link danger", onclick: safe(() => onCancel(task)) }, "Отменить") : null,
+      active && onCancel ? h("button", { type: "button", class: "link danger", onclick: busyClick(() => onCancel(task), `cancel:${task.id}`) }, "Отменить") : null,
     ),
     task.error ? h("p", { class: "job-error" }, task.error) : null,
     full ? logBlock(task.log) : task.last && active ? h("div", { class: "task-last" }, task.last) : null,
@@ -346,6 +348,47 @@ export function safe(fn) {
       reportError(err);
       return Promise.resolve();
     }
+  };
+}
+
+// --- Кнопки на время запроса ---
+
+const inflight = new Map();
+
+// busy(кнопка, () => промис, ключ) — кнопка неактивна (aria-busy, aria-disabled, стиль в ui.css
+// гасит её и клики) до ответа. disabled не трогаем: его ставит перерисовка по состоянию, и снятие
+// в finally не должно его перебить. Повторный вызов, пока первый не кончился, нового запроса не шлёт:
+// с тем же ключом (или той же кнопкой) возвращает промис первого. Ключ нужен, когда перерисовка
+// подменяет кнопку новой.
+export function busy(btn, work, key = null) {
+  const id = key ?? btn;
+  if (id && inflight.has(id)) return inflight.get(id);
+  const target = typeof btn?.setAttribute === "function" ? btn : null;
+  target?.setAttribute("aria-busy", "true");
+  target?.setAttribute("aria-disabled", "true");
+  const run = (async () => {
+    try {
+      return await work();
+    } finally {
+      if (id) inflight.delete(id);
+      target?.removeAttribute("aria-busy");
+      target?.removeAttribute("aria-disabled");
+    }
+  })();
+  if (id) inflight.set(id, run);
+  return run;
+}
+
+// Идёт ли запрос с этим ключом: перерисовка рисует кнопку неактивной, пока ответа нет.
+export const isBusy = (key) => inflight.has(key);
+
+// Обработчик клика для кнопки, шлющей запрос: busy() по нажатой кнопке (и ключу) плюс safe().
+// key — строка или функция от события.
+export function busyClick(fn, key = null) {
+  return (event) => {
+    const btn = typeof event?.currentTarget?.setAttribute === "function" ? event.currentTarget : null;
+    const id = typeof key === "function" ? key(event) : key;
+    return busy(btn, () => fn(event), id).catch(reportError);
   };
 }
 

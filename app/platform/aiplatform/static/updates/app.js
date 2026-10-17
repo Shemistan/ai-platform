@@ -1,5 +1,5 @@
 // Вкладка «Обновления»: версии моделей и пайплайнов, реестр запрещённых организаций.
-import { $, api, fill, followTask, h, NARRATOR_TIMEOUT_MS, poller, progressBar, taskCard } from "/ui.js";
+import { $, api, busy, busyClick, fill, followTask, h, NARRATOR_TIMEOUT_MS, poller, progressBar, reportError, taskCard } from "/ui.js";
 
 const API = "/api/updates";
 const MODEL_STATUS = { update: "есть обновление", ok: "актуально", unknown: "не знаю", error: "ошибка" };
@@ -123,8 +123,8 @@ function renderProposal(reg) {
         h(
           "div",
           { class: "actions" },
-          h("button", { type: "button", class: "primary", onclick: () => act("registry/apply") }, "Применить"),
-          h("button", { type: "button", class: "link", onclick: () => act("registry/dismiss") }, "Отклонить"),
+          h("button", { type: "button", class: "primary", onclick: busyClick(() => act("registry/apply"), "registry") }, "Применить"),
+          h("button", { type: "button", class: "link", onclick: busyClick(() => act("registry/dismiss"), "registry") }, "Отклонить"),
         ),
       ),
     );
@@ -165,17 +165,23 @@ function render(data) {
   statePoll.later();
 }
 
-$("models-check").addEventListener("click", () => act("models/check"));
-$("registry-check").addEventListener("click", () => act("registry/check"));
+// Кнопки проверок перерисовывает render() по состоянию задачи: здесь — только один запрос на нажатие,
+// кнопка гаснет сразу, а включает её следующая перерисовка.
+const startCheck = (btn, path) => () => {
+  btn.disabled = true;
+  busy(null, () => act(path), path).catch(reportError);
+};
+$("models-check").addEventListener("click", startCheck($("models-check"), "models/check"));
+$("registry-check").addEventListener("click", startCheck($("registry-check"), "registry/check"));
 $("registry-json").addEventListener("input", () => (state.editing = true));
-$("registry-save").addEventListener("click", async () => {
+$("registry-save").addEventListener("click", busyClick(async () => {
   await act("registry", { text: $("registry-json").value });
   if ($("error").hidden) state.editing = false;
-});
-$("registry-reset").addEventListener("click", async () => {
+}, "registry"));
+$("registry-reset").addEventListener("click", busyClick(async () => {
   state.editing = false;
   await act("registry/reset");
-});
+}, "registry"));
 statePoll.start();
 
 // --- модели озвучки движка: что на диске, скачать основные или модели для сравнения ---
@@ -200,7 +206,7 @@ function renderVoiceModels(data) {
       h("td", {}, m.downloaded ? chip("done", "скачана") : chip("pending", "не скачана")),
     );
   });
-  const pick = h("button", { type: "button", class: "secondary", id: "voice-mlx", onclick: () => startVoice("mlx", { engines: [...voice.picked] }) }, "Скачать выбранные");
+  const pick = h("button", { type: "button", class: "secondary", id: "voice-mlx", onclick: busyClick(() => startVoice("mlx", { engines: [...voice.picked] }), "voice") }, "Скачать выбранные");
   fill(
     $("voice-models"),
     data.root_exists ? null : h("p", { class: "job-error" }, `Папки моделей ${data.root} нет: ${data.hint}`),
@@ -250,6 +256,6 @@ async function startVoice(action, body = {}) {
   }
 }
 
-$("voice-fetch").addEventListener("click", () => startVoice("fetch"));
-$("voice-move").addEventListener("click", () => startVoice("move"));
+$("voice-fetch").addEventListener("click", busyClick(() => startVoice("fetch"), "voice"));
+$("voice-move").addEventListener("click", busyClick(() => startVoice("move"), "voice"));
 loadVoiceModels();

@@ -1,6 +1,6 @@
 // Вкладка «Фото» (перенос UI photogen): режим, промпт, исходное фото с маской или полями, запуск и результат. Без сборки и зависимостей.
 
-import { $, api, h, jobProgress, poller, STATUS } from "/ui.js";
+import { $, api, busyClick, h, jobProgress, poller, STATUS } from "/ui.js";
 
 const state = {
   config: null,
@@ -383,7 +383,7 @@ function upscaleBlock(job) {
   return h("div", { class: "upscale" },
     h("span", { class: "muted small" }, "Увеличить с дорисовкой деталей (SeedVR2):"),
     ...targets.map((t) =>
-      h("button", { type: "button", onclick: () => upscaleJob(job.id, t.id) }, `до ${t.label}`),
+      h("button", { type: "button", onclick: busyClick(() => upscaleJob(job.id, t.id), `upscale:${job.id}`) }, `до ${t.label}`),
     ),
     h("span", { class: "muted small" }, "2K — ~20 с, 4K — ~1,5 мин, ~18 ГБ памяти; первый запуск докачает ~7 ГБ весов."),
   );

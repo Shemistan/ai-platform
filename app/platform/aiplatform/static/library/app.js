@@ -1,5 +1,5 @@
 // Вкладка «Статьи»: библиотека статей движка — текст для озвучки, озвучка, проверка, канал.
-import { $, narratorApi as api, chip, fill, h, minutes, poller, shortDate, taskCard } from "/ui.js";
+import { $, narratorApi as api, busyClick, chip, fill, h, minutes, poller, shortDate, taskCard } from "/ui.js";
 
 const API = "/api/library";
 const QUALITY = { verbatim: "текст дословно", pasted: "текст прислан", webfetch: "текст по пересказу WebFetch" };
@@ -52,10 +52,10 @@ function renderStats() {
   const running = state.data.tasks.some((t) => isActive(t) && (t.kind === "render" || t.kind === "unsent"));
   fill(
     $("bulk"),
-    h("button", { type: "button", class: "primary", disabled: !waiting || running, onclick: () => render(false) }, waiting ? `Озвучить новые (${waiting})` : "Новых нет"),
-    h("button", { type: "button", class: "small-btn", disabled: running || !list.length, onclick: () => render(true) }, "Переозвучить все"),
-    h("button", { type: "button", class: "small-btn accent", disabled: !state.data.unsent || running, onclick: () => bulkUnsent("send") }, `Отправить неотправленные (${state.data.unsent})`),
-    h("button", { type: "button", class: "small-btn", disabled: !state.data.unsent || running, onclick: () => bulkUnsent("mark") }, "Считать отправленными"),
+    h("button", { type: "button", class: "primary", disabled: !waiting || running, onclick: busyClick(() => render(false), "bulk") }, waiting ? `Озвучить новые (${waiting})` : "Новых нет"),
+    h("button", { type: "button", class: "small-btn", disabled: running || !list.length, onclick: busyClick(() => render(true), "bulk") }, "Переозвучить все"),
+    h("button", { type: "button", class: "small-btn accent", disabled: !state.data.unsent || running, onclick: busyClick(() => bulkUnsent("send"), "bulk") }, `Отправить неотправленные (${state.data.unsent})`),
+    h("button", { type: "button", class: "small-btn", disabled: !state.data.unsent || running, onclick: busyClick(() => bulkUnsent("mark"), "bulk") }, "Считать отправленными"),
     h("span", { class: "hint" }, `Озвучка — движком «Аудио» по умолчанию (${defaultEngineLabel()}), с проверкой распознаванием и отправкой в канал статей.`),
   );
   const recent = state.data.tasks.filter((t) => isActive(t) || Date.now() / 1000 - (t.finished_at || 0) < 600).slice(0, 4);
@@ -240,9 +240,9 @@ function renderCard() {
         h(
           "div",
           { class: "toolbar" },
-          h("button", { type: "button", class: "secondary", disabled: locked, onclick: save }, "Сохранить"),
+          h("button", { type: "button", class: "secondary", disabled: locked, onclick: busyClick(save, `save:${c.id}`) }, "Сохранить"),
           c.source ? h("button", { type: "button", class: "small-btn", disabled: locked, onclick: fromSource }, "Взять исходный текст") : null,
-          c.has_source ? h("button", { type: "button", class: "small-btn accent", disabled: locked, onclick: run("prepare") }, "Подготовить агентом") : null,
+          c.has_source ? h("button", { type: "button", class: "small-btn accent", disabled: locked, onclick: busyClick(run("prepare"), `act:${c.id}`) }, "Подготовить агентом") : null,
         ),
         h("p", { class: "hint" }, "Агент пишет полный пересказ для уха по правилам озвучки и заполняет описание. Цифры и латиницу движок и так переведёт в произношение."),
         c.source ? h("details", { class: "inline" }, h("summary", {}, "Исходный текст (source.md)"), h("pre", { class: "preview-text" }, c.source)) : null,
@@ -257,7 +257,7 @@ function renderCard() {
         h(
           "div",
           { class: "toolbar" },
-          h("button", { type: "button", class: "primary", disabled: locked || !c.has_script || !summary.value.trim(), onclick: () => run("synth", { ...value(), send: send.checked })() }, c.has_audio ? "Переозвучить" : "Озвучить"),
+          h("button", { type: "button", class: "primary", disabled: locked || !c.has_script || !summary.value.trim(), onclick: busyClick(() => run("synth", { ...value(), send: send.checked })(), `act:${c.id}`) }, c.has_audio ? "Переозвучить" : "Озвучить"),
           !summary.value.trim() && c.has_script ? h("span", { class: "hint warn" }, "Нужно описание — сохрани его выше.") : null,
         ),
       ),
@@ -268,15 +268,15 @@ function renderCard() {
           ? h("div", { class: "check-head" }, h("span", { class: `score ${c.check >= 85 ? "ok" : "warn"}` }, `${c.check}%`), h("span", { class: "muted" }, "совпадение по словам"))
           : h("p", { class: "hint" }, "Озвучка распознаётся обратно в текст: так видно, где модель исказила слова."),
         c.check_report ? h("details", { class: "inline" }, h("summary", {}, "Отчёт проверки"), h("pre", { class: "preview-text" }, c.check_report)) : null,
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: run("verify") }, "Проверить")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: busyClick(run("verify"), `act:${c.id}`) }, "Проверить")),
       ),
       section(
         4,
         "Публикация",
         h("div", { class: "toolbar" }, c.has_audio ? (c.sent ? chip("в канале", "ok") : chip("ещё не в канале")) : chip("нечего отправлять")),
-        h("div", { class: "toolbar" }, channel, h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: () => run("send", { channel: channel.value })() }, "Отправить")),
+        h("div", { class: "toolbar" }, channel, h("button", { type: "button", class: "secondary", disabled: locked || !c.has_audio, onclick: busyClick(() => run("send", { channel: channel.value })(), `act:${c.id}`) }, "Отправить")),
         h("p", { class: "hint" }, "Уходит mp3 с описанием статьи. Повторная отправка в тот же канал — по этой кнопке."),
-        h("div", { class: "toolbar" }, h("button", { type: "button", class: "small-btn accent", disabled: !c.has_script, onclick: () => makeVideo(c, script.value) }, "Сделать видео по статье →")),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "small-btn accent", disabled: !c.has_script, onclick: busyClick(() => makeVideo(c, script.value)) }, "Сделать видео по статье →")),
       ),
     ),
   );
