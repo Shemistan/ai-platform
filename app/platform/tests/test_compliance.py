@@ -16,7 +16,8 @@ from aiplatform.studio import publish
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.render import VERTICAL, Renderer
 from aiplatform.updates import registry
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, SOURCE, StudioCase, png_bytes
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG, SOURCE, png_bytes
+from tests.helpers import StudioCase
 
 DEFAULT = registry.Registry(registry.DEFAULT_FILE).entries()
 META_NOTE = (
@@ -185,7 +186,7 @@ class DisclaimersOffTest(StudioCase):
 
     def publish(self, pid, **extra):
         status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"]} | extra)
-        self.assertEqual(status, 200, view)
+        self.assertEqual(status, 202, view)
         done = self.settle(pid)
         return done, next(s for s in done["steps"] if s["id"] == "publish")
 

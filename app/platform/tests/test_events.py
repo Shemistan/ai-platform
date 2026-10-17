@@ -11,7 +11,7 @@ from unittest import mock
 from aiplatform.core import events, media
 from aiplatform.studio import backfill, pipeline
 from aiplatform.studio.llm import StudioError
-from tests.test_studio_publish_journal import JournalCase
+from tests.helpers import JournalCase
 
 
 def fake_steps(calls: list[str], fail: set[str] | None = None) -> dict:

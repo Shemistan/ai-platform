@@ -45,13 +45,46 @@ def views_from_embed(page: str) -> int | None:
     return parse_count(m[1]) if m else None
 
 
-def http_get(url: str) -> str:
+def _open(url: str) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (ai-platform)"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return resp.read().decode("utf-8", "replace")
+
+
+def _retry_after(exc: urllib.error.HTTPError) -> float | None:
+    """Пауза из заголовка Retry-After (секунды); нет или слишком долго — None."""
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            return resp.read().decode("utf-8", "replace")
-    except (urllib.error.URLError, OSError):
-        return ""
+        wait = float((exc.headers or {}).get("Retry-After") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return wait if wait <= publish.MAX_RETRY_AFTER_S else None
+
+
+def http_get(url: str, opener: HttpGet | None = None) -> str:
+    """Страница целиком или "" при сбое. Чтение — повторы как у publish.call_api (BE-013):
+    сеть и 5xx — паузы 1/2/4 с, 429 — ждём Retry-After; прочие 4xx не повторяем."""
+    fetch = opener or _open
+    for attempt in range(1, publish.ATTEMPTS + 1):
+        last = attempt == publish.ATTEMPTS
+        try:
+            return fetch(url)
+        except urllib.error.HTTPError as exc:
+            if last:
+                return ""
+            if exc.code == 429:
+                wait = _retry_after(exc)
+                if wait is None:
+                    return ""
+                publish._sleep(wait or publish.backoff(attempt))
+            elif exc.code >= 500:
+                publish._sleep(publish.backoff(attempt))
+            else:
+                return ""
+        except (urllib.error.URLError, OSError):
+            if last:
+                return ""
+            publish._sleep(publish.backoff(attempt))
+    return ""
 
 
 def sent_at(record: dict) -> float | None:

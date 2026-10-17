@@ -4,7 +4,8 @@ import unittest
 
 from aiplatform.core import media
 from aiplatform.studio import series
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG
+from tests.helpers import StudioCase
 
 
 def words(n: int, word: str = "слово") -> str:

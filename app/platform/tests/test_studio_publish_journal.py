@@ -6,103 +6,16 @@
 
 import io
 import json
-import os
-import shutil
-import tempfile
 import time
 import unittest
 import urllib.error
-from pathlib import Path
 from unittest import mock
 
 from aiplatform.core import media
 from aiplatform.studio import publish, stats
 from aiplatform.studio.llm import StudioError
-from tests.test_studio_channels import TOKEN
-from tests.test_studio_flow import ARTICLE, StudioCase, png_bytes
-
-CHATS = {"tg-a": "-1001111111111", "tg-b": "-1002222222222"}
-
-
-def chat_of(body: bytes) -> str:
-    for cid, chat in CHATS.items():
-        if f'name="chat_id"\r\n\r\n{chat}\r\n'.encode() in body:
-            return cid
-    return "?"
-
-
-class FakeTelegram:
-    """Подмена publish._http_post: пишет вызовы, по флагам отвечает отказом или «рвёт» ответ."""
-
-    def __init__(self):
-        self.calls: list[tuple[str, str, bool]] = []  # (канал, метод, принят ли пост)
-        self.refuse: set[tuple[str, str]] = set()  # Telegram ответил ok=false
-        self.drop: set[tuple[str, str]] = set()  # ответа нет: обрыв после отправки
-
-    def __call__(self, url, body, ctype):
-        method = url.rsplit("/", 1)[-1]
-        if method in ("getChatMemberCount", "getChat"):
-            return {"ok": True, "result": 10}
-        key = (chat_of(body), method)
-        if key in self.drop:
-            self.calls.append((*key, False))
-            raise ConnectionResetError("обрыв посреди ответа")
-        if key in self.refuse:
-            self.calls.append((*key, False))
-            return {"ok": False, "description": "Too Many Requests: retry after 5"}
-        self.calls.append((*key, True))
-        return {"ok": True, "result": {"message_id": len(self.calls)}}
-
-    def count(self, channel, method, *, accepted=None):
-        return sum(
-            1 for c, m, ok in self.calls if c == channel and m == method and (accepted is None or ok == accepted)
-        )
-
-
-class JournalCase(StudioCase):
-    def setUp(self):
-        folder = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, folder)
-        self.channels_file = folder / "channels.json"
-        self.channels_file.write_text(
-            json.dumps(
-                [
-                    {"id": cid, "label": cid.upper(), "type": "telegram", "chat_id": chat, "token_env": "AIP_TG_TEST"}
-                    for cid, chat in CHATS.items()
-                ]
-            ),
-            encoding="utf-8",
-        )
-        self.extra_env = StudioCase.extra_env | {"AIP_CHANNELS": str(self.channels_file)}
-        super().setUp()
-        self.tg = FakeTelegram()
-        for patcher in (
-            mock.patch.dict(os.environ, {"AIP_TG_TEST": TOKEN}),
-            mock.patch.object(publish, "_http_post", self.tg),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def video_project(self) -> str:
-        pid = self.create(scenario="article", text=ARTICLE)["id"]
-        (self.folder(pid) / "video.mp4").write_bytes(b"x")
-        return pid
-
-    def press(self, pid, **body):
-        status, view = self.json("POST", f"/api/studio/projects/{pid}/publish", body)
-        self.assertEqual(status, 200, view)
-        return self.settle(pid)
-
-    def resolve(self, pid, channel, posted):
-        status, view = self.json(
-            "POST", f"/api/studio/projects/{pid}/publish/resolve", {"channel": channel, "posted": posted}
-        )
-        self.assertEqual(status, 200, view)
-        return self.settle(pid)
-
-    def journal(self, pid) -> dict:
-        data = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
-        return {r["channel"]: r for r in data}
+from tests.fixtures import ARTICLE, png_bytes
+from tests.helpers import JournalCase
 
 
 class PartialPublishTest(JournalCase):
@@ -204,7 +117,7 @@ class UnknownStateTest(JournalCase):
         self.assertEqual(self.statuses(failed)["publish"], "failed")
         self.tg.refuse.clear()
 
-        self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/run", {})[0], 200)
+        self.assertEqual(self.json("POST", f"/api/studio/projects/{pid}/run", {})[0], 202)
         after = self.settle(pid)
         self.assertEqual(self.statuses(after)["publish"], "waiting", after["log"])
         self.assertEqual(self.tg.count("tg-a", "sendVideo"), 1, "«Запустить всё» не публикует без подтверждения")

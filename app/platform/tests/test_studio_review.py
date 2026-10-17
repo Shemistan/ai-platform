@@ -12,8 +12,8 @@ import unittest
 from aiplatform.channels.service import BotServe
 from aiplatform.studio import review as review_module
 from aiplatform.studio import steps
-from tests.test_studio_flow import ARTICLE
-from tests.test_studio_publish_journal import JournalCase
+from tests.fixtures import ARTICLE
+from tests.helpers import JournalCase
 
 OWNER = 42
 
@@ -39,7 +39,7 @@ class ReviewCase(JournalCase):
         (self.folder(pid) / "video.mp4").write_bytes(b"x")
         (self.folder(pid) / steps.POST).write_text("**Главное** о сборщике мусора.\n", encoding="utf-8")
         status, view = self.json("POST", f"/api/studio/projects/{pid}/run", {"step": "publish"})
-        self.assertEqual(status, 200, view)
+        self.assertEqual(status, 202, view)
         done = self.settle(pid)
         self.assertEqual(self.statuses(done)["publish"], "waiting", done["log"])
         deadline = time.time() + 10  # превью шлёт поток выпуска сразу после остановки

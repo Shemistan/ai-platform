@@ -457,3 +457,22 @@ button[aria-busy="true"] { pointer-events: none; opacity: 0.55; cursor: progress
 .toast .icon-btn { font-size: var(--fs-lg); }
 @keyframes toast-in { from { opacity: 0; translate: 0 8px; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+/* Загрузки файлов (uploadFile в ui.js, FE-003): лоток внизу слева — тосты справа его не закрывают. */
+.upload-tray {
+  position: fixed;
+  left: var(--sp-4);
+  bottom: var(--sp-4);
+  z-index: var(--z-toast);
+  display: grid;
+  gap: var(--sp-2);
+  width: min(360px, calc(100vw - 32px));
+}
+.upload-row {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.15);
+}
+.upload-row .stage { overflow-wrap: anywhere; }

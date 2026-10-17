@@ -6,7 +6,8 @@ import os
 import time
 
 from aiplatform.studio import history
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG
+from tests.helpers import StudioCase
 
 DAY = 86400
 MONTH_LATER = 31 * DAY

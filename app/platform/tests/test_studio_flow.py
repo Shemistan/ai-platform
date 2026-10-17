@@ -7,56 +7,8 @@ import unittest
 from pathlib import Path
 
 from aiplatform.core import media
-from aiplatform.fakes import fake_gen
-from tests.helpers import PlatformCase
-
-ARTICLE = """Как устроен сборщик мусора в Go
-
-Сборщик мусора в Go работает параллельно с программой. Он помечает живые объекты и освобождает остальные.
-
-В новой версии паузы стали короче. Это важно для сервисов с жёсткими требованиями к задержкам.
-
-Итог: обновляйтесь и измеряйте профили. Подписывайтесь на канал."""
-
-FAST = {
-    "FAKE_GEN_STEP_DELAY": "0.005",
-    "FAKE_TTS_STEP_DELAY": "0.01",
-    "FAKE_NEWS_DELAY": "0",
-    "FAKE_LLM_FAIL": "",
-    "FAKE_LLM_GARBAGE": "",
-    "FAKE_NEWS_EMPTY": "",
-}
-SOURCE = {"source_url": "https://example.dev/gc", "source_author": "Иван Петров"}
-NEEDS_FFMPEG = unittest.skipUnless(shutil.which("ffmpeg"), "нужен ffmpeg")
-
-
-def png_bytes() -> bytes:
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "p.png"
-        fake_gen.write_png(str(path), 64, 36, 5)
-        return path.read_bytes()
-
-
-class StudioCase(PlatformCase):
-    process_env = FAST
-    extra_env = {"AIP_RENDER_SCALE": "0.25"}
-
-    def create(self, **payload):
-        if payload.get("scenario") == "article":  # без источника статья не публикуется (CMP-005)
-            payload["settings"] = SOURCE | (payload.get("settings") or {})
-        status, project = self.json("POST", "/api/studio/projects", payload)
-        self.assertEqual(status, 201, project)
-        return project
-
-    def settle(self, pid, timeout=90):
-        return self.poll(f"/api/studio/projects/{pid}", lambda p: not p["running"], timeout=timeout, interval=0.1)
-
-    @staticmethod
-    def statuses(project):
-        return {s["id"]: s["status"] for s in project["steps"]}
-
-    def folder(self, pid) -> Path:
-        return Path(self.tmp.name) / "studio" / "projects" / pid
+from tests.fixtures import ARTICLE, FAST, NEEDS_FFMPEG, SOURCE, png_bytes  # noqa: F401 — и для старых импортов
+from tests.helpers import StudioCase
 
 
 @NEEDS_FFMPEG
@@ -209,7 +161,7 @@ class DigestVerdictTest(StudioCase):
         self.assertTrue(any("судья: не готово" in line for line in done["log"]))
 
         status, _ = self.json("POST", f"/api/studio/projects/{project['id']}/publish", {"channels": ["download-16x9"]})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 202)
         self.assertEqual(self.statuses(self.settle(project["id"]))["publish"], "waiting")
         body = {"channels": ["download-16x9"], "ignore_verdict": True}
         self.json("POST", f"/api/studio/projects/{project['id']}/publish", body)

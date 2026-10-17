@@ -5,6 +5,8 @@
 # Запуск из app/platform:  make models M="z-image-turbo ltx-2.5-q4"
 #   или напрямую:          sh tools/setup-model.sh <модель> [<модель>…]
 #   список моделей:        sh tools/setup-model.sh --list
+#   перенос весов:         make move-models TO=~/local_models
+#     (= sh tools/setup-model.sh --move-to <каталог>)
 # Повторный запуск докачивает недостающее; уже поставленное пропускается.
 #
 # Каталог весов: AIP_MODELS_DIR, иначе записанный в local.mk, иначе
@@ -13,6 +15,8 @@
 #   VIDEOGEN_HOME (~/.local/share/videogen) — те же, что у старых setup-model.sh,
 #   поэтому уже поставленное ими не качается заново.
 # Закрытые лицензией веса (FLUX.2, Ideogram 4, LTX-2.5): токен Hugging Face в HF_TOKEN.
+# Для Flux2CLI докладывается mlx.metallib (в релизном zip его нет), для FLUX.2 Klein
+# заранее качается текстовый энкодер — иначе Flux2CLI тянет его на первой генерации.
 # В конце пути к пайплайнам и каталог весов дописываются в local.mk (AIP_*);
 # остальные строки local.mk не трогаются.
 set -e
@@ -26,6 +30,8 @@ LTX_VERSION=v0.16.2
 # Запускатель Wan лежит в репозитории весов; ревизия закреплена — это исполняемый код.
 WAN_REVISION=86bfc9847512a9eb66886388b8b92ba81e0b6729
 GEMMA_REPO=mlx-community/gemma-3-12b-it-4bit
+# Flux2CLI v3.1.0 собран с mlx-swift 0.31.6 = MLX v0.31.1; шейдеры — из колеса mlx-metal той же версии.
+MLX_METAL_VERSION=0.31.1
 
 DEFAULT_MODELS_DIR="/Volumes/External SSD/local_models"
 PHOTO_HOME="${PHOTOGEN_HOME:-$HOME/.local/share/photogen}"
@@ -47,6 +53,43 @@ PHOTO_CATALOG="$("$PYTHON" -m aiplatform.photo.models)" ||
   fail "не удалось прочитать каталог моделей фото (нужен Python 3.11+: make models PYTHON=python3.12 …)"
 PHOTO_IDS="$(echo "$PHOTO_CATALOG" | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')"
 
+# Строка KEY=VALUE в local.mk: старая с тем же ключом убирается, остальное — как было.
+set_setting() {
+  touch "$SETTINGS"
+  grep -v "^$1=" "$SETTINGS" > "$SETTINGS.tmp" || true
+  echo "$1=$2" >> "$SETTINGS.tmp"
+  mv "$SETTINGS.tmp" "$SETTINGS"
+}
+
+SAVED_DIR="$(sed -n 's/^AIP_MODELS_DIR=//p' "$SETTINGS" 2>/dev/null | tail -1)"
+MODELS_DIR="${AIP_MODELS_DIR:-${SAVED_DIR:-$DEFAULT_MODELS_DIR}}"
+
+# Перенос всех весов на другой диск: каталоги переезжают целиком (mv), local.mk
+# получает новый AIP_MODELS_DIR. Совпадающие имена в цели — отказ до переноса.
+move_models() {
+  to="$1"
+  [ -n "$to" ] || fail "куда переносить? sh tools/setup-model.sh --move-to <каталог>"
+  [ -d "$MODELS_DIR" ] || fail "каталога весов $MODELS_DIR нет — диск подключён?"
+  mkdir -p "$to" 2>/dev/null || fail "не могу создать $to"
+  to="$(cd "$to" && pwd)" from="$(cd "$MODELS_DIR" && pwd)"
+  [ "$from" != "$to" ] || fail "веса уже в $to"
+  case "$to/" in "$from"/*) fail "$to внутри $from — выбери каталог снаружи" ;; esac
+  clash="$(find "$from" -mindepth 1 -maxdepth 1 -exec basename {} \; | while read -r name; do
+    [ ! -e "$to/$name" ] || echo "$name"
+  done)"
+  [ -z "$clash" ] || fail "в $to уже есть: $(echo "$clash" | tr '\n' ' ')— убери или выбери другой каталог"
+  echo "→ переношу веса: $from → $to"
+  find "$from" -mindepth 1 -maxdepth 1 -exec mv {} "$to/" \;
+  rmdir "$from" 2>/dev/null || true
+  set_setting AIP_MODELS_DIR "$to"
+  echo "✓ веса в $to, AIP_MODELS_DIR записан в $(pwd)/$SETTINGS"
+}
+
+if [ "$1" = "--move-to" ]; then
+  move_models "$2"
+  exit 0
+fi
+
 if [ "$1" = "--list" ]; then
   echo "фото: $PHOTO_IDS"
   echo "видео: $VIDEO_IDS"
@@ -61,21 +104,10 @@ for id in "$@"; do
   esac
 done
 
-SAVED_DIR="$(sed -n 's/^AIP_MODELS_DIR=//p' "$SETTINGS" 2>/dev/null | tail -1)"
-MODELS_DIR="${AIP_MODELS_DIR:-${SAVED_DIR:-$DEFAULT_MODELS_DIR}}"
-
 [ "$(uname -sm)" = "Darwin arm64" ] || fail "MLX работает только на Mac с Apple Silicon"
 command -v uv >/dev/null 2>&1 || fail "нужен uv: brew install uv"
 mkdir -p "$MODELS_DIR" 2>/dev/null || fail "не могу создать $MODELS_DIR — внешний диск подключён?
   Другой каталог: make models M=\"$*\" AIP_MODELS_DIR=~/local_models"
-
-# Строка KEY=VALUE в local.mk: старая с тем же ключом убирается, остальное — как было.
-set_setting() {
-  touch "$SETTINGS"
-  grep -v "^$1=" "$SETTINGS" > "$SETTINGS.tmp" || true
-  echo "$1=$2" >> "$SETTINGS.tmp"
-  mv "$SETTINGS.tmp" "$SETTINGS"
-}
 
 write_settings() {
   set_setting AIP_MODELS_DIR "$MODELS_DIR"
@@ -116,11 +148,52 @@ install_flux2() {
   xattr -d com.apple.quarantine "$FLUX2_BIN" 2>/dev/null || true
 }
 
+# Релизный zip Flux2CLI — только бинарник; без mlx.metallib рядом FLUX.2 падает на
+# первой генерации («Failed to load the default metallib»). Берём файл из колеса
+# mlx-metal (или готовый из MLX_METALLIB) и кладём рядом с бинарником.
+ensure_metallib() {
+  dest="$(dirname "$FLUX2_BIN")/mlx.metallib"
+  [ ! -f "$dest" ] || return 0
+  if [ -n "$MLX_METALLIB" ]; then
+    [ -f "$MLX_METALLIB" ] || fail "MLX_METALLIB=$MLX_METALLIB — файла нет"
+    cp "$MLX_METALLIB" "$dest"
+  else
+    echo "→ докладываю mlx.metallib (mlx-metal==$MLX_METAL_VERSION) к Flux2CLI"
+    tmp="$(mktemp -d)"
+    uv pip install --quiet --target "$tmp" "mlx-metal==$MLX_METAL_VERSION" ||
+      fail "mlx-metal==$MLX_METAL_VERSION не скачался — нужна сеть к PyPI"
+    found="$(find "$tmp" -name mlx.metallib | head -1)"
+    [ -n "$found" ] || fail "в колесе mlx-metal==$MLX_METAL_VERSION нет mlx.metallib"
+    cp "$found" "$dest"
+    rm -rf "$tmp"
+  fi
+  echo "✓ mlx.metallib рядом с Flux2CLI"
+}
+
+# Текстовый энкодер Klein: Flux2CLI (swift-transformers) держит его рядом с --models-dir —
+# в AIP_MODELS_DIR/models/<repo> — и без него качает ~5 ГБ на первой генерации.
+preload_encoder() {
+  repo="$1"
+  [ "$repo" != "-" ] || return 0
+  target="$MODELS_DIR/models/$repo"
+  ! ls "$target"/*.safetensors >/dev/null 2>&1 || return 0
+  install_mflux  # в окружении mflux есть hf
+  echo "→ скачиваю текстовый энкодер $repo в $target"
+  HF_HOME="$MODELS_DIR/.photogen-cache/hf" "$MFLUX_ENV/bin/hf" download "$repo" --local-dir "$target" >/dev/null ||
+    fail "энкодер $repo не скачался (нужна сеть к Hugging Face)"
+}
+
 install_photo() {
   # shellcheck disable=SC2046
   set -- $(echo "$PHOTO_CATALOG" | grep "^$1 ")
-  id="$1" backend="$2" dir="$MODELS_DIR/$3" marker="$MODELS_DIR/$3/$4" source="$5" quant="$6"
+  id="$1" backend="$2" dir="$MODELS_DIR/$3" marker="$MODELS_DIR/$3/$4" source="$5" quant="$6" encoder="$7"
   if [ -f "$marker" ]; then
+    # Поставленной раньше FLUX.2 докладываем то, чего старый скрипт не ставил.
+    if [ "$backend" = "flux2" ]; then
+      install_flux2
+      ensure_metallib
+      preload_encoder "$encoder"
+    fi
     echo "✓ $id уже установлена"
     return 0
   fi
@@ -136,6 +209,7 @@ $(token_help "https://huggingface.co/$source" "$id")"
     }
   else
     install_flux2
+    ensure_metallib
     case "$source" in
       dev) page=https://huggingface.co/black-forest-labs/FLUX.2-dev ;;
       *) page=https://huggingface.co/black-forest-labs/FLUX.2-klein-9B ;;
@@ -152,6 +226,7 @@ $(token_help "$page" "$id")"
       fail "веса $id не скачались.
 $(token_help "$page" "$id")"
     }
+    preload_encoder "$encoder"
   fi
   touch "$marker"
   echo "✓ $id установлена"

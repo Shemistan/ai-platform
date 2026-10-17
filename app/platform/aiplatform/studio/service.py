@@ -200,6 +200,15 @@ class StudioModule:
     prefix = PREFIX
     label = "Сценарии"
 
+    def nav(self) -> list[dict]:
+        """Вкладки шапки: доска «Выпуски» со счётчиком ждущих и по вкладке на сценарий."""
+        board = {"id": "board", "label": "Выпуски", "href": "/board/", "badge": "attention"}
+        scenarios = [
+            {"id": k, "label": v, "href": f"/studio/?scenario={k}"} | ({"default": True} if k == "article" else {})
+            for k, v in SCENARIOS.items()
+        ]
+        return [board, *scenarios]
+
     def __init__(self, ctx) -> None:
         self.ctx = ctx
         self.config = studio_config.load(ctx.config)
@@ -317,6 +326,15 @@ class StudioModule:
         except ValueError:
             return []
 
+    def channels_or_503(self) -> list[publish.Channel]:
+        """Для действий, которым каналы нужны: битый channels.json — ошибка сервера (503), не запроса."""
+        try:
+            return self.config.channels()
+        except ValueError as exc:
+            raise HttpError(
+                HTTPStatus.SERVICE_UNAVAILABLE, f"Каналы: файл настроек сломан — {exc}", code="config_broken"
+            ) from exc
+
     def publish_now(self, project_id: str, payload: object) -> dict:
         """Кнопка «Опубликовать», как `make news-publish`: выбранные каналы, повторно — с force."""
         if not isinstance(payload, dict):
@@ -325,7 +343,7 @@ class StudioModule:
         ignore_verdict = payload.get("ignore_verdict", False)
         if not isinstance(chosen, list) or not chosen or not all(isinstance(c, str) for c in chosen):
             raise bad_request("Выбери хотя бы один канал.")
-        unknown = [c for c in chosen if c not in {ch.id for ch in self.channels()}]
+        unknown = [c for c in chosen if c not in {ch.id for ch in self.channels_or_503()}]
         if unknown:
             raise bad_request(f"Нет таких каналов: {', '.join(unknown)}.")
         if not isinstance(force, bool) or not isinstance(ignore_verdict, bool):
@@ -425,6 +443,7 @@ class StudioModule:
         counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
         return {
             "groups": list(BOARD_GROUPS.items()),
+            "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
             "counts": counts,
             "projects": items,
             # «Что работает» — по всем выпускам: и с другой вкладки доски, и удалённым уборкой (AN-008).
@@ -739,6 +758,7 @@ class StudioModule:
         return {
             "scenario_defaults": {k: self.scenario_defaults(k) for k in SCENARIOS},
             "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
+            "upload_limits": uploads_module.limits(),
             "steps": [{"id": s, "label": LABELS[s]} for s in STEP_IDS],
             "defaults": self.defaults(),
             "engines": [e.public() for e in self.ctx.modules["audio"].config.engines().values()],
@@ -1461,6 +1481,10 @@ class StudioModule:
         except ProjectNotFound as exc:
             raise not_found("Проект не найден.") from exc
 
+    @staticmethod
+    def _follow(project_id: str) -> dict[str, str]:
+        return {"Location": f"/api/studio/projects/{project_id}"}
+
     def _route(self, req: Request) -> None:
         match (req.method, req.sub):
             case ("GET", ["config"]):
@@ -1482,19 +1506,22 @@ class StudioModule:
             case ("POST", ["projects", pid, "summary"]):
                 return req.send_json(self.summarize(pid), HTTPStatus.ACCEPTED)
             case ("POST", ["projects", pid, "clone"]):
-                return req.send_json(self.clone(pid, req.json()), HTTPStatus.CREATED)
+                copy = self.clone(pid, req.json())
+                return req.send_json(copy, HTTPStatus.CREATED, self._follow(copy["id"]))
             case ("POST", ["projects", pid, "archive"]):
                 return req.send_json(self.archive(pid, req.json() or {}))
             case ("POST", ["projects"]):
                 key = req.headers.get("Idempotency-Key")
-                return req.send_json(self.create_once(req.json(MAX_BODY), key), HTTPStatus.CREATED)
+                made = self.create_once(req.json(MAX_BODY), key)
+                return req.send_json(made, HTTPStatus.CREATED, self._follow(made["id"]))
             case ("GET", ["projects", pid]):
                 return req.send_json(self.view(pid))
             case ("POST", ["projects", pid, "settings"]):
                 return req.send_json(self.update_settings(pid, req.json()))
             case ("POST", ["projects", pid, "run"]):
                 payload = req.json() or {}
-                return req.send_json(self.rerun(pid, payload))
+                # Асинхронное действие: 202 и ссылка на выпуск, за которым следить (docs/api.md).
+                return req.send_json(self.rerun(pid, payload), HTTPStatus.ACCEPTED, self._follow(pid))
             case ("POST", ["projects", pid, "cancel"]):
                 self.studio.cancel(pid)
                 return req.send_json(self.view(pid))
@@ -1506,7 +1533,7 @@ class StudioModule:
                 self.studio.approve(pid, step)
                 return req.send_json(self.view(pid))
             case ("POST", ["projects", pid, "publish"]):
-                return req.send_json(self.publish_now(pid, req.json()))
+                return req.send_json(self.publish_now(pid, req.json()), HTTPStatus.ACCEPTED, self._follow(pid))
             case ("POST", ["projects", pid, "publish", "resolve"]):
                 return req.send_json(self.resolve_publish(pid, req.json()))
             case ("POST", ["projects", pid, "uploaded"]):
