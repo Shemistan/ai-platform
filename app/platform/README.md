@@ -44,6 +44,55 @@ make run    # на настоящих моделях
 Python-зависимостей у сервиса нет; у движка `app/narrator` они свои (uv), первый
 `make check` в нём их ставит.
 
+Живость: `curl -s 127.0.0.1:8780/api/health` → `{"ok": true, "version", "uptime_s",
+"schedule"}`. Без внешних вызовов (ffmpeg и narrator не трогает); `schedule` —
+настройки дайджеста и итог последнего запуска по расписанию.
+
+### Автозапуск
+
+Расписание дайджеста живёт внутри процесса: нет процесса — нет выпуска. Чтобы
+сервис поднимался сам при входе в систему и после падения, поставь
+LaunchAgent. Один раз, в обычном терминале **из основного checkout** (агент
+запомнит этот каталог):
+
+```sh
+cd app/platform
+make install-agent    # ~/Library/LaunchAgents/com.aiplatform.server.plist + чекер дайджеста
+make agent-status     # состояние агентов и ответ /api/health
+make uninstall-agent  # убрать оба агента; процесс больше не перезапускается
+```
+
+- Сервис запускается как `make run` (берёт `local.mk`), `PATH` с brew, uv и
+  claude подставляется при установке: launchd не читает `.zshrc`. Поставил
+  новую команду в другой каталог — `make install-agent` ещё раз.
+- Упал или убит (`kill -9`) — launchd поднимет его через ≤30 с
+  (`ThrottleInterval`). Штатный выход с кодом 0 не перезапускается.
+- Перезапуск после обновления кода: `launchctl kickstart -k gui/$(id -u)/com.aiplatform.server`.
+- Логи: `~/Library/Logs/aiplatform/server.log` и `server.err.log` (трассировки
+  сбоев расписания — во втором), чекер — `digest-check.log`.
+- Mac спит в 07:00 — расписание не сработает. Будить его к выпуску:
+  `sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00` (снять — `sudo pmset repeat cancel`).
+
+**Внешний чекер дайджеста.** Алерты платформы шлёт её же процесс; если он
+мёртв, сказать некому. Второй агент `com.aiplatform.digest-check` раз в день
+(время дайджеста из настроек + 30 мин, по умолчанию 09:00; своё —
+`AIP_CHECK_AT=ЧЧ:ММ make install-agent`) запускает `tools/digest_check.py`:
+сервис не ответил — «Сервис недоступен», расписание включено, а дайджеста за
+день нет — «Дайджест не создан», выпуск упал — «Дайджест упал». Сообщение
+уходит ботом прямо в Telegram, мимо платформы. Токен бота и твой chat id —
+в Keychain, не в файлах:
+
+```sh
+security add-generic-password -U -s aiplatform-digest-check -a telegram-token -w '<токен бота>'
+security add-generic-password -U -s aiplatform-digest-check -a telegram-chat -w '<chat id>'
+make digest-check     # проверить вручную (или AIP_ALERT_TG_TOKEN / AIP_ALERT_TG_CHAT в env)
+```
+
+Поменял время дайджеста — `make install-agent` заново, чтобы сдвинулся чекер.
+По желанию — heartbeat-сервис (healthchecks.io): `AIP_HEARTBEAT_URL=<url>` в
+`local.mk`, платформа пингует его после каждого тика расписания, и сервис сам
+напишет, если пинги пропали.
+
 ### Переезд со старого narrator
 
 Один раз, в обычном терминале из основного checkout:

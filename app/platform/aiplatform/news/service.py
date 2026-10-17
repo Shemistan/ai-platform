@@ -62,7 +62,8 @@ class NewsModule:
         return {}
 
     def problems(self) -> list[str]:
-        return []
+        problem = self.narrator.check()
+        return [problem] if problem else []
 
     def _bridge(self, *args: str) -> dict:
         try:

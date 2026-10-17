@@ -106,8 +106,9 @@ class AudioModule:
         return {e["id"] for e in info["engines"] if isinstance(e, dict) and not e.get("problem")}
 
     def problems(self) -> list[str]:
-        if not self.config.runner_available():
-            return [f"Аудио: команда «{self.config.narrate_cmd[0]}» не найдена. {INSTALL_HINT}"]
+        problem = self.narrator.check()  # нет команды, старый движок, другая версия моста
+        if problem:
+            return [problem]
         info = self.engines()
         live = {e.get("id"): e for e in info.get("engines") or [] if isinstance(e, dict)}
         engine_id = self.config.default_engine

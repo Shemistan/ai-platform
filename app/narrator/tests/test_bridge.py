@@ -179,3 +179,11 @@ def test_sources_view(capsys, monkeypatch, home):
     assert out == {"failed": []}
     _, out = bridge(capsys, monkeypatch, "top", "--date", "2026-09-24")
     assert out == {"day": "2026-09-24", "events": []}
+
+
+def test_version_reports_bridge_api(capsys, monkeypatch, home):
+    from narrator.bridge import BRIDGE_API
+
+    code, out = bridge(capsys, monkeypatch, "version")
+    assert code == 0
+    assert out == {"bridge_api": BRIDGE_API}
