@@ -35,6 +35,12 @@ if [ -f tools/api_routes.py ]; then
   python3 tools/api_routes.py --check
 fi
 
+# --- карта проекта docs/context.md не отстала от кода (DX-016) ---
+if [ -f tools/context_gate.py ]; then
+  quiet_test tools/test_context_gate.py
+  python3 tools/context_gate.py
+fi
+
 # --- бэклог (backlog/ главного checkout, вне git): шапки задач, связи, индекс и журнал ---
 if [ -f tools/tasks_gate.py ]; then
   python3 tools/test_tasks_gate.py
