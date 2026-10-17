@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Фото — AI Platform</title>
   <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,12 +16,12 @@
   <div class="banner" id="banner" role="status" hidden></div>
 
   <main class="layout">
-    <form class="panel composer" id="composer" novalidate>
+    <form class="panel" id="composer" novalidate>
       <h2>Новое фото</h2>
 
       <fieldset class="field">
         <legend class="field-label">Режим</legend>
-        <div class="segmented modes" id="modes"></div>
+        <div class="segmented segmented--radio" id="modes"></div>
         <p class="mode-hint" id="mode-hint"></p>
       </fieldset>
 
@@ -81,7 +82,7 @@
 
       <fieldset class="field">
         <legend class="field-label">Детализация</legend>
-        <div class="segmented" id="details"></div>
+        <div class="segmented segmented--radio" id="details"></div>
       </fieldset>
 
       <details class="advanced">
@@ -99,7 +100,7 @@
             <span class="field-label">Seed</span>
             <input type="number" id="seed" min="0" max="2147483647" step="1" placeholder="случайный">
           </label>
-          <label class="field wide" id="strength-field">
+          <label class="field span-all" id="strength-field">
             <span class="field-label">Сила изменений</span>
             <span class="range-row">
               <input type="range" id="strength" min="0.1" max="1" step="0.05">
@@ -107,7 +108,7 @@
             </span>
             <span class="hint" id="strength-hint"></span>
           </label>
-          <label class="field wide" id="negative-field">
+          <label class="field span-all" id="negative-field">
             <span class="field-label">Негативный промпт</span>
             <input type="text" id="negative" placeholder="чего на картинке быть не должно">
           </label>
@@ -121,7 +122,7 @@
     <div class="side">
       <section class="panel" id="job-panel">
         <h2>Результат</h2>
-        <div id="job"></div>
+        <div class="job" id="job"></div>
       </section>
       <section class="panel">
         <h2>История</h2>
