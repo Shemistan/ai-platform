@@ -532,7 +532,9 @@ async function addChannel(prefix) {
 
 // Выбор каналов и «повторно» у кнопки «Опубликовать» живут между перерисовками страницы.
 function publishPick(project) {
-  if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(project.settings.channels), force: false, ignoreVerdict: false, noDisclaimers: "" };
+  // Каналы не выбраны — сразу отмечены каналы по умолчанию сценария (PRD-005).
+  const initial = project.settings.channels.length ? project.settings.channels : project.default_channels || [];
+  if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(initial), force: false, ignoreVerdict: false, noDisclaimers: "" };
   return state.publish[project.id];
 }
 
@@ -942,6 +944,9 @@ function stepBody(step) {
               )
             : null,
           h("strong", {}, "Куда опубликовать"),
+          !p.settings.channels.length && !(p.default_channels || []).length
+            ? h("p", { class: "hint" }, "Чтобы не выбирать каналы каждый раз, задай каналы по умолчанию: ", h("a", { href: "/settings/#defaults-panel" }, "Настройки → Выпуски по умолчанию"), ".")
+            : null,
           h(
             "div",
             { class: "publish-channels" },

@@ -16,6 +16,7 @@ from aiplatform.core import settings as settings_module
 from aiplatform.core.cleanup import Cleaner
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
 from aiplatform.photo import models as photo_models
+from aiplatform.studio import service as studio_service
 from aiplatform.video import models as video_models
 
 PREFIX = "settings"
@@ -26,7 +27,13 @@ CATALOGS = {
 }
 KIND_LABELS = {"photo": "модели фото", "video": "модели видео", "audio": "движки озвучки"}
 # Разделы настроек вне «что выключено»: имя → путь к словарю в settings.json.
-SECTIONS = {"schedule": ("schedule", "digest"), "notify": ("notify",), "stats": ("stats",), "cleanup": ("cleanup",)}
+SECTIONS = {
+    "schedule": ("schedule", "digest"),
+    "notify": ("notify",),
+    "stats": ("stats",),
+    "cleanup": ("cleanup",),
+    "default_channels": ("default_channels",),  # каналы по умолчанию по сценариям (PRD-005)
+}
 
 
 class SettingsModule:
@@ -124,6 +131,17 @@ class SettingsModule:
             "notify": full["notify"],
             "stats": full["stats"],
             "cleanup": full["cleanup"] | {"choices": list(settings_module.CLEANUP_DAYS)},
+            "default_channels": full["default_channels"],
+            # Что выбрать в «каналах по умолчанию» и что сейчас действует у сценария (с учётом VOICE_NEWS).
+            "channels": [{"id": c.id, "label": c.label} for c in studio.channels()] if studio else [],
+            "scenarios": (
+                [
+                    {"id": k, "label": v, "channels": studio.default_channels(k)}
+                    for k, v in studio_service.SCENARIOS.items()
+                ]
+                if studio
+                else []
+            ),
             "last_runs": studio.scheduler.state() if studio else {},
             "notifications": self.ctx.notifier.recent(10),
         }

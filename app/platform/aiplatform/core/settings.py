@@ -44,6 +44,7 @@ MAX_LIMIT_MIN = 24 * 60
 MAX_POLICY_DAYS = 3650  # trim_days / archive_days уборки
 MAX_FREE_GB = 10000  # cleanup.min_free_gb
 REGISTRY_MAX_AGE_DAYS = 14
+SCENARIO_IDS = ("digest", "article", "post")  # как studio.service.SCENARIOS
 
 
 def _empty() -> dict:
@@ -65,6 +66,9 @@ def _empty() -> dict:
             "draft_days": 7,
             "min_free_gb": None,
         },
+        # Каналы по умолчанию по сценариям (PRD-005): id из channels.json; None — не заданы
+        # (у дайджеста тогда VOICE_NEWS движка, если такой канал есть).
+        "default_channels": {s: None for s in SCENARIO_IDS},
         # Реестр запрещённых организаций: ежедневная сверка в фоне и порог свежести, дни (CMP-013).
         "registry": {"auto_check": True, "max_age_days": REGISTRY_MAX_AGE_DAYS},
         # Лимиты времени процессов по виду (runner.LIMITS), минуты: {"llm": {"total": 10, "idle": 5}}.
@@ -133,6 +137,11 @@ def normalize(raw: object) -> dict:
             out["cleanup"][name] = int(cleanup[name])
     if _number(cleanup.get("min_free_gb"), MAX_FREE_GB):
         out["cleanup"]["min_free_gb"] = cleanup["min_free_gb"]
+    chosen = _section(raw, "default_channels")
+    for scenario in SCENARIO_IDS:
+        value = chosen.get(scenario)
+        if isinstance(value, list):
+            out["default_channels"][scenario] = list(dict.fromkeys(v for v in value if isinstance(v, str) and v))
     reg = _section(raw, "registry")
     out["registry"]["auto_check"] = _flag(reg.get("auto_check"), True)
     age = reg.get("max_age_days")

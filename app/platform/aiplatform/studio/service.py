@@ -493,6 +493,7 @@ class StudioModule:
         channels = {c.id: c.label for c in known.values()}
         facts = self._facts()
         items = []
+        defaults: dict[str, list[str]] = {}  # каналы по умолчанию по сценарию — один раз на доску
         for item in self.studio.list(archived=archived):
             project = self.studio.get(item["id"]) or {}
             folder = self.studio.project_dir(item["id"])
@@ -500,6 +501,9 @@ class StudioModule:
             chosen = project.get("settings", {}).get("channels") or []
             review = _read_text(folder / steps.NARRATOR_REVIEW)
             group = board_group(item, project, published)
+            if not chosen and item["scenario"] not in defaults:
+                defaults[item["scenario"]] = self.default_channels(item["scenario"])
+            fallback = [] if chosen else defaults[item["scenario"]]
             items.append(
                 item
                 | {
@@ -519,6 +523,11 @@ class StudioModule:
                     # Копия — вариант оригинала (AN-009): доля переделок и сравнение вариантов.
                     "variant_of": project.get("variant_of"),
                     "variant": project.get("variant"),
+                    # Каналы не выбраны — доска предлагает каналы по умолчанию сценария (PRD-005).
+                    "default_channels": [
+                        {"id": c, "label": channels.get(c, c), "type": known[c].type if c in known else None}
+                        for c in fallback
+                    ],
                     # Ключ материала (PRD-004) — по нему доска группирует копии и дубли (UX-009).
                     "material": self.material(item, project),
                 }
@@ -817,17 +826,14 @@ class StudioModule:
 
     def scenario_defaults(self, scenario: str) -> dict:
         """Чем настройки сценария отличаются от общих: их и показывает форма нового выпуска."""
+        out: dict = {}
         if scenario == "digest":
             # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
             # по промпту выпуска — постер загружает человек.
-            out: dict = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
-            usual = [c.id for c in self.channels() if c.id == DIGEST_CHANNEL]  # VOICE_NEWS narrator
-            if usual:
-                out["channels"] = usual
-            return out
-        if scenario == "post":
+            out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
+        elif scenario == "post":
             # Пост — из готового: свой постер и свой mp3, оформление канала, кадр по постеру.
-            return {
+            out = {
                 "branding": True,
                 "poster_mode": "upload",
                 "voice_mode": "upload",
@@ -836,7 +842,19 @@ class StudioModule:
                 "clips": False,
                 "shorts": False,
             }
-        return {}
+        chosen = self.default_channels(scenario)
+        if chosen:
+            out["channels"] = chosen
+        return out
+
+    def default_channels(self, scenario: str) -> list[str]:
+        """Каналы по умолчанию сценария (PRD-005): из настроек, только существующие; не заданы —
+        у дайджеста VOICE_NEWS движка, если такой канал есть, у остальных — пусто."""
+        known = [c.id for c in self.channels()]
+        chosen = self.ctx.config.settings.load().get("default_channels", {}).get(scenario)
+        if chosen is None:
+            chosen = [DIGEST_CHANNEL] if scenario == "digest" else []
+        return [c for c in chosen if c in known]
 
     def describe(self) -> dict:
         return {
@@ -1268,6 +1286,10 @@ class StudioModule:
         project["settings"] = self.defaults() | project["settings"]  # выпуски из версий без новых настроек
         project["scenario_label"] = SCENARIOS[project["scenario"]]
         project["material"] = self.material({"id": project_id}, project)  # ключ материала (PRD-004)
+        # Каналы не выбраны (выпуск из старой версии) — студия предлагает каналы сценария (PRD-005).
+        project["default_channels"] = (
+            [] if project["settings"]["channels"] else self.default_channels(project["scenario"])
+        )
         raw = project["steps"]
         project["steps"] = [
             {

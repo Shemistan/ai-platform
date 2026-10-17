@@ -229,10 +229,37 @@ function renderUpkeep(data) {
 
 const state = { data: null };
 
+// Каналы по умолчанию по сценариям (PRD-005): новый выпуск получает их сам, доска публикует в них
+// выпуски без выбранных каналов.
+function renderDefaults(data) {
+  const box = $("defaults");
+  if (!box) return;
+  if (!data.channels?.length) {
+    fill(box, h("p", { class: "hint" }, "Каналов публикации пока нет — добавь их во вкладке ", h("a", { href: "/channels/" }, "«Каналы»"), "."));
+    return;
+  }
+  const rows = (data.scenarios || []).map((s) => {
+    const current = new Set(s.channels);
+    const save = (id, on) => {
+      const next = data.channels.map((c) => c.id).filter((c) => (c === id ? on : current.has(c)));
+      section("default_channels", { [s.id]: next });
+    };
+    return h(
+      "div",
+      { class: "field" },
+      h("span", { class: "field-label" }, s.label),
+      h("div", { class: "inline-fields" }, ...data.channels.map((c) => h("label", { class: "check" }, h("input", { type: "checkbox", checked: current.has(c.id), onchange: (e) => save(c.id, e.target.checked) }), h("span", {}, c.label)))),
+      current.size ? null : h("p", { class: "hint" }, "Не заданы — каналы выбираются у каждого выпуска."),
+    );
+  });
+  fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Новый выпуск сразу получает каналы своего сценария; у выпусков без каналов доска предлагает опубликовать в них."), ...rows));
+}
+
 function render(data) {
   state.data = data;
   renderSchedule(data);
   renderUpkeep(data);
+  renderDefaults(data);
   const { photo, video, audio } = data.sections;
   fill($("photo"), h("div", { class: "toggle-list" }, ...photo.map((m) => row(m, "photo", m.note))));
   fill($("video"), h("div", { class: "toggle-list" }, ...video.map((m) => row(m, "video", m.note))));
