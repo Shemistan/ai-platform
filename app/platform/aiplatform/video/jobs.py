@@ -29,7 +29,7 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*m")  # цвета терминала в выв
 
 GPU_OWNER = "Видео"
 WAIT_POLL_S = 0.2
-INSTALL_HINT = "Поставь модель видео: ./setup-model.sh в 10_video_generator/app/videogen (см. README платформы)."
+INSTALL_HINT = "Поставь модель видео: make models M=ltx-2.3-q4 в app/platform (README, «Установка моделей»)."
 
 
 class JobManager:
@@ -121,7 +121,7 @@ class JobManager:
             if model is None:
                 raise ValidationError(models.unknown(model_id))
         if not model.installed:
-            raise ValidationError(f"Модель {model.label} не установлена: запусти ./setup-model.sh {model.id}.")
+            raise ValidationError(f"Модель {model.label} не установлена: запусти make models M={model.id}.")
         return model
 
     def create(self, payload: object) -> dict:
