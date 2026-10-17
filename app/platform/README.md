@@ -98,8 +98,11 @@ make digest-check     # проверить вручную (или AIP_ALERT_TG_T
 Один раз, в обычном терминале из основного checkout:
 
 ```sh
-sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word
+sh app/narrator/tools/import-old.sh <old-narrator-dir>
 ```
+
+`<old-narrator-dir>` — каталог старого narrator, где лежат `library/`,
+`telegram_tems.md` и `bot_token.md`.
 
 Скрипт копирует `library/` (статьи, база новостей, подписчики бота),
 `telegram_tems.md` и `bot_token.md` и ничего не удаляет. Проверь «Статьи»,
@@ -120,7 +123,7 @@ sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word
 | Дайджест или промпты слайдов падают: `claude: command not found` | claude CLI (Claude Code) не установлен или его нет в `PATH` процесса — у launchd `PATH` короче, чем в терминале | установить Claude Code, залогиниться, проверить `claude --version`; под launchd — полный путь в `AIP_LLM_CMD` и `CLAUDE=/полный/путь/claude` для `make news` движка |
 | Агент (Claude Code) не может скачать модели, `make check` движка падает на `uv`, нет GPU | sandbox агента: сети к Hugging Face и PyPI нет, GPU нет, `~/.cache/uv` закрыт на запись | модели и первую установку зависимостей — в обычном терминале (`make models`, `make check` в `app/narrator`); `./narrate` сам переносит кэш uv в `$TMPDIR`, для своих команд — `UV_CACHE_DIR=$TMPDIR/uv-cache` |
 | Шаг «Постер» дайджеста ждёт картинку, локальная модель обложку не рисует | так задумано: обложку дайджеста делают в ChatGPT по `image_prompt.md` выпуска — кириллические заголовки локальные модели рисуют хуже | сгенерировать в ChatGPT по промпту шага 2 и перетащить в шаг или положить `cover.*` в каталог выпуска narrator; локально — галочка «локальная модель» |
-| `git commit` не гоняет `./check`, сообщение коммита не проверяется | хуки репозитория не включены на этой машине | `sh bootstrap.sh` в корне репозитория |
+| `git commit` не гоняет `./check`, сообщение коммита не проверяется | хуки репозитория не включены на этой копии | `sh bootstrap.sh` в корне репозитория |
 
 Эксплуатация живого сервиса — дайджест не вышел, GPU завис, диск не
 примонтирован, Telegram не принимает — не здесь: это runbook (задача
@@ -338,7 +341,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 |---|---|---|
 | `AIP_PORT`, `AIP_HOST` | `8780`, `127.0.0.1` | где слушать |
 | `AIP_DATA_DIR` | `app/platform/data` | задачи, загрузки, выпуски |
-| `AIP_MODELS_DIR` | `/Volumes/External SSD/local_models` | веса фото- и видеомоделей |
+| `AIP_MODELS_DIR` | `/Volumes/External SSD/local_models` (у автора — внешний диск) | веса фото- и видеомоделей; диска нет — свой каталог, `~/local_models`, см. «Если не работает при установке» |
 | `AIP_LOW_RAM` | — | экономия памяти для фото и видео |
 | `AIP_PHOTO_MFLUX_BIN`, `AIP_PHOTO_FLUX2_CMD` | из PATH | пайплайны фото (или старые `PHOTOGEN_*`) |
 | `AIP_VIDEO_LTX_CMD`, `AIP_VIDEO_WAN_CMD`, `AIP_VIDEO_MODEL` | из PATH | пайплайны видео (или старые `VIDEOGEN_*`) |
@@ -362,7 +365,7 @@ Almaz Capital Partners (экстремистские), Recorded Future, OpenText
 | `AIP_VIDEO_WAN_STEPS` | `10` | шаги Wan 2.2 (или старый `VIDEOGEN_WAN_STEPS`); целое от 1 |
 | `AIP_TEST_GUARD` | — | ставят тесты (`tests/__init__.py`): с ним сервис отказывается работать на боевых `data/` и `data-demo/` |
 | `NARRATOR_ENGINE` | — | запасное имя для `AIP_AUDIO_ENGINE`; его же читает Makefile движка |
-| `NARRATOR_MODELS_DIR` | `/Volumes/External SSD/local_models` | папка моделей озвучки; читает движок `app/narrator` |
+| `NARRATOR_MODELS_DIR` | `/Volumes/External SSD/local_models` (у автора — внешний диск) | папка моделей озвучки; читает движок `app/narrator`; диска нет — свой каталог |
 | `AIP_TELEGRAM_TOKEN` (или другое имя) | — | токен бота канала: имя переменной задаёт `token_env` в `channels.json`, см. «Каналы публикации»; значение не в git |
 | `NARRATOR_TELEGRAM_TOKEN` | — | токен бота движка для каналов без своего `token_env`; значение не в git |
 | `NARRATOR_TELEGRAM_TOKEN_FILE` | `app/narrator/bot_token.md` | файл с токеном бота, если переменная выше пуста |
@@ -425,7 +428,7 @@ mflux, веса (~7 ГБ) докачиваются в `AIP_MODELS_DIR/.photogen-
 Озвучка и новости: в `app/narrator` — `make models`; для дайджеста нужен ещё
 claude CLI. Данные старого narrator (статьи, база новостей, каналы, токен
 бота) переносит один раз
-`sh app/narrator/tools/import-old.sh ~/my_track/07_offline_text-to-word`.
+`sh app/narrator/tools/import-old.sh <old-narrator-dir>` (`<old-narrator-dir>` — каталог старого narrator).
 
 ### Каналы публикации
 
@@ -461,14 +464,5 @@ make smoke   # на настоящих моделях: картинка, фра�
 
 ## Что проверено на настоящих моделях
 
-По выпускам в `data/` за 15–16.10.2026 платформа работала на этой машине:
-картинки Z-Image Turbo и увеличение SeedVR2 до 4K, ролики LTX, озвучка
-Higgs (статья на 38 минут), сбор дайджеста движком narrator с агентом и
-судьёй, публикация в Telegram и пакеты для ручной загрузки.
-
-Новое из «Выпусков» — доска, дубликаты и кэш, оценка и проверка до
-запуска, черновик, серия и выжимка, расписание и уведомления, отклик,
-уборка — проверено тестами на фейках и прогоном `python -m aiplatform.smoke --fake`. С
-настоящим Telegram (getChat, getChatMemberCount, страница embed) отклик не
-проверялся; системные уведомления osascript — тоже. Первый `make smoke`
-на этой машине стоит запустить руками.
+Отчёты о прогонах на настоящих моделях — в журнале версий
+[`docs/CHANGELOG.md`](../../docs/CHANGELOG.md), под версией, на которой их делали.
