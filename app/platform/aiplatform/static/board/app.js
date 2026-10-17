@@ -4,7 +4,7 @@ import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, h, pol
 const API = "/api/studio";
 const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
 // Дополнения над группами (сводка отклика и т.п.): sig(data) — подпись блока, build(data) → узел.
-const extras = [{ key: "response", sig: (d) => [d.stats, d.response], build: (d) => responsePanel(d) }];
+const extras = [{ key: "response", sig: (d) => [d.stats, d.response, d.coverage], build: (d) => responsePanel(d) }];
 
 const href = (p) => `/studio/?scenario=${p.scenario}&project=${p.id}`;
 
@@ -127,8 +127,29 @@ function reachRow(p, r) {
   );
 }
 
-// «Что работает»: средние просмотры за 24ч и прирост за сутки по сценарию, длине и формату —
-// только посты с закрытым окном 24ч.
+// «Что работает»: медиана и p25–p75 просмотров за 24ч, прирост за сутки и индекс к каналу по сценарию,
+// длине и формату — только посты с закрытым окном 24ч; над таблицами — сколько учтено (AN-007).
+function coverageLine(c) {
+  if (!c || !c.total) return null;
+  const why = [];
+  if (c.fresh) why.push(`окно 24ч не закрыто: ${c.fresh}`);
+  if (c.no_data) why.push(`нет просмотров: ${c.no_data}`);
+  return h("p", { class: "muted small" }, `Учтено ${c.counted} из ${c.total} публикаций${why.length ? ` (${why.join(", ")})` : ""}`);
+}
+
+function responseRow(r) {
+  const spread = r.posts > 1 ? h("span", { class: "muted" }, ` ${number(r.p25_views)}–${number(r.p75_views)}`) : null;
+  return h(
+    "tr",
+    {},
+    h("th", {}, r.label, r.few ? h("span", { class: "muted small", title: "меньше 5 постов — медиана ненадёжна" }, " · мало данных") : null),
+    h("td", {}, String(r.posts)),
+    h("td", {}, number(r.median_views), spread),
+    h("td", {}, r.median_growth === null ? "—" : signed(r.median_growth)),
+    h("td", {}, r.median_index === null ? "—" : `×${r.median_index}`),
+  );
+}
+
 function responsePanel(data) {
   const s = data.stats || {};
   const refresh = h(
@@ -154,18 +175,27 @@ function responsePanel(data) {
       "table",
       { class: "reach-table" },
       h("caption", {}, d.dimension),
-      h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "постов"), h("th", {}, "просмотров за 24ч"), h("th", {}, "подписчиков за сутки"))),
       h(
-        "tbody",
+        "thead",
         {},
-        ...d.rows.map((r) => h("tr", {}, h("th", {}, r.label), h("td", {}, String(r.posts)), h("td", {}, number(r.avg_views)), h("td", {}, r.avg_growth === null ? "—" : signed(r.avg_growth)))),
+        h(
+          "tr",
+          {},
+          h("th", {}, ""),
+          h("th", { title: "постов с закрытым окном 24ч" }, "n"),
+          h("th", { title: "медиана, ниже — p25–p75" }, "просмотров за 24ч"),
+          h("th", { title: "медиана, за вычетом тренда канала" }, "подписчиков за сутки"),
+          h("th", { title: "просмотры за 24ч / медиана канала за 30 дней" }, "к каналу"),
+        ),
       ),
+      h("tbody", {}, ...d.rows.map(responseRow)),
     ),
   );
   return h(
     "section",
     { class: "panel response" },
     h("div", { class: "response-head" }, h("h2", {}, "Что работает"), refresh, h("span", { class: "muted small" }, s.at ? `обновлено ${s.at}` : "ещё не обновлялось")),
+    coverageLine(data.coverage),
     tables.length
       ? h("div", { class: "reach-tables" }, ...tables)
       : h("p", { class: "hint" }, "Постов с закрытым окном 24ч пока нет. Публичные каналы Telegram подтягиваются сами (раз в сутки или кнопкой), у пакетов для YouTube и TikTok и у приватных каналов просмотры вносятся руками в карточке выпуска."),

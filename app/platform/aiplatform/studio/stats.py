@@ -339,50 +339,117 @@ def _format(record: dict) -> str | None:
     return "вертикальный 9:16" if record["format"] == publish.VERTICAL else "16:9 и квадрат"
 
 
-def summary(items: list[dict]) -> list[dict]:
-    """«Что работает»: средние просмотры за 24ч и прирост подписчиков за сутки после поста (за вычетом
-    тренда канала) по сценарию, длине ролика и формату. Считаются только публикации с закрытым окном
-    24ч: свежий пост с недобранными сутками и старый с накопленными просмотрами несравнимы."""
-    posts = []
+FEW = 5  # меньше постов в строке — «мало данных»: медиана по 2–4 точкам ненадёжна (AN-007)
+INDEX_DAYS = 30  # индекс просмотров — к медиане views_24h канала за 30 дней до поста
+
+
+def quartiles(values: list[float]) -> tuple[float, float, float]:
+    """p25, медиана, p75 (линейная интерполяция между точками); одна точка — она же везде."""
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0], ordered[0], ordered[0]
+
+    def at(q: float) -> float:
+        pos = q * (len(ordered) - 1)
+        low = int(pos)
+        high = min(low + 1, len(ordered) - 1)
+        return ordered[low] + (ordered[high] - ordered[low]) * (pos - low)
+
+    return at(0.25), at(0.5), at(0.75)
+
+
+def _live_posts(items: list[dict]) -> list[tuple[dict, dict]]:
+    """(выпуск, запись) вышедших публикаций: канал выпуска — один раз, первая вышедшая (AN-005)."""
+    out = []
     for item in items:
         seen: set[str] = set()
         for record in item.get("published", []):
-            # Канал выпуска — один раз: первая вышедшая публикация, повтор не считается (AN-005).
             channel = record.get("channel")
             if record.get("state") not in LIVE or (channel and channel in seen):
                 continue
             seen.add(channel)
-            if record.get("views_24h") is None:
-                continue
-            posts.append(
-                {
-                    "Сценарий": item.get("scenario_label"),
-                    # Срезы — по полям, записанным в момент публикации (AN-006): длина отправленного
-                    # файла (шортса у вертикального канала), формат канала тогда, вид поста.
-                    "Длина ролика": _length(record.get("media_s")),
-                    "Формат": _format(record),
-                    "views": record["views_24h"],
-                    "growth": record.get("growth_24h_attr"),
-                }
-            )
+            out.append((item, record))
+    return out
+
+
+def _indexes(posts: list[tuple[dict, dict]]) -> dict[int, float]:
+    """Индекс просмотров поста: views_24h / медиана views_24h его канала за INDEX_DAYS до поста
+    (сам пост входит). Сравнивает посты маленького и большого канала. Ключ — id(записи)."""
+    by_channel: dict[str, list[tuple[float, float]]] = {}
+    for _, record in posts:
+        start, views = sent_at(record), record.get("views_24h")
+        if record.get("channel") and start is not None and views is not None:
+            by_channel.setdefault(record["channel"], []).append((float(start), float(views)))
+    out = {}
+    for _, record in posts:
+        start, views = sent_at(record), record.get("views_24h")
+        if views is None or start is None:
+            continue
+        base = [v for at, v in by_channel.get(record.get("channel"), []) if start - INDEX_DAYS * DAY <= at <= start]
+        median = _median(base) if base else 0
+        if median > 0:
+            out[id(record)] = views / median
+    return out
+
+
+def coverage(items: list[dict]) -> dict:
+    """Покрытие «Что работает»: сколько вышедших публикаций учтено и почему остальные выпали —
+    окно 24ч ещё не закрыто или просмотров нет (приватный канал, ручной пакет без внесённых цифр)."""
+    posts = _live_posts(items)
+    counted = sum(1 for _, r in posts if r.get("views_24h") is not None)
+    fresh = sum(
+        1 for _, r in posts if r.get("views_24h") is None and r.get("age_h") is not None and r["age_h"] < WINDOWS[0][0]
+    )
+    return {"counted": counted, "total": len(posts), "fresh": fresh, "no_data": len(posts) - counted - fresh}
+
+
+def _row(label: str, group: list[dict]) -> dict:
+    """Строка сводки: n, медиана и p25–p75 просмотров за 24ч, медиана прироста и индекса к каналу."""
+    p25, median, p75 = quartiles([p["views"] for p in group])
+    growth = [p["growth"] for p in group if p["growth"] is not None]
+    index = [p["index"] for p in group if p["index"] is not None]
+    return {
+        "label": label,
+        "posts": len(group),
+        "median_views": round(median),
+        "p25_views": round(p25),
+        "p75_views": round(p75),
+        "median_growth": round(_median(growth), 1) if growth else None,
+        "median_index": round(_median(index), 2) if index else None,
+        "few": len(group) < FEW,
+    }
+
+
+def summary(items: list[dict]) -> list[dict]:
+    """«Что работает»: медиана и p25–p75 просмотров за 24ч, медиана прироста подписчиков за сутки после
+    поста (за вычетом тренда канала) и индекса к медиане канала — по сценарию, длине ролика и формату.
+    Медиана, а не среднее: один вирусный пост не перекашивает строку (AN-007). Считаются только
+    публикации с закрытым окном 24ч: свежий пост с недобранными сутками и старый с накопленными
+    просмотрами несравнимы; сколько выпало — в coverage()."""
+    live = _live_posts(items)
+    indexes = _indexes(live)
+    posts = [
+        {
+            "Сценарий": item.get("scenario_label"),
+            # Срезы — по полям, записанным в момент публикации (AN-006): длина отправленного
+            # файла (шортса у вертикального канала), формат канала тогда, вид поста.
+            "Длина ролика": _length(record.get("media_s")),
+            "Формат": _format(record),
+            "views": record["views_24h"],
+            "growth": record.get("growth_24h_attr"),
+            "index": indexes.get(id(record)),
+        }
+        for item, record in live
+        if record.get("views_24h") is not None
+    ]
     out = []
     for dimension in ("Сценарий", "Длина ролика", "Формат"):
         groups: dict[str, list[dict]] = {}
         for post in posts:
             if post[dimension]:
                 groups.setdefault(post[dimension], []).append(post)
-        rows = []
-        for label, group in groups.items():
-            growth = [p["growth"] for p in group if p["growth"] is not None]
-            rows.append(
-                {
-                    "label": label,
-                    "posts": len(group),
-                    "avg_views": round(sum(p["views"] for p in group) / len(group)),
-                    "avg_growth": round(sum(growth) / len(growth), 1) if growth else None,
-                }
-            )
-        rows.sort(key=lambda r: r["avg_views"], reverse=True)
+        rows = [_row(label, group) for label, group in groups.items()]
+        rows.sort(key=lambda r: r["median_views"], reverse=True)
         if rows:
             out.append({"dimension": dimension, "rows": rows})
     return out

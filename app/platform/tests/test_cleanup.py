@@ -144,7 +144,8 @@ class CleanupKeepsPublicationsTest(StudioCase):
 
         board = self.json("GET", "/api/studio/board")[1]
         rows = {d["dimension"]: d["rows"] for d in board["response"]}["Сценарий"]
-        self.assertEqual([(r["posts"], r["avg_views"]) for r in rows], [(1, 240)], "«Что работает» учитывает удалённый")
+        got = [(r["posts"], r["median_views"]) for r in rows]
+        self.assertEqual(got, [(1, 240)], "«Что работает» учитывает удалённый")
         self.assertIn("tg-old", studio._facts().posts, "прирост канала — и по удалённым выпускам")
 
         # Повторная запись того же выпуска не дублируется.

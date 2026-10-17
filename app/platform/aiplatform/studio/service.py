@@ -451,13 +451,16 @@ class StudioModule:
                 }
             )
         counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
+        everything = items + self._response_items(not archived, known, facts)
         return {
             "groups": list(BOARD_GROUPS.items()),
             "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
             "counts": counts,
             "projects": items,
             # «Что работает» — по всем выпускам: и с другой вкладки доски, и удалённым уборкой (AN-008).
-            "response": stats.summary(items + self._response_items(not archived, known, facts)),
+            "response": stats.summary(everything),
+            # Покрытие сводки: учтено X из Y вышедших публикаций и почему выпали остальные (AN-007).
+            "coverage": stats.coverage(everything),
             "stats": {"running": self._stats_thread is not None, "at": self.scheduler.state().get("stats_at")},
         }
 

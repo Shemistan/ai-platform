@@ -62,7 +62,11 @@ class StatsUnitTest(unittest.TestCase):
             {"scenario_label": "Пост", "published": [post(10, fmt="landscape", post_format="photo")]},
         ]
         found = {d["dimension"]: d["rows"] for d in stats.summary(items)}
-        self.assertEqual(found["Сценарий"][0], {"label": "Дайджест", "posts": 2, "avg_views": 200, "avg_growth": 2.0})
+        row = found["Сценарий"][0]
+        self.assertEqual(
+            (row["label"], row["posts"], row["median_views"], row["median_growth"]), ("Дайджест", 2, 200, 2.0)
+        )
+        self.assertEqual((row["p25_views"], row["p75_views"], row["few"]), (150, 250, True))
         self.assertEqual([r["label"] for r in found["Длина ролика"]], ["8–15 мин", "до 3 мин", "длиннее 15 мин"])
         self.assertEqual(
             [r["label"] for r in found["Формат"]], ["16:9 и квадрат", "вертикальный 9:16", "картинка и аудио"]
@@ -215,7 +219,7 @@ class ThinTest(unittest.TestCase):
 
         items = [item("Старый", old), item("Свежий", fresh), item("Час назад", open_)]
         rows = {d["dimension"]: d["rows"] for d in stats.summary(items)}["Сценарий"]
-        self.assertEqual([(r["label"], r["avg_views"]) for r in rows], [("Свежий", 384), ("Старый", 100)])
+        self.assertEqual([(r["label"], r["median_views"]) for r in rows], [("Свежий", 384), ("Старый", 100)])
         self.assertEqual(items[0]["published"][0]["views"], 5000, "сырые последние просмотры остаются в API")
 
     def test_summary_counts_channel_once(self):
@@ -226,7 +230,83 @@ class ThinTest(unittest.TestCase):
         failed = {"channel": "tg3", "state": "failed", "views_24h": 5}
         items = [{"scenario_label": "Статья", "published": [first, again, other, failed]}]
         row = {d["dimension"]: d["rows"] for d in stats.summary(items)}["Сценарий"][0]
-        self.assertEqual((row["posts"], row["avg_views"]), (2, 200))
+        self.assertEqual((row["posts"], row["median_views"]), (2, 200))
+
+
+class RobustSummaryTest(unittest.TestCase):
+    """«Что работает» (AN-007): медиана и квартили вместо среднего, n, покрытие, индекс к каналу."""
+
+    @staticmethod
+    def post(views, channel="tg", at=T0, **extra):
+        return {"channel": channel, "state": "sent", "sent": at, "views_24h": views, **extra}
+
+    def rows(self, items):
+        return {d["dimension"]: d["rows"] for d in stats.summary(items)}["Сценарий"]
+
+    def test_quartiles(self):
+        self.assertEqual(stats.quartiles([5]), (5, 5, 5))
+        self.assertEqual(stats.quartiles([1, 2, 3, 4, 5]), (2, 3, 4))
+        self.assertEqual(stats.quartiles([10, 20, 30, 40]), (17.5, 25, 32.5))
+
+    def test_median_quartiles_n_and_few(self):
+        items = [
+            {"scenario_label": "Статья", "published": [self.post(v, channel=f"c{v}")]} for v in (10, 20, 30, 40, 50)
+        ]
+        items.append({"scenario_label": "Пост", "published": [self.post(7)]})
+        rows = self.rows(items)
+        article = rows[0]
+        self.assertEqual(
+            (article["label"], article["posts"], article["median_views"], article["p25_views"], article["p75_views"]),
+            ("Статья", 5, 30, 20, 40),
+        )
+        self.assertFalse(article["few"], "5 постов — уже не «мало данных»")
+        self.assertTrue(rows[1]["few"])
+
+    def test_outlier_does_not_flip_order(self):
+        # Среднее: «Пост» (1000+10+10)/3=340 > «Статья» 100 — один вирусный пост переворачивал порядок.
+        items = [
+            {
+                "scenario_label": "Статья",
+                "published": [self.post(100, channel="a"), self.post(100, channel="b"), self.post(100, channel="c")],
+            },
+            {
+                "scenario_label": "Пост",
+                "published": [self.post(1000, channel="a"), self.post(10, channel="b"), self.post(10, channel="c")],
+            },
+        ]
+        self.assertEqual([r["label"] for r in self.rows(items)], ["Статья", "Пост"])
+
+    def test_index_to_channel_median(self):
+        # Канал big: медиана 1000, пост 2000 → ×2; канал small: медиана 10, пост 20 → ×2.
+        # Пост старше 30 дней в базу канала не входит.
+        items = [
+            {"scenario_label": "Старое", "published": [self.post(1, channel="small", at=T0 - 40 * D)]},
+            {
+                "scenario_label": "База",
+                "published": [self.post(1000, channel="big", at=T0 - D), self.post(10, channel="small", at=T0 - D)],
+            },
+            {
+                "scenario_label": "Новое",
+                "published": [self.post(2000, channel="big", at=T0), self.post(20, channel="small", at=T0)],
+            },
+        ]
+        rows = {r["label"]: r for r in self.rows(items)}
+        self.assertEqual(rows["Новое"]["median_index"], 1.33, "медиана канала за 30 дней включает сам пост: 2000/1500")
+        self.assertEqual(rows["База"]["median_index"], 1.0)
+        self.assertEqual(rows["Старое"]["median_index"], 1.0)
+
+    def test_coverage(self):
+        items = [
+            {
+                "published": [
+                    self.post(100),
+                    self.post(None, channel="fresh", age_h=3),
+                    self.post(None, channel="private", age_h=50),
+                    {"channel": "yt", "state": "packaged"},
+                ]
+            }
+        ]
+        self.assertEqual(stats.coverage(items), {"counted": 1, "total": 3, "fresh": 1, "no_data": 1})
 
 
 class StatsHttpTest(StudioCase):
@@ -271,8 +351,11 @@ class StatsHttpTest(StudioCase):
         board = self.json("GET", "/api/studio/board")[1]
         rows = {d["dimension"]: d["rows"] for d in board["response"]}
         self.assertEqual(
-            rows["Сценарий"], [{"label": "Видео по статье", "posts": 1, "avg_views": 960, "avg_growth": 40.0}]
+            [(r["label"], r["posts"], r["median_views"], r["median_growth"]) for r in rows["Сценарий"]],
+            [("Видео по статье", 1, 960, 40.0)],
         )
+        # Покрытие (AN-007): TG учтён; пакет YouTube без «Залил» — не публикация и в знаменатель не входит.
+        self.assertEqual((board["coverage"]["counted"], board["coverage"]["total"]), (1, 1))
         saved = json.loads((self.folder(pid) / "published.json").read_text(encoding="utf-8"))
         self.assertTrue(saved[1]["stats"][-1]["manual"])
 
