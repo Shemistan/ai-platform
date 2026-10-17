@@ -1,6 +1,6 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
-import { $, announce, api, busy as busyRequest, busyClick, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reportError, safe, STATUS, statusChip, toneOf } from "/ui.js";
+import { $, announce, api, busy as busyRequest, busyClick, confirmAction, confirmPublish, debounce, h, logBlock, poller, progressBar, reportError, safe, STATUS, statusChip, toast, toneOf } from "/ui.js";
 
 const API = "/api/studio";
 const SCENARIO_TITLES = { digest: "Дайджест новостей", article: "Видео по статье", post: "Пост в канал" };
@@ -616,7 +616,10 @@ async function rerunStep(stepId) {
   }
   const names = STEP_FIELDS[step.id];
   const settings = names && document.getElementById(`step-${step.id}-settings`) ? readSettings(`step-${step.id}`, names) : undefined;
-  if (await act("run", { step: step.id, settings })) delete state.stepDrafts[step.id];
+  if (await act("run", { step: step.id, settings })) {
+    delete state.stepDrafts[step.id];
+    toast(`Шаг «${step.label}» запущен`, "info");
+  }
   state.gen += 1; // параметры шага — из сохранённых настроек, а не из набросков
   show(state.project);
 }
@@ -633,6 +636,7 @@ async function saveArtifact(name, text) {
   try {
     const fresh = await api("POST", `${API}/projects/${state.project.id}/artifacts/${name}`, { text });
     delete state.drafts[name];
+    toast("Сохранено");
     state.gen += 1;
     show(fresh);
   } catch (err) {
@@ -740,10 +744,11 @@ function copyButton(text) {
         try {
           await navigator.clipboard.writeText(text);
           btn.textContent = "Скопировано";
+          toast("Промпт скопирован");
         } catch {
           btn.textContent = "Не вышло";
+          toast("Не удалось скопировать: браузер не дал доступ к буферу обмена", "danger");
         }
-        announce(btn.textContent);
         setTimeout(() => (btn.textContent = "Скопировать промпт"), 1500);
       },
     },
@@ -916,6 +921,15 @@ function stepBody(step) {
         h(
           "div",
           { class: "publish-box" },
+          // Домены ссылок поста; не из исходника — красным: автопубликация их не пропустит (SEC-013).
+          p.links?.domains?.length
+            ? h(
+                "p",
+                { class: "post-links" },
+                "Ссылки ведут на: ",
+                ...p.links.domains.map((d) => h("span", { class: `chip ${p.links.foreign.includes(d) ? "tone-danger" : ""}`, title: p.links.foreign.includes(d) ? "Этого домена нет в исходном материале" : "" }, d)),
+              )
+            : null,
           h("strong", {}, "Куда опубликовать"),
           h(
             "div",
