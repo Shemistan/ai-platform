@@ -51,6 +51,19 @@ class TokensTest(unittest.TestCase):
         used += "\n".join(p.read_text(encoding="utf-8") for p in STATIC.rglob("*.html"))
         self.assertNotIn("small-btn", used)
 
+    def test_no_legacy_button_aliases(self):
+        # Старые имена вариантов .primary/.secondary/.link/.danger убраны (DS-018): в CSS их нет,
+        # в разметке и JS кнопки только на .btn--*.
+        self.assertEqual(offenders(r"\.(?:primary|secondary|link|danger)\b"), [])
+        found = [
+            f"{p.relative_to(STATIC)}:{n}: {line.strip()}"
+            for p in sorted([*STATIC.rglob("*.js"), *STATIC.rglob("*.html")])
+            for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+            for cls in re.findall(r"class(?:: |=)\"([^\"]*)\"", line)
+            if re.search(r"(?<![\w-])(?:primary|secondary|link|danger)(?![\w-])", cls)
+        ]
+        self.assertEqual(found, [])
+
     def test_board_on_tone_classes(self):
         # Цвет карточки доски — от .tone-* (cardTone → toneOf), без своих правил по группам (DS-017).
         css = (STATIC / "board" / "style.css").read_text(encoding="utf-8")

@@ -39,7 +39,7 @@ async function publish(p) {
 // Что можно сделать с выпуском прямо с доски.
 function actions(p) {
   const busy = state.busy.has(p.id) || p.running;
-  const out = [h("a", { class: "link", href: href(p) }, "Открыть")];
+  const out = [h("a", { class: "btn--link", href: href(p) }, "Открыть")];
   const need = p.attention;
   if (need?.step === "publish" && p.channels.length && p.verdict !== "не готово") {
     const names = p.channels.map((c) => c.label).join(", ");
@@ -53,12 +53,12 @@ function actions(p) {
   } else if (p.group === "drafts" || need?.status === "failed") {
     out.unshift(h("button", { type: "button", class: "btn btn--ghost btn--sm", disabled: busy, onclick: () => act(p, "run", {}) }, "Запустить всё"));
   }
-  if (p.running) out.push(h("button", { type: "button", class: "link", disabled: state.busy.has(p.id), onclick: () => act(p, "cancel") }, "Остановить"));
+  if (p.running) out.push(h("button", { type: "button", class: "btn btn--link", disabled: state.busy.has(p.id), onclick: () => act(p, "cancel") }, "Остановить"));
   else
     out.push(
       h(
         "button",
-        { type: "button", class: "link", disabled: busy, onclick: () => act(p, "archive", { archived: !p.archived }) },
+        { type: "button", class: "btn btn--link", disabled: busy, onclick: () => act(p, "archive", { archived: !p.archived }) },
         p.archived ? "Вернуть из архива" : "В архив",
       ),
     );
@@ -113,7 +113,7 @@ function reachRow(p, r) {
     "li",
     {},
     h("span", {}, `✓ ${r.label}`),
-    r.external_url ? h("a", { class: "link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
+    r.external_url ? h("a", { class: "btn--link", href: r.external_url, target: "_blank", rel: "noopener" }, " ролик") : null,
     facts.length ? h("span", { class: "muted" }, ` · ${facts.join(" · ")}`) : null,
     manual
       ? h(
