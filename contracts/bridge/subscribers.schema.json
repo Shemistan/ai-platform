@@ -1,5 +1,5 @@
 {
-  "$comment": "ответ `narrate bridge subscribers`",
+  "$comment": "ответ `narrate bridge subscribers`; о подписчике — только chat_id, дата и тема (CMP-007), отписавшихся нет (CMP-006)",
   "type": "object",
   "required": [
     "active",
@@ -14,26 +14,14 @@
       "items": {
         "type": "object",
         "required": [
-          "active",
           "added",
           "chat_id",
-          "name",
-          "note",
           "thread"
         ],
         "properties": {
-          "active": {
-            "type": "boolean"
-          },
           "thread": {},
-          "note": {
-            "type": "string"
-          },
           "chat_id": {
             "type": "number"
-          },
-          "name": {
-            "type": "string"
           },
           "added": {
             "type": "string"
