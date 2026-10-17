@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from aiplatform import __version__
 from aiplatform import config as config_module
 from aiplatform.config import Config
-from aiplatform.core import disk, log, media, runner
+from aiplatform.core import disk, log, media, perms, runner
 from aiplatform.core.gate import Gate
 from aiplatform.core.http import HttpError, Request, not_found
 from aiplatform.core.notify import Notifier
@@ -64,7 +64,7 @@ SECURITY_HEADERS = (
 NO_AUTH = (("GET", ("api", "health")), ("GET", ("api", "ready")))  # пробы живости — без токена
 LOGIN_PAGE = """<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Вход — AI Platform</title></head>
+<title>Вход — AI Platform</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"></head>
 <body style="font-family:system-ui,sans-serif;max-width:420px;margin:15vh auto;padding:0 16px">
 <h1>AI Platform</h1><p>Нужен токен доступа (AIP_AUTH_TOKEN).</p>
 <form method="get" action="{action}"><input type="password" name="token" autocomplete="current-password"
@@ -145,12 +145,40 @@ def default_modules(ctx: Context) -> list[Module]:
     ]
 
 
+# Группы вкладок шапки: между группами — разделитель. Модуль без записи — сам себе группа.
+NAV_GROUPS = {
+    "photo": "media",
+    "video": "media",
+    "audio": "media",
+    "library": "texts",
+    "news": "texts",
+    "channels": "service",
+    "updates": "service",
+    "settings": "service",
+}
+
+
+def nav_tabs(module: Module) -> list[dict]:
+    """Вкладки шапки от модуля — единственный список вкладок (FE-007): nav.js рисует его из /api/config.
+
+    По умолчанию — одна вкладка /<prefix>/; модуль с под-вкладками (студия) отдаёт свои через nav().
+    Поля: id, label, href, group; необязательные badge (счётчик в шапке) и default (активна, если в
+    адресе нет своего параметра).
+    """
+    own = getattr(module, "nav", None)
+    tabs = own() if own else [{"id": module.prefix, "label": module.label, "href": f"/{module.prefix}/"}]
+    group = NAV_GROUPS.get(module.prefix, module.prefix)
+    return [{"group": group} | tab for tab in tabs]
+
+
 class App:
     def __init__(self, config: Config, modules: ModulesFactory = default_modules) -> None:
         self.config = config
         self.started = time.monotonic()
         self.stopping = False  # пришёл SIGTERM: новые задачи не принимаются (503)
         self.closed = False
+        # Каталог данных — только владельцу: подписчики, логи, задачи (SEC-010).
+        config.data_dir.mkdir(mode=perms.PRIVATE_DIR, parents=True, exist_ok=True)
         # Процессы моделей прошлого запуска, пережившие его (SIGKILL, сбой), держат память — гасим.
         self.run_dir = config.data_dir / "run"
         self.orphans = runner.reap_orphans(self.run_dir)
@@ -188,6 +216,8 @@ class App:
                 f"Каталог моделей {models} не найден — внешний диск не примонтирован? "
                 "Подключи его или задай AIP_MODELS_DIR."
             )
+        if not self.config.fake and (loose := perms.warning(self.config.data_dir, "Каталог данных")):
+            out.append(loose)
         for module in self.modules.values():
             out.extend(module.problems())
         return list(dict.fromkeys(out))  # общий движок (narrator) жалуется из нескольких вкладок
@@ -196,7 +226,7 @@ class App:
         return {
             "backend": self.config.backend,
             "version": __version__,
-            "tabs": [{"id": m.prefix, "label": m.label} for m in self.modules.values()],
+            "tabs": [tab for m in self.modules.values() for tab in nav_tabs(m)],
             "problems": self.problems(),
         }
 
@@ -441,6 +471,8 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 1 and (STATIC_DIR / parts[0]).is_dir() and not path.endswith("/"):
             return req.redirect(f"/{parts[0]}/")
         name = path.lstrip("/")
+        if name == "favicon.ico":  # браузер просит его сам у страниц без <link rel=icon> (вход, JSON)
+            name = "favicon.svg"
         if name.endswith("/") or (STATIC_DIR / name).is_dir():
             name = name.rstrip("/") + "/index.html"
         target = (STATIC_DIR / name).resolve()

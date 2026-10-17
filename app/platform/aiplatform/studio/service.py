@@ -200,6 +200,15 @@ class StudioModule:
     prefix = PREFIX
     label = "Сценарии"
 
+    def nav(self) -> list[dict]:
+        """Вкладки шапки: доска «Выпуски» со счётчиком ждущих и по вкладке на сценарий."""
+        board = {"id": "board", "label": "Выпуски", "href": "/board/", "badge": "attention"}
+        scenarios = [
+            {"id": k, "label": v, "href": f"/studio/?scenario={k}"} | ({"default": True} if k == "article" else {})
+            for k, v in SCENARIOS.items()
+        ]
+        return [board, *scenarios]
+
     def __init__(self, ctx) -> None:
         self.ctx = ctx
         self.config = studio_config.load(ctx.config)
@@ -445,6 +454,7 @@ class StudioModule:
         counts = {g: sum(i["group"] == g for i in items) for g in BOARD_GROUPS}
         return {
             "groups": list(BOARD_GROUPS.items()),
+            "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
             "counts": counts,
             "projects": items,
             "response": stats.summary(items),
@@ -694,6 +704,7 @@ class StudioModule:
         return {
             "scenario_defaults": {k: self.scenario_defaults(k) for k in SCENARIOS},
             "scenarios": [{"id": k, "label": v} for k, v in SCENARIOS.items()],
+            "upload_limits": uploads_module.limits(),
             "steps": [{"id": s, "label": LABELS[s]} for s in STEP_IDS],
             "defaults": self.defaults(),
             "engines": [e.public() for e in self.ctx.modules["audio"].config.engines().values()],
@@ -1105,6 +1116,8 @@ class StudioModule:
         project["review"] = {"verdict": steps.verdict(review), "text": review} if review else None
         found = registry.mentioned(f"{project['title']}\n{read(steps.TEXT)}\n{read(steps.POST)}", self.banned())
         project["disclaimers"] = [{"name": e.name, "note": e.disclaimer + "."} for e in found]
+        # Куда ведут ссылки поста и какие из них не из исходника — видно до публикации (SEC-013).
+        project["links"] = steps.post_links(project["scenario"], project["settings"], read, read(steps.POST))
         plan = self._plan(folder) or None
         voice = steps.find(folder, "voice", steps.AUDIO_EXT)
         project["estimate"] = estimate_module.estimate(

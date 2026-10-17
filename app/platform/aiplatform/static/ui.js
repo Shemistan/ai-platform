@@ -563,6 +563,223 @@ export function busyClick(fn, key = null) {
   };
 }
 
+// --- Загрузка файлов: прогресс, отмена, лимит (FE-003) ---
+
+// Лимиты загрузки по умолчанию; точные приходят в /config модуля (upload_limits).
+export const UPLOAD_LIMITS = { image: 25 * 1024 * 1024, media: 200 * 1024 * 1024 };
+
+const megabytes = (bytes) => Math.round(bytes / 2 ** 20);
+
+let activeUploads = 0;
+// Уход со страницы обрывает загрузку молча — пока она идёт, браузер переспросит.
+function guardUnload(event) {
+  event.preventDefault();
+  event.returnValue = ""; // старые Chrome и Safari показывают вопрос только так
+}
+function uploadStarted() {
+  if (activeUploads++ === 0) globalThis.addEventListener?.("beforeunload", guardUnload);
+}
+function uploadFinished() {
+  if (--activeUploads === 0) globalThis.removeEventListener?.("beforeunload", guardUnload);
+}
+export const uploadsInFlight = () => activeUploads;
+
+// Строка загрузки в лотке внизу экрана: имя, полоска, процент, «Отменить».
+function uploadRow(label, onCancel) {
+  if (typeof document === "undefined") return null;
+  let tray = document.getElementById("upload-tray");
+  if (!tray) {
+    tray = h("div", { id: "upload-tray", class: "upload-tray", role: "status", "aria-label": "Загрузки" });
+    document.body.append(tray);
+  }
+  const fill = h("div", { class: "bar-fill", style: "width:0%" });
+  const bar = h("div", { class: "bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": "0", "aria-label": `Загрузка: ${label}` }, fill);
+  const percent = h("span", { class: "percent" }, "0%");
+  const row = h(
+    "div",
+    { class: "upload-row progress" },
+    h("div", { class: "progress-head" }, h("span", { class: "stage" }, label), percent),
+    bar,
+    h("div", { class: "progress-foot" }, h("span", {}), h("button", { type: "button", class: "btn btn--link danger", onclick: onCancel }, "Отменить")),
+  );
+  tray.append(row);
+  return {
+    update(p) {
+      fill.style.width = `${p}%`;
+      bar.setAttribute("aria-valuenow", String(p));
+      percent.textContent = `${p}%`;
+    },
+    remove() {
+      row.remove();
+      if (!tray.childElementCount) tray.remove();
+    },
+  };
+}
+
+// uploadFile(url, файл, { limit, label, onProgress, signal }) → JSON ответа или ApiError, как у api().
+// Больше limit — отказ «Файл больше N МБ.» без запроса (kind: too_big): иначе сервер ответит 413,
+// не дочитав тело, и браузер покажет «Failed to fetch». Пока идёт — строка с полоской и «Отменить»
+// внизу экрана и предупреждение при уходе со страницы. Отмена (кнопкой или signal) — kind: abort.
+// XMLHttpRequest, а не fetch: только у него есть прогресс отправки тела.
+export function uploadFile(url, file, { limit = 0, label = file?.name || "файл", onProgress = null, signal = null } = {}) {
+  if (limit && file.size > limit) {
+    return Promise.reject(new ApiError(`Файл больше ${megabytes(limit)} МБ.`, { kind: "too_big", data: { limit } }));
+  }
+  if (signal?.aborted) return Promise.reject(new ApiError("Загрузка отменена.", { kind: "abort" }));
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const cancel = () => xhr.abort();
+    const row = uploadRow(label, cancel);
+    let done = false;
+    const finish = (settle, value) => {
+      if (done) return;
+      done = true;
+      signal?.removeEventListener("abort", cancel);
+      row?.remove();
+      uploadFinished();
+      settle(value);
+    };
+    xhr.open("POST", url);
+    xhr.setRequestHeader("X-AIP", "1"); // как у api(): признак запроса своей страницы (SEC-002)
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      const percent = Math.min(100, Math.round((100 * e.loaded) / e.total));
+      row?.update(percent);
+      onProgress?.({ loaded: e.loaded, total: e.total, percent });
+    };
+    xhr.onload = () => {
+      const text = xhr.responseText;
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) return finish(resolve, data || {});
+      let message = data?.error || httpMessage(xhr.status, data ? "" : text);
+      if (data?.request_id) message = `${message.replace(/\.$/, "")}. Код для поиска в логе: ${data.request_id}`;
+      finish(reject, new ApiError(message, { kind: "http", status: xhr.status, data: data || {} }));
+    };
+    xhr.onerror = () => finish(reject, new ApiError("Сервис не отвечает. Проверь, что он запущен.", { kind: "network" }));
+    xhr.onabort = () => finish(reject, new ApiError("Загрузка отменена.", { kind: "abort" }));
+    signal?.addEventListener("abort", cancel, { once: true });
+    uploadStarted();
+    xhr.send(file);
+  });
+}
+
+// --- Перерисовка блоков без потери ввода (студия, доска) ---
+
+const blockSig = new WeakMap();
+const TEXT_INPUTS = new Set(["text", "search", "url", "email", "number", "tel", "password", "date", "time", "datetime-local", "month", "week"]);
+const isEditable = (el) => Boolean(el) && (el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable || (el.tagName === "INPUT" && TEXT_INPUTS.has(el.type)));
+
+// В блоке фокус в поле, которое не вернуть после перерисовки (открытый список, поле без id) — блок подождёт.
+function holdsInput(node) {
+  const el = document.activeElement;
+  return node.contains(el) && isEditable(el) && (el.tagName === "SELECT" || el.isContentEditable || !el.id);
+}
+
+const fieldKey = (el) => (el.type === "radio" ? (el.name ? `${el.name}=${el.value}` : null) : el.id || null);
+
+// Несохранённые правки полей блока: чекбоксы, переключатели, списки и однострочные поля (тексты студия держит в state.drafts).
+function editsOf(node) {
+  const out = new Map();
+  for (const el of node.querySelectorAll("input, select")) {
+    const key = fieldKey(el);
+    if (!key || el.type === "file") continue;
+    if (el.type === "checkbox" || el.type === "radio") {
+      if (el.checked !== el.defaultChecked) out.set(key, el.checked);
+    } else if (el.tagName === "SELECT") {
+      if ([...el.options].some((o) => o.selected !== o.defaultSelected)) out.set(key, el.value);
+    } else if (el.value !== el.defaultValue) out.set(key, el.value);
+  }
+  return out;
+}
+
+function applyEdits(node, edits) {
+  if (!edits.size) return;
+  for (const el of node.querySelectorAll("input, select")) {
+    const key = fieldKey(el);
+    if (!key || !edits.has(key)) continue;
+    if (el.type === "checkbox" || el.type === "radio") el.checked = edits.get(key);
+    else el.value = edits.get(key);
+  }
+}
+
+const detailsKey = (d) => d.id || (d.querySelector(":scope > summary")?.textContent || "").replace(/\d+/g, "#");
+
+// Перенести из старого узла блока в новый то, что человек уже сделал: правки полей, раскрытые <details>,
+// и сами медиа-элементы с тем же адресом — ролик в превью не начнётся сначала, плеер не собьётся.
+function carryOver(prev, node) {
+  applyEdits(node, editsOf(prev));
+  const opened = new Map([...prev.querySelectorAll("details")].map((d) => [detailsKey(d), d.open]));
+  for (const d of node.querySelectorAll("details")) if (opened.has(detailsKey(d))) d.open = opened.get(detailsKey(d));
+  const media = new Map();
+  for (const m of prev.querySelectorAll("video[src], audio[src], img[src]")) {
+    const key = `${m.tagName}:${m.getAttribute("src")}`;
+    if (!media.has(key)) media.set(key, m);
+  }
+  for (const m of node.querySelectorAll("video[src], audio[src], img[src]")) {
+    const key = `${m.tagName}:${m.getAttribute("src")}`;
+    const twin = media.get(key);
+    if (!twin) continue;
+    media.delete(key);
+    twin.className = m.className;
+    m.replaceWith(twin); // перенос в том же такте: браузер не ставит видео на паузу и не грузит заново
+  }
+}
+
+// reconcile(родитель, [{ key, sig, build }], scope) — узел с той же подписью остаётся как есть, изменившийся
+// пересобирается (правки полей с id и раскрытые <details> переносятся, если scope тот же), лишние удаляются,
+// порядок — как в items. Блок с полем в фокусе, которое не вернуть (без id, открытый список), ждёт.
+export function reconcile(parent, items, scope = "") {
+  const old = new Map();
+  for (const n of parent.children) if (n.dataset.key) old.set(n.dataset.key, n);
+  const nodes = items.map(({ key, sig, build }) => {
+    const prev = old.get(key);
+    if (prev && (blockSig.get(prev) === sig || holdsInput(prev))) return prev;
+    const node = build();
+    node.dataset.key = key;
+    node.dataset.scope = scope;
+    blockSig.set(node, sig);
+    if (prev && prev.dataset.scope === scope) carryOver(prev, node);
+    return node;
+  });
+  for (const n of [...parent.children]) if (!nodes.includes(n)) n.remove();
+  nodes.forEach((n, i) => {
+    if (parent.children[i] !== n) parent.insertBefore(n, parent.children[i] || null);
+  });
+}
+
+// Фокус и курсор в поле с id внутри root переживают перерисовку его блока: captureFocus до, restoreFocus после.
+export function captureFocus(root) {
+  const el = document.activeElement;
+  if (!el?.id || !root?.contains(el)) return null;
+  let start = null;
+  let end = null;
+  try {
+    start = el.selectionStart;
+    end = el.selectionEnd;
+  } catch {
+    /* у чекбоксов и списков выделения нет */
+  }
+  return { el, id: el.id, start, end, scroll: el.scrollTop };
+}
+
+export function restoreFocus(saved) {
+  if (!saved || saved.el.isConnected) return;
+  const twin = document.getElementById(saved.id);
+  if (!twin) return;
+  twin.focus({ preventScroll: true });
+  try {
+    if (saved.start !== null) twin.setSelectionRange(saved.start, saved.end);
+  } catch {
+    /* поле без выделения */
+  }
+  twin.scrollTop = saved.scroll;
+}
+
 // --- Опрос ---
 
 export const POLL_MAX_BACKOFF_MS = 30000;

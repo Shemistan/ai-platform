@@ -216,7 +216,7 @@ function renderUnsent() {
 async function loadSubscribers(sync = false) {
   $("subs-sync").disabled = true;
   try {
-    state.subscribers = await api("GET", `${API}/subscribers${sync ? "?sync=1" : ""}`);
+    state.subscribers = sync ? await api("POST", `${API}/subscribers/sync`) : await api("GET", `${API}/subscribers`);
     renderSubscribers();
   } catch (err) {
     fill($("subscribers"), errorState({ title: "Подписчики не загрузились", error: err, onRetry: () => loadSubscribers() }));

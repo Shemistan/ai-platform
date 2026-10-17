@@ -1000,9 +1000,10 @@ def step_publish(ctx: StepContext) -> None:
             "«Опубликовать несмотря на вердикт» и нажми «Опубликовать»."
         )
     force = bool(ctx.state.get("force"))
+    approved = bool(ctx.state.get("approved"))
     # Подтверждение одноразовое: чем бы ни кончился шаг, «Запустить всё» или перезапуск
-    # без нового нажатия «Опубликовать» ничего не отправят.
-    ctx.remember(force=False, **({} if ctx.settings.get("auto_publish") else {"approved": False}))
+    # без нового нажатия «Опубликовать» ничего не отправят (и не пропустят чужие ссылки).
+    ctx.remember(force=False, approved=False)
     channels = {c.id: c for c in svc.config.channels()}
     plan_title = ""
     if ctx.read(PLAN):
@@ -1012,6 +1013,16 @@ def step_publish(ctx: StepContext) -> None:
     post = with_source(ctx, ctx.read(POST))
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
+    links = post_links(ctx.project["scenario"], ctx.settings, ctx.read, post)
+    if links["domains"]:
+        ctx.log("ссылки в посте ведут на: " + ", ".join(links["domains"]))
+    # Автопубликация не пропускает ссылки, которых нет в исходнике: LLM мог их подменить (SEC-013).
+    if links["foreign"] and not approved:
+        raise Waiting(
+            "В посте ссылки на домены, которых нет в исходном материале: "
+            + ", ".join(links["foreign"])
+            + ". Проверь ссылки и нажми «Опубликовать», если всё верно."
+        )
     # Сначала все каналы: что не уйдёт — видно сразу, и ни один канал не получит выпуск наполовину.
     problems = []
     photo_post = ctx.settings.get("post_format") == "photo"
@@ -1181,6 +1192,24 @@ def source_line(ctx: StepContext) -> str:
     """«Источник: автор — ссылка» для «Видео по статье»; пусто, пока источник не указан."""
     url, author = ctx.settings.get("source_url") or "", ctx.settings.get("source_author") or ""
     return f"Источник: {author} — {url}" if url and author else ""
+
+
+def link_sources(scenario: str, settings: dict, read) -> list[str]:
+    """Исходный материал выпуска, откуда законно берутся ссылки поста (SEC-013)."""
+    sources = [settings.get("source_url") or "", read(TEXT)]
+    folder = read(NARRATOR_FOLDER).strip() if scenario == "digest" else ""
+    if folder:  # дайджест: ссылки материалов из базы narrator и текст выпуска
+        for name in ("events.md", "text.md"):
+            path = Path(folder) / name
+            if path.is_file():
+                sources.append(path.read_text(encoding="utf-8"))
+    return sources
+
+
+def post_links(scenario: str, settings: dict, read, post: str) -> dict:
+    """Домены ссылок поста и те из них, которых нет в исходнике; пост «Пост в канал» пишет человек."""
+    foreign = [] if scenario == POST_SCENARIO else publish.foreign_domains(post, link_sources(scenario, settings, read))
+    return {"domains": publish.link_domains(post), "foreign": foreign}
 
 
 def with_source(ctx: StepContext, post: str) -> str:

@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 105. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 106. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -136,7 +136,8 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/channels/items/{channel_id}/delete` | — | JSON | — |
 | POST | `/api/channels/items/{channel_id}` | JSON | JSON | — |
 | POST | `/api/channels/bot/check` | — | JSON | — |
-| GET | `/api/channels/subscribers` | ?sync | JSON | — |
+| GET | `/api/channels/subscribers` | — | JSON | — |
+| POST | `/api/channels/subscribers/sync` | — | JSON | — |
 | GET | `/api/channels/serve` | — | JSON | — |
 | POST | `/api/channels/serve/start` | — | JSON | — |
 | POST | `/api/channels/serve/stop` | — | JSON | — |
