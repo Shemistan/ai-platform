@@ -548,7 +548,7 @@ def send_folder(args, d: Path) -> int:
     Как дайджест новостей: mp3 и картинка склеиваются в видео, пост — подпись
     под ним. --as photo — картинка с постом, затем аудио.
     """
-    from narrator import telegram
+    from narrator import registry, telegram
     from narrator.news.cli import audio_seconds
     from narrator.news.video import VideoError, make_frames, make_video
 
@@ -570,7 +570,8 @@ def send_folder(args, d: Path) -> int:
     video = covers = None
     if args.as_ != "photo" and parcel.audio and parcel.image:
         try:
-            poster, thumb, frame = make_frames(parcel.image)
+            notes = registry.notes(parcel.text(), registry.load())  # пометки — в кадре
+            poster, thumb, frame = make_frames(parcel.image, notes)
             video = make_video(poster, frame, parcel.audio, d / f"{d.name}.mp4", seconds)
         except VideoError as e:
             return fail(str(e), 5)

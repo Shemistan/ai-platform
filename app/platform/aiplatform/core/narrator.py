@@ -25,6 +25,8 @@ DEFAULT_DIR = Path(__file__).resolve().parents[3] / "narrator"  # app/narrator �
 FAKE = Path(__file__).resolve().parent.parent / "fakes" / "fake_narrate.py"
 FAKE_HOME_ENV = "FAKE_NARRATOR_HOME"
 BRIDGE_TIMEOUT_S = 120  # первый запуск uv собирает окружение — дольше обычного
+REGISTRY_ENV = "NARRATOR_REGISTRY"  # путь к registry.json для пометок в подписях narrator (ADR 0001)
+REGISTRY_FILE = "registry.json"  # = aiplatform.updates.registry.FILE_NAME, в корне data
 INSTALL_HINT = "Нужен движок app/narrator: `make models` в нём (или задай AIP_NARRATE_CMD)."
 # Версия контракта моста, с которой работает платформа (narrator.bridge.BRIDGE_API).
 EXPECTED_BRIDGE_API = 1
@@ -142,4 +144,6 @@ def load(config: Config) -> Narrator:
         fake_home = config.data_dir / "fake-narrator"
         return Narrator((sys.executable, str(FAKE)), home, {FAKE_HOME_ENV: str(fake_home)}, fake=True)
     cmd = tuple(shlex.split(pick(config.env, "AIP_NARRATE_CMD", default=str(home / "narrate"))))
-    return Narrator(cmd, home)
+    # Реестр платформы (вкладка «Обновления») — и для пометок в подписях narrator.
+    own = pick(config.env, REGISTRY_ENV, default=str(config.data_dir / REGISTRY_FILE))
+    return Narrator(cmd, home, {REGISTRY_ENV: own})
