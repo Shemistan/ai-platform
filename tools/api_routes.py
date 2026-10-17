@@ -5,7 +5,7 @@
 и aiplatform/*/service.py (путь модуля — `/api/<PREFIX>/…`). Разбор через `ast`,
 код не импортируется. Описание ветки — комментарий прямо над `case`, иначе первая
 строка docstring метода `self.<метод>(…)`, который ветка зовёт. Тело и ответ —
-по вызовам `req.json` / `req.body` / `req.arg` / `req.send_json` / `send_file`.
+по вызовам `req.json` / `req.body` (`body_to_file`) / `req.arg` / `req.send_json` / `send_file`.
 Команды моста — `add_parser` в app/narrator/src/narrator/bridge.py.
 
 Генерируется блок `<!-- gate:begin api-routes -->…<!-- gate:end api-routes -->`;
@@ -102,7 +102,7 @@ def _describe_body(stmts):
         for node in ast.walk(stmt):
             if _attr_call(node, "req", {"json"}) and "JSON" not in body:
                 body.append("JSON")
-            elif _attr_call(node, "req", {"body"}) and "файл" not in body:
+            elif _attr_call(node, "req", {"body", "body_to_file"}) and "файл" not in body:
                 body.append("файл")
             elif _attr_call(node, "req", {"arg"}) and node.args and _str(node.args[0]):
                 query.append("?" + node.args[0].value)
