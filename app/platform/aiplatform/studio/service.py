@@ -12,6 +12,7 @@ import threading
 import time
 import urllib.parse
 from dataclasses import dataclass, field
+from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
 
@@ -55,6 +56,7 @@ VOICE_MODES = ("tts", "upload")
 # Настройка → шаг, который она меняет (его и зависящие — заново).
 SETTING_STEPS = {
     "poster_mode": "poster",
+    "poster_deadline": None,  # до скольких ждать свою обложку (PRD-002): шаги не сбрасывает
     "draw_images": "images",
     "images_mode": "images",
     "image_model": ("poster", "images"),
@@ -331,6 +333,44 @@ class StudioModule:
                 f"Шаг «{label}» не закончился — {more}.",
                 important=True,
             )
+
+    def poster_deadlines(self, now: datetime) -> list[str]:
+        """Шаг «Постер» ждёт свою обложку (upload), а срок poster_deadline прошёл — переключить шаг
+        на локальную модель и продолжить выпуск (PRD-002). Срок — время дня: ожидание, начатое уже
+        после сегодняшнего срока, ждёт до завтрашнего. Зовётся тиком расписания."""
+        done = []
+        for item in self.studio.list(archived=False):
+            project = self.studio.get(item["id"])
+            if project is None or project.get("running"):
+                continue
+            settings, poster = project.get("settings", {}), project["steps"].get("poster", {})
+            deadline = settings.get("poster_deadline") or ""
+            if settings.get("poster_mode") != "upload" or not deadline or poster.get("status") != "waiting":
+                continue
+            hour, minute = map(int, deadline.split(":"))
+            due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            since = poster.get("waiting_since") or project.get("updated_at") or 0
+            if now < due or datetime.fromtimestamp(since) >= due:
+                continue
+
+            def to_local(p: dict) -> set[str]:
+                p["settings"]["poster_mode"] = "local"
+                return {"poster"}
+
+            try:
+                self.studio.update(project["id"], to_local)
+                self.studio.log(project["id"], f"[Постер] свою обложку не дождались к {deadline} — рисую локально")
+                self.studio.run(project["id"])
+            except (Conflict, ProjectNotFound):
+                continue  # выпуск запустили руками в этот момент — проверим на следующем тике
+            log.event("poster.deadline", project=project["id"], deadline=deadline)
+            self.notify(
+                "Свою обложку не дождались — нарисовал локально",
+                f"{project['title']}: срок {deadline}, выпуск продолжается.",
+                important=True,
+            )
+            done.append(f"постер {project['id']}: после {deadline} — локально")
+        return done
 
     def _daily_stats(self) -> str | None:
         if not self.ctx.config.settings.load()["stats"]["auto"]:
@@ -796,6 +836,7 @@ class StudioModule:
         audio = self.ctx.modules["audio"].config
         return {
             "poster_mode": "local",
+            "poster_deadline": "",  # пусто — свою обложку ждать без срока
             "draw_images": True,
             "images_mode": "local",
             "image_model": self.default_image_model(),
@@ -831,6 +872,10 @@ class StudioModule:
             # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
             # по промпту выпуска — постер загружает человек.
             out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
+            # Не дождались своей обложки к сроку — рисуем локально (PRD-002); срок — в «Настройках».
+            deadline = self.ctx.config.settings.load().get("digest_defaults", {}).get("poster_deadline")
+            if deadline:
+                out["poster_deadline"] = deadline
         elif scenario == "post":
             # Пост — из готового: свой постер и свой mp3, оформление канала, кадр по постеру.
             out = {
@@ -935,6 +980,10 @@ class StudioModule:
             out[key] = value
         if out["poster_mode"] not in POSTER_MODES:
             raise bad_request("poster_mode — local или upload.")
+        out.setdefault("poster_deadline", "")
+        deadline = out["poster_deadline"]
+        if not isinstance(deadline, str) or (deadline and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", deadline)):
+            raise bad_request("poster_deadline — время ЧЧ:ММ или пусто.")
         if out["images_mode"] not in IMAGES_MODES:
             raise bad_request("images_mode — local или upload.")
         if out["clips_mode"] not in CLIPS_MODES:

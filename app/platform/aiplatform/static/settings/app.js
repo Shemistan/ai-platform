@@ -235,7 +235,7 @@ function renderDefaults(data) {
   const box = $("defaults");
   if (!box) return;
   if (!data.channels?.length) {
-    fill(box, h("p", { class: "hint" }, "Каналов публикации пока нет — добавь их во вкладке ", h("a", { href: "/channels/" }, "«Каналы»"), "."));
+    fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Каналов публикации пока нет — добавь их во вкладке ", h("a", { href: "/channels/" }, "«Каналы»"), "."), posterDeadline(data)));
     return;
   }
   const rows = (data.scenarios || []).map((s) => {
@@ -252,7 +252,17 @@ function renderDefaults(data) {
       current.size ? null : h("p", { class: "hint" }, "Не заданы — каналы выбираются у каждого выпуска."),
     );
   });
-  fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Новый выпуск сразу получает каналы своего сценария; у выпусков без каналов доска предлагает опубликовать в них."), ...rows));
+  fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Новый выпуск сразу получает каналы своего сценария; у выпусков без каналов доска предлагает опубликовать в них."), ...rows, posterDeadline(data)));
+}
+
+// Дайджест: свою обложку (ChatGPT) ждать до срока, потом рисовать локально (PRD-002).
+function posterDeadline(data) {
+  return h(
+    "label",
+    { class: "field" },
+    h("span", { class: "hint" }, "Дайджест: своя обложка не пришла к этому времени — нарисовать локально и продолжить (пусто — ждать)"),
+    h("input", { type: "time", value: data.digest_defaults?.poster_deadline || "", onchange: (e) => section("digest_defaults", { poster_deadline: e.target.value }) }),
+  );
 }
 
 function render(data) {

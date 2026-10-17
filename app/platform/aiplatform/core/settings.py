@@ -69,6 +69,9 @@ def _empty() -> dict:
         # Каналы по умолчанию по сценариям (PRD-005): id из channels.json; None — не заданы
         # (у дайджеста тогда VOICE_NEWS движка, если такой канал есть).
         "default_channels": {s: None for s in SCENARIO_IDS},
+        # Дайджест по умолчанию: до скольких (ЧЧ:ММ) ждать свою обложку, потом рисовать локально;
+        # пусто — ждать без срока (PRD-002).
+        "digest_defaults": {"poster_deadline": ""},
         # Реестр запрещённых организаций: ежедневная сверка в фоне и порог свежести, дни (CMP-013).
         "registry": {"auto_check": True, "max_age_days": REGISTRY_MAX_AGE_DAYS},
         # Лимиты времени процессов по виду (runner.LIMITS), минуты: {"llm": {"total": 10, "idle": 5}}.
@@ -137,6 +140,9 @@ def normalize(raw: object) -> dict:
             out["cleanup"][name] = int(cleanup[name])
     if _number(cleanup.get("min_free_gb"), MAX_FREE_GB):
         out["cleanup"]["min_free_gb"] = cleanup["min_free_gb"]
+    deadline = _section(raw, "digest_defaults").get("poster_deadline")
+    if isinstance(deadline, str) and _TIME.match(deadline):
+        out["digest_defaults"]["poster_deadline"] = deadline
     chosen = _section(raw, "default_channels")
     for scenario in SCENARIO_IDS:
         value = chosen.get(scenario)

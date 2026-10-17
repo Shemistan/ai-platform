@@ -33,6 +33,7 @@ SECTIONS = {
     "stats": ("stats",),
     "cleanup": ("cleanup",),
     "default_channels": ("default_channels",),  # каналы по умолчанию по сценариям (PRD-005)
+    "digest_defaults": ("digest_defaults",),  # срок своей обложки дайджеста (PRD-002)
 }
 
 
@@ -132,6 +133,7 @@ class SettingsModule:
             "stats": full["stats"],
             "cleanup": full["cleanup"] | {"choices": list(settings_module.CLEANUP_DAYS)},
             "default_channels": full["default_channels"],
+            "digest_defaults": full["digest_defaults"],
             # Что выбрать в «каналах по умолчанию» и что сейчас действует у сценария (с учётом VOICE_NEWS).
             "channels": [{"id": c.id, "label": c.label} for c in studio.channels()] if studio else [],
             "scenarios": (
