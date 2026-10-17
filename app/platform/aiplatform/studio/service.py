@@ -1092,6 +1092,8 @@ class StudioModule:
                 warn(f"«{channel.label}»: {channel.problem()}.")
         if not settings.get("channels"):
             info("Каналы не выбраны — публикация будет ждать выбора.")
+        elif stale := steps.registry_stale(self.config):
+            warn(stale)
         if not self.config.llm_available():
             warn(f"LLM-команда «{self.config.llm_cmd[0]}» не найдена — промпты и слайды не написать.")
         draws = settings.get("draw_images") and settings.get("images_mode") == "local" and not settings.get("draft")

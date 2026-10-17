@@ -16,3 +16,4 @@
 .proposal { display: grid; gap: 10px; border: 1px solid var(--warn); border-radius: 10px; padding: 12px; }
 .editor { display: grid; gap: 8px; }
 .editor[open] summary { margin-bottom: 8px; }
+.unconfirmed { color: var(--warn); font-size: 12px; }

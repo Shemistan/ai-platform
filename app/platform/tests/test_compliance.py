@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import threading
 import unittest
+from datetime import date, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
@@ -217,6 +218,26 @@ class DisclaimersOffTest(StudioCase):
             "POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"], "ignore_disclaimers": 1}
         )
         self.assertEqual(status, 400)
+
+
+@NEEDS_FFMPEG
+class RegistryFreshnessTest(StudioCase):
+    def test_stale_registry_warns_before_and_at_publish(self):
+        # CMP-013: реестр сверяли давно — предупреждение до запуска и в состоянии шага публикации.
+        old = (date.today() - timedelta(days=40)).isoformat()
+        registry.Registry(Path(self.tmp.name) / registry.FILE_NAME).save(DEFAULT, old)
+        pid = DisclaimersOffTest.ready_post(self, "**Про Go**\n\nСборщик мусора стал быстрее.")
+        project = self.json("GET", f"/api/studio/projects/{pid}")[1]
+        self.assertFalse(any("Реестр" in x["text"] for x in project["preflight"]), "без каналов о реестре молчим")
+        done, step = DisclaimersOffTest.publish(self, pid)
+        self.assertEqual(step["status"], "done", done["log"])
+        self.assertIn("40 дн. назад", step["registry_warning"])
+        self.assertTrue(any("40 дн. назад" in x["text"] and x["level"] == "warn" for x in done["preflight"]))
+
+        registry.Registry(Path(self.tmp.name) / registry.FILE_NAME).save(DEFAULT)  # сверили сегодня
+        done, step = DisclaimersOffTest.publish(self, pid, force=True)
+        self.assertIsNone(step["registry_warning"])
+        self.assertFalse(any("Реестр" in x["text"] for x in done["preflight"]))
 
 
 @NEEDS_FFMPEG

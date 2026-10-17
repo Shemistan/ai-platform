@@ -82,7 +82,15 @@ function entryRow(e, statuses, mark = "") {
     h("td", {}, h("strong", {}, e.name), h("div", { class: "aliases" }, e.aliases.join(", "))),
     h("td", {}, statuses[e.status] || e.status),
     h("td", { class: "disclaimer" }, `${e.disclaimer}.`),
-    h("td", { class: "hint" }, e.basis, e.source ? [" ", h("a", { class: "link", href: e.source, target: "_blank", rel: "noopener" }, "источник")] : null),
+    h(
+      "td",
+      { class: "hint" },
+      e.basis,
+      e.ref ? ` (№ ${e.ref} в перечне)` : null,
+      e.source ? [" ", h("a", { class: "link", href: e.source, target: "_blank", rel: "noopener" }, "источник")] : null,
+      e.archive_url ? [" ", h("a", { class: "link", href: e.archive_url, target: "_blank", rel: "noopener" }, "снимок")] : null,
+      e.confirmed === false ? h("div", { class: "unconfirmed" }, "не подтверждено: нет номера в перечне или снимка источника") : null,
+    ),
   );
 }
 
@@ -135,12 +143,18 @@ function renderProposal(reg) {
 function renderRegistry(reg) {
   $("registry-hint").textContent =
     `Если организация из списка упомянута в выпуске, на её слайдах внизу идёт мелкая пометка, а в посте — строка в конце. ` +
-    `Последняя сверка: ${reg.checked || "не было"}${reg.customized ? "" : " (список по умолчанию)"}. ` +
-    `«Проверить» просит LLM с веб-поиском сверить список с перечнями Минюста.`;
+    `Последняя сверка: ${reg.checked || "не было"}${reg.age_days != null ? ` (${reg.age_days} дн. назад, порог — ${reg.max_age_days})` : ""}` +
+    `${reg.customized ? "" : " (список по умолчанию)"}. ` +
+    `«Проверить» просит LLM с веб-поиском сверить список с перечнями Минюста` +
+    `${reg.auto_check ? "; сверка идёт и сама раз в день, применяешь найденное ты" : ""}.`;
+  const warnings = [];
+  if (reg.stale) warnings.push(h("p", { class: "job-error" }, reg.stale));
+  if (reg.unconfirmed?.length) warnings.push(h("p", { class: "hint warn" }, `Не подтверждены основания (${reg.unconfirmed.length}): ${reg.unconfirmed.join(", ")} — допиши номер в перечне (ref) и снимок источника (archive_url).`));
+  $("registry-warnings").replaceChildren(...warnings);
   $("registry-reset").hidden = !reg.customized;
   $("registry").replaceChildren(entryTable(reg.entries.map((e) => entryRow(e, reg.statuses))));
   if (!state.editing) {
-    const plain = reg.entries.map(({ status_label, ...rest }) => rest);
+    const plain = reg.entries.map(({ status_label, confirmed, ...rest }) => rest);
     $("registry-json").value = JSON.stringify({ entries: plain }, null, 2);
   }
   renderProposal(reg);

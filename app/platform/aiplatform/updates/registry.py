@@ -35,6 +35,7 @@ STATUSES = {
 }
 MAX_ENTRIES = 200
 MAX_STOPWORDS = 80
+MAX_AGE_DAYS = 14  # порог свежести по умолчанию; свой — settings.json, registry.max_age_days
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _SHORT = 4
 
@@ -49,9 +50,16 @@ class Entry:
     basis: str = ""
     source: str = ""
     stopwords: tuple[str, ...] = ()
+    ref: str = ""  # номер в официальном перечне
+    archive_url: str = ""  # снимок первоисточника (web.archive.org и т. п.)
+
+    @property
+    def confirmed(self) -> bool:
+        """Основание проверяемо: есть номер в перечне и снимок первоисточника."""
+        return bool(self.ref and self.archive_url)
 
     def public(self) -> dict:
-        return self.stored() | {"status_label": STATUSES[self.status]}
+        return self.stored() | {"status_label": STATUSES[self.status], "confirmed": self.confirmed}
 
     def stored(self) -> dict:
         """Запись для JSON: кортежи — списками."""
@@ -158,6 +166,8 @@ def parse(obj: object) -> list[Entry]:
                 basis=_text(item, "basis", 400, required=False),
                 source=_web(_text(item, "source", 400, required=False)),
                 stopwords=tuple(w for w in _words(stopwords) if w.strip("*"))[:MAX_STOPWORDS],
+                ref=_text(item, "ref", 60, required=False),
+                archive_url=_web(_text(item, "archive_url", 400, required=False)),
             )
         )
     return out
@@ -180,6 +190,27 @@ def with_footnotes(post: str, text: str, entries: list[Entry]) -> str:
         return post
     lines = "\n".join(f"* {n}" for n in missing)
     return f"{post.rstrip()}\n\n{lines}\n" if post.strip() else f"{lines}\n"
+
+
+def age_days(checked: str, today: date | None = None) -> int | None:
+    """Сколько дней назад сверяли реестр; None — дата не задана или битая."""
+    try:
+        return ((today or date.today()) - date.fromisoformat(checked)).days
+    except (TypeError, ValueError):
+        return None
+
+
+def stale_note(checked: str, max_days: int = MAX_AGE_DAYS, today: date | None = None) -> str:
+    """Предупреждение о несверенном реестре (пусто — свежий): вкладка «Обновления» и публикация."""
+    age = age_days(checked, today)
+    if age is None:
+        return "Реестр запрещённых организаций не сверяли — запусти сверку на вкладке «Обновления»."
+    if age <= max_days:
+        return ""
+    return (
+        f"Реестр запрещённых организаций сверяли {age} дн. назад ({checked}), порог — {max_days} дн.: "
+        "сверь его на вкладке «Обновления», иначе пометки могут быть неполными."
+    )
 
 
 def diff(old: list[Entry], new: list[Entry]) -> dict:

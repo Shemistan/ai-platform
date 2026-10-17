@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiplatform.core import log, media
+from aiplatform.core import settings as core_settings
 from aiplatform.core.runner import Canceled
 from aiplatform.studio import cache, news, prompts, publish, render, slides
 from aiplatform.studio.config import StudioConfig
@@ -286,6 +287,13 @@ def uploads_ready(ctx: StepContext, kind: str, items: list[tuple[int, str]]) -> 
 
 def banned(config: StudioConfig) -> list[registry.Entry]:
     return registry.Registry(config.registry_file).entries()
+
+
+def registry_stale(config: StudioConfig) -> str:
+    """Предупреждение, если реестр сверяли дольше порога из настроек (CMP-013); пусто — свежий."""
+    checked = registry.Registry(config.registry_file).read()[1]
+    max_days = core_settings.at(config.registry_file.parent).load()["registry"]["max_age_days"]
+    return registry.stale_note(checked, max_days)
 
 
 def slide_notes(paras: list[str], plan: list[slides.Slide], entries: list[registry.Entry]) -> list[list[str]]:
@@ -979,6 +987,10 @@ def step_publish(ctx: StepContext) -> None:
         plan_title = json.loads(ctx.read(PLAN)).get("title", "")
     title = plan_title or ctx.project["title"]
     off = disclaimers_off(ctx, title)
+    stale = registry_stale(svc.config)
+    ctx.remember(registry_warning=stale or None)  # видно в состоянии шага; публикацию не держит
+    if stale:
+        ctx.log(stale)
     post = with_source(ctx, ctx.read(POST))
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))

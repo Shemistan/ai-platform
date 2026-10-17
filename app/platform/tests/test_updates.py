@@ -4,6 +4,7 @@ import dataclasses
 import json
 import tempfile
 import unittest
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from aiplatform.studio import slides, steps
@@ -68,6 +69,21 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(entry.stored()["stopwords"], ["иксы-*", "иксер*"])
         with self.assertRaisesRegex(ValueError, "stopwords"):
             registry.parse([item | {"aliases": ["X Corp"], "stopwords": "x"}])
+
+    def test_ref_archive_and_freshness(self):
+        # CMP-013: проверяемые основания и предупреждение о несверенном реестре.
+        item = {"id": "x", "name": "X", "status": "extremist", "aliases": ["X Corp"], "disclaimer": "X"}
+        full = registry.parse([item | {"ref": " 96 ", "archive_url": "https://web.archive.org/x"}])[0]
+        self.assertTrue(full.confirmed and full.public()["confirmed"])
+        self.assertEqual((full.ref, full.stored()["archive_url"]), ("96", "https://web.archive.org/x"))
+        bare = registry.parse([item | {"archive_url": "javascript:alert(1)"}])[0]
+        self.assertFalse(bare.confirmed or bare.archive_url)
+        today = date(2026, 10, 17)
+        self.assertEqual(registry.age_days("2026-10-03", today), 14)
+        self.assertEqual(registry.stale_note("2026-10-03", 14, today), "")
+        self.assertIn("15 дн. назад", registry.stale_note("2026-10-02", 14, today))
+        self.assertIn("не сверяли", registry.stale_note("", 14, today))
+        self.assertIsNone(registry.age_days("вчера", today))
 
     def test_footnotes_once(self):
         post = registry.with_footnotes("**Главное** за день.", "Instagram запустил ленту", DEFAULT)
@@ -248,6 +264,33 @@ class UpdatesTabTest(PlatformCase):
             self.assertEqual(self.json("POST", "/api/updates/registry", {"text": bad})[0], 400, bad)
         _, body = self.json("POST", "/api/updates/registry/reset")
         self.assertEqual(len(body["registry"]["entries"]), 6)
+
+    def test_registry_age_and_unconfirmed(self):
+        old = (date.today() - timedelta(days=30)).isoformat()
+        registry.Registry(Path(self.tmp.name) / registry.FILE_NAME).save(DEFAULT, old)
+        reg = self.json("GET", "/api/updates/state")[1]["registry"]
+        self.assertEqual((reg["age_days"], reg["max_age_days"]), (30, 14))
+        self.assertIn("30 дн. назад", reg["stale"])
+        self.assertIn("Meta", reg["unconfirmed"])  # в списке по умолчанию номеров и снимков нет
+        self.assertFalse(reg["entries"][0]["confirmed"])
+        self.config.settings.change(lambda d: d["registry"].update(max_age_days=60))
+        self.assertEqual(self.json("GET", "/api/updates/state")[1]["registry"]["stale"], "")
+
+    def test_daily_registry_check_in_schedule(self):
+        updates = self.app.modules["updates"]
+        scheduler = self.app.modules["studio"].scheduler
+        self.assertIs(scheduler.daily["registry"].__func__, type(updates)._daily_registry)
+        scheduler.daily = {"registry": scheduler.daily["registry"]}  # без отклика и уборки
+        scheduler.tick(datetime.now())
+        body = self.poll("/api/updates/state", lambda b: self.done(b, "registry"))
+        self.assertEqual(body["registry"]["check"]["status"], "done", body["registry"]["check"])
+        self.assertIsNotNone(body["registry"]["check"]["proposal"], "применяет человек, не расписание")
+        self.assertFalse(body["registry"]["customized"])
+        self.config.settings.change(lambda d: d["registry"].update(auto_check=False))
+        scheduler._mark("registry", "")
+        self.json("POST", "/api/updates/registry/dismiss")
+        scheduler.tick(datetime.now())
+        self.assertIsNone(self.json("GET", "/api/updates/state")[1]["registry"]["check"]["proposal"])
 
 
 ARTICLE_META = """Meta открыла модель Llama

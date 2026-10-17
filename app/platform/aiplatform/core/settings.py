@@ -38,6 +38,7 @@ CLEANUP_DAYS = (7, 14, 30, 60, 90)
 _CHAT = re.compile(r"-?\d+|@\w+")  # личный чат владельца: id или @username
 LIMIT_KINDS = ("llm", "image", "render", "video", "audio", "news")  # виды процессов в runner.LIMITS
 MAX_LIMIT_MIN = 24 * 60
+REGISTRY_MAX_AGE_DAYS = 14
 
 
 def _empty() -> dict:
@@ -47,6 +48,8 @@ def _empty() -> dict:
         "notify": {"enabled": False, "telegram_chat": ""},
         "stats": {"auto": True},
         "cleanup": {"auto": False, "days": 30},
+        # Реестр запрещённых организаций: ежедневная сверка в фоне и порог свежести, дни (CMP-013).
+        "registry": {"auto_check": True, "max_age_days": REGISTRY_MAX_AGE_DAYS},
         # Лимиты времени процессов по виду (runner.LIMITS), минуты: {"llm": {"total": 10, "idle": 5}}.
         "timeouts": {},
     }
@@ -103,6 +106,11 @@ def normalize(raw: object) -> dict:
     out["cleanup"]["auto"] = _flag(cleanup.get("auto"), False)
     if cleanup.get("days") in CLEANUP_DAYS:
         out["cleanup"]["days"] = cleanup["days"]
+    reg = _section(raw, "registry")
+    out["registry"]["auto_check"] = _flag(reg.get("auto_check"), True)
+    age = reg.get("max_age_days")
+    if isinstance(age, int) and not isinstance(age, bool) and 1 <= age <= 365:
+        out["registry"]["max_age_days"] = age
     disabled = raw.get("disabled") if isinstance(raw, dict) else None
     if not isinstance(disabled, dict):
         return out

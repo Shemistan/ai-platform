@@ -74,14 +74,17 @@ def registry_prompt(entries: list[registry.Entry], today: str) -> str:
 - disclaimer — стандартная пометка без точки в конце, как принято в СМИ.
   Пример: «Компания Meta (продукты Facebook и Instagram) признана
   экстремистской организацией и запрещена на территории РФ»;
-- basis — номер в перечне и решение (суд, дата);
-- source — ссылка на перечень или решение.
+- basis — решение (суд или Генпрокуратура, дата);
+- ref — номер записи в перечне, как он там стоит; не нашёл — пусто;
+- source — ссылка на перечень или решение;
+- archive_url — снимок первоисточника (web.archive.org), если он есть; не
+  выдумывай: пусто — запись покажется как «не подтверждено».
 
 В notes одной-двумя фразами напиши, что изменилось и что проверить руками.
 Ответь только JSON такого вида:
 ```json
 {{"entries": [{{"id": "…", "name": "…", "status": "extremist", "aliases": ["…"],
-  "disclaimer": "…", "basis": "…", "source": "…"}}], "notes": "…"}}
+  "disclaimer": "…", "basis": "…", "ref": "…", "source": "…", "archive_url": "…"}}], "notes": "…"}}
 ```
 
 {DATA_NOTE}Текущий список:
@@ -142,6 +145,7 @@ class UpdatesModule:
     label = "Обновления"
 
     def __init__(self, ctx) -> None:
+        self.ctx = ctx
         self.config: Config = ctx.config
         self.registry = registry.Registry(ctx.config.data_dir / registry.FILE_NAME)
         self.cancel = threading.Event()
@@ -187,11 +191,32 @@ class UpdatesModule:
 
     # --- реестр ---
 
+    def bind(self) -> None:
+        """Сверка реестра — ежедневной работой расписания; применяет найденное человек (CMP-013)."""
+        studio = self.ctx.modules.get("studio")
+        if studio is not None:
+            studio.scheduler.daily["registry"] = self._daily_registry
+
+    def _daily_registry(self) -> None:
+        """Запуск без отчёта в итог тика: ход и предложение видны на вкладке «Обновления»."""
+        idle = self.registry_job.snapshot().get("status") != RUNNING
+        if idle and self.config.settings.load()["registry"]["auto_check"]:
+            self.check_registry()
+
+    def max_age_days(self) -> int:
+        return self.config.settings.load()["registry"]["max_age_days"]
+
     def registry_view(self) -> dict:
         entries, checked = self.registry.read()
+        max_days = self.max_age_days()
         return {
             "entries": [e.public() for e in entries],
             "checked": checked,
+            "age_days": registry.age_days(checked),
+            "max_age_days": max_days,
+            "stale": registry.stale_note(checked, max_days),
+            "unconfirmed": [e.name for e in entries if not e.confirmed],
+            "auto_check": self.config.settings.load()["registry"]["auto_check"],
             "customized": self.registry.customized(),
             "statuses": registry.STATUSES,
             "check": self.registry_job.snapshot(),

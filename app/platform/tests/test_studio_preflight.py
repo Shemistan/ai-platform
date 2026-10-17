@@ -68,12 +68,9 @@ class PreflightTest(StudioCase):
         texts = [x["text"] for x in body["preflight"] if x["level"] == "warn"]
         self.assertTrue(any("шортс 9:16" in t for t in texts), body)
         self.assertGreater(body["estimate"]["total_s"], 0)
-        self.assertEqual(
-            self.check(scenario="article", text=ARTICLE, settings={"channels": ["download-9x16"], "shorts": True})[
-                "preflight"
-            ],
-            [],
-        )
+        fine = self.check(scenario="article", text=ARTICLE, settings={"channels": ["download-9x16"], "shorts": True})
+        # Возраст реестра зависит от сегодняшней даты — его проверяет test_compliance.RegistryFreshnessTest.
+        self.assertEqual([x for x in fine["preflight"] if "Реестр" not in x["text"]], [])
 
         long = "\n\n".join(" ".join(["слово"] * 100) for _ in range(20))  # 2000 слов ≈ 15 мин
         body = self.check(scenario="article", text=long, settings={"poster_mode": "upload"})
