@@ -11,7 +11,8 @@ from aiplatform.core import fsutil
 from aiplatform.studio import service as service_module
 from aiplatform.studio import steps
 from aiplatform.studio.cache import MediaCache
-from tests.test_studio_flow import ARTICLE, StudioCase, png_bytes
+from tests.fixtures import ARTICLE, png_bytes
+from tests.helpers import StudioCase
 
 
 class AtomicWriteTest(unittest.TestCase):

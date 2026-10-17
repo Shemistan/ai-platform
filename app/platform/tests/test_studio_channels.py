@@ -10,9 +10,8 @@ from unittest import mock
 
 from aiplatform.studio import publish
 from aiplatform.studio.llm import StudioError
-from tests.test_studio_flow import ARTICLE, StudioCase
-
-TOKEN = "123456:" + "A" * 35
+from tests.fixtures import ARTICLE, TOKEN
+from tests.helpers import StudioCase
 
 
 class NarratorChannelsTest(unittest.TestCase):

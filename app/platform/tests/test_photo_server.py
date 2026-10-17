@@ -10,10 +10,8 @@ from aiplatform import config as platform_config
 from aiplatform import server as server_module
 from aiplatform.core import uploads
 from aiplatform.fakes import fake_gen
-from aiplatform.photo import config as config_module
 from aiplatform.photo import models, params
-from aiplatform.photo.service import PhotoModule
-from tests.helpers import PlatformCase, isolated_config
+from tests.helpers import PhotoServerCase, live_processes, photo_load, photo_only, poll, scaled
 
 
 def png(width, height, seed=1):
@@ -23,47 +21,8 @@ def png(width, height, seed=1):
         return path.read_bytes()
 
 
-def photo_only(ctx):
-    return [PhotoModule(ctx)]
-
-
-def load(env):
-    return config_module.load(platform_config.load(isolated_config(env)))
-
-
-class ServerCase(PlatformCase):
-    step_delay = "0.01"
-    fail_flag = ""
-    modules = staticmethod(photo_only)
-
-    def setUp(self):
-        self.process_env = {"FAKE_GEN_STEP_DELAY": self.step_delay, "FAKE_GEN_FAIL": self.fail_flag}
-        super().setUp()
-
-    def upload(self, width=512, height=384):
-        status, body = self.json("POST", "/api/photo/uploads", png(width, height))
-        self.assertEqual(status, 201, body)
-        self.assertEqual((body["width"], body["height"]), (width, height))
-        return body["id"]
-
-    def wait(self, job_id, statuses=("done", "failed", "canceled"), timeout=20):
-        deadline = time.time() + timeout
-        seen = []
-        while time.time() < deadline:
-            _, job = self.json("GET", f"/api/photo/jobs/{job_id}")
-            seen.append(job)
-            if job["status"] in statuses:
-                return job, seen
-            time.sleep(0.02)
-        self.fail(f"задача не дошла до {statuses}: {seen[-1]}")
-
-    def run_job(self, payload):
-        status, job = self.json("POST", "/api/photo/jobs", payload)
-        self.assertEqual(status, 201, job)
-        done, seen = self.wait(job["id"])
-        self.assertEqual(done["status"], "done", done)
-        _, _, image = self.call("GET", done["image_url"])
-        return done, seen, image
+ServerCase = PhotoServerCase  # прежнее имя: на него ссылаются ветки
+load = photo_load
 
 
 class HappyPathTest(ServerCase):
@@ -213,11 +172,13 @@ class CancelTest(ServerCase):
 
         _, view = self.json("POST", f"/api/photo/jobs/{queued['id']}/cancel")
         self.assertEqual(view["status"], "canceled")
-        started = time.time()
+        procs = poll(live_processes, bool, what="процесс модели")
         self.json("POST", f"/api/photo/jobs/{running['id']}/cancel")
-        canceled, _ = self.wait(running["id"])
+        canceled, _ = self.wait(running["id"], timeout=10)
         self.assertEqual(canceled["status"], "canceled")
-        self.assertLess(time.time() - started, 5, "отмена должна убивать процесс, а не ждать его")
+        # Убит сигналом, а не доработал до конца: код возврата отрицательный (−SIGTERM/−SIGKILL).
+        codes = [p.wait(scaled(5)) for p in procs]
+        self.assertTrue(all(code < 0 for code in codes), f"отмена должна убивать процесс, а не ждать его: {codes}")
         self.assertFalse((Path(self.tmp.name) / "photo" / "jobs" / running["id"] / "output.png").exists())
 
 

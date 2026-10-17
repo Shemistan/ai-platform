@@ -4,7 +4,8 @@ import unittest
 from datetime import datetime, timedelta
 
 from aiplatform.studio import metrics
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG
+from tests.helpers import StudioCase
 
 NOW = datetime(2026, 10, 17, 18, 0).timestamp()
 

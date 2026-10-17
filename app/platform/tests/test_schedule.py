@@ -1,9 +1,10 @@
 """Дайджест по расписанию, уведомления о выпусках и разделы настроек."""
 
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from unittest import mock
 
-from tests.test_studio_flow import ARTICLE, NEEDS_FFMPEG, StudioCase, png_bytes
+from tests.fixtures import ARTICLE, NEEDS_FFMPEG, TODAY, png_bytes
+from tests.helpers import StudioCase
 
 
 @NEEDS_FFMPEG
@@ -36,7 +37,7 @@ class ScheduleTest(StudioCase):
     def test_digest_runs_once_a_day_after_its_time(self):
         self.section("stats", {"auto": False})  # ежедневный отклик — отдельный тест
         self.section("schedule", {"enabled": True, "time": "07:00"})
-        today = date.today()
+        today = TODAY
         yesterday = (today - timedelta(days=1)).isoformat()
         self.assertEqual(self.studio.scheduler.tick(datetime.combine(today, time(6, 59))), [])
         done = self.studio.scheduler.tick(datetime.combine(today, time(9, 30)))  # платформу включили позже
@@ -59,7 +60,7 @@ class ScheduleTest(StudioCase):
     def test_digest_failure_is_reported_and_retried(self):
         self.section("stats", {"auto": False})
         self.section("schedule", {"enabled": True, "time": "07:00"})
-        today = date.today()
+        today = TODAY
         create = self.studio.create
         calls = []
 
@@ -90,7 +91,7 @@ class ScheduleTest(StudioCase):
     def test_digest_gives_up_after_max_attempts(self):
         self.section("stats", {"auto": False})
         self.section("schedule", {"enabled": True, "time": "07:00"})
-        today = date.today()
+        today = TODAY
         boom = mock.Mock(side_effect=KeyError("schedule"))
         with mock.patch.object(self.studio, "create", boom), self.assertLogs("aiplatform.schedule", "ERROR"):
             for minute in (0, 15, 30, 45):
@@ -103,8 +104,8 @@ class ScheduleTest(StudioCase):
     def test_old_string_mark_counts_as_done(self):
         self.section("stats", {"auto": False})
         self.section("schedule", {"enabled": True, "time": "07:00"})
-        self.studio.scheduler._mark("digest", date.today().isoformat())
-        self.assertEqual(self.studio.scheduler.tick(datetime.combine(date.today(), time(9, 0))), [])
+        self.studio.scheduler._mark("digest", TODAY.isoformat())
+        self.assertEqual(self.studio.scheduler.tick(datetime.combine(TODAY, time(9, 0))), [])
 
     def test_daily_job_failure_is_visible(self):
         self.section("stats", {"auto": False})
@@ -114,7 +115,7 @@ class ScheduleTest(StudioCase):
 
         self.studio.scheduler.daily["boom"] = broken
         with self.assertLogs("aiplatform.schedule", "ERROR") as logs:
-            done = self.studio.scheduler.tick(datetime.combine(date.today(), time(8, 0)))
+            done = self.studio.scheduler.tick(datetime.combine(TODAY, time(8, 0)))
         self.assertIn("boom: сбой — RuntimeError: диск отвалился", done)
         self.assertIn("Traceback", "\n".join(logs.output))
         note = self.json("GET", "/api/settings/state")[1]["notifications"][0]
@@ -122,10 +123,10 @@ class ScheduleTest(StudioCase):
 
     def test_disabled_schedule_does_nothing(self):
         self.section("stats", {"auto": False})
-        self.assertEqual(self.studio.scheduler.tick(datetime.combine(date.today(), time(23, 0))), [])
+        self.assertEqual(self.studio.scheduler.tick(datetime.combine(TODAY, time(23, 0))), [])
 
     def test_daily_response_refresh_once_a_day(self):
-        today = datetime.combine(date.today(), time(8, 0))
+        today = datetime.combine(TODAY, time(8, 0))
         self.assertEqual(self.studio.scheduler.tick(today), ["отклик: обновлено выпусков 0"])
         self.assertEqual(self.studio.scheduler.tick(today), [])
         self.assertTrue(self.json("GET", "/api/studio/board")[1]["stats"]["at"])
@@ -150,14 +151,12 @@ class ScheduleTest(StudioCase):
 
         # Постер загружен → выпуск доходит до публикации и ждёт её; выгрузили пакет — «Пакет готов»:
         # пакет для ручной загрузки ещё не публикация (AN-003).
+        # Конвейер после загрузки стартует не мгновенно: settle() мог бы вернуться до старта — ждём уведомление.
         self.call("POST", f"/api/studio/projects/{project['id']}/upload/poster", png_bytes())
-        self.settle(project["id"])
-        notes = self.json("GET", "/api/settings/state")[1]["notifications"]
-        self.assertIn("Публикация", notes[0]["text"], notes)
+        self.poll("/api/settings/state", lambda st: "Публикация" in st["notifications"][0]["text"])
         self.json("POST", f"/api/studio/projects/{project['id']}/publish", {"channels": ["download-16x9"]})
+        self.poll("/api/settings/state", lambda st: st["notifications"][0]["title"] == "Пакет готов — залей руками")
         self.settle(project["id"])
-        notes = self.json("GET", "/api/settings/state")[1]["notifications"]
-        self.assertEqual(notes[0]["title"], "Пакет готов — залей руками", notes)
 
         self.json("POST", "/api/settings/notify-test")
         self.assertEqual(

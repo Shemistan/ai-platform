@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 from aiplatform import smoke
-from tests.test_studio_flow import FAST
+from tests.fixtures import FAST
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "нужен ffmpeg")
