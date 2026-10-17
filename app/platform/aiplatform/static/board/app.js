@@ -6,7 +6,7 @@ const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
 // Дополнения над группами (сводка отклика и т.п.): sig(data) — подпись блока, build(data) → узел.
 const extras = [
   { key: "week", sig: (d) => [d.week], build: (d) => weekLine(d.week) },
-  { key: "response", sig: (d) => [d.stats, d.response, d.coverage], build: (d) => responsePanel(d) },
+  { key: "response", sig: (d) => [d.stats, d.response, d.coverage, d.variants], build: (d) => responsePanel(d) },
 ];
 
 // Плашка недели (AN-016): сколько вышло, ждёт и брошено, медиана от готового видео до публикации.
@@ -256,6 +256,42 @@ function responsePanel(data) {
     tables.length
       ? h("div", { class: "reach-tables" }, ...tables)
       : h("p", { class: "hint" }, "Постов с закрытым окном 24ч пока нет. Публичные каналы Telegram подтягиваются сами (раз в сутки или кнопкой), у пакетов для YouTube и TikTok и у приватных каналов просмотры вносятся руками в карточке выпуска."),
+    variantsBlock(data.variants),
+  );
+}
+
+// Варианты (AN-019): доля переделок и копии одного оригинала рядом — n, медиана просмотров и прироста.
+function variantsBlock(v) {
+  if (!v || !v.groups.length) return null;
+  const cell = (value, fmt) => (value === null ? "—" : fmt(value));
+  const tables = v.groups.map((g) =>
+    h(
+      "table",
+      { class: "reach-table" },
+      h("caption", {}, g.title || g.root),
+      h("thead", {}, h("tr", {}, h("th", {}, "вариант"), h("th", {}, "n"), h("th", {}, "просмотров за 24ч"), h("th", {}, "подписчиков за сутки"))),
+      h(
+        "tbody",
+        {},
+        ...g.rows.map((r) =>
+          h(
+            "tr",
+            {},
+            h("th", {}, h("a", { class: "btn--link", href: `/studio/?scenario=${r.scenario}&project=${r.id}` }, r.variant), r.few ? h("span", { class: "muted small" }, " · мало данных") : null),
+            h("td", {}, String(r.posts)),
+            h("td", {}, cell(r.median_views, number)),
+            h("td", {}, cell(r.median_growth, signed)),
+          ),
+        ),
+      ),
+    ),
+  );
+  return h(
+    "div",
+    { class: "variants" },
+    h("h3", {}, "Варианты"),
+    h("p", { class: "muted small" }, `Переделок: ${v.copies} из ${v.projects} выпусков (${Math.round(v.share * 100)}%)`),
+    h("div", { class: "reach-tables" }, ...tables),
   );
 }
 

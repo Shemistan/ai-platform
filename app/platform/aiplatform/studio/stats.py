@@ -550,3 +550,47 @@ def week(projects: list[dict], now: float | None = None) -> dict:
         "median_lead_h": round(_median(lead), 1) if lead else None,
         "days": WEEK_DAYS,
     }
+
+
+# --- варианты выпуска (AN-019): копии одного оригинала рядом, с n и медианой ---
+
+
+def _variant_row(item: dict, variant: str | None) -> dict:
+    """Строка варианта: вышедшие посты с закрытым окном 24ч — n, медиана просмотров и прироста."""
+    posts = [r for _, r in _live_posts([item]) if r.get("views_24h") is not None]
+    views = [r["views_24h"] for r in posts]
+    growth = [r["growth_24h_attr"] for r in posts if r.get("growth_24h_attr") is not None]
+    return {
+        "id": item.get("id"),
+        "title": item.get("title"),
+        "scenario": item.get("scenario"),
+        "variant": variant,
+        "posts": len(posts),
+        "median_views": round(_median(views)) if views else None,
+        "median_growth": round(_median(growth), 1) if growth else None,
+        "few": len(posts) < FEW,
+    }
+
+
+def variants(items: list[dict]) -> dict:
+    """Доля переделок (копий среди выпусков) и сравнение вариантов: по группе на оригинал, у которого
+    есть копии, — оригинал первым, дальше копии. variant_of у копии — корень цепочки (AN-009)."""
+    unique = list({item.get("id"): item for item in items if item.get("id")}.values())
+    by_id = {item["id"]: item for item in unique}
+    copies = [item for item in unique if item.get("variant_of")]
+    groups: dict[str, list[dict]] = {}
+    for item in copies:
+        groups.setdefault(item["variant_of"], []).append(item)
+    out = []
+    for root_id, group in groups.items():
+        root = by_id.get(root_id)
+        rows = [_variant_row(root, "оригинал")] if root else []
+        rows += [_variant_row(item, item.get("variant") or "без описания") for item in group]
+        out.append({"root": root_id, "title": (root or group[0]).get("title"), "rows": rows})
+    out.sort(key=lambda g: -len(g["rows"]))
+    return {
+        "projects": len(unique),
+        "copies": len(copies),
+        "share": round(len(copies) / len(unique), 2) if unique else None,
+        "groups": out,
+    }

@@ -460,9 +460,18 @@ async function splitProject() {
   }
 }
 
+// Копия — вариант оригинала (AN-009/AN-019): «что меняли» уходит в variant, доска сравнивает варианты.
 async function cloneProject() {
+  const what = h("input", { type: "text", id: "variant-what", maxlength: "200", placeholder: "например: другая обложка, короче на минуту", "aria-label": "Что меняли в копии" });
+  const ok = await confirmAction({
+    title: "Копия выпуска",
+    body: [h("label", { class: "field-label", for: "variant-what" }, "Что меняем в копии (необязательно)"), what, h("p", { class: "hint" }, "На доске копии одного выпуска сравниваются рядом: просмотры и подписчики по вариантам.")],
+    confirmLabel: "Сделать копию",
+  });
+  if (!ok) return;
   try {
-    const copy = await api("POST", `${API}/projects/${state.project.id}/clone`);
+    const variant = what.value.trim();
+    const copy = await api("POST", `${API}/projects/${state.project.id}/clone`, variant ? { variant } : {});
     await loadProjects();
     await open(copy.id);
   } catch (err) {

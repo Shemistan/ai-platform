@@ -36,6 +36,8 @@
 .views-input[type="datetime-local"] { width: auto; }
 .week-line { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
 .week-line strong { color: var(--text); }
+.variants { display: grid; gap: var(--sp-2); }
+.variants h3 { margin: 0; font-size: var(--fs-md); }
 .response { display: grid; gap: var(--sp-3); }
 .response-head { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); align-items: center; }
 .response-head h2 { margin: 0; }

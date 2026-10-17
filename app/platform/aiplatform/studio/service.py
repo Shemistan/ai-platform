@@ -487,6 +487,8 @@ class StudioModule:
             "coverage": stats.coverage(everything),
             # Плашка недели: опубликовано, ждут, брошено, медиана до публикации — по обеим вкладкам (AN-016).
             "week": stats.week(self._week_facts()),
+            # Доля переделок и сравнение вариантов одного оригинала (AN-019).
+            "variants": stats.variants(everything),
             "stats": {"running": self._stats_thread is not None, "at": self.scheduler.state().get("stats_at")},
         }
 
@@ -554,6 +556,10 @@ class StudioModule:
         scenario = project.get("scenario") or ""
         return {
             "id": project.get("id"),
+            "title": project.get("title"),
+            "scenario": scenario,
+            "variant_of": project.get("variant_of"),
+            "variant": project.get("variant"),
             "scenario_label": SCENARIOS.get(scenario, scenario),
             "video_s": video_seconds(project),
             "published": self._board_published(records, known, facts),

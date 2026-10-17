@@ -333,6 +333,49 @@ class WeekTest(unittest.TestCase):
         self.assertIsNone(stats.week([], now=now)["median_lead_h"])
 
 
+class VariantsTest(unittest.TestCase):
+    """Варианты выпуска (AN-019): доля переделок и копии одного оригинала рядом с n и медианой."""
+
+    @staticmethod
+    def item(pid, views, variant_of=None, variant=None):
+        published = [
+            {"channel": f"c{i}", "state": "sent", "views_24h": v, "growth_24h_attr": 1} for i, v in enumerate(views)
+        ]
+        return {
+            "id": pid,
+            "title": f"Выпуск {pid}",
+            "variant_of": variant_of,
+            "variant": variant,
+            "published": published,
+        }
+
+    def test_aggregate(self):
+        items = [
+            self.item("a", [100, 300]),
+            self.item("b", [500], variant_of="a", variant="другая обложка"),
+            self.item("c", [], variant_of="a"),
+            self.item("d", [50]),
+            self.item("a", [100, 300]),  # тот же выпуск из второй выборки — один раз
+        ]
+        got = stats.variants(items)
+        self.assertEqual((got["projects"], got["copies"], got["share"]), (4, 2, 0.5))
+        [group] = got["groups"]
+        self.assertEqual((group["root"], group["title"]), ("a", "Выпуск a"))
+        rows = [(r["id"], r["variant"], r["posts"], r["median_views"], r["few"]) for r in group["rows"]]
+        self.assertEqual(
+            rows,
+            [
+                ("a", "оригинал", 2, 200, True),
+                ("b", "другая обложка", 1, 500, True),
+                ("c", "без описания", 0, None, True),
+            ],
+        )
+
+    def test_no_copies(self):
+        self.assertEqual(stats.variants([self.item("a", [1])])["groups"], [])
+        self.assertIsNone(stats.variants([])["share"])
+
+
 class StatsHttpTest(StudioCase):
     def setUp(self):
         folder = Path(tempfile.mkdtemp())
@@ -478,6 +521,20 @@ class WeekHttpTest(StudioCase):
         self.assertEqual(
             (week["published"], week["waiting"], week["abandoned"], week["median_lead_h"]), (2, 1, 1, 7.0), week
         )
+
+
+class VariantsHttpTest(StudioCase):
+    def test_clone_with_variant_shows_on_board(self):
+        """Копия с «что меняли» (AN-019): variant сохранён, на доске — группа вариантов оригинала."""
+        source = self.create(scenario="article", text=ARTICLE)
+        status, copy = self.json("POST", f"/api/studio/projects/{source['id']}/clone", {"variant": "короче на минуту"})
+        self.assertEqual(status, 201, copy)
+        self.assertEqual(copy["variant"], "короче на минуту")
+        board = self.json("GET", "/api/studio/board")[1]
+        [group] = board["variants"]["groups"]
+        self.assertEqual(group["root"], source["id"])
+        self.assertEqual([r["variant"] for r in group["rows"]], ["оригинал", "короче на минуту"])
+        self.assertEqual((board["variants"]["copies"], board["variants"]["projects"]), (1, 2))
 
 
 if __name__ == "__main__":
