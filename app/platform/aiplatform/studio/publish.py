@@ -315,6 +315,14 @@ def caption(post: str, title: str) -> str:
     )
 
 
+def audio_caption(post: str, title: str) -> str:
+    """Короткая подпись к аудио: заголовок и неудаляемый хвост поста (сноски, источник)."""
+    name = title.replace("*", "").strip()
+    tail = split_tail(post)[1]
+    head = f"**{name}**" if name else ""
+    return caption(f"{head}\n\n{tail}".strip(), title)
+
+
 # --- отправка ---
 
 HttpPost = Callable[[str, bytes, str], dict]
@@ -411,7 +419,8 @@ def publish_photo(
     photo = _send(
         channel, "sendPhoto", {"caption": caption(post, title), "parse_mode": "HTML"}, {"photo": poster}, http_post
     )
-    fields = {"title": title[:64]}
+    # Аудио могут переслать отдельно от картинки — сноски реестра и источник идут и в его подписи.
+    fields = {"title": title[:64], "caption": audio_caption(post, title), "parse_mode": "HTML"}
     if seconds:
         fields["duration"] = str(int(round(seconds)))
     sound = _send(channel, "sendAudio", fields, {"audio": audio}, http_post)

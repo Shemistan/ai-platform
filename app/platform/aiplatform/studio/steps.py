@@ -773,8 +773,21 @@ def render_still(ctx: StepContext) -> None:
     out = ctx.path(VIDEO)
     ctx.progress("Собираю видео: постер под звук…", 10.0)
     orientation = video_frame(ctx, poster)
+    notes = None
+    if ctx.settings.get("disclaimers", True):  # видео могут переслать без подписи — пометка в кадре
+        said = "\n".join([ctx.project["title"], ctx.read(TEXT), ctx.read(POST)])
+        notes = registry.notes(said, banned(svc.config)) or None
+        if notes:
+            ctx.log(f"пометки о запрещённых организациях в кадре: {len(notes)}")
     renderer(ctx).still(
-        poster=poster, audio=audio, audio_s=audio_s, out=out, orientation=orientation, cancel=ctx.cancel, branding=brand
+        poster=poster,
+        audio=audio,
+        audio_s=audio_s,
+        out=out,
+        orientation=orientation,
+        cancel=ctx.cancel,
+        branding=brand,
+        notes=notes,
     )
     cover, thumb = covers(out)
     if brand is not None:
