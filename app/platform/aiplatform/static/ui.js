@@ -116,6 +116,7 @@ export function copyButton(getText, label = "Скопировать") {
     } catch {
       btn.textContent = "Не вышло";
     }
+    announce(btn.textContent);
     setTimeout(() => (btn.textContent = label), 1500);
   });
   return btn;
@@ -132,6 +133,69 @@ export function modal(title, ...children) {
   document.body.append(dialog);
   dialog.showModal();
   return { dialog, body, close: () => dialog.close() };
+}
+
+// Подтверждение необратимого действия: await confirmAction({ title, body, confirmLabel, danger }) → true/false.
+// «Отмена», крестик, Esc и клик мимо окна — false. body — узел, строка или массив узлов.
+export function confirmAction({ title, body = null, confirmLabel = "Да", cancelLabel = "Отмена", danger = false }) {
+  return new Promise((resolve) => {
+    let answer = false;
+    const yes = h("button", { type: "button", class: danger ? "primary danger" : "primary" }, confirmLabel);
+    const no = h("button", { type: "button", class: "small-btn" }, cancelLabel);
+    const { dialog, close } = modal(title, ...[].concat(body), h("div", { class: "toolbar confirm-actions" }, yes, no));
+    yes.addEventListener("click", () => ((answer = true), close()));
+    no.addEventListener("click", () => close());
+    dialog.addEventListener("close", () => resolve(answer));
+    no.focus(); // по Enter ничего необратимого не случится
+  });
+}
+
+const VERDICT_TONES = { готово: "ok", "готово с оговорками": "warn", "не готово": "bad" };
+
+// Подтверждение публикации (доска и шаг «Публикация»): каналы по названиям, начало подписи, вердикт судьи.
+// channels: [{ label, type }], caption — текст поста, review — отчёт судьи (необязательно).
+export function confirmPublish({ channels, caption = "", verdict = null, review = null, note = null }) {
+  const names = channels.map((c) => c.label).join(", ");
+  const text = caption.trim();
+  const head = text.split("\n").filter((line) => line.trim()).slice(0, 3).join("\n");
+  const where = channels.every((c) => c.type === "telegram") ? "Опубликовать в Telegram" : "Опубликовать";
+  return confirmAction({
+    title: "Опубликовать выпуск?",
+    body: [
+      h("div", {}, h("p", { class: "field-label" }, "Куда"), h("ul", { class: "confirm-list" }, ...channels.map((c) => h("li", {}, c.label)))),
+      h(
+        "div",
+        {},
+        h("p", { class: "field-label" }, "Подпись"),
+        head ? h("p", { class: "preview-text" }, head.length < text.length ? `${head}…` : head) : h("p", { class: "muted" }, "Подписи нет."),
+      ),
+      h(
+        "div",
+        {},
+        h("span", { class: "field-label" }, "Судья: "),
+        verdict ? chip(verdict, VERDICT_TONES[verdict] || "") : h("span", { class: "muted" }, "вердикта нет"),
+        review && verdict !== "готово" ? h("details", { class: "inline" }, h("summary", {}, "Отчёт судьи"), h("pre", { class: "log" }, review)) : null,
+      ),
+      note ? h("p", { class: "hint warn" }, note) : null,
+      h("p", { class: "hint" }, "Отменить отправленный пост отсюда нельзя."),
+    ],
+    confirmLabel: `${where}: ${names}`,
+    danger: true,
+  });
+}
+
+// Одна на страницу область объявлений для скринридера (#sr-status ставит nav.js):
+// панели перерисовываются часто, поэтому вслух — только переходы, которые объявили явно.
+export function announce(text) {
+  if (!text) return;
+  let box = document.getElementById("sr-status");
+  if (!box) {
+    box = h("div", { id: "sr-status", class: "sr-only", role: "status", "aria-live": "polite" });
+    document.body.append(box);
+  }
+  // Сначала очистить: тот же текст подряд иначе не зачитается.
+  box.textContent = "";
+  setTimeout(() => (box.textContent = text), 50);
 }
 
 // Карточка фоновой задачи вкладки: статус, этап, сколько идёт, последняя строка или лог.
@@ -160,6 +224,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Опрос задачи до конца: onUpdate(задача) на каждом шаге, промис — итог.
 export async function followTask(url, onUpdate, interval = 1000) {
+  let last = null;
   while (true) {
     let task = null;
     try {
@@ -169,6 +234,8 @@ export async function followTask(url, onUpdate, interval = 1000) {
       continue;
     }
     onUpdate(task);
+    if (last && task.status !== last) announce(`${task.title || "Задача"}: ${STATUS[task.status] || task.status}`);
+    last = task.status;
     if (task.status !== "queued" && task.status !== "running") return task;
     await pause(interval);
   }

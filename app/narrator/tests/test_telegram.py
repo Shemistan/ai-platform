@@ -66,13 +66,16 @@ def article(tmp_path: Path, engine: str = "silero", size: int = 2048) -> tuple[P
 
 # --- токен ---------------------------------------------------------------
 
+FAKE_TOKEN = "123456:" + "A" * 35
+
 
 def test_read_token_from_file_ignoring_markdown(tmp_path, monkeypatch):
     monkeypatch.delenv(telegram.TOKEN_ENV, raising=False)
     path = tmp_path / "bot_token.md"
-    path.write_text("# токен бота\n\n`8841726324:AAGuOLy5MV6vPP4GUkR95Tpe7fZGEqzmwf4`\n")
+    # Синтетический токен: настоящий в тестах держать нельзя (SEC-001).
+    path.write_text(f"# токен бота\n\n`{FAKE_TOKEN}`\n")
     monkeypatch.setenv(telegram.TOKEN_FILE_ENV, str(path))
-    assert telegram.read_token() == "8841726324:AAGuOLy5MV6vPP4GUkR95Tpe7fZGEqzmwf4"
+    assert telegram.read_token() == FAKE_TOKEN
 
 
 def test_read_token_prefers_env(tmp_path, monkeypatch):
