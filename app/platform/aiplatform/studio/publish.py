@@ -31,8 +31,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from aiplatform.core import schema
-from aiplatform.core.fsutil import atomic_write_json
+from aiplatform.core import perms, schema
 from aiplatform.studio.llm import StudioError
 
 TELEGRAM, MANUAL = "telegram", "manual"
@@ -193,15 +192,17 @@ CHANNELS_SCHEMA = 1
 
 
 def save_channels(path: Path, channels: list[Channel]) -> None:
-    """Записать список целиком. Зовёт только ChannelStore — под своим замком (channels/store.py).
-    Файл, записанный более новой версией, не перезаписываем: schema.TooNew."""
+    """Записать список целиком: атомарно и только для владельца (0600, SEC-010).
+    Зовёт только ChannelStore — под своим замком (channels/store.py).
+    Файл, записанный более новой версией, не перезаписываем: schema.TooNew (ADR 0009)."""
     try:
         current = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         current = None
     with contextlib.suppress(schema.Broken):
         schema.upgrade(current, CHANNELS_SCHEMA, where=path.name)
-    atomic_write_json(path, schema.wrap([c.stored() for c in channels], "channels", CHANNELS_SCHEMA))
+    payload = schema.wrap([c.stored() for c in channels], "channels", CHANNELS_SCHEMA)
+    perms.write_private(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def new_channel(existing: list[Channel], label: str, chat_id: str, fmt: str) -> Channel:
@@ -270,6 +271,27 @@ def post_html(text: str) -> str:
         pieces.append(_bold(html.escape(line[last:], quote=False)))
         out.append("".join(pieces).rstrip())
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+
+
+# --- домены ссылок: что увидит читатель и откуда они взялись (SEC-013) ---
+
+_URL = re.compile(r"https?://[^\s)\]>\"'<]+", re.IGNORECASE)
+
+
+def link_domains(text: str) -> list[str]:
+    """Домены всех ссылок текста — и [текст](url), и голых URL (Telegram делает их ссылками)."""
+    out = set()
+    for m in _URL.finditer(text or ""):
+        host = (urllib.parse.urlsplit(m.group(0)).hostname or "").lower().rstrip(".")
+        if host:
+            out.add(host.removeprefix("www."))
+    return sorted(out)
+
+
+def foreign_domains(post: str, sources: list[str]) -> list[str]:
+    """Домены ссылок поста, которых нет в исходном материале (поддомен известного — свой)."""
+    known = {d for text in sources for d in link_domains(text)}
+    return [d for d in link_domains(post) if not any(d == k or d.endswith("." + k) for k in known)]
 
 
 def _bold(escaped: str) -> str:

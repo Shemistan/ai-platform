@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from aiplatform.core import log
-from aiplatform.core.fsutil import atomic_write_json
+from aiplatform.core.perms import write_private
 
 KEY = "schema"
 Migration = Callable[[Any], Any]
@@ -173,7 +173,7 @@ def unwrap_lists(data_dir: Path) -> list[Path]:
             except (OSError, json.JSONDecodeError):
                 continue
             if isinstance(data, dict) and isinstance(data.get(field), list):
-                atomic_write_json(path, data[field])
+                write_private(path, json.dumps(data[field], ensure_ascii=False, indent=2) + "\n")
                 changed.append(path)
     return changed
 

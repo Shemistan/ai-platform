@@ -68,6 +68,35 @@ class IncompatibleNarratorTest(PlatformCase):
         self.assertIn("AIP_NARRATOR_DIR", found_[0])
 
 
+class NavTabsTest(PlatformCase):
+    """Шапка из /api/config (FE-007): каждый модуль сервера есть в навигации, группы не рвутся."""
+
+    def test_every_module_in_nav(self):
+        status, body = self.json("GET", "/api/config")
+        self.assertEqual(status, 200)
+        tabs = body["tabs"]
+        paths = {t["href"].split("?")[0] for t in tabs}
+        for prefix in self.app.modules:
+            self.assertIn(f"/{prefix}/", paths, prefix)
+        ids = [t["id"] for t in tabs]
+        self.assertEqual(len(ids), len(set(ids)))
+        groups = [g for i, g in enumerate(t["group"] for t in tabs) if not i or tabs[i - 1]["group"] != g]
+        self.assertEqual(len(groups), len(set(groups)), "группа вкладок разорвана другой")
+        self.assertEqual(ids[:4], ["photo", "video", "audio", "board"])
+        self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
+        self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention"])
+
+    def test_upload_limits_in_module_config(self):
+        """FE-003: страница сверяет размер файла с лимитом до отправки — лимиты в /config модулей."""
+        from aiplatform.core import uploads
+
+        want = {"image": uploads.MAX_UPLOAD_BYTES, "media": uploads.MAX_AUDIO_BYTES}
+        for module in ("photo", "video", "audio", "studio"):
+            status, body = self.json("GET", f"/api/{module}/config")
+            self.assertEqual(status, 200, module)
+            self.assertEqual(body["upload_limits"], want, module)
+
+
 class ShellTest(PlatformCase):
     @staticmethod
     def modules(ctx):
@@ -82,15 +111,44 @@ class ShellTest(PlatformCase):
         status, headers, body = self.call("GET", "/nav.js")
         self.assertEqual(status, 200)
         self.assertIn("javascript", headers["Content-Type"])
-        self.assertIn(b"TABS", body)
+        self.assertIn(b"/api/config", body)
+        self.assertNotIn("Видео по статье".encode(), body, "вкладки шапки — только с сервера (FE-007)")
         status, _, _ = self.call("GET", "/../server.py")
         self.assertEqual(status, 404)
+
+    def test_static_etag_and_304(self):
+        """FE-006: статика с ETag и Last-Modified; повтор с валидатором — 304 без тела."""
+        status, headers, body = self.call("GET", "/nav.js")
+        self.assertEqual(status, 200)
+        etag, modified = headers["ETag"], headers["Last-Modified"]
+        self.assertTrue(etag.startswith('"') and body)
+        self.assertEqual(headers["Cache-Control"], "no-cache")
+        for cond in ({"If-None-Match": etag}, {"If-None-Match": f'"x", W/{etag}'}, {"If-Modified-Since": modified}):
+            status, headers, body = self.call("GET", "/nav.js", headers=cond)
+            self.assertEqual((status, body), (304, b""), cond)
+            self.assertEqual(headers["ETag"], etag)
+        status, _, body = self.call("GET", "/nav.js", headers={"If-None-Match": '"old"'})
+        self.assertEqual(status, 200)
+        self.assertTrue(body)
+        # If-None-Match главнее If-Modified-Since: другой тег — полный ответ.
+        status, _, _ = self.call("GET", "/nav.js", headers={"If-None-Match": '"old"', "If-Modified-Since": modified})
+        self.assertEqual(status, 200)
+
+    def test_favicon(self):
+        status, headers, body = self.call("GET", "/favicon.ico")
+        self.assertEqual(status, 200)
+        self.assertIn("svg", headers["Content-Type"])
+        self.assertIn(b"<svg", body)
+        pages = sorted(server_module.STATIC_DIR.glob("*/index.html"))
+        self.assertTrue(pages)
+        for page in pages:
+            self.assertIn('rel="icon" href="/favicon.svg"', page.read_text(encoding="utf-8"), page)
 
     def test_config_lists_tabs_and_problems(self):
         status, body = self.json("GET", "/api/config")
         self.assertEqual(status, 200)
         self.assertEqual(body["backend"], "fake")
-        self.assertEqual(body["tabs"], [{"id": "echo", "label": "Эхо"}])
+        self.assertEqual(body["tabs"], [{"group": "echo", "id": "echo", "label": "Эхо", "href": "/echo/"}])
         self.assertIn("эхо не настроено", body["problems"])
 
     def test_status(self):
@@ -244,7 +302,8 @@ class AuthTest(EchoCase):
             self.assertIn(part, cookie)
         status, _, body = self.request("GET", "/nav.js", {"Cookie": f"aip_auth={AUTH}"})
         self.assertEqual(status, 200)
-        self.assertIn(b"TABS", body)
+        self.assertIn(b"/api/config", body)
+        self.assertNotIn("Видео по статье".encode(), body, "вкладки шапки — только с сервера (FE-007)")
         post = {"Authorization": f"Bearer {AUTH}", "X-AIP": "1", "Content-Type": "application/json"}
         self.assertEqual(self.request("POST", "/api/echo/hello", post, b"{}")[0], 201)
         self.assertEqual(self.request("POST", "/api/echo/hello", {"X-AIP": "1"}, b"{}")[0], 401)
