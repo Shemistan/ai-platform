@@ -105,7 +105,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 106. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 104. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -234,7 +234,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/studio/projects/{pid}/summary` | — | JSON 202 | Выжимка: LLM в фоне пишет текст на 5–8 минут, из него — новый выпуск. Ход — в журнале исходного |
 | POST | `/api/studio/projects/{pid}/clone` | — | JSON 201 | Копия выпуска: те же настройки и готовые результаты до сборки; сборка и публикация — заново |
 | POST | `/api/studio/projects/{pid}/archive` | JSON | JSON | — |
-| POST | `/api/studio/projects` | JSON | JSON 201 | — |
+| POST | `/api/studio/projects` | JSON | JSON 201 | POST /projects с Idempotency-Key: повтор с тем же ключом отдаёт уже созданный выпуск |
 | GET | `/api/studio/projects/{pid}` | — | JSON | — |
 | POST | `/api/studio/projects/{pid}/settings` | JSON | JSON | — |
 | POST | `/api/studio/projects/{pid}/run` | JSON | JSON | «Выполнить/Перезапустить шаг»: с settings — сначала параметры из карточки шага |
@@ -243,8 +243,6 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/studio/projects/{pid}/publish` | JSON | JSON | Кнопка «Опубликовать», как `make news-publish`: выбранные каналы, повторно — с force |
 | POST | `/api/studio/projects/{pid}/publish/resolve` | JSON | JSON | «Пост есть» / «Поста нет» по каналу, где ответа Telegram не было; затем публикация |
 | POST | `/api/studio/projects/{pid}/uploaded` | JSON | JSON | «Залил»: автор сам залил пакет на площадку и дал ссылку на ролик — теперь выпуск опубликован |
-| POST | `/api/studio/channels` | JSON | JSON 201 | Канал Telegram со страницы: список целиком записывается в channels.json |
-| POST | `/api/studio/channels/{channel_id}/delete` | — | JSON | — |
 | POST | `/api/studio/projects/{pid}/artifacts/{name}` | JSON | JSON | — |
 | POST | `/api/studio/projects/{pid}/upload/{what}` | файл | JSON | — |
 | POST | `/api/studio/projects/{pid}/upload/{kind}/{key}` | файл | JSON | Картинка или видео слайда от человека. Все на месте — шаг готов, сборка заново |
