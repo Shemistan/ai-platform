@@ -112,6 +112,13 @@ function fieldsOf(values, prefix) {
         "Первый кадр — обложка: постер притемнён, по центру плей, внизу крупная плашка; дальше плашка плавно уезжает в угол и остаётся до конца. Этот кадр — обложка видео в Telegram.",
         values.branding,
       ),
+    ai_badge: () =>
+      check(
+        "ai_badge",
+        "Плашка «ИИ» в углу видео",
+        "Мелкая метка в правом нижнем углу: озвучка и картинки сделаны нейросетью. Строка об ИИ в посте и метка в файле видео ставятся всегда.",
+        values.ai_badge,
+      ),
     disclaimers: () =>
       check(
         "disclaimers",
@@ -227,7 +234,7 @@ function settingsForm(values, prefix) {
       { class: "settings-form" },
       group("Постер", f.poster_mode(), f.image_model()),
       group("Озвучка", f.voice_mode(), f.engine()),
-      group("Оформление", f.frame(), f.branding(), f.disclaimers()),
+      group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
       group("Публикация", channelAdder(prefix), f.post_format(), f.tempo(), f.channels(), f.auto_publish()),
       f.review_text(),
     );
@@ -242,7 +249,7 @@ function settingsForm(values, prefix) {
     group("Озвучка", f.voice_mode(), f.engine()),
     group("Шортс", f.shorts()),
     group("Слайды", f.slide_s(), f.reading()),
-    group("Оформление", f.frame(), f.branding(), f.disclaimers()),
+    group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
     group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish()),
     scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author()) : null,
     f.review_text(),
@@ -251,12 +258,12 @@ function settingsForm(values, prefix) {
 
 const SETTING_NAMES = [
   "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
-  "voice_mode", "engine", "shorts", "review_text", "disclaimers", "branding", "tempo", "frame", "auto_publish", "channels",
+  "voice_mode", "engine", "shorts", "review_text", "disclaimers", "ai_badge", "branding", "tempo", "frame", "auto_publish", "channels",
   "post_format", "draft", "slide_s", "reading",
 ]; // prettier-ignore
 // Поля формы поста: остальные настройки у него не меняются.
 const POST_SETTINGS = [
-  "poster_mode", "image_model", "voice_mode", "engine", "review_text", "disclaimers", "branding", "tempo", "frame",
+  "poster_mode", "image_model", "voice_mode", "engine", "review_text", "disclaimers", "ai_badge", "branding", "tempo", "frame",
   "auto_publish", "channels", "post_format",
 ]; // prettier-ignore
 
@@ -564,8 +571,8 @@ const STEP_FIELDS = {
   clips: ["clips", "clips_mode", "video_model"],
   voice: ["voice_mode", "engine"],
   plan: ["slide_s"],
-  render: ["draft", "frame", "tempo", "reading", "branding", "disclaimers"],
-  short: ["shorts", "tempo", "reading", "branding", "disclaimers"],
+  render: ["draft", "frame", "tempo", "reading", "branding", "disclaimers", "ai_badge"],
+  short: ["shorts", "tempo", "reading", "branding", "disclaimers", "ai_badge"],
 };
 
 const openSettings = new Set();

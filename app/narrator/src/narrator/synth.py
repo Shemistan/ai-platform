@@ -637,13 +637,17 @@ def render(
     return total / sr
 
 
+# Синтетический голос — метка в ID3 (TXXX:AI_GENERATED, комментарий): EU AI Act ст. 50, CMP-011.
+AI_METADATA = ["-metadata", "comment=AI-generated: synthetic voice", "-metadata", "AI_GENERATED=1"]
+
+
 def encode_mp3(wav: Path, mp3: Path, title: str, bitrate: str = "64k") -> None:
     tmp = mp3.with_suffix(".tmp.mp3")
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav),
         "-ac", "1", "-codec:a", "libmp3lame", "-b:a", bitrate,
         "-metadata", f"title={title}", "-metadata", "album=Озвученные статьи",
-        "-metadata", "artist=narrator", str(tmp),
+        "-metadata", "artist=narrator", *AI_METADATA, str(tmp),
     ]  # fmt: skip
     subprocess.run(cmd, check=True)
     tmp.replace(mp3)
@@ -655,7 +659,7 @@ def retime_mp3(src: Path, dst: Path, tempo: float, bitrate: str = "64k") -> None
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
         "-filter:a", f"atempo={tempo:g}", "-ac", "1", "-codec:a", "libmp3lame",
-        "-b:a", bitrate, str(tmp),
+        "-b:a", bitrate, *AI_METADATA, str(tmp),
     ]  # fmt: skip
     subprocess.run(cmd, check=True)
     tmp.replace(dst)

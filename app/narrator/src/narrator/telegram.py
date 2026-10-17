@@ -397,6 +397,7 @@ def describe(path: Path, entry: Entry, engine: str) -> str:
     tail = " · ".join(facts)
     if entry.url:
         tail += f'\n<a href="{html.escape(entry.url)}">Оригинал статьи</a>'
+    tail += f"\n{registry.ai_line(voice=True)}"  # озвучка narrator — всегда синтез (CMP-011)
     notes = registry.footnotes_html(spoken_text(path, entry), registry.load())
     head = f"<b>{html.escape(entry.title.strip())}</b>"
     # Лимит Telegram считает текст без разметки, так что запас тут с избытком.
@@ -620,6 +621,10 @@ def broadcast(
     return done
 
 
+# Дайджест: озвучка — синтез (Gemini TTS или локальная модель), картинка — ChatGPT.
+DIGEST_AI = registry.ai_line(voice=True, images=True)
+
+
 def digest_caption(path: Path, entry: Entry) -> str:
     """Подпись к картинке дайджеста: пост из post.md со ссылками на источники.
 
@@ -633,6 +638,7 @@ def digest_caption(path: Path, entry: Entry) -> str:
     entries = registry.load()
     text = registry.with_footnotes(text, spoken_text(path, entry), entries)
     text = registry.with_materials(text, registry.materials(digest_agents(path), entries))
+    text = registry.with_ai_line(text, DIGEST_AI)
     try:
         return registry.fit_caption(text, CAPTION_LIMIT)
     except registry.CaptionError as e:
@@ -685,7 +691,8 @@ def audio_caption(path: Path, entry: Entry, title: str) -> str:
     entries = registry.load()
     notes = registry.footnotes_html(spoken_text(path, entry), entries)
     labels = "\n".join(html.escape(m) for m in registry.materials(digest_agents(path), entries))
-    return "\n\n".join(p for p in (labels, html.escape(title), notes) if p)
+    ai = html.escape(DIGEST_AI)
+    return "\n\n".join(p for p in (labels, html.escape(title), notes, ai) if p)
 
 
 def digest_agents(path: Path) -> list[str]:

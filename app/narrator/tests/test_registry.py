@@ -110,6 +110,7 @@ def test_describe_adds_footnote_from_script(tmp_path):
     (path / "script.txt").write_text("Компания Мета показала очки.", encoding="utf-8")
     caption = telegram.describe(path, entry, "silero")
     assert caption.endswith(f"* {META_NOTE}")
+    assert "ИИ-контент: озвучено ИИ-голосом." in caption  # CMP-011
     assert visible_length(caption) <= telegram.CAPTION_LIMIT
     plain, _ = article(tmp_path / "b", "Про Go.")
     assert "запрещена" not in telegram.describe(plain, _, "silero")
@@ -122,7 +123,7 @@ def test_digest_caption_and_audio_caption(tmp_path):
     (path / "post.md").write_text("**Главное**\n🐹 [Вышел Go 1.26](https://go.dev/x)\n")
     (path / "narration.md").write_text("Instagram запустил новую ленту.", encoding="utf-8")
     caption = telegram.digest_caption(path, entry)
-    assert caption.endswith(f"* {META_NOTE}") and "Вышел Go 1.26" in caption
+    assert caption.endswith(f"* {META_NOTE}\n\n{telegram.DIGEST_AI}") and "Вышел Go 1.26" in caption
     assert META_NOTE in telegram.audio_caption(path, entry, "Новости за 23 сентября")
 
 
@@ -244,3 +245,40 @@ def test_foreign_agent_material_marked_in_db_and_caption(tmp_path, monkeypatch):
     other.mkdir(parents=True)
     (other / "post.md").write_text("**Дайджест**\n\nПро Go.\n")
     assert "ДАННОЕ" not in telegram.digest_caption(other, entry)
+
+
+def test_ai_labels_in_caption_mp3_and_video(tmp_path, monkeypatch):
+    """CMP-011: строка об ИИ в хвосте подписи (лимит 1024), метка в mp3 и mp4, плашка «ИИ»."""
+    from PIL import Image
+
+    from narrator import synth
+    from narrator.news import video
+
+    post = registry.with_footnotes("Компания Meta показала очки. " * 60, "", registry.load())
+    post = registry.with_ai_line(post, telegram.DIGEST_AI)
+    body = registry.fit_caption(post)
+    assert visible_length(body) <= registry.CAPTION_LIMIT and body.endswith(telegram.DIGEST_AI)
+    calls = []
+    monkeypatch.setattr(synth.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    monkeypatch.setattr(Path, "replace", lambda self, target: target)
+    synth.encode_mp3(tmp_path / "a.wav", tmp_path / "a.mp3", "Статья")
+    synth.retime_mp3(tmp_path / "a.mp3", tmp_path / "b.mp3", 1.25)
+    assert all("AI_GENERATED=1" in cmd for cmd in calls)
+    monkeypatch.undo()
+
+    cover = tmp_path / "cover.png"
+    Image.new("RGB", (400, 400), (250, 250, 250)).save(cover)
+    poster, _, frame = video.make_frames(cover)
+    for path in (poster, frame):
+        assert max(Image.open(path).convert("RGB").getpixel((14, 14))) < 120, "в углу плашка «ИИ»"
+    monkeypatch.setenv(video.BADGE_ENV, "0")
+    cover.touch()
+    (tmp_path / video.FRAME).unlink()
+    _, _, frame = video.make_frames(cover)
+    assert min(Image.open(frame).convert("RGB").getpixel((14, 14))) > 200
+    seen = []
+    monkeypatch.setattr(video.subprocess, "run", lambda cmd, **kw: seen.append(cmd))
+    audio = tmp_path / "a.mp3"
+    audio.write_bytes(b"ID3")
+    video.make_video(poster, frame, audio, tmp_path / "v.mp4", 3.0)
+    assert "comment=AI-generated" in seen[0]

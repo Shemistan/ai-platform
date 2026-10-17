@@ -65,6 +65,7 @@ SETTING_STEPS = {
     "auto_publish": "publish",
     "post_format": "publish",
     "disclaimers": ("render", "short"),
+    "ai_badge": ("render", "short"),  # плашка «ИИ» в углу видео (CMP-011)
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
     "slide_s": "plan",  # ориентир для LLM: сколько держится слайд
@@ -617,6 +618,7 @@ class StudioModule:
             "review_text": False,
             "draft": False,
             "disclaimers": True,
+            "ai_badge": True,
             "branding": False,
             "tempo": 1.0,
             "slide_s": slides.TARGET_SLIDE_S,
@@ -737,7 +739,10 @@ class StudioModule:
             raise bad_request("post_format — video или photo.")
         if out["upscale_images"] not in UPSCALE_CHOICES:
             raise bad_request("upscale_images — none, 2k или 4k.")
-        bools = ("draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "branding", "draft")
+        bools = (
+            "draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "ai_badge", "branding",
+            "draft",
+        )  # fmt: skip
         for key in bools:
             if not isinstance(out[key], bool):
                 raise bad_request(f"{key} — true или false.")

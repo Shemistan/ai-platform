@@ -222,6 +222,7 @@ def speak(ctx: StepContext, text: str, target: Path, what: str) -> Path:
         raise StudioError(f"{what}: mp3 не найден.")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
+    svc.renderer.tag_ai(target, ctx.cancel)  # синтетический голос — метка в ID3 (CMP-011)
     svc.cache.put(entry, target)
     return target
 
@@ -750,7 +751,7 @@ def render_video(
 
 def renderer(ctx: StepContext) -> Renderer:
     """Черновик собирается в половинном кадре: быстро посмотреть структуру и ритм."""
-    base = services(ctx).renderer
+    base = dataclasses.replace(services(ctx).renderer, ai_badge=bool(ctx.settings.get("ai_badge", True)))
     return dataclasses.replace(base, scale=base.scale * DRAFT_SCALE) if ctx.settings.get("draft") else base
 
 
@@ -994,6 +995,8 @@ def step_publish(ctx: StepContext) -> None:
     post = with_source(ctx, ctx.read(POST))
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
+    ai = ai_used(ctx)
+    post = publish.with_ai_line(post, ai)
     # Сначала все каналы: что не уйдёт — видно сразу, и ни один канал не получит выпуск наполовину.
     problems = []
     photo_post = ctx.settings.get("post_format") == "photo"
@@ -1032,7 +1035,9 @@ def step_publish(ctx: StepContext) -> None:
             record = publish_video(ctx, journal, channel, title, post)
         else:
             video = ctx.path(SHORT_VIDEO if channel.format == VERTICAL else VIDEO)
-            result = publish.publish(channel, video=video, title=title, post=post, out_dir=ctx.path("publish"))
+            result = publish.publish(
+                channel, video=video, title=title, post=post, out_dir=ctx.path("publish"), synthetic=bool(ai)
+            )
             if prev and publication_state(prev) == UPLOADED:
                 # Уже залит: пакет пересобран, но ссылка и время публикации остаются.
                 record = journal.put(prev | {"files": result.get("files"), "label": channel.label})
@@ -1178,6 +1183,20 @@ def with_source(ctx: StepContext, post: str) -> str:
     if url in post:
         return post
     return f"{post.rstrip()}\n\nИсточник: {author.replace('*', '')} — [оригинал]({url})\n"
+
+
+def ai_used(ctx: StepContext) -> str:
+    """Строка об ИИ для подписи — по генераторам, которые выпуск правда использовал (CMP-011).
+
+    Загруженные человеком озвучка, постер, картинки и ролики ИИ-контентом не считаются."""
+    s = ctx.settings
+    post = is_post(ctx)
+    draft = bool(s.get("draft"))
+    images = s.get("poster_mode") == "local" or (
+        not post and not draft and s.get("draw_images") and s.get("images_mode") == "local"
+    )
+    video = not post and not draft and bool(s.get("clips")) and s.get("clips_mode") == "local"
+    return publish.ai_line(voice=s.get("voice_mode") == "tts", images=bool(images), video=video)
 
 
 def disclaimers_off(ctx: StepContext, title: str) -> dict | None:

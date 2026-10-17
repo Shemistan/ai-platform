@@ -54,7 +54,8 @@ TEMPLATES = {
 _SHORT = 4
 CAPTION_LIMIT = 1024
 # Неудаляемый хвост подписи: сноски («* Компания … признана …») и строки об источнике.
-_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор)\b)")
+_TAIL_LINE = re.compile(r"^(?:\*\s|\**(?:Источник|Оригинал|Автор|ИИ-контент)\b)")
+AI_PREFIX = "ИИ-контент"  # строка об ИИ в хвосте подписи (CMP-011), как у платформы
 _SENTENCE_END = re.compile(r"[.!?…»)](?=\s)|\n")
 _SPACE = re.compile(r"\s+")
 _LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
@@ -273,6 +274,26 @@ def with_materials(post: str, labels: list[str]) -> str:
         return post
     head = "\n".join(fresh)
     return f"{head}\n\n{post.lstrip()}" if post.strip() else f"{head}\n"
+
+
+def ai_line(*, voice: bool = False, images: bool = False) -> str:
+    """Строка об ИИ по фактически использованным генераторам; ничего — пусто."""
+    parts = [
+        t
+        for used, t in (
+            (voice, "озвучено ИИ-голосом"),
+            (images, "иллюстрации сгенерированы нейросетью"),
+        )
+        if used
+    ]
+    return f"{AI_PREFIX}: {'; '.join(parts)}." if parts else ""
+
+
+def with_ai_line(post: str, line: str) -> str:
+    """Пост (markdown) со строкой об ИИ в неудаляемом хвосте."""
+    if not line or line in post:
+        return post
+    return f"{post.rstrip()}\n\n{line}\n" if post.strip() else f"{line}\n"
 
 
 def footnotes_html(text: str, entries: list[Entry]) -> str:

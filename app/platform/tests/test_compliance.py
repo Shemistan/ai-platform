@@ -4,6 +4,7 @@ import html
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -218,6 +219,70 @@ class DisclaimersOffTest(StudioCase):
             "POST", f"/api/studio/projects/{pid}/publish", {"channels": ["download-16x9"], "ignore_disclaimers": 1}
         )
         self.assertEqual(status, 400)
+
+
+def ffprobe_tags(path: Path) -> dict:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format_tags", "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    )  # fmt: skip
+    return {k.lower(): v for k, v in json.loads(out.stdout).get("format", {}).get("tags", {}).items()}
+
+
+class AiLabelTest(unittest.TestCase):
+    """CMP-011: строка об ИИ в неудаляемом хвосте, плашка «ИИ» и метка в файлах."""
+
+    def test_ai_line_by_generators(self):
+        self.assertEqual(publish.ai_line(), "")
+        line = publish.ai_line(voice=True, images=True)
+        self.assertEqual(line, "ИИ-контент: озвучено ИИ-голосом; иллюстрации сгенерированы нейросетью.")
+        post = publish.with_ai_line(registry.with_footnotes(long_post(1600), "", DEFAULT), line)
+        self.assertEqual(publish.with_ai_line(post, line), post)
+        body = publish.caption(post, "Заголовок")
+        self.assertLessEqual(publish.visible_len(body), publish.CAPTION_LIMIT)
+        self.assertTrue(body.endswith(line), body[-200:])
+        self.assertIn(html.escape(META_NOTE, quote=False), body)
+        self.assertIn(line, publish.audio_caption(post, "Заголовок"))
+
+    def test_badge_and_metadata_in_ffmpeg_args(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder)
+        calls = []
+
+        def run(self, argv, cancel, what):
+            calls.append(argv)
+            Path(argv[-1]).touch()  # склейка переименовывает .part.mp4
+
+        with mock.patch.object(Renderer, "_run", run):
+            Renderer(ffmpeg="ffmpeg", font="", ai_badge=True).poster_clip(
+                folder / "p.png", folder / "a.mp4", 3.0, VERTICAL, threading.Event(), notes=[META_NOTE]
+            )
+            Renderer(ffmpeg="ffmpeg", font="").poster_clip(
+                folder / "p.png", folder / "b.mp4", 3.0, VERTICAL, threading.Event()
+            )
+            Renderer(ffmpeg="ffmpeg", font="").concat(
+                [folder / "a.mp4"], folder / "v.mp3", folder / "o.mp4", 3.0, threading.Event()
+            )
+        badged, bare, concat = calls
+        self.assertIn("text='ИИ'", badged[badged.index("-filter_complex") + 1])
+        self.assertNotIn("ИИ", bare[bare.index("-filter_complex") + 1])
+        self.assertIn("comment=AI-generated", concat)
+        self.assertIn("AI_GENERATED=1", concat)
+
+
+@NEEDS_FFMPEG
+class AiLabelFlowTest(StudioCase):
+    def test_published_package_is_labeled(self):
+        settings = {"channels": ["download-16x9"], "auto_publish": True}
+        project = self.create(scenario="article", text=ARTICLE, settings=settings, run=True)
+        done = self.settle(project["id"])
+        self.assertEqual(self.statuses(done)["publish"], "done", done["log"])
+        folder = self.folder(project["id"])
+        description = (folder / "publish" / "download-16x9" / "description.txt").read_text(encoding="utf-8")
+        self.assertIn("ИИ-контент: озвучено ИИ-голосом; иллюстрации сгенерированы нейросетью.", description)
+        self.assertIn(publish.SYNTHETIC_FLAG, description)
+        self.assertEqual(ffprobe_tags(folder / "video.mp4").get("comment"), "AI-generated")
+        self.assertEqual(ffprobe_tags(folder / "voice.mp3").get("ai_generated"), "1")
 
 
 @NEEDS_FFMPEG
