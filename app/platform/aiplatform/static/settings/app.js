@@ -10,9 +10,12 @@ function showError(message) {
 }
 
 async function toggle(body) {
+  // Каталог перерисовывается целиком: фокус возвращаем на тот же флажок или кнопку голоса.
+  const focused = document.activeElement?.id;
   try {
     render(await api("POST", `${API}/toggle`, body));
     showError("");
+    if (focused) $(focused)?.focus();
   } catch (err) {
     showError(err.message);
     load();
@@ -27,27 +30,31 @@ function installedChip(item) {
 }
 
 // Строка каталога: флажок «включено», название, пометки и под ними — extra (голоса движка).
+// Подпись связана с флажком через for/id, пояснение — через aria-describedby: имя флажка = название.
 function row(item, kind, note, extra = null) {
+  const id = `t-${kind}-${String(item.id).replace(/[^\w-]/g, "_")}`;
   const box = h("input", {
     type: "checkbox",
+    id,
     checked: item.enabled,
+    "aria-describedby": note ? `${id}-note` : null,
     onchange: (e) => toggle({ kind, id: item.id, enabled: e.target.checked }),
   });
   return h(
     "div",
     { class: `toggle-row${item.enabled ? "" : " off"}` },
-    h("label", {}, box),
+    box,
     h(
       "div",
       { class: "toggle-body" },
       h(
-        "label",
-        { class: "toggle-title", onclick: () => box.click() },
-        h("span", { class: "toggle-name" }, item.label),
+        "div",
+        { class: "toggle-title" },
+        h("label", { class: "toggle-name", for: id }, item.label),
         installedChip(item),
         item.enabled ? null : chip("выключено"),
       ),
-      note ? h("span", { class: "hint" }, note) : null,
+      note ? h("span", { class: "hint", id: `${id}-note` }, note) : null,
       extra,
     ),
   );
@@ -62,6 +69,7 @@ function voiceButtons(engine) {
         "button",
         {
           type: "button",
+          id: `v-${engine.id}-${v.id}`.replace(/[^\w-]/g, "_"),
           "aria-pressed": String(v.enabled),
           disabled: !engine.enabled,
           title: v.id === engine.default_voice ? "голос по умолчанию" : null,
