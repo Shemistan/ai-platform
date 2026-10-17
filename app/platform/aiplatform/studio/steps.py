@@ -868,6 +868,7 @@ def step_publish(ctx: StepContext) -> None:
     if ctx.read(PLAN):
         plan_title = json.loads(ctx.read(PLAN)).get("title", "")
     title = plan_title or ctx.project["title"]
+    off = disclaimers_off(ctx, title)
     post = ctx.read(POST)
     if ctx.settings.get("disclaimers", True):
         post = registry.with_footnotes(post, f"{title}\n{ctx.read(TEXT)}", banned(svc.config))
@@ -926,9 +927,29 @@ def step_publish(ctx: StepContext) -> None:
         ctx.log(f"{channel.label}: {result['message']}")
         sent = {"sent": time.time(), **audience(channel)} if channel.type == publish.TELEGRAM else {}
         results.append(result | {"label": channel.label} | sent)
+    if off:  # осознанно без пометок: когда, почему и о ком — в записи публикации
+        results = [r if r.get("skipped") else r | {"disclaimers_off": off} for r in results]
     done = {r["channel"] for r in results}
     kept = [r for r in read_published(ctx) if r["channel"] not in done]  # прошлые отправки в другие каналы
     ctx.write(PUBLISHED, json.dumps(results + kept, ensure_ascii=False, indent=2) + "\n")
+
+
+def disclaimers_off(ctx: StepContext, title: str) -> dict | None:
+    """Пометки выключены, а в выпуске есть упоминания из реестра: публикация — только с причиной."""
+    if ctx.settings.get("disclaimers", True):
+        return None
+    said = "\n".join([title, ctx.project["title"], ctx.read(TEXT), ctx.read(POST)])
+    names = [e.name for e in registry.mentioned(said, banned(services(ctx).config))]
+    if not names:
+        return None
+    reason = " ".join(str(ctx.state.get("ignore_disclaimers") or "").split())
+    if not reason:
+        raise StudioError(
+            f"В тексте есть упоминания из реестра ({', '.join(names)}), пометки выключены. Включи "
+            "«Помечать запрещённые организации» и пересобери видео или подтверди публикацию без пометок с причиной."
+        )
+    ctx.log(f"публикация без пометок о {', '.join(names)} — причина: {reason}")
+    return {"reason": reason, "at": time.time(), "mentions": names}
 
 
 def audience(channel: publish.Channel) -> dict:

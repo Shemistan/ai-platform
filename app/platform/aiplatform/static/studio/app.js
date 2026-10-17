@@ -509,13 +509,13 @@ async function deleteChannel(channelId, prefix) {
 
 // Выбор каналов и «повторно» у кнопки «Опубликовать» живут между перерисовками страницы.
 function publishPick(project) {
-  if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(project.settings.channels), force: false, ignoreVerdict: false };
+  if (!state.publish[project.id]) state.publish[project.id] = { channels: new Set(project.settings.channels), force: false, ignoreVerdict: false, noDisclaimers: "" };
   return state.publish[project.id];
 }
 
 async function publishNow(project) {
   const pick = publishPick(project);
-  await act("publish", { channels: [...pick.channels], force: pick.force, ignore_verdict: pick.ignoreVerdict });
+  await act("publish", { channels: [...pick.channels], force: pick.force, ignore_verdict: pick.ignoreVerdict, ignore_disclaimers: pick.noDisclaimers });
   pick.force = false;
 }
 
@@ -886,6 +886,15 @@ function stepBody(step) {
                 { class: "check" },
                 h("input", { type: "checkbox", checked: pick.ignoreVerdict, onchange: (e) => (pick.ignoreVerdict = e.target.checked) }),
                 h("span", {}, "Опубликовать несмотря на вердикт", h("span", { class: "hint" }, "Судья сказал «не готово» — как --force у make news-publish.")),
+              )
+            : null,
+          // Пометки выключены, а в тексте есть упоминания из реестра — публикация только с причиной.
+          p.settings.disclaimers === false && p.disclaimers?.length
+            ? h(
+                "label",
+                { class: "check" },
+                h("span", {}, `Без пометок о: ${p.disclaimers.map((d) => d.name).join(", ")}`, h("span", { class: "hint" }, "Пометки выключены. Причина обязательна — она сохранится в записи публикации.")),
+                h("input", { type: "text", value: pick.noDisclaimers, placeholder: "Причина публикации без пометок", oninput: (e) => (pick.noDisclaimers = e.target.value) }),
               )
             : null,
           channelAdder("step-publish"),
