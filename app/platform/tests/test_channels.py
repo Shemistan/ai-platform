@@ -2,6 +2,7 @@
 
 import time
 import unittest
+from unittest import mock
 
 from aiplatform.channels.service import ChannelsModule
 from tests.helpers import PlatformCase
@@ -64,8 +65,26 @@ class ChannelsTest(PlatformCase):
     def test_bot_check_and_subscribers(self):
         _, bot = self.json("POST", "/api/channels/bot/check")
         self.assertEqual(bot["username"], "demo_narrator_bot")
-        _, subs = self.json("GET", "/api/channels/subscribers?sync=1")
+        _, subs = self.json("POST", "/api/channels/subscribers/sync")
         self.assertEqual((subs["active"], len(subs["subscribers"])), (2, 3))
+
+    def test_get_subscribers_never_syncs(self):
+        # GET с ?sync=1 (например <img src> с чужого сайта) не трогает getUpdates (SEC-008).
+        narrator = self.app.modules["channels"].narrator
+        calls = []
+        real = type(narrator).bridge
+
+        def spy(this, *args):
+            calls.append(args)
+            return real(this, *args)
+
+        with mock.patch.object(type(narrator), "bridge", spy):
+            status, _ = self.json("GET", "/api/channels/subscribers?sync=1")
+            self.assertEqual(status, 200)
+            self.assertEqual(calls, [("subscribers",)])
+            status, _ = self.json("POST", "/api/channels/subscribers/sync")
+            self.assertEqual(status, 200)
+            self.assertEqual(calls[-1], ("subscribers", "--sync"))
 
     def test_serve_accepts_subscriptions(self):
         _, serve = self.json("POST", "/api/channels/serve/start")

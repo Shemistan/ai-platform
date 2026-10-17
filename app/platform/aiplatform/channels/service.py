@@ -159,8 +159,11 @@ class ChannelsModule:
             case ("POST", ["bot", "check"]):
                 return req.send_json(self._bridge("bot", "--check"))
             case ("GET", ["subscribers"]):
-                sync = req.arg("sync") == "1"
-                return req.send_json(self._bridge("subscribers", *(["--sync"] if sync else [])))
+                # GET только читает: getUpdates сдвигает offset и пишет telegram.json,
+                # а GET не проверяется по Origin (SEC-008).
+                return req.send_json(self._bridge("subscribers"))
+            case ("POST", ["subscribers", "sync"]):
+                return req.send_json(self._bridge("subscribers", "--sync"))
             case ("GET", ["serve"]):
                 return req.send_json(self.serve.view())
             case ("POST", ["serve", "start"]):
