@@ -56,7 +56,7 @@
 | `video/` | `/api/video/` | ролики LTX и Wan, ключевые кадры (`timeline.py`), «живое фото» (`living.py`) |
 | `audio/` | `/api/audio/` | текст → mp3 через narrator; движки и голоса — `voices.py` |
 | `avatar/` | `/api/avatar/` | «Диктор»: персонаж по фото говорит текст — озвучка очередью «Аудио», анимация SadTalker (`sadtalker.py`), персонажи `characters.py` |
-| `montage/` | `/api/montage/` | «Монтаж» (в работе): расшифровка со временем слов — каталог `asr.py`, воркер `asr_worker.py` в окружении mlx-audio, `transcript.py` (тишина, точки разреза, WER), `compare.py` (`make asr-compare`) |
+| `montage/` | `/api/montage/` | «Монтаж»: своя запись → ролик (ниже) |
 | `studio/` | `/api/studio/` | сценарии выпусков и доска «Выпуски» (ниже) |
 | `library/` | `/api/library/` | «Статьи»: библиотека narrator через мост, озвучка/проверка/отправка — фоновые `core.tasks` |
 | `news/` | `/api/news/` | источники, главное за день, добор упавших, обзоры недели/месяца |
@@ -108,6 +108,15 @@
   `stats.py` (подписчики, просмотры, окна 24ч/72ч/7д), `metrics.py`, `history.py`
   (архив аналитики), `backfill.py`, `config.py`, `assets/`.
 
+## Монтаж `montage/`
+
+Своя запись («голова» + по желанию экран) → ролик для YouTube; свой список роликов, не доска.
+Конвейер (`projects.py`): звук → сдвиг экрана (`sync.py`) → тишина и расшифровка (`asr.py`, воркер
+`asr_worker.py` в окружении mlx-audio, `transcript.py`) → план LLM по индексам слов (`plan.py`,
+правила `assets/rules.md` + выученные `lessons.md`) → человек правит → сегменты с кэшем, склейка,
+финал (`edl.py`, `render.py`) → проверка повторной расшифровкой (до 2 кругов). Замечание человека →
+новый план и правило в `lessons.md`. `compare.py` — `make asr-compare`.
+
 ## Фронтенд `aiplatform/static/`
 
 Ванильный JS, ES-модули без сборки; страница вкладки = `static/<tab>/index.html` + `app.js`.
@@ -116,7 +125,7 @@
   `/api/config` → `tabs`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
   `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`,
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
-- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`),
+- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `montage/` (+`plan.js`),
   `board/` «Выпуски», `studio/` (`state.js`, `create.js`, `steps.js`, `head.js`,
   `media.js`, `publish.js`, `settings.js`), `library/` «Статьи», `news/`,
   `channels/`, `updates/`, `settings/`.
@@ -162,6 +171,8 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
   `uploads/`, `analytics/publications.jsonl`.
 - `photo/jobs/`, `video/jobs/`, `audio/jobs/`, `avatar/jobs/`, `library/tasks/` — задачи вкладок;
   `avatar/characters/<id>/` — персонажи диктора (картинка, согласие на лицо).
+- `montage/projects/<id>/`: `project.json`, `sources/`, `audio.wav`, `words.json`, `silences.json`,
+  `plan.json`, `segments/` (кэш), `output.mp4`, `subtitles.srt`; `montage/lessons.md` — выученные правила.
 - `studio/projects/<id>/`: `project.json`, `text.md`, `post.md`, `poster.*`,
   `plan.json`, `images/`, `clips/`, `voice.*`, `video.mp4`, `short.mp4`,
   `published.json`, `narrator/` (review.md судьи), `publish/<канал>/`;

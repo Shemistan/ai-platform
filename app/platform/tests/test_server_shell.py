@@ -82,7 +82,7 @@ class NavTabsTest(PlatformCase):
         self.assertEqual(len(ids), len(set(ids)))
         groups = [g for i, g in enumerate(t["group"] for t in tabs) if not i or tabs[i - 1]["group"] != g]
         self.assertEqual(len(groups), len(set(groups)), "группа вкладок разорвана другой")
-        self.assertEqual(ids[:5], ["photo", "video", "audio", "avatar", "board"])
+        self.assertEqual(ids[:6], ["photo", "video", "audio", "avatar", "montage", "board"])
         self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
         self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention"])
 

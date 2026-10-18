@@ -40,6 +40,7 @@ LIMITS: dict[str, tuple[float | None, float | None]] = {
     "audio": (90, None),
     "news": (30, None),
     "avatar": (720, 30),  # SadTalker на CPU: ~4 мин на секунду речи (M-серия); зависание ловит idle
+    "asr": (240, 30),  # расшифровка монтажа: час записи — десятки минут на большой модели
 }
 KIND_LABELS = {
     "llm": "LLM",
@@ -49,6 +50,7 @@ KIND_LABELS = {
     "audio": "озвучка",
     "news": "сбор новостей",
     "avatar": "анимация диктора",
+    "asr": "расшифровка монтажа",
 }
 
 _run_dir: Path | None = None

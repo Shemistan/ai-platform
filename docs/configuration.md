@@ -89,6 +89,7 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `AIP_AVATAR_SADTALKER_HOME` | `~/.local/share/avatar/sadtalker-cd4c046` | исходники SadTalker и его окружение `.venv` (вкладка «Диктор»); пишет `make models M=sadtalker` |
 | `AIP_AVATAR_MODELS_DIR` | `AIP_MODELS_DIR` | каталог, где лежит `SadTalker/` с весами (`checkpoints/`, `gfpgan/weights/`) |
 | `AIP_MONTAGE_ASR_PYTHON` | `~/.local/share/montage/mlx-audio-0.5.8/.venv/bin/python` | python окружения mlx-audio для расшифровки монтажа; пишет `make models M=whisper-large-v3-turbo` (и другие модели расшифровки) |
+| `AIP_MONTAGE_MAX_GB` | `16` | предел одной загрузки записи во вкладке «Монтаж», ГБ |
 | `AIP_MONTAGE_MODELS_DIR` | `AIP_MODELS_DIR` | каталог, где лежит `asr/` с весами расшифровки (по каталогу на репозиторий) |
 | `AIP_VIDEO_WAN_STEPS` | `10` | шаги Wan 2.2 (или старый `VIDEOGEN_WAN_STEPS`); целое от 1 |
 | `AIP_TEST_GUARD` | — | ставят тесты (`app/platform/tests/__init__.py`): с ним сервис отказывается работать на боевых `data/` и `data-demo/` |
