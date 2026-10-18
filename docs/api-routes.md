@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 106. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 118. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -123,6 +123,25 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | GET | `/api/audio/voices/{stem}/sample` | — | файл | — |
 | POST | `/api/audio/voices/{stem}` | JSON | JSON 202 | Перезаписать образец: из Gemini TTS (Charon) или из загруженной записи и её текста |
 | GET | `/api/audio/tasks/{task_id}` | — | JSON | — |
+
+### `avatar`
+
+Код: `app/platform/aiplatform/avatar/service.py`
+
+| Метод | Путь | Тело / query | Ответ | Что делает |
+|---|---|---|---|---|
+| GET | `/api/avatar/config` | — | JSON | — |
+| GET | `/api/avatar/characters` | — | JSON | — |
+| POST | `/api/avatar/characters` | JSON | JSON 201 | — |
+| GET | `/api/avatar/characters/{char_id}/image` | — | файл | — |
+| POST | `/api/avatar/characters/{char_id}/rename` | JSON | JSON | — |
+| POST | `/api/avatar/characters/{char_id}/delete` | — | JSON | — |
+| GET | `/api/avatar/jobs` | — | JSON | — |
+| POST | `/api/avatar/jobs` | JSON | JSON 201 | — |
+| GET | `/api/avatar/jobs/{job_id}` | — | JSON | — |
+| POST | `/api/avatar/jobs/{job_id}/cancel` | — | JSON | — |
+| GET | `/api/avatar/jobs/{job_id}/face` | — | файл | — |
+| GET | `/api/avatar/jobs/{job_id}/video` | ?download | файл | — |
 
 ### `channels`
 

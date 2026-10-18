@@ -6,7 +6,8 @@
 поля действия: канал, message_id, sha256 подписи и медиа, сноски, версия
 (дата сверки) реестра.
 
-Действия: publish, registry_apply, voice_record, disclaimers_off, delete.
+Действия: publish, registry_apply, voice_record, likeness_consent (лицо персонажа
+«Диктора»), disclaimers_off, delete.
 Файл только дополняется (права 0600); единственное исключение — ротация:
 записи старше года уходят в `audit-archive.jsonl`, тоже дописыванием.
 Механизм записи — тот же, что у журнала событий AN-002 (events.append_jsonl).
@@ -30,7 +31,7 @@ FILE = "audit.jsonl"
 ARCHIVE = "audit-archive.jsonl"
 KEEP_S = 365 * 24 * 3600  # записи старше — в архив
 LOCAL, SCHEDULER, AGENT = "local", "scheduler", "claude -p"
-ACTIONS = ("publish", "registry_apply", "voice_record", "disclaimers_off", "delete")
+ACTIONS = ("publish", "registry_apply", "voice_record", "likeness_consent", "disclaimers_off", "delete")
 _ROTATE = threading.Lock()
 
 

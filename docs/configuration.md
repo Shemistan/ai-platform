@@ -86,6 +86,8 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `AIP_LOG_STDERR` | — (`1` в LaunchAgent) | дублировать лог процесса в stderr |
 | `AIP_BACKEND` | `real` | `real` — настоящие модели; `fake` — фейковые генераторы, TTS, LLM и новости (так запускает `make demo`) |
 | `AIP_VIDEO_MODELS_DIR` | `AIP_MODELS_DIR`, иначе каталог рядом с `AIP_VIDEO_MODEL` | веса видеомоделей, если они лежат отдельно от фото (или старый `VIDEOGEN_MODELS_DIR`) |
+| `AIP_AVATAR_SADTALKER_HOME` | `~/.local/share/avatar/sadtalker-cd4c046` | исходники SadTalker и его окружение `.venv` (вкладка «Диктор»); пишет `make models M=sadtalker` |
+| `AIP_AVATAR_MODELS_DIR` | `AIP_MODELS_DIR` | каталог, где лежит `SadTalker/` с весами (`checkpoints/`, `gfpgan/weights/`) |
 | `AIP_VIDEO_WAN_STEPS` | `10` | шаги Wan 2.2 (или старый `VIDEOGEN_WAN_STEPS`); целое от 1 |
 | `AIP_TEST_GUARD` | — | ставят тесты (`app/platform/tests/__init__.py`): с ним сервис отказывается работать на боевых `data/` и `data-demo/` |
 | `AIP_TELEGRAM_API` | `https://api.telegram.org` | адрес Bot API для публикации и уведомлений; тесты ставят фейковый сервер `tests/fake_telegram.py`. Токен уходит по этому адресу — в бою не задавать |
@@ -130,7 +132,8 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 
 **Лимиты времени.** Зависший процесс снимается по таймауту и отпускает
 GPU-замок: LLM — 10 мин, картинка — 15, сборка видео — 30, видео — 60,
-озвучка — 90, сбор новостей — 30. Свои значения (минуты, `total` — весь
+озвучка — 90, сбор новостей — 30, анимация диктора — 720 (и 30 без
+вывода: SadTalker на процессоре тратит ~4 мин на секунду речи). Свои значения (минуты, `total` — весь
 запуск, `idle` — без вывода) — в `data/settings.json`:
 `"timeouts": {"video": {"total": 120, "idle": 20}}`.
 

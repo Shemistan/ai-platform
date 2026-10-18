@@ -98,6 +98,7 @@
 | `studio` | `config`, `projects` (`POST` — создать; `Idempotency-Key`), `projects/<id>` и действия `run`, `cancel`, `approve`, `publish`, `publish/resolve`, `settings`, `split`, `summary`, `clone`, `archive`, `uploaded`, `stats`, `upload/…`, `artifacts/<name>`, `files/…`; `board`, `preflight`, `stats/refresh` |
 | `photo` | `config`, `jobs`, `jobs/<id>` (`cancel`, `upscale`, `image`), `uploads` |
 | `video` | `config`, `jobs`, `jobs/<id>` (`cancel`, `video`), `living`, `uploads` |
+| `avatar` | `config`, `uploads`, `characters` (`POST` — добавить), `characters/<id>` (`image`, `rename`, `delete`), `jobs`, `jobs/<id>` (`cancel`, `face`, `video`) |
 | `audio` | `config`, `preview`, `split`, `library`, `jobs` (`batch`), `jobs/<id>` (`cancel`, `audio`), `voices`, `tasks/<id>` |
 | `channels` | `state`, `items` (`POST` — добавить), `items/import`, `items/<id>` (`POST` — правка, `…/delete`), `bot/check`, `subscribers`, `serve` (`start`, `stop`) |
 | `library` | `state`, `articles`, `articles/<id>` и действия, `render`, `unsent/<mode>`, `tasks/<id>` |
