@@ -265,7 +265,7 @@ install_video() {
         vocoder.safetensors spatial_upscaler_x2_v1_0.safetensors chat_template.jinja" ;;
   esac
   dir="$MODELS_DIR/${repo#*/}"
-  command -v ffmpeg >/dev/null 2>&1 || fail "нужен ffmpeg: brew install ffmpeg"
+  command -v ffmpeg >/dev/null 2>&1 || fail "нужен ffmpeg: brew install ffmpeg-full"
   install_ltx  # в его окружении есть hf — им и качаем веса
 
   # В репозиториях лежат и трансформеры других режимов, и LoRA — десятки лишних

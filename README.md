@@ -23,7 +23,8 @@ cd app/platform && make demo   # http://127.0.0.1:8780
 
 ```sh
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"  # Homebrew, если его нет
-brew install uv ffmpeg ruff python@3.12   # системный python3 на Mac — 3.9, нужен 3.11+
+brew install uv ffmpeg-full ruff python@3.12   # системный python3 на Mac — 3.9, нужен 3.11+
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"  # ffmpeg-full keg-only; формула ffmpeg — без drawtext
 git clone <url репозитория> ai-platform && cd ai-platform
 sh bootstrap.sh                           # включить git-хуки репозитория
 cd app/platform && make demo              # http://127.0.0.1:8780 — фейковые модели

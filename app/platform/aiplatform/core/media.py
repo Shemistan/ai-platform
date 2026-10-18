@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,6 +10,17 @@ from pathlib import Path
 
 def ffmpeg_available(ffmpeg: str = "ffmpeg") -> bool:
     return shutil.which(ffmpeg) is not None
+
+
+@functools.lru_cache(maxsize=8)
+def has_filter(ffmpeg: str, name: str) -> bool:
+    """Есть ли в сборке ffmpeg фильтр (drawtext — подписи и брендинг на кадрах). Кэш: баннер
+    проблем собирается на каждый /api/config, а `-filters` — отдельный процесс."""
+    try:
+        out = subprocess.run([ffmpeg, "-hide_banner", "-filters"], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return any(line.split()[1:2] == [name] for line in out.splitlines())
 
 
 def ffprobe_for(ffmpeg: str = "ffmpeg") -> str:

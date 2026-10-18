@@ -170,6 +170,8 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
 FLUX.2 Klein-9B/Dev. Видео: LTX-2.5 Q4 (по умолчанию), LTX-2.3 Q4, Wan 2.2.
 Апскейл: SeedVR2. Ставит `app/platform/tools/setup-model.sh` (`make models M=`).
 Известная беда: Flux2CLI без `mlx.metallib` — `docs/грабли.md` №1.
+ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): формула `ffmpeg`
+без freetype, а постер и слайды рисуются `drawtext`. Нет фильтра — баннер (`media.has_filter`).
 
 ## Решения (ADR, `docs/decisions/`)
 
