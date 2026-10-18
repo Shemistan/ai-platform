@@ -56,6 +56,7 @@
 | `video/` | `/api/video/` | ролики LTX и Wan, ключевые кадры (`timeline.py`), «живое фото» (`living.py`) |
 | `audio/` | `/api/audio/` | текст → mp3 через narrator; движки и голоса — `voices.py` |
 | `avatar/` | `/api/avatar/` | «Диктор»: персонаж по фото говорит текст — озвучка очередью «Аудио», анимация SadTalker (`sadtalker.py`), персонажи `characters.py` |
+| `montage/` | `/api/montage/` | «Монтаж» (в работе): расшифровка со временем слов — каталог `asr.py`, воркер `asr_worker.py` в окружении mlx-audio, `transcript.py` (тишина, точки разреза, WER), `compare.py` (`make asr-compare`) |
 | `studio/` | `/api/studio/` | сценарии выпусков и доска «Выпуски» (ниже) |
 | `library/` | `/api/library/` | «Статьи»: библиотека narrator через мост, озвучка/проверка/отправка — фоновые `core.tasks` |
 | `news/` | `/api/news/` | источники, главное за день, добор упавших, обзоры недели/месяца |
@@ -170,7 +171,9 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
 
 Фото: Z-Image Turbo (по умолчанию), Krea-2, Qwen-Image-2512, Ideogram 4,
 FLUX.2 Klein-9B/Dev. Видео: LTX-2.5 Q4 (по умолчанию), LTX-2.3 Q4, Wan 2.2.
-Апскейл: SeedVR2. Диктор: SadTalker (CPU, окружение в `~/.local/share/avatar`). Ставит `app/platform/tools/setup-model.sh` (`make models M=`).
+Апскейл: SeedVR2. Диктор: SadTalker (CPU, окружение в `~/.local/share/avatar`).
+Расшифровка монтажа: Whisper Large V3 Turbo (по умолчанию), Whisper Large V3, Qwen3-ASR 1.7B +
+ForcedAligner — mlx-audio в `~/.local/share/montage`, веса в `<AIP_MODELS_DIR>/asr/`. Ставит `app/platform/tools/setup-model.sh` (`make models M=`).
 Известная беда: Flux2CLI без `mlx.metallib` — `docs/грабли.md` №1.
 ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): формула `ffmpeg`
 без freetype, а постер и слайды рисуются `drawtext`. Нет фильтра — баннер (`media.has_filter`).

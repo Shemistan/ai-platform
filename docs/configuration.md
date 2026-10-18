@@ -88,6 +88,8 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `AIP_VIDEO_MODELS_DIR` | `AIP_MODELS_DIR`, иначе каталог рядом с `AIP_VIDEO_MODEL` | веса видеомоделей, если они лежат отдельно от фото (или старый `VIDEOGEN_MODELS_DIR`) |
 | `AIP_AVATAR_SADTALKER_HOME` | `~/.local/share/avatar/sadtalker-cd4c046` | исходники SadTalker и его окружение `.venv` (вкладка «Диктор»); пишет `make models M=sadtalker` |
 | `AIP_AVATAR_MODELS_DIR` | `AIP_MODELS_DIR` | каталог, где лежит `SadTalker/` с весами (`checkpoints/`, `gfpgan/weights/`) |
+| `AIP_MONTAGE_ASR_PYTHON` | `~/.local/share/montage/mlx-audio-0.5.8/.venv/bin/python` | python окружения mlx-audio для расшифровки монтажа; пишет `make models M=whisper-large-v3-turbo` (и другие модели расшифровки) |
+| `AIP_MONTAGE_MODELS_DIR` | `AIP_MODELS_DIR` | каталог, где лежит `asr/` с весами расшифровки (по каталогу на репозиторий) |
 | `AIP_VIDEO_WAN_STEPS` | `10` | шаги Wan 2.2 (или старый `VIDEOGEN_WAN_STEPS`); целое от 1 |
 | `AIP_TEST_GUARD` | — | ставят тесты (`app/platform/tests/__init__.py`): с ним сервис отказывается работать на боевых `data/` и `data-demo/` |
 | `AIP_TELEGRAM_API` | `https://api.telegram.org` | адрес Bot API для публикации и уведомлений; тесты ставят фейковый сервер `tests/fake_telegram.py`. Токен уходит по этому адресу — в бою не задавать |

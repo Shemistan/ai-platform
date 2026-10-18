@@ -1,4 +1,4 @@
-.PHONY: run demo smoke contracts test test-serial cov lint check release-prep release-tag python-check models move-models install-agent \
+.PHONY: run demo smoke contracts asr-compare test test-serial cov lint check release-prep release-tag python-check models move-models install-agent \
 	uninstall-agent agent-status digest-check backup restore migrate-data tm-exclude deploy deployed
 
 # Нужен Python 3.11+. Не задан (make PYTHON=… или окружение) — берём первый подходящий
@@ -75,6 +75,12 @@ smoke: python-check
 # Тест сверяет с ними флаги build_argv. Один снапшот: make contracts C=flux2-t2i.
 contracts: python-check
 	$(PYTHON) -m aiplatform.contracts $(C)
+
+# Сравнение моделей расшифровки монтажа на своей записи с эталонным текстом (PRD-020):
+# make asr-compare REC=запись.mp4 REF=teleprompter.md [M="whisper-large-v3-turbo qwen3-asr-1.7b"] [TERMS="Claude Code,ffmpeg"].
+asr-compare: python-check
+	@test -n "$(REC)" -a -n "$(REF)" || { echo "укажи запись и эталон: make asr-compare REC=… REF=…" >&2; exit 2; }
+	$(PYTHON) -m aiplatform.montage.compare "$(REC)" "$(REF)" $(if $(M),--models $(M),) $(if $(TERMS),--terms "$(TERMS)",)
 
 # Пайплайны и веса фото и видео (нужны сеть и Mac на Apple Silicon): make models M="z-image-turbo ltx-2.3-q4".
 # Другой каталог весов: … AIP_MODELS_DIR=~/local_models. Список моделей: make models M=--list.

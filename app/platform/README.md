@@ -134,7 +134,7 @@ make run
 Скрипт ставит пайплайны в `~/.local/share/photogen` и `…/videogen`
 (`PHOTOGEN_HOME`, `VIDEOGEN_HOME`), качает веса в `AIP_MODELS_DIR` и
 дописывает в `local.mk` строки `AIP_MODELS_DIR`, `AIP_PHOTO_*`,
-`AIP_VIDEO_*`, `AIP_AVATAR_*`, не трогая остальные. Повтор докачивает недостающее. Для
+`AIP_VIDEO_*`, `AIP_AVATAR_*`, `AIP_MONTAGE_*`, не трогая остальные. Повтор докачивает недостающее. Для
 FLUX.2 сам докладывает `mlx.metallib` к Flux2CLI и ставит энкодер Klein.
 Нет внешнего диска — `make models M=z-image-turbo AIP_MODELS_DIR=~/local_models`;
 перенести скачанное на другой диск — `make move-models TO=~/local_models`.
@@ -155,6 +155,7 @@ FLUX.2 сам докладывает `mlx.metallib` к Flux2CLI и ставит 
 | `ltx-2.5-q4` | видео | ~27 ГБ (энкодер внутри) | модель видео по умолчанию, нужен `HF_TOKEN` |
 | `wan-2.2-t2v-q4` | видео | ~27 ГБ | только по промпту, без звука |
 | `sadtalker` | диктор | ~2,4 ГБ + окружение ~1 ГБ в `~/.local/share/avatar` | идёт на процессоре |
+| `whisper-large-v3-turbo`, `whisper-large-v3`, `qwen3-asr-1.7b` | монтаж | 1,5 / 2,9 / 5,5 ГБ + mlx-audio ~1 ГБ | расшифровка; сравнить: `make asr-compare` |
 
 Размеры — `du` каталогов (у LTX — файлы режима `--distilled`, `FULL=1` — весь репозиторий);
 сверху — пайплайны (~2 ГБ) и SeedVR2 (~7 ГБ, при первом увеличении). Обновил пайплайн —
