@@ -275,7 +275,7 @@ function setup(p) {
     h("label", { class: "field narrow" }, h("span", { class: "field-label" }, "Самая длинная пауза, с"), pause),
     box("check", "Проверить результат", "расшифровать готовый ролик ещё раз и вырезать пропущенное (до двух кругов)"),
     box("subtitles", "Субтитры в кадре", "файл .srt для YouTube будет в любом случае"),
-    box("motion", "Моушн-графика", "заголовки, цифры и списки поверх ролика"),
+    box("motion", "Моушн-графика", cfg.hyperframes_available ? "заголовки, цифры и списки поверх ролика" : "HyperFrames не установлен: make models M=hyperframes (нужен Node 22+)"),
     box("auto", "Собрать без подтверждения плана"),
     error,
     h("div", { class: "toolbar" }, start),
@@ -325,7 +325,11 @@ function result(p) {
     ),
     fixed.length ? h("p", {}, `Проверка нашла и вырезала ещё ${fixed.length}: `, fixed.map((i) => i.reason || kindLabel(i.kind)).join("; ")) : rounds.length ? h("p", { class: "muted" }, "Проверка готового ролика ничего не нашла.") : null,
     tech.length ? h("div", { class: "callout" }, "Длинные паузы в результате — посмотри эти места:\n", tech.join("\n")) : null,
-    p.motion?.skipped ? h("p", { class: "muted" }, `Моушн-графика: ${p.motion.skipped}`) : p.motion?.inserts ? h("p", { class: "muted" }, `Моушн-вставок: ${p.motion.inserts}`) : null,
+    p.motion?.skipped ? h("p", { class: "muted" }, `Моушн-графика: ${p.motion.skipped}`) : null,
+    p.motion?.inserts
+      ? h("p", { class: "muted" }, `Моушн-вставок: ${p.motion.inserts}${p.motion.failed ? `, не отрисовалось: ${p.motion.failed}` : ""} — `,
+          (p.motion.items || []).map((i) => `${clock(i.at)} ${i.fields.title || i.fields.value || i.fields.text}`).join(" · "))
+      : null,
     h("div", { class: "toolbar" },
       h("a", { class: "btn btn--primary", href: `${p.video_url}?download=1` }, "Скачать mp4"),
       h("a", { class: "btn btn--secondary", href: p.srt_url }, "Субтитры .srt"),

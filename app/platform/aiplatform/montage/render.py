@@ -29,6 +29,11 @@ LOUDNORM = "loudnorm=I=-14:TP=-1.5:LRA=11"  # громкость YouTube
 CACHE_VERSION = 1  # поднять, если меняется то, как рисуется сегмент
 
 
+def frame(t: float) -> float:
+    """Время на сетке кадров: сегмент из целых кадров не удлиняется при кодировании."""
+    return round(round(t * FPS) / FPS, 4)
+
+
 @dataclass(frozen=True)
 class SegmentSpec:
     start: float

@@ -128,7 +128,30 @@ def _phrases(prompt: str) -> list[tuple[int, list[str]]]:
     return [(int(first), text.split()) for first, text in _LINE.findall(body)]
 
 
+_TIMED = re.compile(r"^\[\d+\]\s+(\d+(?:\.\d+)?)\s+(.+)$", re.M)
+
+
+def motion(prompt: str) -> dict:
+    """Вставки: подпись к первой фразе с латиницей и заголовок через 25+ с — в пределах ролика."""
+    duration = float(re.search(r"Длительность ролика: (\d+)", prompt)[1])
+    body = prompt.split("Расшифровка:", 1)[-1]
+    inserts: list[dict] = []
+    for at_raw, text in _TIMED.findall(body):
+        at = float(at_raw)
+        if at < 3 or at + 4 > duration - 5 or (inserts and at < inserts[-1]["at"] + 25):
+            continue
+        latin = " ".join(w for w in text.split() if re.search(r"[A-Za-z]", w)).strip(",.")
+        if latin and not inserts:
+            fields = {"title": latin, "subtitle": "демо-вставка"}
+            inserts.append({"at": at, "duration": 4, "template": "lower_third", "fields": fields})
+        elif inserts:
+            inserts.append({"at": at, "duration": 4, "template": "title", "fields": {"title": _words(text, 4)}})
+    return {"inserts": inserts}
+
+
 def montage(task: str, prompt: str) -> dict:
+    if task == "montage_motion":
+        return motion(prompt)
     if task == "montage_check":
         issues = (
             [{"from": 0, "to": 0, "kind": "slip", "reason": "демо: оговорка"}]

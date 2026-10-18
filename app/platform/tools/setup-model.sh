@@ -39,6 +39,8 @@ SADTALKER_RELEASE=https://github.com/OpenTalker/SadTalker/releases/download/v0.0
 SADTALKER_TORCH="torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2"
 # Расшифровка монтажа (вкладка «Монтаж»): Whisper и Qwen3-ASR на mlx-audio в своём окружении.
 MLX_AUDIO_VERSION=0.5.8
+# Моушн-графика монтажа: HyperFrames CLI (Apache-2.0) — HTML + GSAP → прозрачный MOV; нужен Node 22+.
+HYPERFRAMES_VERSION=0.8.172
 
 DEFAULT_MODELS_DIR="/Volumes/External SSD/local_models"
 PHOTO_HOME="${PHOTOGEN_HOME:-$HOME/.local/share/photogen}"
@@ -51,6 +53,8 @@ AVATAR_HOME="${AVATAR_HOME:-$HOME/.local/share/avatar}"
 SADTALKER_SRC="$AVATAR_HOME/sadtalker-$(printf %.7s "$SADTALKER_REVISION")"
 MONTAGE_HOME="${MONTAGE_HOME:-$HOME/.local/share/montage}"
 ASR_ENV="$MONTAGE_HOME/mlx-audio-$MLX_AUDIO_VERSION/.venv"
+HYPERFRAMES_HOME="$MONTAGE_HOME/hyperframes-$HYPERFRAMES_VERSION"
+HYPERFRAMES_BIN="$HYPERFRAMES_HOME/node_modules/@hyperframes/cli/bin/hyperframes.mjs"
 GEMMA_NAME="${GEMMA_REPO#*/}"
 GEMMA_CACHE="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--mlx-community--$GEMMA_NAME"
 SETTINGS=local.mk
@@ -67,6 +71,7 @@ PHOTO_IDS="$(echo "$PHOTO_CATALOG" | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')
 # Каталог расшифровки — тот же, что у сервиса: id репозиторий ревизия [репозиторий ревизия] (montage/asr.py).
 ASR_CATALOG="$("$PYTHON" -m aiplatform.montage.asr)" || fail "не удалось прочитать каталог моделей расшифровки"
 ASR_IDS="$(echo "$ASR_CATALOG" | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')"
+MOTION_IDS="hyperframes"
 
 # Строка KEY=VALUE в local.mk: старая с тем же ключом убирается, остальное — как было.
 set_setting() {
@@ -110,13 +115,14 @@ if [ "$1" = "--list" ]; then
   echo "видео: $VIDEO_IDS"
   echo "диктор: $AVATAR_IDS"
   echo "расшифровка: $ASR_IDS"
+  echo "моушн-графика: $MOTION_IDS"
   exit 0
 fi
 
-ALL_IDS="фото: $PHOTO_IDS; видео: $VIDEO_IDS; диктор: $AVATAR_IDS; расшифровка: $ASR_IDS"
+ALL_IDS="фото: $PHOTO_IDS; видео: $VIDEO_IDS; диктор: $AVATAR_IDS; расшифровка: $ASR_IDS; моушн-графика: $MOTION_IDS"
 [ $# -gt 0 ] || fail "укажи модель. $ALL_IDS"
 for id in "$@"; do
-  case " $PHOTO_IDS $VIDEO_IDS $AVATAR_IDS $ASR_IDS " in
+  case " $PHOTO_IDS $VIDEO_IDS $AVATAR_IDS $ASR_IDS $MOTION_IDS " in
     *" $id "*) ;;
     *) fail "неизвестная модель «${id}». $ALL_IDS" ;;
   esac
@@ -135,6 +141,8 @@ write_settings() {
   [ ! -f "$WAN_SRC/pyproject.toml" ] || set_setting AIP_VIDEO_WAN_CMD "uv run --project $WAN_SRC pocketai-wan-video"
   [ ! -x "$SADTALKER_SRC/.venv/bin/python" ] || set_setting AIP_AVATAR_SADTALKER_HOME "$SADTALKER_SRC"
   [ ! -x "$ASR_ENV/bin/hf" ] || set_setting AIP_MONTAGE_ASR_PYTHON "$ASR_ENV/bin/python"
+  # Полный путь к node: под launchd PATH короткий, а nvm-ноды в нём нет.
+  [ ! -f "$HYPERFRAMES_BIN" ] || set_setting AIP_MONTAGE_HYPERFRAMES_CMD "\"$(command -v node)\" \"$HYPERFRAMES_BIN\""
 }
 
 token_help() {
@@ -399,6 +407,22 @@ install_asr() {
   echo "✓ $id установлена"
 }
 
+# --- моушн-графика монтажа: HyperFrames CLI ---
+
+install_hyperframes() {
+  command -v node >/dev/null 2>&1 || fail "нужен Node 22+: brew install node@22 (или nvm install 22)"
+  major="$(node -p 'process.versions.node.split(".")[0]')"
+  [ "$major" -ge 22 ] || fail "HyperFrames нужен Node 22+, сейчас $(node --version): brew install node@22 или nvm install 22"
+  if [ ! -f "$HYPERFRAMES_BIN" ]; then
+    echo "→ ставлю HyperFrames $HYPERFRAMES_VERSION в $HYPERFRAMES_HOME (с ним — headless Chrome)"
+    mkdir -p "$HYPERFRAMES_HOME"
+    npm install --silent --prefix "$HYPERFRAMES_HOME" "@hyperframes/cli@$HYPERFRAMES_VERSION" ||
+      fail "@hyperframes/cli@$HYPERFRAMES_VERSION не встал (нужна сеть к npm)"
+  fi
+  node "$HYPERFRAMES_BIN" doctor || echo "⚠ hyperframes doctor недоволен — вывод выше"
+  echo "✓ hyperframes установлен"
+}
+
 for id in "$@"; do
   if echo " $VIDEO_IDS " | grep -q " $id "; then
     install_video "$id"
@@ -406,6 +430,8 @@ for id in "$@"; do
     install_sadtalker
   elif echo " $ASR_IDS " | grep -q " $id "; then
     install_asr "$id"
+  elif [ "$id" = hyperframes ]; then
+    install_hyperframes
   else
     install_photo "$id"
   fi

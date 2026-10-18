@@ -115,7 +115,9 @@
 `asr_worker.py` в окружении mlx-audio, `transcript.py`) → план LLM по индексам слов (`plan.py`,
 правила `assets/rules.md` + выученные `lessons.md`) → человек правит → сегменты с кэшем, склейка,
 финал (`edl.py`, `render.py`) → проверка повторной расшифровкой (до 2 кругов). Замечание человека →
-новый план и правило в `lessons.md`. `compare.py` — `make asr-compare`.
+новый план и правило в `lessons.md`. Моушн (`motion.py`): LLM выбирает вставки по шаблонам (title,
+lower_third, stat, list, quote), HyperFrames рендерит HTML+GSAP (`assets/motion/style.css`) в прозрачный
+MOV, финал накладывает. `compare.py` — `make asr-compare`. Фейки: `fake_asr.py`, `fake_hyperframes.py`.
 
 ## Фронтенд `aiplatform/static/`
 
@@ -184,7 +186,8 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
 FLUX.2 Klein-9B/Dev. Видео: LTX-2.5 Q4 (по умолчанию), LTX-2.3 Q4, Wan 2.2.
 Апскейл: SeedVR2. Диктор: SadTalker (CPU, окружение в `~/.local/share/avatar`).
 Расшифровка монтажа: Whisper Large V3 Turbo (по умолчанию), Whisper Large V3, Qwen3-ASR 1.7B +
-ForcedAligner — mlx-audio в `~/.local/share/montage`, веса в `<AIP_MODELS_DIR>/asr/`. Ставит `app/platform/tools/setup-model.sh` (`make models M=`).
+ForcedAligner — mlx-audio в `~/.local/share/montage`, веса в `<AIP_MODELS_DIR>/asr/`; моушн — HyperFrames
+(Node 22+, `make models M=hyperframes`). Ставит `app/platform/tools/setup-model.sh` (`make models M=`).
 Известная беда: Flux2CLI без `mlx.metallib` — `docs/грабли.md` №1.
 ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): формула `ffmpeg`
 без freetype, а постер и слайды рисуются `drawtext`. Нет фильтра — баннер (`media.has_filter`).

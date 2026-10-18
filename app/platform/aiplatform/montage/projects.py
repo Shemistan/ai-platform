@@ -23,7 +23,7 @@ from aiplatform.core import log, media, runner, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
-from aiplatform.montage import asr, edl, plan, render, sync, transcript
+from aiplatform.montage import asr, edl, motion, plan, render, sync, transcript
 from aiplatform.montage.config import MontageConfig
 from aiplatform.studio import llm
 
@@ -102,7 +102,6 @@ class MontageProjects:
         self._projects: dict[str, dict] = {}
         self._cancels: dict[str, threading.Event] = {}
         self._queue: queue.Queue[tuple[str, str, str] | None] = queue.Queue()
-        self.motion: Callable[[dict, Path, list[dict], threading.Event], list[render.Overlay]] | None = None
         config.projects_dir.mkdir(parents=True, exist_ok=True)
         self.load_problems: list[str] = []
         self._load()
@@ -684,16 +683,24 @@ class MontageProjects:
             current["cuts"] = cuts
             atomic_write(folder / "plan.json", json.dumps(current, ensure_ascii=False))
             self._note(project, f"Проверка нашла {len(issues)}, пересобираю")
-        overlays = self.motion(project, folder / "output.mp4", out_words, cancel) if self.motion else []
-        if overlays:
-            self._final(project, out_words, overlays, cancel)
+        info = None
+        if project["options"]["motion"]:
+            overlays, info = motion.run(
+                self.config, project, folder, out_words, result.duration, cancel,
+                ask=lambda text: self._llm(text, project, cancel),
+                note=lambda line: self._note(project, line),
+                progress=lambda stage, percent: self._progress(project, cancel, stage, percent),
+            )  # fmt: skip
+            if overlays:
+                self._final(project, out_words, overlays, cancel)
         with self._lock:
             project["output"] = {
-                "duration": round(result.duration, 1),
+                "duration": round(media.duration(folder / "output.mp4", self.config.ffmpeg), 1),
                 "segments": len(result.segments),
                 "size": (folder / "output.mp4").stat().st_size,
             }
             project["check"] = {"rounds": rounds}
+            project["motion"] = info
             self._set_plan_summary(project, words, cuts, layout)
             fixed = sum(len(r["issues"]) for r in rounds)
             self._history(project, "render", f"{result.duration:.0f} с, исправлено проверкой: {fixed}")
@@ -720,7 +727,8 @@ class MontageProjects:
         parts: list[Path] = []
         total = len(result.segments)
         for n, seg in enumerate(result.segments, 1):
-            spec = render.SegmentSpec(seg.start, seg.end, seg.layout, project["options"]["grade"], head, screen,
+            start, end = render.frame(seg.start), render.frame(seg.end)  # целые кадры: склейка без набегания
+            spec = render.SegmentSpec(start, end, seg.layout, project["options"]["grade"], head, screen,
                                       project["screen_offset"])  # fmt: skip
             part = cache / f"{spec.key()}.mp4"
             if not part.is_file():
