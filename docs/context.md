@@ -55,6 +55,7 @@
 | `photo/` | `/api/photo/` | картинки (mflux, Flux2CLI), правка/маска/расширение, апскейл SeedVR2; `jobs.py`, `models.py` CATALOG |
 | `video/` | `/api/video/` | ролики LTX и Wan, ключевые кадры (`timeline.py`), «живое фото» (`living.py`) |
 | `audio/` | `/api/audio/` | текст → mp3 через narrator; движки и голоса — `voices.py` |
+| `avatar/` | `/api/avatar/` | «Диктор»: персонаж по фото говорит текст — озвучка очередью «Аудио», анимация SadTalker (`sadtalker.py`), персонажи `characters.py` |
 | `studio/` | `/api/studio/` | сценарии выпусков и доска «Выпуски» (ниже) |
 | `library/` | `/api/library/` | «Статьи»: библиотека narrator через мост, озвучка/проверка/отправка — фоновые `core.tasks` |
 | `news/` | `/api/news/` | источники, главное за день, добор упавших, обзоры недели/месяца |
@@ -62,7 +63,7 @@
 | `updates/` | `/api/updates/` | версии моделей (PyPI/GitHub/HF), реестр запрещённых организаций и иноагентов |
 | `settings/` | `/api/settings/` | `settings.json`: выключенные модели/голоса, расписание, уведомления, уборка |
 | `core/` | — | общие механизмы (ниже) |
-| `fakes/` | — | имитации CLI для `make demo` и тестов (`fake_narrate.py`, `fake_gen.py`, `fake_ltx.py`, `fake_llm.py`…) |
+| `fakes/` | — | имитации CLI для `make demo` и тестов (`fake_narrate.py`, `fake_gen.py`, `fake_ltx.py`, `fake_sadtalker.py`, `fake_llm.py`…) |
 | `static/` | — | фронтенд (ниже) |
 
 `core/`: `gate.py` GPU-замок, одна тяжёлая модель за раз (ADR 0004) · `narrator.py`
@@ -114,7 +115,7 @@
   `/api/config` → `tabs`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
   `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`,
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
-- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`,
+- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`),
   `board/` «Выпуски», `studio/` (`state.js`, `create.js`, `steps.js`, `head.js`,
   `media.js`, `publish.js`, `settings.js`), `library/` «Статьи», `news/`,
   `channels/`, `updates/`, `settings/`.
@@ -158,7 +159,8 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
 - Корень: `settings.json`, `channels.json`, `registry.json`, `backup.json`,
   `events.jsonl`, `audit.jsonl`, `notifications.log`, `logs/platform.log`, `run/`,
   `uploads/`, `analytics/publications.jsonl`.
-- `photo/jobs/`, `video/jobs/`, `audio/jobs/`, `library/tasks/` — задачи вкладок.
+- `photo/jobs/`, `video/jobs/`, `audio/jobs/`, `avatar/jobs/`, `library/tasks/` — задачи вкладок;
+  `avatar/characters/<id>/` — персонажи диктора (картинка, согласие на лицо).
 - `studio/projects/<id>/`: `project.json`, `text.md`, `post.md`, `poster.*`,
   `plan.json`, `images/`, `clips/`, `voice.*`, `video.mp4`, `short.mp4`,
   `published.json`, `narrator/` (review.md судьи), `publish/<канал>/`;
@@ -168,7 +170,7 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
 
 Фото: Z-Image Turbo (по умолчанию), Krea-2, Qwen-Image-2512, Ideogram 4,
 FLUX.2 Klein-9B/Dev. Видео: LTX-2.5 Q4 (по умолчанию), LTX-2.3 Q4, Wan 2.2.
-Апскейл: SeedVR2. Ставит `app/platform/tools/setup-model.sh` (`make models M=`).
+Апскейл: SeedVR2. Диктор: SadTalker (CPU, окружение в `~/.local/share/avatar`). Ставит `app/platform/tools/setup-model.sh` (`make models M=`).
 Известная беда: Flux2CLI без `mlx.metallib` — `docs/грабли.md` №1.
 ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): формула `ffmpeg`
 без freetype, а постер и слайды рисуются `drawtext`. Нет фильтра — баннер (`media.has_filter`).

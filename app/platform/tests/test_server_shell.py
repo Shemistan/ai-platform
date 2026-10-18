@@ -82,7 +82,7 @@ class NavTabsTest(PlatformCase):
         self.assertEqual(len(ids), len(set(ids)))
         groups = [g for i, g in enumerate(t["group"] for t in tabs) if not i or tabs[i - 1]["group"] != g]
         self.assertEqual(len(groups), len(set(groups)), "группа вкладок разорвана другой")
-        self.assertEqual(ids[:4], ["photo", "video", "audio", "board"])
+        self.assertEqual(ids[:5], ["photo", "video", "audio", "avatar", "board"])
         self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
         self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention"])
 
@@ -91,7 +91,7 @@ class NavTabsTest(PlatformCase):
         from aiplatform.core import uploads
 
         want = {"image": uploads.MAX_UPLOAD_BYTES, "media": uploads.MAX_AUDIO_BYTES}
-        for module in ("photo", "video", "audio", "studio"):
+        for module in ("photo", "video", "audio", "avatar", "studio"):
             status, body = self.json("GET", f"/api/{module}/config")
             self.assertEqual(status, 200, module)
             self.assertEqual(body["upload_limits"], want, module)

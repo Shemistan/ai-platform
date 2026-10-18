@@ -1,0 +1,81 @@
+/* Только своё для вкладки «Диктор»: токены — в /tokens.css, общие элементы — в /ui.css. */
+
+.main-col { display: grid; gap: var(--sp-5); min-width: 0; }
+
+.field-label .muted, .check .muted { font-weight: var(--fw-regular); }
+
+#composer { display: grid; gap: var(--sp-4); }
+#speech-text { display: grid; gap: var(--sp-3); }
+/* Переключатели «Кадр» и «Качество» по два варианта — колонка шире, чтобы они не ломались столбиком. */
+#video-settings { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); align-items: start; }
+
+/* --- персонажи --- */
+
+.characters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.character {
+  position: relative;
+  display: grid;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.character.current { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.character-pick {
+  display: grid;
+  gap: var(--sp-1);
+  padding: 0 0 var(--sp-2);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.character-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.character-pick img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--sunken); }
+.character-name { padding: 0 var(--sp-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fw-semibold); }
+.character-kind { padding: 0 var(--sp-2); }
+.character-tools { display: flex; justify-content: space-between; align-items: center; padding: 0 var(--sp-1) var(--sp-1); }
+
+.character-add {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--sp-2);
+  min-height: 180px;
+  width: 100%;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+  background: var(--sunken);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.character-add:hover { border-color: var(--accent); color: var(--text); }
+.character-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* --- окно «Новый персонаж» --- */
+
+.new-character { display: grid; gap: var(--sp-3); min-width: min(420px, 80vw); }
+.new-character .preview { width: 160px; aspect-ratio: 1; object-fit: cover; border-radius: var(--r-md); background: var(--sunken); }
+.consent { display: grid; gap: var(--sp-2); padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-md); }
+
+/* --- задача --- */
+
+.player { width: 100%; max-height: 60vh; border-radius: var(--r-md); display: block; background: var(--sunken); }
+.job-foot { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-3); }
+.job-face { width: 56px; height: 56px; object-fit: cover; border-radius: var(--r-sm); }
+
+/* --- история --- */
+
+.history-thumb { flex: none; width: 40px; height: 40px; object-fit: cover; border-radius: var(--r-sm); background: var(--sunken); }

@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from aiplatform.avatar import models as avatar_models
 from aiplatform.photo import models as photo_models
 from aiplatform.updates import checks
 from aiplatform.video import models as video_models
@@ -34,7 +35,7 @@ class CatalogTest(unittest.TestCase):
         proc = run("--list")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         listed = proc.stdout.replace(";", " ").split()
-        for model in (*photo_models.CATALOG, *video_models.CATALOG):
+        for model in (*photo_models.CATALOG, *video_models.CATALOG, *avatar_models.CATALOG):
             with self.subTest(model=model.id):
                 self.assertIn(model.id, listed)
 
@@ -48,7 +49,7 @@ class CatalogTest(unittest.TestCase):
         text = README.read_text(encoding="utf-8")
         section = text[text.index("### Установка моделей") :]
         section = section[: section.index("\n### ", 1)]
-        for model in (*photo_models.CATALOG, *video_models.CATALOG):
+        for model in (*photo_models.CATALOG, *video_models.CATALOG, *avatar_models.CATALOG):
             row = next((line for line in section.splitlines() if f"`{model.id}`" in line), "")
             with self.subTest(model=model.id):
                 self.assertIn("ГБ", row, f"нет строки с размером весов для {model.id}")
@@ -65,7 +66,7 @@ class CatalogTest(unittest.TestCase):
 
     def test_script_keeps_versions_the_updates_tab_talks_about(self):
         text = SCRIPT.read_text(encoding="utf-8")
-        for name in ("MFLUX_VERSION=", "FLUX2_VERSION=", "LTX_VERSION=", "WAN_REVISION="):
+        for name in ("MFLUX_VERSION=", "FLUX2_VERSION=", "LTX_VERSION=", "WAN_REVISION=", "SADTALKER_REVISION="):
             self.assertIn(name, text)
 
 

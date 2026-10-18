@@ -31,7 +31,12 @@ from pathlib import Path
 from aiplatform.core import log
 
 DAY_S = 86400
-JOB_TABS = {"photo": "Задачи «Фото»", "video": "Задачи «Видео»", "audio": "Задачи «Аудио»"}
+JOB_TABS = {
+    "photo": "Задачи «Фото»",
+    "video": "Задачи «Видео»",
+    "audio": "Задачи «Аудио»",
+    "avatar": "Задачи «Диктор»",
+}
 ACTIVE = ("queued", "running")
 # Тяжёлые промежуточные файлы опубликованного выпуска: каталоги и шаблоны файлов (steps.py).
 TRIM_DIRS = ("images", "clips", "short")

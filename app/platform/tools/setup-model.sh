@@ -1,5 +1,5 @@
 #!/bin/sh
-# Ставит пайплайны и качает веса моделей фото и видео. Соседние репозитории
+# Ставит пайплайны и качает веса моделей фото, видео и диктора. Соседние репозитории
 # (photogen, videogen) не нужны: всё, что нужно, — в этом скрипте.
 #
 # Запуск из app/platform:  make models M="z-image-turbo ltx-2.5-q4"
@@ -32,6 +32,11 @@ WAN_REVISION=86bfc9847512a9eb66886388b8b92ba81e0b6729
 GEMMA_REPO=mlx-community/gemma-3-12b-it-4bit
 # Flux2CLI v3.1.0 собран с mlx-swift 0.31.6 = MLX v0.31.1; шейдеры — из колеса mlx-metal той же версии.
 MLX_METAL_VERSION=0.31.1
+# SadTalker (вкладка «Диктор»): проект не развивается с 2023 года — ревизия и окружение закреплены.
+# На Mac он идёт на CPU; Python 3.10 и torch 2.0 — последние, с которыми встают его зависимости.
+SADTALKER_REVISION=cd4c0465ae0b54a6f85af57f5c65fec9fe23e7f8
+SADTALKER_RELEASE=https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc
+SADTALKER_TORCH="torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2"
 
 DEFAULT_MODELS_DIR="/Volumes/External SSD/local_models"
 PHOTO_HOME="${PHOTOGEN_HOME:-$HOME/.local/share/photogen}"
@@ -40,11 +45,14 @@ MFLUX_ENV="$PHOTO_HOME/mflux-$MFLUX_VERSION"
 FLUX2_BIN="$PHOTO_HOME/flux2cli-$FLUX2_VERSION/Flux2CLI"
 LTX_SRC="$VIDEO_HOME/ltx-2-mlx-$LTX_VERSION"
 WAN_SRC="$VIDEO_HOME/wan-video-mlx-$(printf %.7s "$WAN_REVISION")"
+AVATAR_HOME="${AVATAR_HOME:-$HOME/.local/share/avatar}"
+SADTALKER_SRC="$AVATAR_HOME/sadtalker-$(printf %.7s "$SADTALKER_REVISION")"
 GEMMA_NAME="${GEMMA_REPO#*/}"
 GEMMA_CACHE="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--mlx-community--$GEMMA_NAME"
 SETTINGS=local.mk
 PYTHON="${PYTHON:-python3}"
 VIDEO_IDS="ltx-2.3-q4 ltx-2.5-q4 wan-2.2-t2v-q4"
+AVATAR_IDS="sadtalker"
 
 fail() { echo "⛔ setup-model: $1" >&2; exit 1; }
 
@@ -93,14 +101,16 @@ fi
 if [ "$1" = "--list" ]; then
   echo "фото: $PHOTO_IDS"
   echo "видео: $VIDEO_IDS"
+  echo "диктор: $AVATAR_IDS"
   exit 0
 fi
 
-[ $# -gt 0 ] || fail "укажи модель. фото: $PHOTO_IDS; видео: $VIDEO_IDS"
+ALL_IDS="фото: $PHOTO_IDS; видео: $VIDEO_IDS; диктор: $AVATAR_IDS"
+[ $# -gt 0 ] || fail "укажи модель. $ALL_IDS"
 for id in "$@"; do
-  case " $PHOTO_IDS $VIDEO_IDS " in
+  case " $PHOTO_IDS $VIDEO_IDS $AVATAR_IDS " in
     *" $id "*) ;;
-    *) fail "неизвестная модель «${id}». фото: $PHOTO_IDS; видео: $VIDEO_IDS" ;;
+    *) fail "неизвестная модель «${id}». $ALL_IDS" ;;
   esac
 done
 
@@ -115,6 +125,7 @@ write_settings() {
   [ ! -x "$FLUX2_BIN" ] || set_setting AIP_PHOTO_FLUX2_CMD "\"$FLUX2_BIN\""
   [ ! -f "$LTX_SRC/pyproject.toml" ] || set_setting AIP_VIDEO_LTX_CMD "uv run --project $LTX_SRC ltx-2-mlx"
   [ ! -f "$WAN_SRC/pyproject.toml" ] || set_setting AIP_VIDEO_WAN_CMD "uv run --project $WAN_SRC pocketai-wan-video"
+  [ ! -x "$SADTALKER_SRC/.venv/bin/python" ] || set_setting AIP_AVATAR_SADTALKER_HOME "$SADTALKER_SRC"
 }
 
 token_help() {
@@ -299,10 +310,63 @@ $(token_help "https://huggingface.co/$repo" "$id")"
   echo "✓ $id установлена"
 }
 
+# --- диктор: SadTalker (фото + речь → говорящая голова) ---
+
+# Файл из релиза — докачкой во временный и переименованием: оборванная загрузка не выглядит готовой.
+fetch() {
+  [ ! -s "$2" ] || return 0
+  echo "→ скачиваю $(basename "$2")"
+  curl -fL --retry 3 -C - -sS "$1" -o "$2.part" || fail "не скачался $1"
+  mv "$2.part" "$2"
+}
+
+install_sadtalker() {
+  dir="$MODELS_DIR/SadTalker"
+  command -v ffmpeg >/dev/null 2>&1 || fail "нужен ffmpeg: brew install ffmpeg-full"
+  if [ ! -f "$SADTALKER_SRC/inference.py" ]; then
+    echo "→ скачиваю SadTalker $(printf %.7s "$SADTALKER_REVISION") в $SADTALKER_SRC"
+    mkdir -p "$SADTALKER_SRC"
+    curl -fsSL "https://github.com/OpenTalker/SadTalker/archive/$SADTALKER_REVISION.tar.gz" |
+      tar -xz -C "$SADTALKER_SRC" --strip-components=1 || fail "исходники SadTalker не скачались"
+  fi
+  py="$SADTALKER_SRC/.venv/bin/python"
+  # Проверка — импорт самих модулей SadTalker, а не пакетов: зависимость может встать и не импортироваться
+  # (librosa 0.9 берёт pkg_resources, которого нет в свежем setuptools).
+  check="import sys; sys.path.insert(0, '$SADTALKER_SRC'); import src.generate_batch, src.facerender.animate, src.utils.preprocess"
+  if ! "$py" -c "$check" 2>/dev/null; then
+    echo "→ ставлю окружение SadTalker (Python 3.10, $SADTALKER_TORCH)"
+    uv venv --quiet --allow-existing --python 3.10 "$SADTALKER_SRC/.venv" || fail "uv не нашёл Python 3.10"
+    # shellcheck disable=SC2086
+    uv pip install --quiet --python "$py" $SADTALKER_TORCH "setuptools<70" wheel || fail "torch для SadTalker не встал"
+    # gradio — только для их веб-демо; basicsr собирается из исходников и импортирует torch при сборке.
+    grep -v '^gradio' "$SADTALKER_SRC/requirements.txt" | sed 's/ *#.*//' > "$SADTALKER_SRC/requirements-aip.txt"
+    # shellcheck disable=SC2086
+    uv pip install --quiet --python "$py" --no-build-isolation $SADTALKER_TORCH "setuptools<70" -r "$SADTALKER_SRC/requirements-aip.txt" ||
+      fail "зависимости SadTalker не встали (uv pip install в $SADTALKER_SRC/.venv)"
+    "$py" -c "$check" || fail "SadTalker не импортируется в своём окружении — вывод выше"
+  fi
+  mkdir -p "$dir/checkpoints" "$dir/gfpgan/weights"
+  for f in mapping_00109-model.pth.tar mapping_00229-model.pth.tar SadTalker_V0.0.2_256.safetensors \
+    SadTalker_V0.0.2_512.safetensors; do
+    fetch "$SADTALKER_RELEASE/$f" "$dir/checkpoints/$f"
+  done
+  # Детектор и выравнивание лиц, улучшение лица: SadTalker ищет их в gfpgan/weights от рабочего каталога.
+  fetch https://github.com/xinntao/facexlib/releases/download/v0.1.0/alignment_WFLW_4HG.pth "$dir/gfpgan/weights/alignment_WFLW_4HG.pth"
+  fetch https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth \
+    "$dir/gfpgan/weights/detection_Resnet50_Final.pth"
+  fetch https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth "$dir/gfpgan/weights/GFPGANv1.4.pth"
+  fetch https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth "$dir/gfpgan/weights/parsing_parsenet.pth"
+  echo "✓ sadtalker установлена"
+}
+
 for id in "$@"; do
   case " $VIDEO_IDS " in
     *" $id "*) install_video "$id" ;;
-    *) install_photo "$id" ;;
+    *)
+      case " $AVATAR_IDS " in
+        *" $id "*) install_sadtalker ;;
+        *) install_photo "$id" ;;
+      esac ;;
   esac
 done
 

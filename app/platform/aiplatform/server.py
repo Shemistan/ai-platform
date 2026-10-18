@@ -124,6 +124,7 @@ ModulesFactory = Callable[[Context], list[Module]]
 def default_modules(ctx: Context) -> list[Module]:
     """Все вкладки платформы в порядке шапки; сценарии — после вкладок, которыми пользуются."""
     from aiplatform.audio.service import AudioModule
+    from aiplatform.avatar.service import AvatarModule
     from aiplatform.channels.service import ChannelsModule
     from aiplatform.library.service import LibraryModule
     from aiplatform.news.service import NewsModule
@@ -137,6 +138,7 @@ def default_modules(ctx: Context) -> list[Module]:
         PhotoModule(ctx),
         VideoModule(ctx),
         AudioModule(ctx),
+        AvatarModule(ctx),
         StudioModule(ctx),
         LibraryModule(ctx),
         NewsModule(ctx),
@@ -151,6 +153,7 @@ NAV_GROUPS = {
     "photo": "media",
     "video": "media",
     "audio": "media",
+    "avatar": "media",
     "library": "texts",
     "news": "texts",
     "channels": "service",

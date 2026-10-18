@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Диктор — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="page-head">
+    <div class="page-title">
+      <h1>Диктор</h1>
+      <span class="chip" id="model-chip">…</span>
+    </div>
+  </header>
+  <div class="banner" id="banner" role="status" hidden></div>
+
+  <main class="layout">
+   <div class="main-col">
+    <form class="panel" id="composer" novalidate>
+      <h2>Новое видео</h2>
+      <p class="hint">Персонаж скажет твой текст твоим голосом: сначала озвучка, потом лицо оживает под неё — губы, мимика, повороты головы.</p>
+
+      <section class="field" aria-labelledby="characters-title">
+        <span class="field-label" id="characters-title">Персонаж</span>
+        <ul class="characters" id="characters"></ul>
+      </section>
+
+      <fieldset class="field">
+        <legend class="field-label">Речь</legend>
+        <div class="segmented segmented--radio" id="sources"></div>
+      </fieldset>
+
+      <div id="speech-text">
+        <label class="field">
+          <span class="field-label">Текст</span>
+          <textarea id="text" rows="6" placeholder="Что скажет персонаж"></textarea>
+          <span class="muted small" id="text-count"></span>
+        </label>
+        <div class="settings">
+          <label class="field">
+            <span class="field-label">Движок озвучки</span>
+            <select id="engine"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">Голос</span>
+            <select id="voice"></select>
+          </label>
+          <label class="field" id="speed-field">
+            <span class="field-label">Скорость</span>
+            <input type="number" id="speed" step="0.05" placeholder="как у голоса">
+          </label>
+        </div>
+      </div>
+
+      <div class="field" id="speech-audio" hidden>
+        <span class="field-label">Готовая озвучка</span>
+        <div class="toolbar">
+          <button type="button" class="btn btn--secondary" id="audio-pick">Выбрать файл</button>
+          <span class="muted small" id="audio-name">mp3, wav или m4a</span>
+        </div>
+        <input type="file" id="audio-input" accept="audio/mpeg,audio/wav,audio/x-wav,audio/mp4,.m4a" hidden>
+      </div>
+
+      <div class="settings" id="video-settings">
+        <label class="field">
+          <span class="field-label">Модель</span>
+          <select id="model"></select>
+          <span class="muted small" id="model-note"></span>
+        </label>
+        <fieldset class="field">
+          <legend class="field-label">Кадр</legend>
+          <div class="segmented segmented--radio" id="frames"></div>
+        </fieldset>
+        <fieldset class="field">
+          <legend class="field-label">Качество</legend>
+          <div class="segmented segmented--radio" id="sizes"></div>
+        </fieldset>
+        <label class="check">
+          <input type="checkbox" id="enhance">
+          <span>Улучшить лицо <span class="muted">— чётче, но дольше</span></span>
+        </label>
+      </div>
+
+      <p class="form-error" id="form-error" role="alert" hidden></p>
+      <button type="submit" class="btn btn--primary" id="submit">Подготовить</button>
+    </form>
+   </div>
+
+    <div class="side">
+      <section class="panel" id="job-panel">
+        <h2>Видео</h2>
+        <div class="job" id="job"></div>
+      </section>
+      <section class="panel">
+        <h2>История</h2>
+        <ul class="history" id="history"></ul>
+      </section>
+    </div>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
