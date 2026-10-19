@@ -58,6 +58,9 @@ class TimeMapTest(unittest.TestCase):
             self.assertEqual(a.edit_frame_end, b.edit_frame_start)
         self.assertEqual(tm.duration_frames, sum(s.frames for s in tm.segments))
         self.assertAlmostEqual(tm.duration_s, result.duration, delta=3 / 30)
+        # Столько же кадров, сколько вырежет рендер: границы на сетке кадров по отдельности (render.frame).
+        for seg in tm.segments:
+            self.assertEqual(seg.frames, round(seg.source_pts_end * 30) - round(seg.source_pts_start * 30))
         self.assertEqual(schemas.validate_many("time_map_segment", [s.as_dict() for s in tm.segments]), [])
 
     def test_round_trip_and_cut_words(self):

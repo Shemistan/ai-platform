@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+from urllib.parse import unquote
 
 from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
 from aiplatform.montage import asr, capabilities, documents, edl, exports, plan, render, templates
@@ -148,7 +149,7 @@ class MontageModule:
             case ("GET", ["projects", pid, "documents"]):
                 return req.send_json({"documents": found(projects.documents(pid), MISSING)})
             case ("POST", ["projects", pid, "documents"]):
-                name = req.headers.get("X-File-Name", "")
+                name = unquote(req.headers.get("X-File-Name", ""))  # UI шлёт имя в percent-кодировке
                 data = req.body(documents.MAX_BYTES, f"Материал больше {documents.MAX_BYTES // 2**20} МБ.")
                 return req.send_json(found(projects.add_document(pid, name, data), MISSING), HTTPStatus.CREATED)
             case ("POST", ["projects", pid, "documents", doc_id, "delete"]):

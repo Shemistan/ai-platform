@@ -159,7 +159,7 @@ LLM — ADR 0006, файлы — 0007).
   `/api/config` → `tabs`, меню групп — `core/nav-groups.js`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
   `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`,
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
-- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `montage/` (+`plan.js`, `stages.js`),
+- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`),
   `board/` «Выпуски», `studio/` (`state.js`, `create.js`, `steps.js`, `head.js`,
   `media.js`, `publish.js`, `settings.js`), `library/` «Статьи», `news/`,
   `channels/`, `updates/`, `settings/`.

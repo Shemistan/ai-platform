@@ -3,10 +3,11 @@
 import { $, api, chip, confirmAction, debounce, fill, h, icon, jobProgress, logBlock, modal, poller, statusChip, toast, toneOf, uploadFile } from "/ui.js";
 import { clock, cutOf, layoutAt, phrases, projectPayload, setLayout, togglePhrase, toggleWord } from "./plan.js";
 import { stageRows, summary } from "./stages.js";
+import { GATE_TEXT, GATE_TONE, beatRows, frameClock, gateState, qaGroups, sceneCard, scenePatch, trackBars } from "./storyboard.js";
 
 const API = "/api/montage";
-const STATUS_LABEL = { draft: "черновик", review: "ждёт вас" };
-const STATUS_TONE = { draft: "neutral", review: "warning" };
+const STATUS_LABEL = { draft: "черновик", review: "ждёт вас", waiting_approval: "ждёт утверждения", blocked: "заблокирован", interrupted: "прерван" };
+const STATUS_TONE = { draft: "neutral", review: "warning", waiting_approval: "warning", blocked: "danger", interrupted: "warning" };
 
 const state = {
   config: null,
@@ -18,6 +19,12 @@ const state = {
   lastCut: null, // последняя своя вырезка — Shift+клик тянет её
   saving: "",
   uploads: {}, // role → { name, percent, error }
+  story: null, // GET storyboard: знания, биты, стиль, сцены (MASTER_SPEC)
+  storyFor: null,
+  after: null, // GET timeline, qa, exports, revisions, documents готового ролика
+  afterFor: null,
+  docs: null, // GET documents
+  docsFor: null,
 };
 
 const isActive = (p) => p?.status === "queued" || p?.status === "running";
@@ -84,11 +91,27 @@ async function refresh(signal) {
     throw err;
   }
   state.project = project;
-  const needsPlan = ["review", "done"].includes(project.status) || (project.plan && !isActive(project));
+  const needsPlan = ["review", "done", "waiting_approval"].includes(project.status) || (project.plan && !isActive(project));
   const key = `${project.id}:${project.updated_at}`;
   if (needsPlan && state.planFor !== key && !state.saving) {
     state.plan = await api("GET", `${API}/projects/${project.id}/plan`, undefined, { signal });
     state.planFor = key;
+  }
+  if (!isActive(project) && state.docsFor !== key) {
+    state.docs = (await api("GET", `${API}/projects/${project.id}/documents`, undefined, { signal })).documents;
+    state.docsFor = key;
+  }
+  if (project.storyboard && !isActive(project) && state.storyFor !== key) {
+    state.story = await api("GET", `${API}/projects/${project.id}/storyboard`, undefined, { signal });
+    state.storyFor = key;
+  }
+  if (project.status === "done" && state.afterFor !== key) {
+    const base = `${API}/projects/${project.id}`;
+    const [timeline, qa, exportsList, revisions] = await Promise.all(
+      ["timeline", "qa", "exports", "revisions"].map((name) => api("GET", `${base}/${name}`, undefined, { signal })),
+    );
+    state.after = { timeline, qa, exports: exportsList.exports, revisions: revisions.revisions };
+    state.afterFor = key;
   }
   renderProject();
 }
@@ -107,16 +130,20 @@ function renderProject() {
       h("button", { type: "button", class: "btn btn--primary", onclick: newProject }, "Новый ролик")));
   }
   // Пока идёт работа, перерисовываем только прогресс: так не сбивается ввод и не дёргается расшифровка.
-  const key = JSON.stringify([p.id, p.status, p.updated_at, state.planFor, Object.keys(state.uploads).length]);
+  const key = JSON.stringify([p.id, p.status, p.updated_at, state.planFor, state.storyFor, state.afterFor, state.docsFor, Object.keys(state.uploads).length]);
   if (key === renderedKey && !isActive(p)) return;
   renderedKey = key;
   const blocks = [head(p)];
-  if (p.status === "draft" || ((p.status === "failed" || p.status === "canceled") && !p.transcript)) blocks.push(setup(p));
+  const fresh = p.status === "draft" || (["failed", "canceled", "interrupted"].includes(p.status) && !p.transcript);
+  if (fresh) blocks.push(setup(p));
   if (isActive(p)) blocks.push(progress(p));
-  if (p.status === "failed") blocks.push(h("section", { class: "panel" }, h("p", { class: "job-error", role: "alert" }, p.error), retry(p)));
+  if (p.status === "failed" || p.status === "interrupted") blocks.push(h("section", { class: "panel" }, h("p", { class: "job-error", role: "alert" }, p.error), retry(p)));
   if (p.status === "canceled") blocks.push(h("section", { class: "panel" }, h("p", { class: "muted" }, "Отменено."), retry(p)));
   if (p.status === "done") blocks.push(result(p));
+  if (p.status === "done" && state.after) blocks.push(qaPanel(p), exportsPanel(p), timelinePanel(p), revisionsPanel(p));
+  if (state.story && !isActive(p) && p.storyboard) blocks.push(storyboardPanel(p));
   if (state.plan && !isActive(p) && p.transcript) blocks.push(review(p));
+  if (!fresh && !isActive(p) && p.transcript) blocks.push(materials(p));
   fill(root, ...blocks);
 }
 
@@ -128,6 +155,7 @@ function head(p) {
       h("label", { class: "field grow" }, h("span", { class: "field-label" }, "Название"), title),
       h("div", { class: "toolbar" },
         statusChipOf(p.status),
+        chip(state.config?.modes.find((m) => m.id === p.mode)?.label || p.mode, "neutral"),
         p.backend === "fake" ? chip("Демо — без модели", "warning") : null,
         h("button", { type: "button", class: "btn btn--link btn--danger", onclick: () => remove(p), disabled: isActive(p) }, "Удалить"),
       ),
@@ -245,6 +273,7 @@ function setup(p) {
     return h("label", { class: "check" }, input, h("span", {}, text, hint ? h("span", { class: "muted" }, ` — ${hint}`) : null));
   };
   const error = h("p", { class: "form-error", role: "alert", hidden: true });
+  const modeHint = h("p", { class: "muted small" }, MODE_HINT[o.mode] || "");
   const start = h("button", { type: "button", class: "btn btn--primary" }, p.status === "draft" ? "Начать" : "Начать заново");
   start.addEventListener("click", async () => {
     const { payload, error: problem } = projectPayload({ ...o, title: p.title, model: model.value, terms: terms.value, maxPause: pause.value });
@@ -252,7 +281,7 @@ function setup(p) {
     error.hidden = true;
     start.disabled = true;
     try {
-      await api("POST", `${API}/projects/${p.id}`, { options: payload.options });
+      await api("POST", `${API}/projects/${p.id}`, { options: { ...payload.options, mode: o.mode } });
       state.project = await api("POST", `${API}/projects/${p.id}/start`);
       renderedKey = "";
       renderProject();
@@ -275,12 +304,65 @@ function setup(p) {
     h("fieldset", { class: "field" }, h("legend", { class: "field-label" }, "Цвет головы"), radios("grade", cfg.grades, o.grade, (g) => (o.grade = g))),
     h("label", { class: "field narrow" }, h("span", { class: "field-label" }, "Самая длинная пауза, с"), pause),
     box("check", "Проверить результат", "расшифровать готовый ролик ещё раз и вырезать пропущенное (до двух кругов)"),
-    box("subtitles", "Субтитры в кадре", "файл .srt для YouTube будет в любом случае"),
-    box("motion", "Моушн-графика", cfg.hyperframes_available ? "заголовки, цифры и списки поверх ролика" : "HyperFrames не установлен: make models M=hyperframes (нужен Node 22+)"),
-    box("auto", "Собрать без подтверждения плана"),
+    box("subtitles", "Субтитры в кадре", "файл .srt и .vtt для YouTube будут в любом случае"),
+    box("motion", "Моушн-графика", cfg.hyperframes_available ? "раскадровка по битам и сцены по 12 шаблонам; в режиме «Автономно» — сразу, иначе кнопкой «Раскадровка»" : "HyperFrames не установлен: make models M=hyperframes (нужен Node 22+)"),
+    h("fieldset", { class: "field" }, h("legend", { class: "field-label" }, "Режим"),
+      radios("mode", cfg.modes, o.mode, (m) => ((o.mode = m), (modeHint.textContent = MODE_HINT[m] || ""))),
+      modeHint),
     error,
     h("div", { class: "toolbar" }, start),
+    materials(p),
   );
+}
+
+const MODE_HINT = {
+  reviewed: "ты подтверждаешь план вырезок, раскадровку и экспорт",
+  autonomous: "ворота проходятся сами, QA обязателен, экспорт — если QA прошёл; каждое решение в журнале",
+  manual: "план вырезок ИИ не строит — отмечаешь вырезки сам, раскадровка по кнопке",
+};
+
+// ---------- материалы (MASTER_SPEC §5.3) ----------
+
+function materials(p) {
+  const cfg = state.config;
+  const docs = state.docs || [];
+  const input = h("input", { type: "file", accept: ".md,.txt,.docx,.pdf", hidden: true });
+  input.addEventListener("change", () => input.files[0] && addDocument(p, input.files[0]));
+  const busy = isActive(p);
+  const rows = docs.map((d) =>
+    h("li", { class: "list-row" },
+      h("span", {}, d.name, " ", chip(d.status === "ready" ? `${d.chunks} фрагм.` : d.status === "unavailable" ? "недоступен" : "не прочитан", d.status === "ready" ? "success" : "warning")),
+      d.error ? h("span", { class: "muted small" }, d.error) : null,
+      h("button", { type: "button", class: "btn btn--link btn--sm", disabled: busy, onclick: () => dropDocument(p, d.id) }, "Убрать"),
+    ));
+  return h("section", { class: "panel stack" },
+    h("h2", {}, "Материалы"),
+    h("p", { class: "muted small" }, "Конспект, статья, документация — ИИ выпишет утверждения с цитатами и не нарисует в сценах то, чего нет ни в речи, ни в материалах. ",
+      `Форматы: ${(cfg.document_exts || []).join(", ")}${cfg.pdftotext_hint ? `; ${cfg.pdftotext_hint}` : ""}.`),
+    rows.length ? h("ul", { class: "list" }, ...rows) : h("p", { class: "muted small" }, "Пока без материалов — утверждения будут только из речи."),
+    h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: busy, onclick: () => input.click() }, "Добавить материал"), input),
+  );
+}
+
+async function addDocument(p, file) {
+  try {
+    await uploadFile(`${API}/projects/${p.id}/documents`, file, { limit: state.config.max_document_bytes, headers: { "X-File-Name": encodeURIComponent(file.name) } });
+    toast("Материал добавлен");
+    state.docsFor = null;
+    await refresh();
+  } catch (err) {
+    if (err.kind !== "abort") setBanner(err.message, "error");
+  }
+}
+
+async function dropDocument(p, id) {
+  try {
+    await api("POST", `${API}/projects/${p.id}/documents/${id}/delete`);
+    state.docsFor = null;
+    await refresh();
+  } catch (err) {
+    setBanner(err.message, "error");
+  }
 }
 
 // Общая полоса с «этап N из M · прошло · осталось» и список этапов действия (PRD-025).
@@ -341,7 +423,7 @@ function result(p) {
   const tech = rounds.flatMap((r) => r.tech || []);
   return h("section", { class: "panel stack" },
     h("h2", {}, "Готовый ролик"),
-    h("video", { class: "player", src: `${p.video_url}?v=${Math.round(p.updated_at)}`, controls: true, preload: "metadata", playsinline: true }),
+    (resultPlayer = h("video", { class: "player", src: `${p.video_url}?v=${Math.round(p.updated_at)}`, controls: true, preload: "metadata", playsinline: true })),
     h("ul", { class: "facts" },
       h("li", {}, h("b", {}, clock(p.output.duration)), h("span", { class: "muted" }, ` из ${clock(p.sources.head.duration)} записи`)),
       h("li", {}, h("b", {}, String(p.plan?.cuts ?? 0)), h("span", { class: "muted" }, " вырезок")),
@@ -354,11 +436,228 @@ function result(p) {
       ? h("p", { class: "muted" }, `Моушн-вставок: ${p.motion.inserts}${p.motion.failed ? `, не отрисовалось: ${p.motion.failed}` : ""} — `,
           (p.motion.items || []).map((i) => `${clock(i.at)} ${i.fields.title || i.fields.value || i.fields.text}`).join(" · "))
       : null,
+    p.motion?.by_status ? h("p", { class: "muted" }, `Сцен раскадровки: ${p.motion.enabled}, отрисовано ${p.motion.by_status.rendered || 0}`) : null,
     h("div", { class: "toolbar" },
       h("a", { class: "btn btn--primary", href: `${p.video_url}?download=1` }, "Скачать mp4"),
       h("a", { class: "btn btn--secondary", href: p.srt_url }, "Субтитры .srt"),
+      h("a", { class: "btn btn--secondary", href: `${API}/projects/${p.id}/subtitles.vtt` }, ".vtt"),
     ),
   );
+}
+
+// ---------- QA, экспорт, таймлайн, ревизии (MASTER_SPEC §5.7–5.8, §8) ----------
+
+function gateChip(value) {
+  return chip(GATE_TEXT[value] || value, GATE_TONE[value] || "neutral");
+}
+
+function qaPanel(p) {
+  const report = state.after.qa;
+  const groups = qaGroups(report.items);
+  const row = (item) =>
+    h("li", { class: `qa-item qa-${item.severity}` },
+      h("b", {}, item.check), " ", item.message,
+      item.evidence?.t_start != null ? h("button", { type: "button", class: "phrase-time", onclick: () => seekResult(item.evidence.t_start) }, clock(item.evidence.t_start)) : null,
+      item.proposed_fix ? h("span", { class: "muted small" }, ` — ${item.proposed_fix}`) : null,
+      item.status !== "open" ? chip(item.status === "fixed" ? "исправлено" : item.status === "escalated" ? "не исправилось" : item.status, item.status === "fixed" ? "success" : "warning") : null,
+    );
+  return h("section", { class: "panel stack" },
+    h("div", { class: "field-head" }, h("h2", {}, "QA"),
+      h("div", { class: "toolbar" }, "механика ", gateChip(report.gates?.mechanical), " семантика ", gateChip(report.gates?.semantic))),
+    report.gates?.semantic === "human_review" ? h("p", { class: "muted small" }, "Семантика без проверки ИИ: посмотри ролик сам — оговорки, смысл сцен.") : null,
+    groups.error.length ? h("ul", { class: "qa-list" }, ...groups.error.map(row)) : h("p", { class: "muted small" }, "Ошибок нет."),
+    groups.warning.length ? h("details", { class: "disclosure", open: true }, h("summary", {}, `Предупреждения: ${groups.warning.length}`), h("ul", { class: "qa-list" }, ...groups.warning.map(row))) : null,
+    groups.info.length ? h("details", { class: "disclosure" }, h("summary", {}, `Исправлено проверкой: ${groups.info.length}`), h("ul", { class: "qa-list" }, ...groups.info.map(row))) : null,
+    h("p", { class: "muted small" }, h("a", { href: `${API}/projects/${p.id}/qa_report.json` }, "qa_report.json"), " · ", h("a", { href: `${API}/projects/${p.id}/decisions`, target: "_blank" }, "журнал решений")),
+  );
+}
+
+let resultPlayer = null;
+
+function seekResult(t) {
+  if (!resultPlayer) return;
+  resultPlayer.currentTime = Math.max(0, t - 0.5);
+  resultPlayer.play().catch(() => {});
+}
+
+function exportsPanel(p) {
+  const cfg = state.config;
+  const failed = state.after.qa.gates?.mechanical === "fail";
+  const preset = h("select", { "aria-label": "Пресет экспорта" }, ...cfg.presets.map((x) => h("option", { value: x.id }, x.label)));
+  const reason = h("textarea", { rows: 2, placeholder: "Почему экспортируем несмотря на ошибки QA — попадёт в журнал и provenance", hidden: !failed });
+  const run = h("button", { type: "button", class: "btn btn--primary", disabled: isActive(p) }, "Экспортировать");
+  run.addEventListener("click", async () => {
+    if (failed && !reason.value.trim()) return (reason.focus(), setBanner("QA нашёл ошибки: укажи причину экспорта.", "error"));
+    await act(p, "export", { preset: preset.value, override_reason: reason.value.trim() });
+  });
+  const rows = (state.after.exports || []).map((e) =>
+    h("li", { class: "list-row" },
+      h("span", {}, `#${e.n} ${e.label}`, e.override_reason ? chip("override", "warning") : null, " ", h("span", { class: "muted small" }, `${(e.size / 2 ** 20).toFixed(0)} МБ`)),
+      h("span", { class: "toolbar" },
+        h("a", { class: "btn btn--link btn--sm", href: e.file_url }, "Скачать"),
+        h("a", { class: "btn btn--link btn--sm", href: e.provenance_url }, "provenance"),
+        h("a", { class: "btn btn--link btn--sm", href: e.archive_url }, "проект .zip")),
+    ));
+  return h("section", { class: "panel stack" },
+    h("h2", {}, "Экспорт"),
+    failed ? h("div", { class: "callout" }, "Механические ворота QA не пройдены: экспорт только с причиной, она запишется в журнал решений.") : null,
+    h("div", { class: "toolbar" }, h("label", { class: "field grow" }, h("span", { class: "field-label" }, "Пресет"), preset), run),
+    failed ? h("label", { class: "field" }, h("span", { class: "field-label" }, "Причина (override)"), reason) : null,
+    rows.length ? h("ul", { class: "list" }, ...rows) : h("p", { class: "muted small" }, "Экспортов ещё нет. Ролик выше — сборка 1080p; экспорт добавляет provenance и архив проекта."),
+  );
+}
+
+function timelinePanel(p) {
+  const tracks = trackBars(state.after.timeline);
+  if (!tracks.length) return null;
+  return h("section", { class: "panel stack" },
+    h("h2", {}, "Таймлайн"),
+    h("p", { class: "muted small" }, `${frameClock(state.after.timeline.duration_frames, state.after.timeline.fps)} · ${state.after.timeline.fps} к/с. Финал собран из этого манифеста; сцены правятся в раскадровке.`),
+    h("div", { class: "tracks" }, ...tracks.map((t) =>
+      h("div", { class: "track" },
+        h("span", { class: "track-label" }, t.label, h("span", { class: "muted small" }, ` ${t.count}`)),
+        h("div", { class: "track-lane" }, ...t.bars.map((b) =>
+          h("span", { class: `track-bar${b.enabled ? "" : " off"}${b.scene ? " scene" : ""}`, style: `left:${b.left}%;width:${b.width}%`, title: b.label }))),
+      ))),
+    h("p", { class: "muted small" }, h("a", { href: `${API}/projects/${p.id}/timeline.json` }, "timeline.json")),
+  );
+}
+
+function revisionsPanel(p) {
+  const revs = [...(state.after.revisions || [])].reverse();
+  return h("details", { class: "disclosure" }, h("summary", {}, `Ревизии проекта: ${revs.length}`),
+    h("ul", { class: "list" }, ...revs.slice(0, 20).map((r) =>
+      h("li", { class: "list-row" },
+        h("span", {}, `#${r.n} ${r.label}`, " ", h("span", { class: "muted small" }, new Date(r.at * 1000).toLocaleString("ru-RU"))),
+        h("button", { type: "button", class: "btn btn--link btn--sm", disabled: isActive(p), onclick: () => restore(p, r) }, "Вернуть"),
+      ))));
+}
+
+async function restore(p, r) {
+  const ok = await confirmAction({ title: `Вернуть ревизию #${r.n} «${r.label}»?`, body: "Вернутся план, раскадровка и прочие манифесты; записи и кэш не трогаются.", confirmLabel: "Вернуть" });
+  if (!ok) return;
+  try {
+    state.project = await api("POST", `${API}/projects/${p.id}/revisions/${r.n}/restore`);
+    state.planFor = state.storyFor = state.afterFor = null;
+    toast("Ревизия возвращена");
+    await refresh();
+  } catch (err) {
+    setBanner(err.message, "error");
+  }
+}
+
+// ---------- раскадровка (MASTER_SPEC §5.3–5.6) ----------
+
+function storyboardPanel(p) {
+  const story = state.story;
+  const cfg = state.config;
+  const fps = story.fps || 30;
+  const busy = isActive(p);
+  const gate = gateState(p, "storyboard");
+  const cards = story.scenes.map((s) => sceneCardNode(p, s, fps, story.duration_frames, busy));
+  const style = story.style;
+  const styleName = h("input", { type: "text", value: style?.name || "", maxlength: "60", "aria-label": "Название стиля" });
+  const accent = h("input", { type: "color", value: style?.palette?.accent || "#4fc3f7", "aria-label": "Акцент" });
+  const density = h("select", {}, ...["low", "medium", "high"].map((d) => h("option", { value: d, selected: style?.density === d }, { low: "редко", medium: "средне", high: "плотно" }[d])));
+  const saveStyle = h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: busy }, "Сохранить стиль");
+  saveStyle.addEventListener("click", async () => {
+    try {
+      await api("POST", `${API}/projects/${p.id}/style`, { name: styleName.value, palette: { accent: accent.value }, density: density.value });
+      toast("Стиль сохранён — сцены перерисуются при сборке");
+      state.storyFor = null;
+      await refresh();
+    } catch (err) {
+      setBanner(err.message, "error");
+    }
+  });
+  const beats = beatRows(story.beats.beats, fps);
+  return h("section", { class: "panel stack" },
+    h("div", { class: "field-head" },
+      h("h2", {}, "Раскадровка"),
+      h("div", { class: "toolbar" },
+        gate.show ? chip(gate.text, gate.approved ? "success" : "warning") : null,
+        chip(`сцен ${story.summary.enabled} из ${story.summary.scenes}`, "neutral")),
+    ),
+    story.flagged.length ? h("div", { class: "callout" }, "Карта знаний: спорное или без подтверждения в материалах —\n", story.flagged.map((c) => `• ${c.statement} (${c.contradiction_status})`).join("\n")) : null,
+    h("details", { class: "disclosure" }, h("summary", {}, `Нарратив: ${beats.length} битов · утверждений ${story.knowledge.claims.length}`),
+      h("ul", { class: "list" }, ...beats.map((b) => h("li", { class: `list-row list-row--static${b.cut ? " out" : ""}` },
+        h("span", {}, h("span", { class: "phrase-time" }, b.at), " ", chip(b.purpose, "neutral"), " ", b.goal, b.cut ? h("span", { class: "muted small" }, " — вырезан") : null),
+        h("span", { class: "muted small" }, `приоритет ${b.priority}${b.claims ? ` · утв. ${b.claims}` : ""}`)))),
+      story.beats.pacing?.longest_explanation_s ? h("p", { class: "muted small" }, `Темп: средний бит ${story.beats.pacing.mean_s} с, самая долгая череда объяснений ${story.beats.pacing.longest_explanation_s} с.`) : null),
+    h("details", { class: "disclosure" }, h("summary", {}, `Стиль: ${style?.name || "по умолчанию"} (${style?.revision || "—"})`),
+      h("div", { class: "toolbar" },
+        h("label", { class: "field grow" }, h("span", { class: "field-label" }, "Название"), styleName),
+        h("label", { class: "field" }, h("span", { class: "field-label" }, "Акцент"), accent),
+        h("label", { class: "field" }, h("span", { class: "field-label" }, "Плотность"), density),
+        saveStyle)),
+    cards.length ? h("div", { class: "scenes-grid" }, ...cards) : h("p", { class: "muted" }, "ИИ не нашёл мест, где сцена добавит смысла. Поправь материалы или замечание к плану и запусти раскадровку заново."),
+    h("div", { class: "toolbar" },
+      gate.show && !gate.approved ? h("button", { type: "button", class: "btn btn--primary", disabled: busy, onclick: () => approve(p, "storyboard") }, "Утвердить раскадровку") : null,
+      h("button", { type: "button", class: gate.show && !gate.approved ? "btn btn--secondary" : "btn btn--primary", disabled: busy || (gate.show && !gate.approved), onclick: () => act(p, "render") }, p.output ? "Пересобрать со сценами" : "Собрать ролик"),
+      h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: () => act(p, "storyboard/run") }, "Раскадровка заново"),
+      cfg.hyperframes_available ? null : h("span", { class: "muted small" }, "HyperFrames не установлен: сцены останутся заблокированными, ролик соберётся без них."),
+    ),
+  );
+}
+
+function sceneCardNode(p, scene, fps, totalFrames, busy) {
+  const card = sceneCard(scene, state.config.templates, fps);
+  const base = `${API}/projects/${p.id}/scenes/${scene.id}`;
+  const start = h("input", { type: "text", value: card.at, size: 6, "aria-label": "Начало" });
+  const seconds = h("input", { type: "number", min: "2.5", max: "12", step: "0.5", value: String(card.seconds), "aria-label": "Секунд" });
+  const error = h("p", { class: "form-error", hidden: true });
+  const save = async (extra = {}) => {
+    const { patch, error: problem } = scenePatch(scene, { start: start.value, seconds: seconds.value, ...extra }, fps, totalFrames);
+    if (problem) return ((error.textContent = problem), (error.hidden = false));
+    error.hidden = true;
+    try {
+      state.project = await api("POST", `${API}/projects/${p.id}/storyboard`, { scenes: [patch] });
+      state.storyFor = null;
+      await refresh();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    }
+  };
+  const redo = async () => {
+    const text = h("textarea", { rows: 3, placeholder: "Что не так: «покажи это списком», «цифра не та», «слишком долго»" });
+    const btn = h("button", { type: "submit", class: "btn btn--primary" }, "Переделать");
+    const form = h("form", { class: "stack", novalidate: true }, h("p", { class: "muted small" }, "Раскадровщик переделает только эту сцену; остальные не трогаются."), text, btn);
+    const dialog = modal(`Сцена ${scene.id}: ${card.title}`, form);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!text.value.trim()) return text.focus();
+      dialog.close();
+      await act(p, `scenes/${scene.id}/redo`, { text: text.value });
+    });
+  };
+  return h("article", { class: `scene-card${card.enabled ? "" : " off"}` },
+    card.thumb ? h("img", { class: "scene-thumb", src: `${base}/thumb.png?v=${scene.hash}`, alt: card.title, loading: "lazy" }) : h("div", { class: "scene-thumb empty" }, card.statusLabel),
+    h("div", { class: "card-head" }, h("h3", {}, card.title), chip(card.statusLabel, card.tone)),
+    h("p", { class: "muted small" }, `${card.template} · ${card.at} · ${card.seconds} с · польза ${card.score}`, card.claims.length ? ` · ${card.claims.join(", ")}` : ""),
+    card.rationale ? h("p", { class: "small" }, card.rationale) : null,
+    card.error ? h("p", { class: "form-error" }, card.error) : null,
+    h("div", { class: "toolbar toolbar--nowrap" },
+      h("label", { class: "field narrow" }, h("span", { class: "field-label" }, "Начало"), start),
+      h("label", { class: "field narrow" }, h("span", { class: "field-label" }, "Секунд"), seconds),
+      h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: busy, onclick: () => save() }, "Применить")),
+    error,
+    h("div", { class: "toolbar" },
+      h("button", { type: "button", class: "btn btn--link btn--sm", disabled: busy, onclick: () => save({ enabled: !card.enabled }) }, card.enabled ? "Выключить" : "Включить"),
+      h("button", { type: "button", class: "btn btn--link btn--sm", disabled: busy, onclick: redo }, "Переделать"),
+      h("a", { class: "btn btn--link btn--sm", href: `${base}/index.html`, target: "_blank" }, "композиция")),
+  );
+}
+
+async function approve(p, gate) {
+  try {
+    state.project = await api("POST", `${API}/projects/${p.id}/approve`, { gate });
+    renderedKey = "";
+    renderProject();
+    listPoll.now();
+  } catch (err) {
+    setBanner(err.message, "error");
+  }
 }
 
 // ---------- план: расшифровка с вырезками ----------
@@ -449,6 +748,8 @@ function review(p) {
   const s = plan.summary;
   const feedback = h("textarea", { rows: 3, maxlength: String(state.config.max_feedback), placeholder: "Что не так с монтажом: «оставляй „вот“, когда я показываю на экран», «режь дубли жёстче»… ИИ переделает план и запомнит правило." });
   const busy = isActive(p);
+  const gate = gateState(p, "edl");
+  const needsApproval = gate.show && !gate.approved;
   player = p.sources_url?.head ? h("video", { class: "player player--source", src: p.sources_url.head, controls: true, preload: "metadata", playsinline: true }) : null;
   const byKind = Object.entries(s.by_kind || {}).map(([k, n]) => `${kindLabel(k)} — ${n}`).join(", ");
   const panel = h("section", { class: "panel stack" },
@@ -465,9 +766,12 @@ function review(p) {
     player,
     h("p", { class: "muted small" }, "Зачёркнутое вырежется. Клик по слову — вырезать или вернуть, Shift+клик — растянуть свою вырезку, время слева — послушать в записи. Паузы длиннее заданной ужмутся сами."),
     h("div", { class: "transcript", id: "transcript" }),
+    gate.show ? h("p", { class: "muted small" }, chip(gate.text, gate.approved ? "success" : "warning"), gate.approved ? "" : " — сборка и раскадровка ждут подтверждения.") : null,
     h("div", { class: "toolbar" },
-      h("button", { type: "button", class: "btn btn--primary", disabled: busy, onclick: () => act(p, "render") }, p.status === "done" ? "Пересобрать" : "Собрать ролик"),
-      h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: () => act(p, "replan") }, "Переделать план заново"),
+      gate.show && !gate.approved ? h("button", { type: "button", class: "btn btn--primary", disabled: busy, onclick: () => approve(p, "edl") }, "Подтвердить план") : null,
+      h("button", { type: "button", class: needsApproval ? "btn btn--secondary" : "btn btn--primary", disabled: busy || needsApproval, onclick: () => act(p, "render") }, p.status === "done" ? "Пересобрать" : "Собрать ролик"),
+      p.mode === "manual" ? null : h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: () => act(p, "replan") }, "Переделать план заново"),
+      p.storyboard ? null : h("button", { type: "button", class: "btn btn--secondary", disabled: busy || needsApproval || !state.config.llm_available, title: "Знания → биты → стиль → раскадровка сцен", onclick: () => act(p, "storyboard/run") }, "Раскадровка"),
     ),
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Замечание к монтажу"), feedback),
     h("div", { class: "toolbar" },
@@ -475,7 +779,44 @@ function review(p) {
     ),
   );
   queueMicrotask(renderTranscript);
-  return p.status === "done" ? h("details", { class: "disclosure" }, h("summary", {}, "План монтажа — посмотреть и поправить"), panel) : panel;
+  const folded = p.status === "done" || (p.storyboard && p.status === "waiting_approval");
+  return folded ? h("details", { class: "disclosure" }, h("summary", {}, "План монтажа — посмотреть и поправить"), panel) : panel;
+}
+
+// ---------- возможности машины (MASTER_SPEC §3) ----------
+
+async function openCapabilities() {
+  let caps;
+  try {
+    caps = await api("GET", `${API}/capabilities`);
+  } catch (err) {
+    return setBanner(err.message, "error");
+  }
+  const STATUS = { available: ["есть", "success"], unavailable: ["нет", "danger"], disabled: ["выключено", "warning"] };
+  const table = h("table", { class: "data-table" });
+  const render = (data) => fill(table,
+    h("thead", {}, h("tr", {}, h("th", {}, "Что"), h("th", {}, "Статус"), h("th", {}, "Версия / как поставить"))),
+    h("tbody", {}, ...data.items.map((i) => h("tr", {},
+      h("td", {}, i.label, i.license ? h("span", { class: "muted small" }, ` · ${i.license}`) : null),
+      h("td", {}, chip(...(STATUS[i.status] || [i.status, "neutral"]))),
+      h("td", { class: "small" }, i.version || i.detail || "", i.hint ? h("div", { class: "muted" }, i.hint) : null)))));
+  render(caps);
+  const routes = h("ul", { class: "list" }, ...Object.entries(caps.routes).map(([task, r]) =>
+    h("li", { class: "list-row list-row--static" }, h("span", {}, caps.tasks[task]), h("span", {}, chip(r.engine, r.engine === "blocked" || r.engine === "unavailable" ? "danger" : "success"), r.reason ? h("span", { class: "muted small" }, ` ${r.reason}`) : null))));
+  const probe = h("button", { type: "button", class: "btn btn--secondary btn--sm" }, "Проверить запуском");
+  probe.addEventListener("click", async () => {
+    probe.disabled = true;
+    try {
+      render(await api("POST", `${API}/capabilities/probe`));
+      toast("Проверено настоящими командами");
+    } catch (err) {
+      setBanner(err.message, "error");
+    }
+    probe.disabled = false;
+  });
+  modal("Возможности машины", h("div", { class: "stack" },
+    h("p", { class: "muted small" }, "Что реально установлено и куда пойдёт каждая задача. Ничего не скачивается; недоступное — честный статус, а не подделка."),
+    h("div", { class: "table-wrap" }, table), h("h3", {}, "Маршруты задач"), routes, h("div", { class: "toolbar" }, probe)));
 }
 
 // ---------- правила ----------
@@ -559,6 +900,7 @@ async function init() {
   setBanner(null);
   $("new-project").addEventListener("click", newProject);
   $("rules-open").addEventListener("click", openRules);
+  $("caps-open").addEventListener("click", openCapabilities);
   renderProject();
   listPoll.start();
 }

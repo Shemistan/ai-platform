@@ -58,11 +58,15 @@ class TimeMap:
     @classmethod
     def from_edl(cls, edl: edl_module.Edl, source_id: str = "head", *, fps: int = render.FPS,
                  source_duration: float = 0.0) -> TimeMap:  # fmt: skip
-        """Сегменты EDL (секунды исходника) → целые кадры результата подряд, без дыр."""
+        """Сегменты EDL (секунды исходника) → целые кадры результата подряд, без дыр.
+
+        Кадров в сегменте — ровно столько, сколько вырежет рендер: границы сегмента он ставит на
+        сетку кадров по отдельности (render.frame), поэтому round(end·fps) − round(start·fps), а не
+        round(длина·fps): иначе за 25 сегментов карта расходится с роликом на ~10 кадров."""
         out = cls(fps=fps, source_duration=source_duration)
         frame = 0
         for seg in edl.segments:
-            n = max(1, round((seg.end - seg.start) * fps))
+            n = max(1, round(seg.end * fps) - round(seg.start * fps))
             out.segments.append(
                 Segment(source_id, seg.start, seg.end, frame, frame + n, seg.layout, seg.first, seg.last)
             )
