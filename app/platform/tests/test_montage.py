@@ -11,7 +11,7 @@ from unittest import mock
 
 from aiplatform.core import media
 from aiplatform.fakes import fake_llm
-from aiplatform.montage import edl, plan, render, sync
+from aiplatform.montage import edl, plan, render, stages, sync
 from aiplatform.montage.service import MontageModule
 from tests.fixtures import FAST, NEEDS_FFMPEG
 from tests.helpers import PlatformCase
@@ -208,6 +208,42 @@ def montage_only(ctx):
 
 
 @NEEDS_FFMPEG
+class StagesTest(unittest.TestCase):
+    """Этапы действия (PRD-025): состав, переходы, общий процент и оценка «осталось»."""
+
+    def test_plan_depends_on_action_and_options(self):
+        auto = {"auto": True, "check": True, "motion": False}
+        self.assertEqual(
+            stages.plan_for("prepare", auto, screen_audio=True),
+            ["audio", "sync", "silences", "transcribe", "plan", "segments", "join", "final", "check"],
+        )
+        self.assertEqual(stages.plan_for("prepare", {"auto": False}), ["audio", "silences", "transcribe", "plan"])
+        self.assertEqual(stages.plan_for("revise", auto), ["plan"])
+        self.assertEqual(stages.plan_for("render", {"check": False, "motion": True}),
+                         ["segments", "join", "final", "motion"])  # fmt: skip
+
+    def test_advance_finish_and_estimates(self):
+        items = stages.new(["audio", "transcribe", "plan"])  # веса 3, 40, 8
+        stages.advance(items, "audio", 50, now=100)
+        self.assertEqual(items[0]["status"], "running")
+        self.assertIsNone(stages.remaining(items, now=100), "ещё не по чему судить")
+        stages.advance(items, "transcribe", 25, "кусок 1 из 4", now=110)  # звук закрылся сам
+        self.assertEqual((items[0]["status"], items[0]["percent"]), ("done", 100.0))
+        self.assertEqual(stages.overall(items), round(100 * (3 + 40 * 0.25) / 51, 1))
+        # Расшифровка: 25% за 30 с → ещё 90 с; план (вес 8) по скорости 40 с на 13 единиц веса.
+        self.assertEqual(stages.stage_remaining(items[1], now=140), 90)
+        self.assertEqual(stages.remaining(items, now=140), round(90 + 8 * 40 / 13))
+        stages.advance(items, "transcribe", 10, now=141)
+        self.assertEqual(items[1]["percent"], 25.0, "процент этапа не откатывается")
+        stages.finish(items, "failed", now=150)
+        self.assertEqual([s["status"] for s in items], ["done", "failed", "pending"])
+        items = stages.new(["segments", "final", "motion"])
+        stages.advance(items, "final", 40, now=1)
+        stages.finish(items, "done", now=2)
+        self.assertEqual([s["status"] for s in items], ["done", "done", "skipped"])
+        self.assertEqual(stages.overall(items), 100.0)
+
+
 class MontageApiTest(PlatformCase):
     modules = staticmethod(montage_only)
     process_env = FAST
@@ -302,6 +338,10 @@ class MontageApiTest(PlatformCase):
         self.json("POST", f"/api/montage/projects/{pid}/start")
         done = self.settle(pid, ("done", "failed", "canceled"))
         self.assertEqual(done["status"], "done", done)
+        ids = ["audio", "sync", "silences", "transcribe", "plan", "segments", "join", "final"]
+        self.assertEqual([s["id"] for s in done["stages"]], ids, "auto без проверки: подготовка и сборка")
+        self.assertTrue(all(s["status"] == "done" and s["finished_at"] >= s["started_at"] for s in done["stages"]))
+        self.assertIsNone(done["eta_s"])
         self.assertIn(done["sync"]["method"], ("audio", "weak"), "у экрана есть звук — сдвиг искали")
         _, view = self.json("GET", f"/api/montage/projects/{pid}/plan")
         self.assertIn("split", {s["layout"] for s in view["segments"]}, "«Покажи экран» → экран и голова")
@@ -359,6 +399,8 @@ class MontageApiTest(PlatformCase):
             self.json("POST", f"/api/montage/projects/{pid}/start")
             failed = self.settle(pid, ("failed", "review"))
         self.assertEqual(failed["status"], "failed")
+        states = {s["id"]: s["status"] for s in failed["stages"]}
+        self.assertEqual(states, {"audio": "done", "silences": "done", "transcribe": "failed", "plan": "pending"})
         self.assertTrue(failed["error"])
         with mock.patch.dict("os.environ", {"FAKE_ASR_STEP_DELAY": "2"}):
             self.json("POST", f"/api/montage/projects/{pid}/start")

@@ -1,7 +1,8 @@
 // Вкладка «Монтаж»: ролики, записи, расшифровка с вырезками на подтверждение, сборка и итог. Без сборки.
 
-import { $, api, chip, confirmAction, debounce, fill, h, jobProgress, logBlock, modal, poller, statusChip, toast, toneOf, uploadFile } from "/ui.js";
+import { $, api, chip, confirmAction, debounce, fill, h, icon, jobProgress, logBlock, modal, poller, statusChip, toast, toneOf, uploadFile } from "/ui.js";
 import { clock, cutOf, layoutAt, phrases, projectPayload, setLayout, togglePhrase, toggleWord } from "./plan.js";
+import { stageRows, summary } from "./stages.js";
 
 const API = "/api/montage";
 const STATUS_LABEL = { draft: "черновик", review: "ждёт вас" };
@@ -282,12 +283,35 @@ function setup(p) {
   );
 }
 
+// Общая полоса с «этап N из M · прошло · осталось» и список этапов действия (PRD-025).
 function progress(p) {
-  const log = logBlock(p.log);
+  const now = Date.now() / 1000;
+  const info = summary(p, now);
+  const rows = stageRows(p.stages, now);
   return h("section", { class: "panel stack" },
     h("h2", {}, "Работа"),
     jobProgress(p, { onCancel: () => act(p, "cancel") }),
-    log,
+    rows.length ? h("p", { class: "muted small stage-summary" }, [info.step, info.elapsed && `прошло ${info.elapsed}`, info.left].filter(Boolean).join(" · ")) : null,
+    rows.length ? h("ol", { class: "stages" }, ...rows.map(stageRow)) : null,
+    logBlock(p.log),
+  );
+}
+
+// Готово — галочка, упал или отменён — крестик; идёт, впереди и пропущен — точка своего вида (style.css).
+const STAGE_ICONS = { done: "check", failed: "close", canceled: "close" };
+
+function stageRow(s) {
+  return h("li", { class: `stage-row stage-row--${s.status}` },
+    h("span", { class: "stage-icon", "aria-hidden": "true" }, STAGE_ICONS[s.status] ? icon(STAGE_ICONS[s.status]) : h("span", { class: "stage-dot" })),
+    h("div", { class: "stage-body" },
+      h("div", { class: "stage-head" },
+        h("span", { class: "stage-label" }, s.label, h("span", { class: "sr-only" }, ` — ${s.status === "running" ? "идёт" : s.note || "впереди"}`)),
+        h("span", { class: "muted small" }, s.status === "running" ? `${s.percent}% · ${s.note}` : s.note),
+      ),
+      s.status === "running" ? h("div", { class: "bar", role: "progressbar", "aria-label": s.label, "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(s.percent) },
+        h("div", { class: "bar-fill", style: `width:${s.percent}%` })) : null,
+      s.detail && s.status === "running" ? h("span", { class: "muted small" }, s.detail) : null,
+    ),
   );
 }
 

@@ -202,7 +202,7 @@ def run(
     """Вставки для ролика: (наложения, сводка для карточки). Нет HyperFrames — пусто и причина."""
     if not config.hyperframes_available():
         return [], {"skipped": INSTALL_HINT}
-    progress("Моушн: где нужны вставки (ИИ)", 95)
+    progress("ИИ ищет, где нужны вставки", 0)
     packed = plan.pack([{"w": w["w"], "s": w["s"], "e": w["e"]} for w in out_words])
     inserts = clean_inserts(ask(prompt(packed, RULES.read_text(encoding="utf-8"), duration)), duration)
     root = folder / "motion"
@@ -215,7 +215,7 @@ def run(
     overlays: list[render.Overlay] = []
     failed = 0
     for n, item in enumerate(inserts, 1):
-        progress(f"Моушн: вставка {n} из {len(inserts)}", 95 + 4 * n / len(inserts))
+        progress(f"вставка {n} из {len(inserts)}", 10 + 80 * (n - 1) / len(inserts))
         target = root / f"{n:02d}"
         target.mkdir(exist_ok=True)
         (target / "index.html").write_text(composition(item, style), encoding="utf-8")
