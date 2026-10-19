@@ -163,19 +163,22 @@ NAV_GROUPS = {
     "updates": "service",
     "settings": "service",
 }
+# Подписи групп — меню шапки (UX-028); группа из одной вкладки рисуется простой ссылкой.
+NAV_GROUP_LABELS = {"media": "Медиа", "studio": "Студия", "texts": "Тексты", "service": "Сервис"}
 
 
 def nav_tabs(module: Module) -> list[dict]:
     """Вкладки шапки от модуля — единственный список вкладок (FE-007): nav.js рисует его из /api/config.
 
     По умолчанию — одна вкладка /<prefix>/; модуль с под-вкладками (студия) отдаёт свои через nav().
-    Поля: id, label, href, group; необязательные badge (счётчик в шапке) и default (активна, если в
-    адресе нет своего параметра).
+    Поля: id, label, href, group, group_label (подпись меню группы); необязательные badge (счётчик в
+    шапке) и default (активна, если в адресе нет своего параметра). Вкладка может задать свою group.
     """
     own = getattr(module, "nav", None)
     tabs = own() if own else [{"id": module.prefix, "label": module.label, "href": f"/{module.prefix}/"}]
     group = NAV_GROUPS.get(module.prefix, module.prefix)
-    return [{"group": group} | tab for tab in tabs]
+    out = [{"group": group} | tab for tab in tabs]
+    return [tab | {"group_label": NAV_GROUP_LABELS.get(tab["group"], tab["label"])} for tab in out]
 
 
 class App:

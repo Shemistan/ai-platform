@@ -124,7 +124,7 @@ MOV, финал накладывает. `compare.py` — `make asr-compare`. Ф�
 Ванильный JS, ES-модули без сборки; страница вкладки = `static/<tab>/index.html` + `app.js`.
 - Общее: `ui.js` (`api()` с `X-AIP`, `narratorApi`, `h()`, `poller`, `jobProgress`,
   `statusChip`/`toneOf`, `modal`, `toast`, `uploadFile`), `nav.js` (шапка из
-  `/api/config` → `tabs`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
+  `/api/config` → `tabs`, меню групп — `core/nav-groups.js`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
   `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`,
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
 - Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `montage/` (+`plan.js`),

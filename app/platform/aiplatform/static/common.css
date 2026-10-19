@@ -41,19 +41,55 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
   text-align: center;
 }
 .platform-nav .badge[hidden] { display: none; }
-.platform-nav .sep { width: 1px; height: 20px; background: var(--line); margin: 0 var(--sp-1); }
+/* Меню группы (UX-028): кнопка как вкладка, список под ней поверх страницы. */
+.platform-nav .menu { position: relative; }
+.platform-nav .menu > button {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.platform-nav .menu > button:hover,
+.platform-nav .menu > button[aria-expanded="true"] { background: var(--sunken); }
+.platform-nav .menu.active > button { background: var(--accent); color: var(--accent-text); }
+.platform-nav .menu .current { opacity: .85; }
+.platform-nav .menu .caret { font-size: var(--fs-xs); opacity: .7; }
+.platform-nav .menu-list {
+  position: absolute;
+  top: calc(100% + var(--sp-1));
+  left: 0;
+  z-index: var(--z-nav);
+  min-width: 200px;
+  margin: 0;
+  padding: var(--sp-1);
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-menu);
+}
+.platform-nav .tabs > li:last-child .menu-list { left: auto; right: 0; }  /* у края экрана — влево */
+.platform-nav .menu-list[hidden] { display: none; }
+.platform-nav .menu-list a { border-radius: var(--r-md); }
 .platform-nav .gpu { margin-left: auto; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
 .platform-nav .gpu.busy { color: var(--warn); }
 .platform-nav .version { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
-/* Узкий экран: шапка в одну строку и не липнет — 13 вкладок прокручиваются вбок,
-   активная вкладка прокручена в видимую область (nav.js). */
+/* Узкий экран: шапка не липнет, пункты групп переносятся, у меню не пишем текущую вкладку —
+   активная группа и так подсвечена. */
 @media (max-width: 640px) {
-  .platform-nav { position: static; flex-wrap: nowrap; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2); }
+  .platform-nav { position: static; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2); }
   .platform-nav .brand { display: none; }
-  .platform-nav .tabs { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .platform-nav .tabs::-webkit-scrollbar { display: none; }
-  .platform-nav .tabs > li { flex: none; }
-  .platform-nav .tabs a { padding: var(--sp-2) var(--sp-2); }
+  .platform-nav .tabs { flex: 1 1 auto; }
+  .platform-nav .tabs a,
+  .platform-nav .menu > button { padding: var(--sp-2) var(--sp-2); }
+  .platform-nav .menu .current { display: none; }
   .platform-nav .gpu { flex: none; max-width: 32vw; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); }
   .platform-nav .version { display: none; }
 }

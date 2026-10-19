@@ -85,6 +85,9 @@ class NavTabsTest(PlatformCase):
         self.assertEqual(ids[:6], ["photo", "video", "audio", "avatar", "montage", "board"])
         self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
         self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention"])
+        labels = {t["group"]: t["group_label"] for t in tabs}
+        self.assertEqual(labels, {"media": "Медиа", "board": "Выпуски", "studio": "Студия", "texts": "Тексты",
+                                  "service": "Сервис"})  # fmt: skip
 
     def test_upload_limits_in_module_config(self):
         """FE-003: страница сверяет размер файла с лимитом до отправки — лимиты в /config модулей."""
@@ -148,7 +151,9 @@ class ShellTest(PlatformCase):
         status, body = self.json("GET", "/api/config")
         self.assertEqual(status, 200)
         self.assertEqual(body["backend"], "fake")
-        self.assertEqual(body["tabs"], [{"group": "echo", "id": "echo", "label": "Эхо", "href": "/echo/"}])
+        self.assertEqual(
+            body["tabs"], [{"group": "echo", "id": "echo", "label": "Эхо", "href": "/echo/", "group_label": "Эхо"}]
+        )
         self.assertIn("эхо не настроено", body["problems"])
 
     def test_status(self):
