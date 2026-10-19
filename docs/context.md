@@ -133,6 +133,12 @@ export` (`approvals`, `approve`); `schemas.py` — JSON Schema из `contracts/m
 (`montage_storyboard`); `templates.py` — каталог 12 шаблонов HyperFrames (+ stat, quote; props-схемы
 `contracts/montage/templates/`); `scenes.py` — рендер `scenes/<id>/<hash>.mov` по кэшу, проверка, миниатюра.
 Сборка с раскадровкой рисует сцены вместо быстрых вставок; без HyperFrames сцены `blocked`.
+Финал и после (§5.7–5.8, §8): `timeline.py` — `timeline.json` (дорожки presenter/screen/overlays/captions/
+dialogue в кадрах), наложения финала берутся из него; `qa.py` — `qa_report.json` (QAItem: blackdetect,
+паузы, пик, ffprobe, сцены, субтитры; семантика по кругам проверки; ворота mechanical/semantic);
+`exports.py` — пресеты youtube_1080p / vertical_1080x1920 / prores_master, `exports/<n>/` с
+provenance.json и project.zip, экспорт при красных воротах только с причиной; `revisions.py` —
+снимки манифестов `revisions/<n>.json` после каждого действия и откат. Субтитры также `subtitles.vtt`.
 
 ## Моушн `motion/`
 
@@ -204,7 +210,8 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
 - `montage/projects/<id>/`: `project.json`, `sources/`, `audio.wav`, `words.json`, `silences.json`,
   `plan.json`, `edl.json`, `timemap.json`, `source_manifest.json`, `decisions.jsonl`, `documents/`,
   `documents.json`, `chunks.json`, `knowledge.json`, `beats.json`, `transcript_edit.json`, `styles/`,
-  `style_bible.json`, `storyboard.json`, `scenes/<id>/`, `segments/` (кэш), `output.mp4`, `subtitles.srt`;
+  `style_bible.json`, `storyboard.json`, `scenes/<id>/`, `segments/` (кэш), `output.mp4`, `subtitles.srt`,
+  `subtitles.vtt`, `timeline.json`, `qa_report.json`, `exports/<n>/`, `revisions/<n>.json`;
   `montage/lessons.md` — выученные правила.
 - `studio/projects/<id>/`: `project.json`, `text.md`, `post.md`, `poster.*`,
   `plan.json`, `images/`, `clips/`, `voice.*`, `video.mp4`, `short.mp4`,

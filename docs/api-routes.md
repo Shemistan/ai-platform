@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 169. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 176. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -213,6 +213,13 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | GET | `/api/montage/projects/{pid}/scenes/{sid}/{name}` | — | файл | — |
 | GET | `/api/montage/projects/{pid}/style` | — | JSON | Стиль-библия (§5.4): правка → новая ревизия |
 | POST | `/api/montage/projects/{pid}/style` | JSON | JSON | — |
+| GET | `/api/montage/projects/{pid}/timeline` | — | JSON | Таймлайн-манифест и QA-отчёт (§5.7–5.8) готового ролика |
+| GET | `/api/montage/projects/{pid}/qa` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/export` | JSON | JSON | Экспорт (§5.7): пресет; при красных воротах QA — только с override_reason |
+| GET | `/api/montage/projects/{pid}/exports` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/exports/{n}/{name}` | — | файл | — |
+| GET | `/api/montage/projects/{pid}/revisions` | — | JSON | Ревизии (§8): снимки манифестов и откат |
+| POST | `/api/montage/projects/{pid}/revisions/{n}/restore` | — | JSON | — |
 | POST | `/api/montage/projects/{pid}/render` | — | JSON | — |
 | POST | `/api/montage/projects/{pid}/revise` | JSON | JSON | — |
 | POST | `/api/montage/projects/{pid}/cancel` | — | JSON | — |

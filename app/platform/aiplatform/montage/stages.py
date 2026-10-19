@@ -28,6 +28,8 @@ STAGES = {
     "style": ("Стиль-библия (ИИ)", 3),
     "storyboard": ("Раскадровка (ИИ)", 8),
     "scenes": ("Моушн-сцены", 15),
+    "qa": ("QA-отчёт", 4),
+    "export": ("Экспорт", 6),
 }
 RENDER = ("segments", "join", "final")
 STORY = ("timemap", "knowledge", "beats", "style", "storyboard")
@@ -43,7 +45,7 @@ def plan_for(action: str, options: dict, *, screen_audio: bool = False, storyboa
         graphics = ["scenes"]
     else:
         graphics = ["motion"] if options.get("motion") else []
-    render = [*RENDER, *(["check"] if options.get("check") else []), *graphics]
+    render = [*RENDER, *(["check"] if options.get("check") else []), *graphics, "qa", *(["export"] if auto else [])]
     if action == "prepare":
         head = ["audio", *(["sync"] if screen_audio else []), "silences", "transcribe"]
         if options.get("mode") != "manual":
@@ -53,9 +55,11 @@ def plan_for(action: str, options: dict, *, screen_audio: bool = False, storyboa
     if action in ("replan", "revise"):
         return ["plan"]
     if action == "story":
-        return list(STORY)
+        return [*STORY, *(render if auto else [])]
     if action == "scene":
-        return ["storyboard"]
+        return ["storyboard", *(render if auto else [])]
+    if action == "export":
+        return ["export"]
     return render
 
 

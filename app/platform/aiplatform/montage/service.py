@@ -5,7 +5,7 @@ from __future__ import annotations
 from http import HTTPStatus
 
 from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
-from aiplatform.montage import asr, capabilities, documents, edl, plan, render, templates
+from aiplatform.montage import asr, capabilities, documents, edl, exports, plan, render, templates
 from aiplatform.montage import config as montage_config
 from aiplatform.montage.projects import (
     DEFAULT_OPTIONS,
@@ -28,7 +28,11 @@ FILES = {
     "edl.json": ("edl.json", "application/json"),
     "source_manifest.json": ("source_manifest.json", "application/json"),
     "storyboard.json": ("storyboard.json", "application/json"),
+    "subtitles.vtt": ("subtitles.vtt", "text/vtt"),
+    "timeline.json": ("timeline.json", "application/json"),
+    "qa_report.json": ("qa_report.json", "application/json"),
 }
+EXPORT_FILES = {"file": None, "provenance.json": "application/json", "project.zip": "application/zip"}
 SCENE_FILES = {
     "thumb.png": "image/png",
     "index.html": "text/plain; charset=utf-8",  # исходник композиции — не страница
@@ -60,6 +64,7 @@ class MontageModule:
             "modes": [{"id": key, "label": label} for key, label in MODES.items()],
             "gates": list(GATES),
             "templates": templates.public(),
+            "presets": list(exports.PRESETS.values()),
             "document_exts": list(documents.EXTS),
             "max_document_bytes": documents.MAX_BYTES,
             "defaults": DEFAULT_OPTIONS,
@@ -171,6 +176,29 @@ class MontageModule:
                 return req.send_json({"style": found(projects.story_view(pid), MISSING)["style"]})
             case ("POST", ["projects", pid, "style"]):
                 return req.send_json({"style": found(projects.save_style(pid, req.json(MAX_BODY)), MISSING)})
+            # Таймлайн-манифест и QA-отчёт (§5.7–5.8) готового ролика.
+            case ("GET", ["projects", pid, "timeline"]):
+                return req.send_json(found(projects.timeline_view(pid), MISSING))
+            case ("GET", ["projects", pid, "qa"]):
+                return req.send_json(found(projects.qa_view(pid), MISSING))
+            # Экспорт (§5.7): пресет; при красных воротах QA — только с override_reason.
+            case ("POST", ["projects", pid, "export"]):
+                return req.send_json(found(projects.export(pid, req.json(MAX_BODY)), MISSING))
+            case ("GET", ["projects", pid, "exports"]):
+                return req.send_json({"exports": found(projects.exports_list(pid), MISSING)})
+            case ("GET", ["projects", pid, "exports", n, name]) if name in EXPORT_FILES:
+                path = projects.export_file(pid, n, name)
+                if path is None:
+                    raise not_found("Экспорта нет.")
+                mime = EXPORT_FILES[name] or ("video/quicktime" if path.suffix == ".mov" else "video/mp4")
+                attachment = f"montage-{pid}-{n}{path.suffix}" if name == "file" else f"{pid}-{n}-{name}"
+                return req.send_file(path, mime, ranged=name == "file", attachment=attachment)
+            # Ревизии (§8): снимки манифестов и откат.
+            case ("GET", ["projects", pid, "revisions"]):
+                return req.send_json({"revisions": found(projects.revisions_list(pid), MISSING)})
+            case ("POST", ["projects", pid, "revisions", n, "restore"]):
+                number = int(n) if n.isdigit() else None
+                return req.send_json(found(projects.restore(pid, number), MISSING))
             case ("POST", ["projects", pid, "render"]):
                 return req.send_json(found(projects.render(pid), MISSING))
             case ("POST", ["projects", pid, "revise"]):

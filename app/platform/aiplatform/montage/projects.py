@@ -33,16 +33,20 @@ from aiplatform.montage import (
     decisions,
     documents,
     edl,
+    exports,
     knowledge,
     motion,
     narrative,
     plan,
+    qa,
     render,
+    revisions,
     scenes,
     stages,
     storyboard,
     sync,
     templates,
+    timeline,
     timemap,
     transcript,
 )
@@ -302,6 +306,7 @@ class MontageProjects:
             if gate == "edl" and project["status"] == "review":
                 project["progress"] = {"stage": "План подтверждён — можно собирать", "percent": 100.0}
             self._touch(project)
+            self._snapshot(project, f"approve {gate}")
             return self._view(project)
 
     def source(self, pid: str, role: str) -> Path | None:
@@ -339,6 +344,9 @@ class MontageProjects:
             "check": None,
             "motion": None,
             "storyboard": None,  # сводка сцен (storyboard.summary)
+            "timeline": None,  # сводка дорожек (timeline.summary)
+            "qa": None,  # ворота и счётчики qa_report.json
+            "exports": 0,  # номер последнего экспорта
             "progress": {"stage": "Ждёт записи", "percent": 0.0},
             "stages": [],  # этапы текущего действия (stages.py, PRD-025)
             "error": None,
@@ -464,6 +472,7 @@ class MontageProjects:
             self._invalidate_knowledge(project)
             self._history(project, "document", f"{record['name']} ({record['status']})")
             self._touch(project)
+            self._snapshot(project, f"document {record['id']}")
         return record
 
     def remove_document(self, pid: str, doc_id: str) -> bool:
@@ -541,6 +550,8 @@ class MontageProjects:
                 decisions.record(self.dir(pid), "human", "storyboard:edit", ids=changed, rationale="правка сцен")
                 self._history(project, "edit", f"сцены поправлены: {', '.join(changed)}")
             self._touch(project)
+            if changed:
+                self._snapshot(project, "storyboard edited")
             return self._view(project)
 
     def save_style(self, pid: str, payload: object) -> dict | None:
@@ -560,6 +571,7 @@ class MontageProjects:
             decisions.record(folder, "human", "style:edit", output=new, ids=[new["revision"]])
             self._history(project, "style", f"стиль {new['revision']}: {new['name']}")
             self._touch(project)
+            self._snapshot(project, f"style {new['revision']}")
         return new
 
     def scene_file(self, pid: str, sid: str, name: str) -> Path | None:
@@ -567,6 +579,104 @@ class MontageProjects:
             return None
         path = scenes.folder_of(self.dir(pid), sid) / name
         return path if path.is_file() else None
+
+    # ---------- таймлайн, QA, экспорт, ревизии (MASTER_SPEC §5.7–5.8, §8) ----------
+
+    def timeline_view(self, pid: str) -> dict | None:
+        if pid not in self._projects:
+            return None
+        data = self._read_json(pid, "timeline.json")
+        return data or {
+            "schema_version": montage_schemas.SCHEMA_VERSION,
+            "fps": render.FPS,
+            "duration_frames": 0,
+            "tracks": [],
+        }
+
+    def qa_view(self, pid: str) -> dict | None:
+        if pid not in self._projects:
+            return None
+        return qa.load(self.dir(pid)) or {
+            "items": [],
+            "gates": {"mechanical": "none", "semantic": "none"},
+            "counts": {},
+        }
+
+    def export(self, pid: str, payload: object) -> dict | None:
+        """Экспорт по пресету; при `mechanical: fail` — только с override_reason (§5.8), причина в журнал."""
+        data = payload if isinstance(payload, dict) else {}
+        preset_id = data.get("preset") or exports.DEFAULT
+        try:
+            exports.preset(preset_id)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        reason = data.get("override_reason") or ""
+        if not isinstance(reason, str) or len(reason) > MAX_FEEDBACK:
+            raise ValidationError("Причина — строка.")
+        with self._lock:
+            project = self._projects.get(pid)
+            if project is None:
+                return None
+            self._idle(project)
+            if not (self.dir(pid) / "output.mp4").is_file():
+                raise Conflict("Ролик ещё не собран.")
+            report = qa.load(self.dir(pid)) or {}
+            gate = (report.get("gates") or {}).get("mechanical", "none")
+            if gate == "fail" and not reason.strip():
+                raise Conflict("QA нашёл ошибки — экспорт только с причиной (override_reason), она попадёт в журнал.")
+        return self._enqueue(pid, "export", json.dumps({"preset": preset_id, "override_reason": reason.strip()}))
+
+    def exports_list(self, pid: str) -> list[dict] | None:
+        if pid not in self._projects:
+            return None
+        return exports.listing(self.dir(pid), f"{self._url}/projects/{pid}/exports")
+
+    def export_file(self, pid: str, n: str, name: str) -> Path | None:
+        if pid not in self._projects or not n.isdigit():
+            return None
+        folder = self.dir(pid) / exports.DIR / n
+        if name == "file":
+            found = [p for p in folder.glob("export.*") if p.is_file()] if folder.is_dir() else []
+            return found[0] if found else None
+        path = folder / name
+        return path if path.is_file() else None
+
+    def revisions_list(self, pid: str) -> list[dict] | None:
+        if pid not in self._projects:
+            return None
+        return revisions.listing(self.dir(pid))
+
+    def restore(self, pid: str, n: object) -> dict | None:
+        """Вернуть манифесты снимка; медиа и кэш не трогаются, сам откат — новый снимок."""
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise ValidationError("Номер ревизии — целое число.")
+        with self._lock:
+            project = self._projects.get(pid)
+            if project is None:
+                return None
+            self._idle(project)
+            folder = self.dir(pid)
+            restored = revisions.restore(folder, n)
+            if restored is None:
+                raise Conflict("Такой ревизии нет.")
+            keep = {k: project[k] for k in ("id", "created_at", "log", "sources", "backend")}
+            fresh = {**project, **{k: v for k, v in restored.items() if k != "schema"}, **keep}
+            if fresh.get("status") in ACTIVE:
+                fresh["status"] = "interrupted"
+            project.clear()
+            project.update(fresh)
+            project.setdefault("approvals", {gate: None for gate in GATES})
+            decisions.record(folder, "human", "revision:restore", ids=[str(n)], rationale=f"откат к ревизии {n}")
+            self._history(project, "restore", f"ревизия {n}")
+            self._touch(project)
+            self._snapshot(project, f"restore {n}")
+            return self._view(project)
+
+    def _snapshot(self, project: dict, label: str) -> None:
+        try:
+            revisions.snapshot(self.dir(project["id"]), label)
+        except (OSError, ValueError) as exc:  # снимок — не повод ронять действие
+            project["log"].append(f"ревизия не записана: {exc}")
 
     def revise(self, pid: str, text: object) -> dict | None:
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_FEEDBACK:
@@ -600,6 +710,7 @@ class MontageProjects:
                              ids=[f"cut:{c['from']}-{c['to']}" for c in cuts][:50])  # fmt: skip
             self._history(project, "edit", f"план поправлен вручную: вырезок {len(cuts)}")
             self._touch(project)
+            self._snapshot(project, "plan edited")
             return self._view(project)
 
     def _invalidate_after_plan(self, project: dict) -> None:
@@ -679,6 +790,8 @@ class MontageProjects:
                 raise Conflict("В режиме «Вручную» план ИИ не строится — правь вырезки в тексте.")
             if action == "scene" and not (self.dir(pid) / "storyboard.json").is_file():
                 raise Conflict("Раскадровки ещё нет.")
+            if action == "export" and not (self.dir(pid) / "output.mp4").is_file():
+                raise Conflict("Ролик ещё не собран.")
             model = asr.get(project["options"]["model"])
             if action == "prepare" and model is not None and model.id in self.config.disabled_models():
                 raise Conflict(f"Модель {model.label} выключена во вкладке «Настройки» — выбери другую.")
@@ -853,6 +966,11 @@ class MontageProjects:
             if action == "render" or (auto and action in ("prepare", "story", "scene")):
                 self._render(project, cancel)
                 status = "done"
+                if auto:
+                    self._auto_export(project, cancel)
+            elif action == "export":
+                self._export(project, json.loads(arg), cancel)
+                status = "done"
             elif action in ("story", "scene"):
                 status, stage_text = "waiting_approval", "Ждёт подтверждения раскадровки"
             else:
@@ -871,6 +989,8 @@ class MontageProjects:
         else:
             with self._lock:
                 self._finish(project, status, stage=stage_text)
+        with self._lock:
+            self._snapshot(project, action)
 
     # ---------- шаги ----------
 
@@ -1242,21 +1362,41 @@ class MontageProjects:
             self._write_edl(project, words, cuts, layout)  # карта времени — по финальным вырезкам (§4)
             self._note(project, f"Проверка нашла {len(issues)}, пересобираю")
         info = None
+        inserts: list[dict] = []
+        board_scenes: list[dict] = []
         has_board = (folder / "storyboard.json").is_file()
+        tm, _w, frame_words = self._edit_words(project)
         if has_board:
-            tm, _w, frame_words = self._edit_words(project)
-            overlays, info = self._scenes(project, frame_words, cancel)
-            if overlays:
-                self._final(project, out_words, overlays, cancel, stage=("scenes", 90, 100, "наложение сцен"))
+            self._scenes(project, frame_words, cancel)
+            board_scenes = (self._read_json(pid, "storyboard.json") or {}).get("scenes") or []
+            info = storyboard.summary(board_scenes)
+            blocked = [s for s in board_scenes if s["status"] == "blocked"]
+            if blocked:
+                info["skipped"] = blocked[0].get("error") or "сцены заблокированы"
+            stage_id = "scenes"
         elif project["options"]["motion"]:
-            overlays, info = motion.run(
+            quick, info = motion.run(
                 self.config, project, folder, out_words, result.duration, cancel,
                 ask=lambda text: self._llm(text, project, cancel, role="motion"),
                 note=lambda line: self._note(project, line),
                 progress=lambda detail, percent: self._stage(project, cancel, "motion", percent, detail),
             )  # fmt: skip
-            if overlays:
-                self._final(project, out_words, overlays, cancel, stage=("motion", 90, 100, "наложение вставок"))
+            inserts = [{"at": o.start, "duration": o.duration, "path": str(o.path.relative_to(folder))} for o in quick]
+            stage_id = "motion"
+        else:
+            stage_id = "final"
+        # Таймлайн-манифест (§5.7): финал берёт наложения из него, а не из раскадровки напрямую.
+        captions = render.chunks(out_words)
+        manifest = timeline.build(tm, board_scenes, captions, has_screen=bool(project["sources"].get("screen")),
+                                  inserts=inserts)  # fmt: skip
+        problems = timeline.check(manifest)
+        if problems:
+            raise runner.RunFailed("Таймлайн не сошёлся: " + "; ".join(problems[:3]))
+        atomic_write(folder / "timeline.json", json.dumps(manifest, ensure_ascii=False))
+        overlays = timeline.overlays(manifest, folder)
+        if overlays:
+            self._final(project, out_words, overlays, cancel, stage=(stage_id, 90, 100, "наложение"))
+        self._qa(project, manifest, board_scenes, captions, rounds, cancel)
         with self._lock:
             project["output"] = {
                 "duration": round(media.duration(folder / "output.mp4", self.config.ffmpeg), 1),
@@ -1265,10 +1405,79 @@ class MontageProjects:
             }
             project["check"] = {"rounds": rounds}
             project["motion"] = info
+            project["timeline"] = timeline.summary(manifest)
             self._set_plan_summary(project, words, cuts, layout)
             fixed = sum(len(r["issues"]) for r in rounds)
             self._history(project, "render", f"{result.duration:.0f} с, исправлено проверкой: {fixed}")
             self._touch(project)
+
+    def _qa(self, project, manifest, board_scenes, captions, rounds, cancel) -> None:
+        """qa_report.json (§5.8): механика по файлу и манифестам, семантика по кругам проверки."""
+        folder = self.dir(project["id"])
+        self._stage(project, cancel, "qa", 0, "механика: ffprobe, чёрные кадры, паузы, пик")
+        style = style_module.load(folder)
+        items = qa.mechanical(self.config, folder, project, manifest, board_scenes, captions, style, cancel)
+        sem_items, mode = qa.semantic(project, rounds, llm_available=self.config.llm_available(), max_rounds=MAX_ROUNDS)
+        attempts = max((r["round"] for r in rounds if r["issues"]), default=0)
+        report = qa.report(items, sem_items, mode, attempts)
+        atomic_write(folder / qa.FILE, json.dumps(report, ensure_ascii=False, indent=1))
+        decisions.record(
+            folder,
+            "technical_qa",
+            "qa:report",
+            output=report["gates"],
+            rationale=f"ошибок {report['counts']['error']}, предупр. {report['counts']['warning']}",
+        )
+        with self._lock:
+            project["qa"] = {"gates": report["gates"], "counts": report["counts"], "attempts": attempts}
+            self._reset_gate(project, "export")
+            self._history(
+                project, "qa", f"механика {report['gates']['mechanical']}, семантика {report['gates']['semantic']}"
+            )
+        self._stage(project, cancel, "qa", 100)
+
+    def _auto_export(self, project: dict, cancel: threading.Event) -> None:
+        """autonomous: экспорт по умолчанию, если механические ворота прошли (§5.8)."""
+        report = qa.load(self.dir(project["id"])) or {}
+        if (report.get("gates") or {}).get("mechanical") != "pass":
+            self._note(project, "Экспорт пропущен: QA нашёл ошибки — посмотри отчёт и экспортируй с причиной.")
+            return
+        with self._lock:
+            self._pass_gate(project, "export", auto=True)
+        self._export(project, {"preset": exports.DEFAULT, "override_reason": ""}, cancel)
+
+    def _export(self, project: dict, arg: dict, cancel: threading.Event) -> None:
+        pid = project["id"]
+        folder = self.dir(pid)
+        preset_id = arg["preset"]
+        reason = arg.get("override_reason") or ""
+        n = exports.next_number(folder)
+        target = folder / exports.DIR / str(n)
+        target.mkdir(parents=True, exist_ok=True)
+        out = target / f"export.{exports.preset(preset_id)['container']}"
+        total_s = media.duration(folder / "output.mp4", self.config.ffmpeg)
+        self._stage(project, cancel, "export", 0, exports.preset(preset_id)["label"])
+        tmp = target / f"export.tmp.{out.suffix[1:]}"
+        argv = exports.argv(preset_id, self.config.ffmpeg, folder / "output.mp4", tmp)
+        on_pct = lambda pct: self._stage(project, cancel, "export", pct * 0.9, "кодирование")  # noqa: E731
+        lines = self._ffmpeg_run(argv, cancel, total_s, on_pct)
+        for line in lines:
+            self._note(project, line)
+        tmp.replace(out)
+        with self._lock:
+            if not (project.get("approvals") or {}).get("export"):
+                self._pass_gate(project, "export", auto=False, reason=reason)
+        if reason:
+            decisions.record(folder, "human", "export:override", rationale=reason, ids=[str(n)])
+        data = exports.provenance(project, folder, preset_id, out, override=reason)
+        atomic_write(target / "provenance.json", json.dumps(data, ensure_ascii=False, indent=1))
+        exports.archive(folder, target / "project.zip")
+        with self._lock:
+            project["exports"] = n
+            self._history(
+                project, "export", f"#{n} {exports.preset(preset_id)['label']}" + (" (override)" if reason else "")
+            )
+        self._stage(project, cancel, "export", 100)
 
     def _assemble(self, project, words, cuts, layout, cancel, *, rebuild=False) -> tuple[edl.Edl, list[dict]]:
         """Сегменты (из кэша, если были) → склейка → субтитры → финал без вставок.
@@ -1335,6 +1544,7 @@ class MontageProjects:
         out_words = edl.output_words(words, result)
         items = render.chunks(out_words)
         atomic_write(folder / "subtitles.srt", render.srt(items))
+        atomic_write(folder / "subtitles.vtt", render.vtt(items))
         self._final(project, out_words, [], cancel, stage=None if not rebuild else ("check", 90, 100, "пересборка"))
         return result, out_words
 

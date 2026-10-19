@@ -215,13 +215,17 @@ class StagesTest(unittest.TestCase):
         auto = {"mode": "autonomous", "check": True, "motion": False}
         self.assertEqual(
             stages.plan_for("prepare", auto, screen_audio=True),
-            ["audio", "sync", "silences", "transcribe", "plan", "segments", "join", "final", "check"],
+            ["audio", "sync", "silences", "transcribe", "plan", "segments", "join", "final", "check", "qa", "export"],
         )
         self.assertEqual(stages.plan_for("prepare", {"mode": "reviewed"}), ["audio", "silences", "transcribe", "plan"])
         self.assertEqual(stages.plan_for("prepare", {"mode": "manual"}), ["audio", "silences", "transcribe"])
         self.assertEqual(stages.plan_for("revise", auto), ["plan"])
         self.assertEqual(stages.plan_for("render", {"check": False, "motion": True}),
-                         ["segments", "join", "final", "motion"])  # fmt: skip
+                         ["segments", "join", "final", "motion", "qa"])  # fmt: skip
+        self.assertEqual(stages.plan_for("render", {"mode": "autonomous", "motion": True}, storyboard=True),
+                         ["segments", "join", "final", "scenes", "qa", "export"])  # fmt: skip
+        self.assertEqual(stages.plan_for("story", {"mode": "reviewed"}), list(stages.STORY))
+        self.assertEqual(stages.plan_for("export", {}), ["export"])
 
     def test_advance_finish_and_estimates(self):
         items = stages.new(["audio", "transcribe", "plan"])  # веса 3, 40, 8
@@ -341,7 +345,7 @@ class MontageApiTest(PlatformCase):
         self.json("POST", f"/api/montage/projects/{pid}/start")
         done = self.settle(pid, ("done", "failed", "canceled"))
         self.assertEqual(done["status"], "done", done)
-        ids = ["audio", "sync", "silences", "transcribe", "plan", "segments", "join", "final"]
+        ids = ["audio", "sync", "silences", "transcribe", "plan", "segments", "join", "final", "qa", "export"]
         self.assertEqual([s["id"] for s in done["stages"]], ids, "auto без проверки: подготовка и сборка")
         self.assertTrue(all(s["status"] == "done" and s["finished_at"] >= s["started_at"] for s in done["stages"]))
         self.assertIsNone(done["eta_s"])

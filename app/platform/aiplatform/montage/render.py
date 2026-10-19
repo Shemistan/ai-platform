@@ -199,6 +199,16 @@ def srt(items: list[dict]) -> str:
     return "\n".join(f"{n}\n{_srt_time(c['s'])} --> {_srt_time(c['e'])}\n{c['text']}\n" for n, c in enumerate(items, 1))
 
 
+def _vtt_time(t: float) -> str:
+    return _srt_time(t).replace(",", ".")
+
+
+def vtt(items: list[dict]) -> str:
+    """WebVTT для плееров и YouTube: те же куски, что в SRT."""
+    body = "\n".join(f"{_vtt_time(c['s'])} --> {_vtt_time(c['e'])}\n{c['text']}\n" for c in items)
+    return "WEBVTT\n\n" + body
+
+
 def _ass_time(t: float) -> str:
     cs = int(round(t * 100))
     return f"{cs // 360000}:{cs // 6000 % 60:02d}:{cs // 100 % 60:02d}.{cs % 100:02d}"
