@@ -53,6 +53,7 @@ from aiplatform.montage import (
 from aiplatform.montage import schemas as montage_schemas
 from aiplatform.montage import style as style_module
 from aiplatform.montage.config import MontageConfig
+from aiplatform.montage.review import engine as review_engine
 from aiplatform.studio import llm
 
 SCHEMA = 2  # 2: mode и approvals вместо галочки auto (PRD-027)
@@ -168,6 +169,7 @@ class MontageProjects:
         self._queue: queue.Queue[tuple[str, str, str] | None] = queue.Queue()
         config.projects_dir.mkdir(parents=True, exist_ok=True)
         self.load_problems: list[str] = []
+        self.review = review_engine.Review(self)  # итеративное ревью (PRD-028)
         self._load()
         self._worker = threading.Thread(target=self._work, name="montage-worker", daemon=True)
         self._worker.start()
@@ -721,6 +723,13 @@ class MontageProjects:
             (folder / name).unlink(missing_ok=True)
         self._reset_gate(project, "storyboard")
 
+    def _cancel_quiet(self, pid: str) -> None:
+        """Прервать идущее действие, не меняя статус проекта (пауза ревью): воркер сам доведёт статус."""
+        project = self._projects.get(pid)
+        event = self._cancels.get(pid)
+        if project and project["status"] in ACTIVE and event:
+            event.set()
+
     def cancel(self, pid: str) -> dict | None:
         with self._lock:
             project = self._projects.get(pid)
@@ -790,7 +799,7 @@ class MontageProjects:
                 raise Conflict("В режиме «Вручную» план ИИ не строится — правь вырезки в тексте.")
             if action == "scene" and not (self.dir(pid) / "storyboard.json").is_file():
                 raise Conflict("Раскадровки ещё нет.")
-            if action == "export" and not (self.dir(pid) / "output.mp4").is_file():
+            if action in ("export", "review") and not (self.dir(pid) / "output.mp4").is_file():
                 raise Conflict("Ролик ещё не собран.")
             model = asr.get(project["options"]["model"])
             if action == "prepare" and model is not None and model.id in self.config.disabled_models():
@@ -856,6 +865,7 @@ class MontageProjects:
                 self._save(project)
             self._projects[project["id"]] = project
             self._cancels[project["id"]] = threading.Event()
+            self.review.on_load(project["id"])
 
     def _history(self, project: dict, action: str, text: str) -> None:
         project.setdefault("history", []).append({"at": time.time(), "action": action, "text": text})
@@ -971,13 +981,19 @@ class MontageProjects:
             elif action == "export":
                 self._export(project, json.loads(arg), cancel)
                 status = "done"
+            elif action == "review":  # раунды ревью (PRD-028): ролик остаётся готовым, запуск живёт в review/
+                stage_text = self.review.run(project, arg, cancel)
+                status = "done"
             elif action in ("story", "scene"):
                 status, stage_text = "waiting_approval", "Ждёт подтверждения раскадровки"
             else:
                 status = "review"
         except runner.Canceled:
             with self._lock:
-                self._finish(project, "canceled")
+                if action == "review":
+                    self._finish(project, "done", stage=self.review.after_cancel(arg))
+                else:
+                    self._finish(project, "canceled")
         except (runner.RunFailed, llm.StudioError, ValueError) as exc:
             with self._lock:
                 self._finish(project, "failed", error=str(exc))

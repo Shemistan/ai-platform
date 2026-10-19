@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/review_version",
+  "title": "review_version",
+  "description": "Версия ролика в запуске ревью (revision lineage): V0 baseline неизменяем, кандидаты V1..Vn с родителем и решением.",
+  "type": "object",
+  "required": [
+    "n",
+    "label",
+    "made_at",
+    "round",
+    "parent",
+    "accepted",
+    "output",
+    "files"
+  ],
+  "properties": {
+    "n": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "label": {
+      "type": "string"
+    },
+    "made_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "parent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "accepted": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "sha256",
+        "size",
+        "duration"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "qa": {
+      "type": "object"
+    },
+    "project_hash": {
+      "type": "string"
+    }
+  },
+  "examples": [
+    {
+      "n": 1,
+      "label": "V1",
+      "made_at": 1760000000.0,
+      "round": 1,
+      "parent": "V0",
+      "accepted": true,
+      "reason": "",
+      "output": {
+        "sha256": "ab",
+        "size": 1000,
+        "duration": 150.0
+      },
+      "files": [
+        "output.mp4",
+        "timeline.json"
+      ],
+      "qa": {
+        "error": 0
+      },
+      "project_hash": "cd"
+    }
+  ]
+}

@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/run_event",
+  "title": "run_event",
+  "description": "Событие конвейера (ITERATIVE_REVIEW_SPEC §14.5): append-only, стабильный id и порядок seq внутри проекта, иерархия run/phase/round/stage/agent/job/task/attempt.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "seq",
+    "occurred_at",
+    "project_id",
+    "type",
+    "severity",
+    "status",
+    "message"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurred_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "phase_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "round_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stage_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "agent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "job_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "task_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "correlation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "type": {
+      "type": "string"
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "debug",
+        "info",
+        "warning",
+        "error"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "queued",
+        "running",
+        "awaiting_approval",
+        "paused",
+        "retrying",
+        "blocked",
+        "failed",
+        "cancelled",
+        "skipped",
+        "completed",
+        "none"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "progress": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "completed_units": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total_units": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": "string"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "artifact_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "examples": [
+    {
+      "event_id": "0123456789ab-17",
+      "seq": 17,
+      "occurred_at": 1760000000.0,
+      "project_id": "0123456789ab",
+      "run_id": "run_ab12",
+      "phase_id": "render",
+      "round_id": null,
+      "stage_id": "scenes",
+      "agent_id": null,
+      "job_id": "job_77",
+      "task_id": "scene_014",
+      "attempt": 1,
+      "correlation_id": "run_ab12",
+      "type": "job_progress",
+      "severity": "info",
+      "status": "running",
+      "message": "Рендер сцены 14",
+      "progress": {
+        "completed_units": 180,
+        "total_units": 240,
+        "unit": "frames"
+      },
+      "metrics": {
+        "render_fps": 18.5
+      },
+      "artifact_ids": [],
+      "reason": ""
+    }
+  ]
+}

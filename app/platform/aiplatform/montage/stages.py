@@ -30,9 +30,15 @@ STAGES = {
     "scenes": ("Моушн-сцены", 15),
     "qa": ("QA-отчёт", 4),
     "export": ("Экспорт", 6),
+    "review_bundle": ("Бандл ревью: прокси, кадры, замеры", 6),
+    "review_roles": ("Роли-ревьюеры", 10),
+    "review_plan": ("Замечания и план исправлений", 2),
+    "review_repair": ("Правки манифестов", 1),
+    "review_compare": ("Сравнение версий", 6),
 }
 RENDER = ("segments", "join", "final")
 STORY = ("timemap", "knowledge", "beats", "style", "storyboard")
+REVIEW = ("review_bundle", "review_roles", "review_plan", "review_repair")
 MIN_PERCENT_FOR_ETA = 2.0  # раньше скорость этапа не видна — оценка врала бы
 
 
@@ -60,6 +66,9 @@ def plan_for(action: str, options: dict, *, screen_audio: bool = False, storyboa
         return ["storyboard", *(render if auto else [])]
     if action == "export":
         return ["export"]
+    if action == "review":  # раунд ревью (PRD-028): анализ → план → правки → пересборка → QA → сравнение
+        graphics = ["scenes"] if storyboard else []
+        return [*REVIEW, *RENDER, *graphics, "qa", "review_compare"]
     return render
 
 

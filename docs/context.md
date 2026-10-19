@@ -139,6 +139,12 @@ dialogue в кадрах), наложения финала берутся из �
 `exports.py` — пресеты youtube_1080p / vertical_1080x1920 / prores_master, `exports/<n>/` с
 provenance.json и project.zip, экспорт при красных воротах только с причиной; `revisions.py` —
 снимки манифестов `revisions/<n>.json` после каждого действия и откат. Субтитры также `subtitles.vtt`.
+Итеративное ревью (PRD-028, ADR 0012, `docs/ITERATIVE_REVIEW_IMPLEMENTATION_PLAN.md`) — пакет `review/`:
+`policy.py` настройки, профили весов, безопасные правки, защищённые области, бюджеты; `state.py` запуск
+и раунды (state machine, чекпоинт `review/runs/<id>/run.json`, после рестарта активный → `paused`);
+`versions.py` версии `review/versions/V<n>/` (V0 baseline неизменяем, жёсткая ссылка на ролик, откат,
+diff); `engine.py` — `projects.review`: создать запуск, start/pause/resume/stop, optimistic lock по
+хэшу манифестов (`stale_revision`); `rounds.py` — стадии раунда (действие воркера `review`).
 
 ## Моушн `motion/`
 
@@ -211,7 +217,8 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
   `plan.json`, `edl.json`, `timemap.json`, `source_manifest.json`, `decisions.jsonl`, `documents/`,
   `documents.json`, `chunks.json`, `knowledge.json`, `beats.json`, `transcript_edit.json`, `styles/`,
   `style_bible.json`, `storyboard.json`, `scenes/<id>/`, `segments/` (кэш), `output.mp4`, `subtitles.srt`,
-  `subtitles.vtt`, `timeline.json`, `qa_report.json`, `exports/<n>/`, `revisions/<n>.json`;
+  `subtitles.vtt`, `timeline.json`, `qa_report.json`, `exports/<n>/`, `revisions/<n>.json`,
+  `review/runs/<run_id>/` (run.json, `rounds/<n>/`), `review/versions/V<n>/`;
   `montage/lessons.md` — выученные правила.
 - `studio/projects/<id>/`: `project.json`, `text.md`, `post.md`, `poster.*`,
   `plan.json`, `images/`, `clips/`, `voice.*`, `video.mp4`, `short.mp4`,
@@ -237,7 +244,8 @@ ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): �
 подпроцессом: CLI для долгого, мост `bridge` для данных · 0006 LLM через `claude -p` ·
 0007 файлы вместо БД · 0008 Telegram ботом, остальное ручным пакетом · 0009 версия
 схемы данных, миграции, карантин · 0010 лицензии движков озвучки и голос Charon · 0011 MASTER_SPEC
-(студия видеопродакшена) внутри платформы: проекция ТЗ на стек, что не делается.
+(студия видеопродакшена) внутри платформы: проекция ТЗ на стек, что не делается · 0012 Iterative Review
+и панель наблюдаемости — файлами и воркером «Монтажа», без VLM честная деградация.
 
 ## Запуск и проверки
 
@@ -264,4 +272,5 @@ ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): �
 | релизы | `docs/CHANGELOG.md` |
 | прошлые системные ошибки | `docs/грабли.md` |
 | MASTER_SPEC: аудит машины, шкалы времени, матрица приёмки | `docs/ENVIRONMENT_AUDIT.md`, `docs/TIMEBASE.md`, `docs/ACCEPTANCE.md` |
+| ITERATIVE_REVIEW_SPEC: gap analysis, миграции, риски, порядок | `docs/ITERATIVE_REVIEW_IMPLEMENTATION_PLAN.md` |
 | что уже сделано / открыто | `backlog/CHANGELOG.md`, `backlog/README.md` |

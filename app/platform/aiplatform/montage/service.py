@@ -19,6 +19,8 @@ from aiplatform.montage.projects import (
     MontageProjects,
     ValidationError,
 )
+from aiplatform.montage.review import policy as review_policy
+from aiplatform.montage.review.engine import ReviewConflict, ReviewError
 
 PREFIX = "montage"
 URL_BASE = f"/api/{PREFIX}"
@@ -39,6 +41,9 @@ SCENE_FILES = {
     "index.html": "text/plain; charset=utf-8",  # исходник композиции — не страница
     "scene.json": "application/json",
 }
+REVIEW_VERBS = ("start", "pause", "resume", "stop")
+VERSION_FILES = {"video": "video/mp4", "version.json": "application/json", "timeline.json": "application/json",
+                 "storyboard.json": "application/json", "qa_report.json": "application/json"}  # fmt: skip
 
 
 def _conflict(exc: Exception) -> HttpError:
@@ -75,6 +80,7 @@ class MontageModule:
             "install_hint": INSTALL_HINT,
             "max_upload_bytes": self.config.max_upload_bytes,
             "max_feedback": MAX_FEEDBACK,
+            "review": review_policy.public(),  # итеративное ревью (PRD-028): режимы, профили, роли
         }
 
     def problems(self) -> list[str]:
@@ -86,13 +92,14 @@ class MontageModule:
     def handle(self, req: Request) -> None:
         try:
             return self._route(req)
-        except ValidationError as exc:
+        except (ValidationError, ReviewError) as exc:
             raise bad_request(str(exc)) from exc
-        except Conflict as exc:
+        except (Conflict, ReviewConflict) as exc:
             raise _conflict(exc) from exc
 
     def _route(self, req: Request) -> None:
         projects = self.projects
+        review = projects.review
         match (req.method, req.sub):
             case ("GET", ["config"]):
                 return req.send_json(self.describe())
@@ -200,6 +207,22 @@ class MontageModule:
             case ("POST", ["projects", pid, "revisions", n, "restore"]):
                 number = int(n) if n.isdigit() else None
                 return req.send_json(found(projects.restore(pid, number), MISSING))
+            # Итеративное ревью (ITERATIVE_REVIEW_SPEC §10, PRD-028): запуски, управление, версии.
+            case ("GET", ["projects", pid, "review-runs"]):
+                return req.send_json({"runs": found(review.runs(pid), MISSING)})
+            case ("POST", ["projects", pid, "review-runs"]):
+                return req.send_json(found(review.create(pid, req.json(MAX_BODY)), MISSING), HTTPStatus.CREATED)
+            case ("GET", ["projects", pid, "review-runs", rid]):
+                return req.send_json(found(review.get(pid, rid), MISSING))
+            case ("POST", ["projects", pid, "review-runs", rid, verb]) if verb in REVIEW_VERBS:
+                return req.send_json(found(review.control(pid, rid, verb), MISSING))
+            case ("GET", ["projects", pid, "versions"]):
+                return req.send_json({"versions": found(review.versions(pid), MISSING)})
+            case ("GET", ["projects", pid, "versions", label, name]) if name in VERSION_FILES:
+                path = review.version_file(pid, label, name)
+                if path is None:
+                    raise not_found("Файла версии нет.")
+                return req.send_file(path, VERSION_FILES[name], ranged=name == "video")
             case ("POST", ["projects", pid, "render"]):
                 return req.send_json(found(projects.render(pid), MISSING))
             case ("POST", ["projects", pid, "revise"]):

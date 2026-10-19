@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/repair_action",
+  "title": "repair_action",
+  "description": "Действие плана исправлений (RepairAction).",
+  "type": "object",
+  "required": [
+    "action_id",
+    "issue_ids",
+    "op",
+    "status",
+    "depends_on",
+    "affected_frames",
+    "estimate",
+    "approval",
+    "attempts"
+  ],
+  "properties": {
+    "action_id": {
+      "type": "string"
+    },
+    "issue_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "op": {
+      "type": "string",
+      "enum": [
+        "scene_extend",
+        "scene_shorten",
+        "scene_shift",
+        "scene_disable",
+        "scene_props",
+        "caption_words",
+        "cut_words",
+        "none"
+      ]
+    },
+    "scene_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "params": {
+      "type": "object"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "approved",
+        "rejected",
+        "deferred",
+        "blocked",
+        "done",
+        "failed",
+        "skipped"
+      ]
+    },
+    "status_reason": {
+      "type": "string"
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "affected_frames": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "asset_hash_before": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "asset_hash_after": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "estimate": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "render_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "assets": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "approval": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "required",
+        "given",
+        "denied"
+      ]
+    },
+    "safe": {
+      "type": "boolean"
+    },
+    "test": {
+      "type": "string"
+    },
+    "rollback": {
+      "type": "string"
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fingerprint": {
+      "type": "string"
+    }
+  },
+  "examples": [
+    {
+      "action_id": "act-001",
+      "issue_ids": [
+        "rev-001-sound-001"
+      ],
+      "op": "caption_words",
+      "scene_id": null,
+      "params": {
+        "max_words": 2
+      },
+      "status": "approved",
+      "status_reason": "",
+      "depends_on": [],
+      "affected_frames": [
+        {
+          "from": 0,
+          "to": 4500
+        }
+      ],
+      "asset_hash_before": null,
+      "asset_hash_after": null,
+      "estimate": {
+        "render_s": 30,
+        "assets": 0
+      },
+      "approval": "given",
+      "safe": true,
+      "test": "скорость чтения ≤ 20 зн/с",
+      "rollback": "V0",
+      "attempts": 0,
+      "error": null,
+      "fingerprint": "captions:caption_words"
+    }
+  ]
+}
