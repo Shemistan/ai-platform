@@ -57,6 +57,7 @@
 | `audio/` | `/api/audio/` | текст → mp3 через narrator; движки и голоса — `voices.py` |
 | `avatar/` | `/api/avatar/` | «Диктор»: персонаж по фото говорит текст — озвучка очередью «Аудио», анимация SadTalker (`sadtalker.py`), персонажи `characters.py` |
 | `montage/` | `/api/montage/` | «Монтаж»: своя запись → ролик (ниже) |
+| `motion/` | `/api/motion/` | «Моушн»: готовое видео → анимации агентов с таймкодами (ниже) |
 | `studio/` | `/api/studio/` | сценарии выпусков и доска «Выпуски» (ниже) |
 | `library/` | `/api/library/` | «Статьи»: библиотека narrator через мост, озвучка/проверка/отправка — фоновые `core.tasks` |
 | `news/` | `/api/news/` | источники, главное за день, добор упавших, обзоры недели/месяца |
@@ -120,6 +121,17 @@ lower_third, stat, list, quote), HyperFrames рендерит HTML+GSAP (`assets
 MOV, финал накладывает. Этапы действия с процентом и «осталось» — `stages.py` (`project.stages`, ffmpeg
 `-progress`). `compare.py` — `make asr-compare`. Фейки: `fake_asr.py`, `fake_hyperframes.py`.
 
+## Моушн `motion/`
+
+Готовое видео (загрузка или `output.mp4` «Монтажа» жёсткой ссылкой, `source.py` перекладывает его
+расшифровку на время результата) → расшифровка (asr «Монтажа») → команда агентов (`agents.py`, правила
+ролей `assets/*.md`): редактор смысла (моменты) → дизайнер (язык выпуска) → по сценам параллельно режиссёр
+(раскадровка битами на слова) → техред (ok/fix/drop) → аниматор (html/css/js в каркасе HyperFrames: CSP без
+сети, логический кадр 1920, `node --check`, одна починка) → рендер MOV ProRes 4444 с альфой → превью 720p
+поверх исходника. Пакет (`scenes.py`): MOV + `timecodes.csv/txt` + `scenes.json`. Конвейер и очередь —
+`projects.py`, переделка и добавление сцены — действия `scene`/`add`. Исходник не меняется (ADR нет:
+LLM — ADR 0006, файлы — 0007).
+
 ## Фронтенд `aiplatform/static/`
 
 Ванильный JS, ES-модули без сборки; страница вкладки = `static/<tab>/index.html` + `app.js`.
@@ -174,6 +186,8 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
   `uploads/`, `analytics/publications.jsonl`.
 - `photo/jobs/`, `video/jobs/`, `audio/jobs/`, `avatar/jobs/`, `library/tasks/` — задачи вкладок;
   `avatar/characters/<id>/` — персонажи диктора (картинка, согласие на лицо).
+- `motion/projects/<id>/`: `project.json`, `source.<ext>`, `words.json`, `moments.json`, `design.json`,
+  `scenes/<sid>/` (`storyboard.json`, `code.json`, `index.html`, `scene.mov`, `preview.mp4`, `poster.jpg`), `package.zip`.
 - `montage/projects/<id>/`: `project.json`, `sources/`, `audio.wav`, `words.json`, `silences.json`,
   `plan.json`, `segments/` (кэш), `output.mp4`, `subtitles.srt`; `montage/lessons.md` — выученные правила.
 - `studio/projects/<id>/`: `project.json`, `text.md`, `post.md`, `poster.*`,
