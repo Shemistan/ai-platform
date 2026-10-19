@@ -68,22 +68,24 @@ make run                                  # http://127.0.0.1:8780 — насто
   HTTP API — [`docs/api-routes.md`](docs/api-routes.md).
 - Не запускается — [«Если не работает при установке»](app/platform/README.md#если-не-работает-при-установке).
 
-## Проверки и CI
+## Проверки
 
-Локально — `./check` (его же зовёт `pre-commit`): гейты документации и
-бэклога, `make check` в каждом сервисе `app/<svc>/`. Покрытие без порога —
-`make cov` в `app/platform` и `app/narrator` (html — в их `tmp/cov/html`).
+Все проверки — локально, CI нет (DX-017: лимит GitHub Actions исчерпан,
+workflow убран). `./check` гоняют три точки, обойти ни одну нельзя:
 
-Независимо от машины тот же `./check` гоняет GitHub Actions
-(`.github/workflows/check.yml`): на каждый PR в `main` и push в `staging`,
-раннер `macos-14` с ffmpeg, Python 3.12 и uv, затем покрытие в лог джобы.
-Экстры narrator с моделями (torch) в CI не ставятся — `NARRATOR_CHECK_EXTRAS=`.
+- `pre-commit` — на каждый коммит (ставит `sh bootstrap.sh`);
+- `./finish` — перед push ветки и сдвигом `staging`;
+- `pre-push` — перед любым push.
 
-Сделать проверку обязательной — один раз, вручную, в настройках репозитория
-на GitHub: Settings → Branches (или Rules → Rulesets) → правило для `main` →
-Require status checks to pass → добавить `check` (появится в списке после
-первого прогона workflow). Тогда PR `staging → main` не сольётся с красным
-статусом.
+`./check` — гейты документации и бэклога, `make check` в каждом сервисе
+`app/<svc>/`. Покрытие без порога — `make cov` в `app/platform` и
+`app/narrator` (html — в их `tmp/cov/html`). PR `staging → main` сливается
+после зелёного `./finish` на машине автора; статусов на GitHub у PR нет — если
+в защите `main` остался обязательный статус `check`, его надо снять:
+Settings → Branches → правило для `main` → Require status checks.
+
+Вернуть CI: workflow лежит в истории (`git log -- .github/workflows/check.yml`),
+раннер `macos-14`, Python 3.12, uv, `NARRATOR_CHECK_EXTRAS=`.
 
 ## Регламент агента
 
