@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/timeline",
+  "title": "timeline",
+  "description": "Хронология: 2–6 событий по порядку: версии, годы, этапы. Длительность по умолчанию 6.0 с, минимальный кегль 30px.",
+  "type": "object",
+  "required": [
+    "events"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "events": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "required": [
+          "label",
+          "text"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "maxLength": 12
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 40
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "title": "Go",
+      "events": [
+        {
+          "label": "2009",
+          "text": "анонс"
+        },
+        {
+          "label": "2012",
+          "text": "Go 1.0"
+        },
+        {
+          "label": "2022",
+          "text": "дженерики"
+        }
+      ]
+    }
+  ]
+}

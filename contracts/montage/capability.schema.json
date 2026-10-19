@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/capability",
+  "title": "capability",
+  "description": "Запись реестра возможностей (§3): что умеет машина, по факту probe.",
+  "type": "object",
+  "required": [
+    "id",
+    "kind",
+    "label",
+    "status",
+    "detail",
+    "hint"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "asr",
+        "llm",
+        "render",
+        "media",
+        "3d",
+        "document",
+        "image",
+        "video"
+      ]
+    },
+    "label": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "available",
+        "unavailable",
+        "disabled"
+      ]
+    },
+    "version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "detail": {
+      "type": "string"
+    },
+    "probed_at": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "hint": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "deterministic": {
+      "type": "boolean"
+    }
+  },
+  "examples": [
+    {
+      "id": "hyperframes",
+      "kind": "render",
+      "label": "HyperFrames",
+      "status": "unavailable",
+      "version": null,
+      "detail": "команда не найдена",
+      "probed_at": null,
+      "hint": "make models M=hyperframes в app/platform (нужен Node 22+)",
+      "license": "Apache-2.0",
+      "deterministic": true
+    }
+  ]
+}

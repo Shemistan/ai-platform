@@ -622,7 +622,7 @@ function uploadRow(label, onCancel) {
 // не дочитав тело, и браузер покажет «Failed to fetch». Пока идёт — строка с полоской и «Отменить»
 // внизу экрана и предупреждение при уходе со страницы. Отмена (кнопкой или signal) — kind: abort.
 // XMLHttpRequest, а не fetch: только у него есть прогресс отправки тела.
-export function uploadFile(url, file, { limit = 0, label = file?.name || "файл", onProgress = null, signal = null } = {}) {
+export function uploadFile(url, file, { limit = 0, label = file?.name || "файл", onProgress = null, signal = null, headers = {} } = {}) {
   if (limit && file.size > limit) {
     return Promise.reject(new ApiError(`Файл больше ${megabytes(limit)} МБ.`, { kind: "too_big", data: { limit } }));
   }
@@ -642,6 +642,7 @@ export function uploadFile(url, file, { limit = 0, label = file?.name || "фай
     };
     xhr.open("POST", url);
     xhr.setRequestHeader("X-AIP", "1"); // как у api(): признак запроса своей страницы (SEC-002)
+    for (const [key, value] of Object.entries(headers)) xhr.setRequestHeader(key, value); // имя файла и т. п.
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable) return;
       const percent = Math.min(100, Math.round((100 * e.loaded) / e.total));

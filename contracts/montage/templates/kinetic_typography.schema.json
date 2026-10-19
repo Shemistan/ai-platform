@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/kinetic_typography",
+  "title": "kinetic_typography",
+  "description": "Кинетическая типографика: ключевая мысль словами, которые появляются по одному; accent — слова, которые выделить. Длительность по умолчанию 4.0 с, минимальный кегль 56px.",
+  "type": "object",
+  "required": [
+    "text"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "maxLength": 90
+    },
+    "accent": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 20
+      },
+      "minItems": 0,
+      "maxItems": 4
+    }
+  },
+  "examples": [
+    {
+      "text": "Канал — это очередь с правилами",
+      "accent": [
+        "очередь"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/code_highlight",
+  "title": "code_highlight",
+  "description": "Код с подсветкой: короткий фрагмент кода (до 12 строк по 64 знака), highlight — номера строк по порядку. Длительность по умолчанию 6.0 с, минимальный кегль 30px.",
+  "type": "object",
+  "required": [
+    "code"
+  ],
+  "properties": {
+    "language": {
+      "type": "string",
+      "maxLength": 12
+    },
+    "code": {
+      "type": "string",
+      "maxLength": 800
+    },
+    "highlight": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "maxItems": 6
+    },
+    "caption": {
+      "type": "string",
+      "maxLength": 60
+    }
+  },
+  "examples": [
+    {
+      "language": "go",
+      "code": "ch := make(chan int, 2)\nch <- 1\nch <- 2\nch <- 3 // блок",
+      "highlight": [
+        1,
+        4
+      ],
+      "caption": "буфер на два значения"
+    }
+  ]
+}

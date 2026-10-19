@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/narrative_beat",
+  "title": "narrative_beat",
+  "description": "Нарративный бит (§5.3, §7): отрезок речи с целью и нужной картинкой; кадры — результата.",
+  "type": "object",
+  "required": [
+    "id",
+    "from",
+    "to",
+    "start_frame",
+    "end_frame",
+    "purpose",
+    "goal",
+    "claims",
+    "priority",
+    "confidence"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "from": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "to": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "start_frame": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "end_frame": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "purpose": {
+      "type": "string",
+      "enum": [
+        "hook",
+        "setup",
+        "explanation",
+        "demo",
+        "recap",
+        "cta",
+        "other"
+      ]
+    },
+    "goal": {
+      "type": "string"
+    },
+    "difficulty": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "keywords": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "visuals_needed": {
+      "type": "string"
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "examples": [
+    {
+      "id": "beat_001",
+      "from": 0,
+      "to": 25,
+      "start_frame": 0,
+      "end_frame": 310,
+      "purpose": "hook",
+      "goal": "зацепить: зачем смотреть",
+      "difficulty": 1,
+      "keywords": [
+        "Go",
+        "каналы"
+      ],
+      "visuals_needed": "нет",
+      "claims": [],
+      "priority": 3,
+      "confidence": 0.8
+    }
+  ]
+}

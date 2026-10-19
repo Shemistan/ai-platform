@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/time_map_segment",
+  "title": "time_map_segment",
+  "description": "Сегмент TimeMap (§4): интервал результата в целых кадрах ↔ интервал исходника в секундах.",
+  "type": "object",
+  "required": [
+    "source_id",
+    "source_pts_start",
+    "source_pts_end",
+    "edit_frame_start",
+    "edit_frame_end",
+    "speed",
+    "transition"
+  ],
+  "properties": {
+    "source_id": {
+      "type": "string"
+    },
+    "source_pts_start": {
+      "type": "number",
+      "minimum": 0
+    },
+    "source_pts_end": {
+      "type": "number",
+      "minimum": 0
+    },
+    "edit_frame_start": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "edit_frame_end": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "speed": {
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": 10
+    },
+    "transition": {
+      "type": "string",
+      "enum": [
+        "cut",
+        "crossfade"
+      ]
+    },
+    "layout": {
+      "type": "string",
+      "enum": [
+        "head",
+        "screen",
+        "split"
+      ]
+    },
+    "first_word": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "last_word": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "examples": [
+    {
+      "source_id": "head",
+      "source_pts_start": 0.4,
+      "source_pts_end": 5.233,
+      "edit_frame_start": 0,
+      "edit_frame_end": 145,
+      "speed": 1,
+      "transition": "cut",
+      "layout": "head",
+      "first_word": 0,
+      "last_word": 11
+    }
+  ]
+}

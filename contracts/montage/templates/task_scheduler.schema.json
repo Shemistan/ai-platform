@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/task_scheduler",
+  "title": "task_scheduler",
+  "description": "Планировщик задач: очередь задач раскладывается по исполнителям: горутины по P, запросы по воркерам. Длительность по умолчанию 6.0 с, минимальный кегль 30px.",
+  "type": "object",
+  "required": [
+    "workers",
+    "tasks"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "workers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 12
+      },
+      "minItems": 1,
+      "maxItems": 4
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 12
+      },
+      "minItems": 2,
+      "maxItems": 6
+    }
+  },
+  "examples": [
+    {
+      "title": "Планировщик",
+      "workers": [
+        "P0",
+        "P1"
+      ],
+      "tasks": [
+        "G1",
+        "G2",
+        "G3",
+        "G4"
+      ]
+    }
+  ]
+}

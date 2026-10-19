@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/timeline",
+  "title": "timeline",
+  "description": "Таймлайн-манифест (§5.7): дорожки и клипы в кадрах результата; из него собирается финал.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "fps",
+    "duration_frames",
+    "tracks"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "fps": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "duration_frames": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "clips"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "presenter",
+              "screen",
+              "overlays",
+              "captions",
+              "dialogue"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "video",
+              "overlay",
+              "captions",
+              "audio"
+            ]
+          },
+          "clips": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "edit_in_frame",
+                "edit_out_frame",
+                "enabled"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "source_id": {
+                  "type": "string"
+                },
+                "source_in": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "source_out": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "edit_in_frame": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "edit_out_frame": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "layout": {
+                  "type": "string"
+                },
+                "scene_id": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "gain_db": {
+                  "type": "number"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "opacity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1.0",
+      "fps": 30,
+      "duration_frames": 145,
+      "tracks": [
+        {
+          "id": "presenter",
+          "kind": "video",
+          "clips": [
+            {
+              "id": "seg_001",
+              "source_id": "head",
+              "source_in": 0.4,
+              "source_out": 5.233,
+              "edit_in_frame": 0,
+              "edit_out_frame": 145,
+              "layout": "head",
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "overlays",
+          "kind": "overlay",
+          "clips": []
+        },
+        {
+          "id": "captions",
+          "kind": "captions",
+          "clips": [
+            {
+              "id": "cap_001",
+              "edit_in_frame": 0,
+              "edit_out_frame": 40,
+              "text": "Привет",
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "dialogue",
+          "kind": "audio",
+          "clips": [
+            {
+              "id": "aud_001",
+              "source_id": "head",
+              "source_in": 0.4,
+              "source_out": 5.233,
+              "edit_in_frame": 0,
+              "edit_out_frame": 145,
+              "enabled": true,
+              "gain_db": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

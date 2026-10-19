@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/lower_third",
+  "title": "lower_third",
+  "description": "Подпись-название: название продукта, человека, репозитория и что это. Длительность по умолчанию 4.0 с, минимальный кегль 36px.",
+  "type": "object",
+  "required": [
+    "title"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "subtitle": {
+      "type": "string",
+      "maxLength": 60
+    }
+  },
+  "examples": [
+    {
+      "title": "HyperFrames",
+      "subtitle": "рендер HTML в видео"
+    }
+  ]
+}

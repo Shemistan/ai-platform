@@ -228,6 +228,34 @@ def output_words(words: list[dict], edl: Edl) -> list[dict]:
     return out
 
 
+CONFIDENCE = {"filler": 0.85, "retake": 0.75, "slip": 0.7, "command": 0.9, "extra": 0.6, "human": 1.0, "check": 0.8}
+
+
+def decisions_of(words: list[dict], cuts: list[dict], layout: list[dict], *, approved: bool = False,
+                 source_id: str = "head", handle: float = KEEP_PAUSE_S / 2) -> list[dict]:  # fmt: skip
+    """Вырезки и смены плана → записи EditDecision (MASTER_SPEC §7) во времени исходника."""
+    out: list[dict] = []
+    for n, cut in enumerate(cuts, 1):
+        a, b = words[cut["from"]], words[cut["to"]]
+        out.append({
+            "id": f"cut_{n:03d}", "source_id": source_id, "source_in": round(a["s"], 3), "source_out": round(b["e"], 3),
+            "action": "remove", "kind": cut["kind"], "reason": cut.get("reason", ""),
+            "confidence": CONFIDENCE.get(cut["kind"], 0.6), "handles": {"before": handle, "after": handle},
+            "approved": approved, "words": [cut["from"], cut["to"]],
+        })  # fmt: skip
+    for n, mark in enumerate(layout, 1):
+        if mark["from"] >= len(words):
+            continue
+        at = words[mark["from"]]["s"]
+        out.append({
+            "id": f"layout_{n:03d}", "source_id": source_id, "source_in": round(at, 3), "source_out": round(at, 3),
+            "action": "layout", "kind": mark["layout"], "reason": f"план {LAYOUTS.get(mark['layout'], mark['layout'])}",
+            "confidence": 0.7, "handles": {"before": 0.0, "after": 0.0}, "approved": approved,
+            "words": [mark["from"], mark["from"]],
+        })  # fmt: skip
+    return out
+
+
 def summary(words: list[dict], duration: float, cuts: list[dict], edl: Edl) -> dict:
     by_kind: dict[str, int] = {}
     for cut in cuts:
