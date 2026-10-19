@@ -41,7 +41,7 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual([m.id for m in asr.CATALOG], ["whisper-large-v3-turbo", "whisper-large-v3", "qwen3-asr-1.7b"])
         self.assertEqual(asr.DEFAULT_ID, "whisper-large-v3-turbo")
         for model in asr.CATALOG:
-            for weights in (model.weights, model.aligner):
+            for weights in (model.weights, model.aligner, model.processor):
                 if weights:
                     self.assertRegex(weights.revision, r"^[0-9a-f]{40}$", weights.repo)
         self.assertIsNotNone(asr.get("qwen3-asr-1.7b").aligner)
@@ -69,8 +69,18 @@ class CatalogTest(unittest.TestCase):
                 (asr.weights_dir(cfg, weights) / weights.files[-1]).touch()
             self.assertTrue(asr.installed(qwen, cfg))
             self.assertFalse(asr.installed(asr.get("whisper-large-v3"), cfg))
+            # Whisper: веса без токенизатора openai — не установлена (BE-015).
+            whisper = asr.get("whisper-large-v3-turbo")
+            folder = asr.weights_dir(cfg, whisper.weights)
+            folder.mkdir(parents=True)
+            for name in whisper.weights.files:
+                (folder / name).touch()
+            self.assertEqual(asr.missing(whisper, cfg), [f"токенизатора openai/whisper-large-v3-turbo в {folder}"])
+            for name in whisper.processor.files:
+                (folder / name).touch()
+            self.assertTrue(asr.installed(whisper, cfg))
             self.assertTrue(asr.installed(qwen, config(Path("/nonexistent"), fake=True)))
-            self.assertEqual([m["installed"] for m in asr.public(cfg)], [False, False, True], "public — по каталогу")
+            self.assertEqual([m["installed"] for m in asr.public(cfg)], [True, False, True], "public — по каталогу")
 
 
 class ArgvTest(unittest.TestCase):

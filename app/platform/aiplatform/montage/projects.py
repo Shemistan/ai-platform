@@ -23,7 +23,7 @@ from aiplatform.core import log, media, runner, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.gate import Gate
-from aiplatform.montage import asr, edl, motion, plan, render, sync, transcript
+from aiplatform.montage import asr, edl, motion, plan, render, stages, sync, transcript
 from aiplatform.montage.config import MontageConfig
 from aiplatform.studio import llm
 
@@ -31,6 +31,9 @@ SCHEMA = 1
 FIELDS = schema.require("id", "status", "created_at", "progress", types={"id": str, "status": str})
 ACTIVE = ("queued", "running")
 LOG_TAIL = 200
+# Строка прогресса ffmpeg (-progress pipe:1): сколько готово, мкс; остальные «ключ=значение» — шум.
+_FF_TIME = re.compile(r"^out_time_(?:us|ms)=(\d+)$")
+_FF_KEY = re.compile(r"^[a-z0-9_]+=\s*\S*$")  # «bitrate= 256.0kbits/s» — с пробелом
 GPU_OWNER = "Монтаж"
 ROLES = {"head": "Голова", "screen": "Экран"}
 MAX_ROUNDS = 2  # кругов «проверка → исправление → пересборка»
@@ -132,6 +135,10 @@ class MontageProjects:
         view["sources_url"] = {
             role: f"{self._url}/projects/{pid}/source/{role}" for role in ROLES if project["sources"].get(role)
         }
+        now = time.time()
+        view["eta_s"] = stages.remaining(view["stages"], now) if project["status"] == "running" else None
+        for stage in view["stages"]:
+            stage["eta_s"] = stages.stage_remaining(stage, now)
         if project["status"] == "queued":
             view["queue_position"] = sum(
                 1 for p in self._projects.values() if p["status"] in ACTIVE and p["updated_at"] < project["updated_at"]
@@ -208,6 +215,7 @@ class MontageProjects:
             "check": None,
             "motion": None,
             "progress": {"stage": "Ждёт записи", "percent": 0.0},
+            "stages": [],  # этапы текущего действия (stages.py, PRD-025)
             "error": None,
             "history": [],
             "log": [],
@@ -400,6 +408,9 @@ class MontageProjects:
             project["action"] = action
             project["error"] = None
             project["progress"] = {"stage": "В очереди", "percent": 0.0}
+            screen = project["sources"].get("screen") or {}
+            ids = stages.plan_for(action, project["options"], screen_audio=bool(screen.get("has_audio")))
+            project["stages"] = stages.new(ids)
             self._touch(project)
             self._queue.put((pid, action, arg))
             return self._view(project)
@@ -422,10 +433,12 @@ class MontageProjects:
             project, _ = schema.load_record(path, SCHEMA, check=FIELDS, problems=self.load_problems, label=label)
             if project is None:
                 continue
+            project.setdefault("stages", [])
             if project["status"] in ACTIVE:
                 project["status"] = "failed"
                 project["error"] = "Сервис был перезапущен во время работы — запусти шаг ещё раз."
                 project["progress"]["stage"] = "Ошибка"
+                stages.finish(project["stages"], "failed")
                 self._save(project)
             self._projects[project["id"]] = project
             self._cancels[project["id"]] = threading.Event()
@@ -437,6 +450,7 @@ class MontageProjects:
     def _finish(self, project: dict, status: str, *, error: str | None = None, stage: str | None = None) -> None:
         project["status"] = status
         project["error"] = error
+        stages.finish(project.setdefault("stages", []), status)
         if status == "done":
             project["progress"] = {"stage": "Готово", "percent": 100.0}
         elif status == "review":
@@ -445,10 +459,41 @@ class MontageProjects:
             project["progress"]["stage"] = stage or ("Ошибка" if status == "failed" else "Отменено")
         self._touch(project)
 
-    def _progress(self, project: dict, cancel: threading.Event, stage: str, percent: float) -> None:
+    def _stage(self, project: dict, cancel: threading.Event, stage_id: str, percent: float, detail: str = "",
+               *, restart: bool = False) -> None:  # fmt: skip
+        """Этап идёт: процент внутри него и деталь; общая строка progress — для списка роликов.
+
+        restart — процент этапа можно сбросить (второй круг проверки).
+        """
         with self._lock:
-            if not cancel.is_set():
-                project["progress"] = {"stage": stage, "percent": round(max(0.0, min(percent, 100.0)), 1)}
+            if cancel.is_set():
+                return
+            items = project.setdefault("stages", [])
+            if restart:
+                for item in items:
+                    if item["id"] == stage_id:
+                        item["percent"] = 0.0
+            stages.advance(items, stage_id, percent, detail)
+            label = stages.STAGES.get(stage_id, (stage_id, 0))[0]
+            project["progress"] = {"stage": f"{label}: {detail}" if detail else label, "percent": stages.overall(items)}
+
+    def _ffmpeg_run(self, argv: list[str], cancel: threading.Event, total_s: float,
+                    on_percent: Callable[[float], None], lines: list[str] | None = None) -> list[str]:  # fmt: skip
+        """ffmpeg с -progress: доля обработанного времени к total_s → on_percent; остальное — в lines."""
+        lines = [] if lines is None else lines
+        argv = [argv[0], "-progress", "pipe:1", "-nostats", *argv[1:]]
+
+        def on_line(line: str) -> None:
+            text = line.strip()
+            found = _FF_TIME.match(text)
+            if found:
+                if total_s > 0:
+                    on_percent(min(100.0, int(found[1]) / 1e6 / total_s * 100))
+            elif text and not _FF_KEY.match(text):
+                lines.append(line)
+
+        runner.run(argv, on_line, cancel, kind="render")
+        return lines
 
     def _note(self, project: dict, line: str) -> None:
         with self._lock:
@@ -481,7 +526,7 @@ class MontageProjects:
             if action == "prepare":
                 self._prepare(project, cancel)
             elif action == "replan":
-                self._plan(project, cancel, 0.0)
+                self._plan(project, cancel)
             elif action == "revise":
                 self._revise(project, arg, cancel)
             if action == "render" or (action == "prepare" and project["options"]["auto"]):
@@ -506,11 +551,12 @@ class MontageProjects:
 
     # ---------- шаги ----------
 
-    def _ffmpeg(self, args: list[str], cancel: threading.Event, what: str) -> list[str]:
+    def _ffmpeg(self, args: list[str], cancel: threading.Event, what: str, total_s: float = 0.0,
+                on_percent: Callable[[float], None] | None = None) -> list[str]:  # fmt: skip
         lines: list[str] = []
         argv = [self.config.ffmpeg, "-y", "-loglevel", "error", *args]
         try:
-            runner.run(argv, lines.append, cancel, kind="render")
+            self._ffmpeg_run(argv, cancel, total_s, on_percent or (lambda _: None), lines)
         except runner.RunFailed as exc:
             raise runner.RunFailed(f"ffmpeg ({what}): {(lines or [str(exc)])[-1]}") from exc
         return lines
@@ -540,19 +586,22 @@ class MontageProjects:
             "size": path.stat().st_size,
         }
 
-    def _audio(self, source: Path, wav: Path, cancel: threading.Event) -> None:
+    def _audio(self, source: Path, wav: Path, cancel: threading.Event, duration: float = 0.0,
+               on_percent: Callable[[float], None] | None = None) -> None:  # fmt: skip
         self._ffmpeg(["-i", str(source), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], cancel,
-                     "звук для расшифровки")  # fmt: skip
+                     "звук для расшифровки", duration, on_percent)  # fmt: skip
 
-    def _silences(self, wav: Path, duration: float, cancel: threading.Event) -> list[tuple[float, float]]:
-        lines: list[str] = []
+    def _silences(self, wav: Path, duration: float, cancel: threading.Event,
+                  on_percent: Callable[[float], None] | None = None) -> list[tuple[float, float]]:  # fmt: skip
         argv = transcript.silence_argv(self.config.ffmpeg, wav)
-        runner.run(argv, lines.append, cancel, kind="render")
+        lines = self._ffmpeg_run(argv, cancel, duration, on_percent or (lambda _: None))
         return transcript.parse_silences(lines, duration)
 
     def _transcribe(
-        self, project: dict, wav: Path, out: Path, silences, cancel: threading.Event, lo: float, hi: float, what: str
-    ) -> dict:
+        self, project: dict, wav: Path, out: Path, silences, cancel: threading.Event, stage: str, lo: float,
+        hi: float, what: str = "",
+    ) -> dict:  # fmt: skip
+        """Воркер расшифровки; его PROGRESS — доля [lo, hi] процентов этапа stage."""
         model = asr.get(project["options"]["model"]) or asr.CATALOG[0]
         duration = media.duration(wav, self.config.ffmpeg)
         hotwords = [*plan.terms(self.lessons()), *split_terms(project["options"]["terms"])]
@@ -563,15 +612,16 @@ class MontageProjects:
         def on_line(line: str) -> None:
             step = asr.parse_progress(line)
             if step:
-                self._progress(project, cancel, f"{what}: {step[1] or model.label}", lo + (hi - lo) * step[0] / 100)
+                detail = f"{what}{step[1] or model.label}"
+                self._stage(project, cancel, stage, lo + (hi - lo) * step[0] / 100, detail)
             elif line.strip():
                 self._note(project, line)
 
         def on_wait(holder: str) -> None:
-            self._progress(project, cancel, f"Ждёт GPU (занят: {holder})", lo)
+            self._stage(project, cancel, stage, lo, f"{what}ждёт GPU (занят: {holder})")
 
         with self._gate.hold(GPU_OWNER, on_wait, cancel):
-            self._progress(project, cancel, f"{what}: {model.label}", lo)
+            self._stage(project, cancel, stage, lo, f"{what}{model.label}")
             runner.run(argv, on_line, cancel, missing_hint=INSTALL_HINT, kind="asr")
         try:
             data = json.loads(out.read_text(encoding="utf-8"))
@@ -590,23 +640,23 @@ class MontageProjects:
         head = self.source(pid, "head")
         if head is None:
             raise runner.RunFailed("Запись «голова» пропала из каталога проекта — загрузи её заново.")
-        self._progress(project, cancel, "Звук", 1)
-        wav = folder / "audio.wav"
-        self._audio(head, wav, cancel)
         duration = project["sources"]["head"]["duration"]
+        self._stage(project, cancel, "audio", 0)
+        wav = folder / "audio.wav"
+        self._audio(head, wav, cancel, duration, lambda pct: self._stage(project, cancel, "audio", pct))
         screen = self.source(pid, "screen")
         if screen is not None and project["sources"]["screen"].get("has_audio"):
-            self._progress(project, cancel, "Сдвиг экрана по звуку", 5)
+            self._stage(project, cancel, "sync", 0)
             found = sync.detect(self.config.ffmpeg, head, screen)
             with self._lock:
                 project["sync"] = found
                 if found["method"] == "audio":
                     project["screen_offset"] = found["offset"]
             self._note(project, f"Сдвиг экрана: {found['offset']:+.2f} с ({found['method']}, {found['score']:.2f})")
-        self._progress(project, cancel, "Паузы", 9)
-        silences = self._silences(wav, duration, cancel)
+        self._stage(project, cancel, "silences", 0)
+        silences = self._silences(wav, duration, cancel, lambda pct: self._stage(project, cancel, "silences", pct))
         atomic_write(folder / "silences.json", json.dumps(silences))
-        data = self._transcribe(project, wav, folder / "words.json", silences, cancel, 10, 85, "Расшифровка")
+        data = self._transcribe(project, wav, folder / "words.json", silences, cancel, "transcribe", 0, 100)
         atomic_write(folder / "words.json", json.dumps(data, ensure_ascii=False))
         with self._lock:
             project["transcript"] = {
@@ -616,17 +666,17 @@ class MontageProjects:
             }
             self._history(project, "transcribe", f"слов: {len(data['words'])}")
             self._touch(project)
-        self._plan(project, cancel, 85)
+        self._plan(project, cancel)
 
     def _llm(self, prompt: str, project: dict, cancel: threading.Event) -> object:
         answer = llm.complete(prompt, cmd=self.config.llm_cmd, cancel=cancel)
         return llm.extract_json(answer)
 
-    def _plan(self, project: dict, cancel: threading.Event, lo: float) -> None:
+    def _plan(self, project: dict, cancel: threading.Event) -> None:
         pid = project["id"]
         words = (self._read_json(pid, "words.json") or {}).get("words") or []
         has_screen = bool(project["sources"].get("screen"))
-        self._progress(project, cancel, "План монтажа (ИИ)", lo)
+        self._stage(project, cancel, "plan", 0, f"ИИ читает {len(words)} слов")
         prompt = plan.plan_prompt(plan.pack(words), plan.base_rules(), self.lessons(), has_screen, project["title"])
         result = plan.parse_plan(self._llm(prompt, project, cancel), len(words), has_screen)
         self._store_plan(project, words, result, "plan")
@@ -636,7 +686,7 @@ class MontageProjects:
         words = (self._read_json(pid, "words.json") or {}).get("words") or []
         has_screen = bool(project["sources"].get("screen"))
         current = self._read_json(pid, "plan.json") or {}
-        self._progress(project, cancel, "Переделываю план по замечанию (ИИ)", 10)
+        self._stage(project, cancel, "plan", 0, "переделываю по замечанию")
         prompt = plan.revise_prompt(
             plan.pack(words), plan.base_rules(), self.lessons(), has_screen,
             current.get("cuts") or [], current.get("layout") or [{"from": 0, "layout": "head"}], feedback,
@@ -670,14 +720,15 @@ class MontageProjects:
         layout = current.get("layout") or [{"from": 0, "layout": "head"}]
         rounds: list[dict] = []
         for n in range(MAX_ROUNDS + 1):
-            result, out_words = self._assemble(project, words, cuts, layout, cancel)
+            # Первая сборка — свои этапы; пересборка по найденному — внутри этапа «Проверка».
+            result, out_words = self._assemble(project, words, cuts, layout, cancel, rebuild=n > 0)
             if not project["options"]["check"] or n == MAX_ROUNDS:
                 found = self._tech_check(project, cancel) if not rounds else []
                 rounds.append({"round": n + 1, "issues": [], "tech": found})
                 break
-            self._progress(project, cancel, f"Проверка, круг {n + 1}", 80)
+            self._stage(project, cancel, "check", 0, f"круг {n + 1}: паузы в результате", restart=n > 0)
             tech = self._tech_check(project, cancel)
-            issues = self._asr_check(project, out_words, cancel)
+            issues = self._asr_check(project, out_words, cancel, n + 1)
             rounds.append({"round": n + 1, "issues": issues, "tech": tech})
             if not issues:
                 break
@@ -691,10 +742,10 @@ class MontageProjects:
                 self.config, project, folder, out_words, result.duration, cancel,
                 ask=lambda text: self._llm(text, project, cancel),
                 note=lambda line: self._note(project, line),
-                progress=lambda stage, percent: self._progress(project, cancel, stage, percent),
+                progress=lambda detail, percent: self._stage(project, cancel, "motion", percent, detail),
             )  # fmt: skip
             if overlays:
-                self._final(project, out_words, overlays, cancel)
+                self._final(project, out_words, overlays, cancel, stage=("motion", 90, 100, "наложение вставок"))
         with self._lock:
             project["output"] = {
                 "duration": round(media.duration(folder / "output.mp4", self.config.ffmpeg), 1),
@@ -708,8 +759,19 @@ class MontageProjects:
             self._history(project, "render", f"{result.duration:.0f} с, исправлено проверкой: {fixed}")
             self._touch(project)
 
-    def _assemble(self, project, words, cuts, layout, cancel) -> tuple[edl.Edl, list[dict]]:
-        """Сегменты (из кэша, если были) → склейка → субтитры → финал без вставок."""
+    def _assemble(self, project, words, cuts, layout, cancel, *, rebuild=False) -> tuple[edl.Edl, list[dict]]:
+        """Сегменты (из кэша, если были) → склейка → субтитры → финал без вставок.
+
+        Первая сборка идёт этапами segments/join/final; rebuild — пересборка после проверки, её ход
+        пишется деталью этапа «Проверка».
+        """
+
+        def step(stage_id: str, percent: float, detail: str = "") -> None:
+            if rebuild:
+                self._stage(project, cancel, "check", 90, f"пересборка: {detail or stages.STAGES[stage_id][0]}")
+            else:
+                self._stage(project, cancel, stage_id, percent, detail)
+
         pid = project["id"]
         folder = self.dir(pid)
         duration = project["sources"]["head"]["duration"]
@@ -728,35 +790,47 @@ class MontageProjects:
             runner.run(render.mask_argv(self.config.ffmpeg, mask), self._note_line(project), cancel, kind="render")
         parts: list[Path] = []
         total = len(result.segments)
+        total_s = sum(seg.end - seg.start for seg in result.segments) or 1.0
+        done_s = 0.0
+        step("segments", 0, f"0 из {total}")
         for n, seg in enumerate(result.segments, 1):
             start, end = render.frame(seg.start), render.frame(seg.end)  # целые кадры: склейка без набегания
             spec = render.SegmentSpec(start, end, seg.layout, project["options"]["grade"], head, screen,
                                       project["screen_offset"])  # fmt: skip
             part = cache / f"{spec.key()}.mp4"
+            length = seg.end - seg.start
             if not part.is_file():
                 tmp = part.with_suffix(".tmp.mp4")
-                runner.run(render.segment_argv(self.config.ffmpeg, spec, tmp, mask), self._note_line(project),
-                           cancel, kind="render")  # fmt: skip
+                lines = self._ffmpeg_run(
+                    render.segment_argv(self.config.ffmpeg, spec, tmp, mask), cancel, length,
+                    lambda pct, base=done_s, length=length, n=n: step(
+                        "segments", 100 * (base + length * pct / 100) / total_s, f"кусок {n} из {total}"),
+                )  # fmt: skip
+                for line in lines:
+                    self._note(project, line)
                 tmp.replace(part)
             parts.append(part)
-            self._progress(project, cancel, f"Сборка: кусок {n} из {total}", 70 * n / total)
+            done_s += length
+            step("segments", 100 * done_s / total_s, f"{n} из {total}")
         used = {p.name for p in parts}
         for old in cache.glob("*.mp4"):  # кэш — только для текущего плана
             if old.name not in used:
                 old.unlink(missing_ok=True)
         listing = folder / "segments.txt"
         listing.write_text(render.concat_list(parts), encoding="utf-8")
-        self._progress(project, cancel, "Склейка", 72)
+        step("join", 0)
         self._ffmpeg(["-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(folder / "joined.mp4")],
-                     cancel, "склейка")  # fmt: skip
+                     cancel, "склейка", total_s, lambda pct: step("join", pct))  # fmt: skip
         out_words = edl.output_words(words, result)
         items = render.chunks(out_words)
         atomic_write(folder / "subtitles.srt", render.srt(items))
-        self._final(project, out_words, [], cancel)
+        self._final(project, out_words, [], cancel, stage=None if not rebuild else ("check", 90, 100, "пересборка"))
         return result, out_words
 
-    def _final(self, project, out_words, overlays, cancel) -> None:
+    def _final(self, project, out_words, overlays, cancel, *, stage: tuple | None = None) -> None:
+        """Финальный проход; stage — (этап, от %, до %, деталь), по умолчанию — свой этап final."""
         folder = self.dir(project["id"])
+        stage_id, lo, hi, detail = stage or ("final", 0, 100, "")
         ass = None
         if project["options"]["subtitles"]:
             if media.has_filter(self.config.ffmpeg, "subtitles"):
@@ -764,10 +838,17 @@ class MontageProjects:
                 atomic_write(ass, render.ass(render.chunks(out_words), self.config.font))
             else:
                 self._note(project, "Субтитры в кадр пропущены: в ffmpeg нет фильтра subtitles (нужен ffmpeg-full).")
-        self._progress(project, cancel, "Финальный проход: громкость" + (", вставки" if overlays else ""), 75)
+        self._stage(project, cancel, stage_id, lo, detail)
         tmp = folder / "output.tmp.mp4"
         argv = render.final_argv(self.config.ffmpeg, folder / "joined.mp4", tmp, subtitles=ass, overlays=overlays)
-        runner.run(argv, self._note_line(project), cancel, kind="render")
+        total_s = media.duration(folder / "joined.mp4", self.config.ffmpeg)
+
+        def on_percent(pct: float) -> None:
+            self._stage(project, cancel, stage_id, lo + (hi - lo) * pct / 100, detail)
+
+        lines = self._ffmpeg_run(argv, cancel, total_s, on_percent)
+        for line in lines:
+            self._note(project, line)
         tmp.replace(folder / "output.mp4")
 
     def _note_line(self, project: dict) -> Callable[[str], None]:
@@ -783,17 +864,27 @@ class MontageProjects:
         found = transcript.parse_silences(lines, media.duration(out, self.config.ffmpeg))
         return [f"пауза {b - a:.1f} с на {a:.1f} с" for a, b in found if b - a >= limit and a > 0.5]
 
-    def _asr_check(self, project: dict, out_words: list[dict], cancel: threading.Event) -> list[dict]:
-        """Повторная расшифровка результата → LLM ищет пропущенное → вырезки в индексах исходника."""
+    def _asr_check(self, project: dict, out_words: list[dict], cancel: threading.Event, n: int = 1) -> list[dict]:
+        """Повторная расшифровка результата → LLM ищет пропущенное → вырезки в индексах исходника.
+
+        Доли этапа «Проверка»: звук 0–10, паузы 10–15, расшифровка 15–80, ИИ 80–90, пересборка 90–100.
+        """
         folder = self.dir(project["id"])
         wav = folder / "check.wav"
-        self._audio(folder / "output.mp4", wav, cancel)
+        out = folder / "output.mp4"
+        length = media.duration(out, self.config.ffmpeg)
+        say = f"круг {n}: "
+        self._audio(out, wav, cancel, length,
+                    lambda pct: self._stage(project, cancel, "check", pct / 10, f"{say}звук результата"))  # fmt: skip
         duration = media.duration(wav, self.config.ffmpeg)
-        silences = self._silences(wav, duration, cancel)
-        data = self._transcribe(project, wav, folder / "check.json", silences, cancel, 82, 92, "Проверка")
+        silences = self._silences(
+            wav, duration, cancel, lambda pct: self._stage(project, cancel, "check", 10 + pct / 20, f"{say}паузы")
+        )
+        data = self._transcribe(project, wav, folder / "check.json", silences, cancel, "check", 15, 80,
+                                f"{say}расшифровка результата, ")  # fmt: skip
         wav.unlink(missing_ok=True)
         heard = data["words"]
-        self._progress(project, cancel, "Проверка: ищу пропущенное (ИИ)", 93)
+        self._stage(project, cancel, "check", 80, f"{say}ИИ ищет пропущенное")
         prompt = plan.check_prompt(plan.pack(heard), plan.base_rules(), self.lessons())
         issues = plan.parse_issues(self._llm(prompt, project, cancel), len(heard))
         # Индексы услышанного → время результата → слова результата → индексы исходника.

@@ -274,7 +274,8 @@ class StudioModule:
 
     def nav(self) -> list[dict]:
         """Вкладки шапки: доска «Выпуски» со счётчиком ждущих и по вкладке на сценарий."""
-        board = {"id": "board", "label": "Выпуски", "href": "/board/", "badge": "attention"}
+        # Доска — своя группа: в шапке она отдельной ссылкой, сценарии — меню «Студия» (UX-028).
+        board = {"id": "board", "label": "Выпуски", "href": "/board/", "badge": "attention", "group": "board"}
         scenarios = [
             {"id": k, "label": v, "href": f"/studio/?scenario={k}"} | ({"default": True} if k == "article" else {})
             for k, v in SCENARIOS.items()

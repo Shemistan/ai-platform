@@ -71,3 +71,20 @@
 .rules-form { display: grid; gap: var(--sp-3); min-width: min(720px, 86vw); }
 .rules-form textarea { min-height: 40vh; font-family: var(--mono); font-size: var(--fs-sm); }
 .rules-form pre { max-height: 30vh; overflow: auto; white-space: pre-wrap; font-size: var(--fs-sm); }
+
+/* --- этапы работы (PRD-025) --- */
+
+.stage-summary { margin: 0; }
+.stages { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
+.stage-row { display: grid; grid-template-columns: 20px 1fr; gap: var(--sp-2); align-items: start; }
+.stage-icon { display: flex; justify-content: center; align-items: center; height: calc(var(--fs-md) * var(--lh-body)); color: var(--muted); }
+.stage-dot { width: 10px; height: 10px; border: 2px solid currentColor; border-radius: var(--r-pill); box-sizing: border-box; }
+.stage-row--running .stage-dot { background: currentColor; }
+.stage-row--skipped .stage-dot { height: 2px; border: 0; border-radius: var(--r-sm); background: currentColor; }
+.stage-body { display: grid; gap: var(--sp-1); min-width: 0; }
+.stage-head { display: flex; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.stage-row--done .stage-icon { color: var(--ok); }
+.stage-row--running .stage-icon { color: var(--accent); }
+.stage-row--running .stage-label { font-weight: var(--fw-semibold); }
+.stage-row--pending .stage-label, .stage-row--skipped .stage-label { color: var(--muted); }
+.stage-row--failed .stage-icon, .stage-row--failed .stage-label { color: var(--danger); }

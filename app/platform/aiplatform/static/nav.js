@@ -1,5 +1,6 @@
 // Общая шапка платформы: вкладки, состояние GPU и предупреждения — из /api/config.
 // Подключается каждой страницей вкладки: <script type="module" src="/nav.js"></script>.
+import { currentTab, groupTabs } from "/core/nav-groups.js";
 import { api, loadLast, poller, saveLast } from "/ui.js";
 
 // Раздел «Если не работает при установке» (app/platform/README.md) — ссылка из баннера проблем.
@@ -7,18 +8,9 @@ const HELP_URL =
   "https://github.com/Shemistan/ai-platform/blob/main/app/platform/README.md#если-не-работает-при-установке";
 
 // Вкладки шапки — единственный список на сервере: /api/config → tabs (server.nav_tabs, FE-007).
-// [{ id, label, href, group, badge?, default? }]; между группами — разделитель. Последний ответ лежит
+// [{ id, label, href, group, group_label, badge?, default? }]; группы — меню (UX-028). Последний ответ лежит
 // в localStorage: шапка рисуется сразу, без ожидания сервера, и уточняется по ответу.
 const NAV_CACHE = "nav-tabs";
-
-// Активна вкладка с тем же путём и теми же параметрами адреса; на пути без своего параметра
-// (студия без ?scenario) — вкладка с default.
-function currentTab(tabs) {
-  const here = new URLSearchParams(location.search);
-  const same = tabs.filter((t) => new URL(t.href, location.href).pathname === location.pathname);
-  const exact = same.find((t) => [...new URL(t.href, location.href).searchParams].every(([k, v]) => here.get(k) === v));
-  return (exact || same.find((t) => t.default) || same[0])?.id;
-}
 
 function el(tag, attrs = {}, text = "") {
   const node = document.createElement(tag);
@@ -27,29 +19,76 @@ function el(tag, attrs = {}, text = "") {
   return node;
 }
 
-function revealActive(list) {
-  const active = list.querySelector('[aria-current="page"]');
-  if (!active || list.scrollWidth <= list.clientWidth) return;
-  const a = active.getBoundingClientRect();
-  const box = list.getBoundingClientRect();
-  if (a.left >= box.left && a.right <= box.right) return;
-  list.scrollLeft += a.left - box.left - (box.width - a.width) / 2;
+function tabLink(tab, current) {
+  const link = el("a", { href: tab.href }, tab.label);
+  if (tab.id === current) link.setAttribute("aria-current", "page");
+  if (tab.badge) link.append(el("span", { class: "badge", id: `platform-${tab.badge}`, hidden: "" }));
+  return link;
 }
 
-function fillTabs(list, tabs) {
-  const current = currentTab(tabs);
-  list.replaceChildren();
-  tabs.forEach((tab, i) => {
-    if (i && tab.group !== tabs[i - 1].group) list.append(el("li", { class: "sep", "aria-hidden": "true" }));
-    const link = el("a", { href: tab.href }, tab.label);
-    if (tab.id === current) link.setAttribute("aria-current", "page");
-    if (tab.badge) link.append(el("span", { class: "badge", id: `platform-${tab.badge}`, hidden: "" }));
+// Меню группы: кнопка «Медиа · Монтаж ▾» и список ссылок. Открыто одно меню за раз; Esc и клик
+// мимо закрывают, стрелки ходят по пунктам.
+function closeMenus(except = null) {
+  for (const button of document.querySelectorAll(".platform-nav .menu > button[aria-expanded='true']")) {
+    if (button === except) continue;
+    button.setAttribute("aria-expanded", "false");
+    button.nextElementSibling.hidden = true;
+  }
+}
+
+function menu(group, current, index) {
+  const id = `nav-menu-${index}`;
+  const button = el("button", { type: "button", "aria-expanded": "false", "aria-controls": id });
+  button.append(el("span", {}, group.label));
+  if (group.current) button.append(el("span", { class: "current" }, ` · ${group.current.label}`));
+  button.append(el("span", { class: "caret", "aria-hidden": "true" }, "▾"));
+  const list = el("ul", { class: "menu-list", id, hidden: "" });
+  for (const tab of group.tabs) {
     const item = el("li");
-    item.append(link);
+    item.append(tabLink(tab, current));
+    list.append(item);
+  }
+  const links = () => [...list.querySelectorAll("a")];
+  const open = (focus) => {
+    closeMenus(button);
+    button.setAttribute("aria-expanded", "true");
+    list.hidden = false;
+    if (focus) links()[focus === "last" ? links().length - 1 : 0]?.focus();
+  };
+  button.addEventListener("click", () => (button.getAttribute("aria-expanded") === "true" ? closeMenus() : open()));
+  button.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      open(event.key === "ArrowDown" ? "first" : "last");
+    }
+  });
+  list.addEventListener("keydown", (event) => {
+    const all = links();
+    const at = all.indexOf(document.activeElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      all[(at + (event.key === "ArrowDown" ? 1 : -1) + all.length) % all.length]?.focus();
+    } else if (event.key === "Escape") {
+      closeMenus();
+      button.focus();
+    }
+  });
+  const item = el("li", { class: `menu${group.active ? " active" : ""}` });
+  item.append(button, list);
+  return item;
+}
+
+// Группа из одной вкладки — ссылка, из нескольких — меню (UX-028).
+function fillTabs(list, tabs) {
+  const current = currentTab(tabs, location);
+  list.replaceChildren();
+  groupTabs(tabs, current).forEach((group, i) => {
+    if (group.tabs.length > 1) return list.append(menu(group, current, i));
+    const item = el("li");
+    item.append(tabLink(group.tabs[0], current));
     list.append(item);
   });
   showAttention();
-  revealActive(list);
 }
 
 function render() {
@@ -62,17 +101,21 @@ function render() {
   const gpu = el("span", { class: "gpu", id: "platform-gpu", title: "Тяжёлые модели идут по одной" }, "GPU: …");
   nav.append(gpu);
   document.body.prepend(nav);
-  // На узком экране вкладки прокручиваются вбок: активную ставим в видимую область.
-  // Ширина ленты меняется и после отрисовки (текст GPU, поворот экрана) — следим за ней.
   // Высота шапки — в --nav-h: под неё встаёт липкий степпер студии.
   if (window.ResizeObserver) {
-    new ResizeObserver(() => revealActive(list)).observe(list);
     new ResizeObserver(() => document.documentElement.style.setProperty("--nav-h", `${nav.offsetHeight}px`)).observe(nav);
   }
   // Одна область объявлений на страницу: announce() из ui.js пишет сюда только переходы («готово», «ошибка»).
   if (!document.getElementById("sr-status")) {
     document.body.append(el("div", { id: "sr-status", class: "sr-only", role: "status", "aria-live": "polite" }));
   }
+  // Клик мимо меню и Esc закрывают открытое меню групп.
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest?.(".platform-nav .menu")) closeMenus();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeMenus();
+  });
   return { gpu, list };
 }
 

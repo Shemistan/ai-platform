@@ -117,17 +117,18 @@
 финал (`edl.py`, `render.py`) → проверка повторной расшифровкой (до 2 кругов). Замечание человека →
 новый план и правило в `lessons.md`. Моушн (`motion.py`): LLM выбирает вставки по шаблонам (title,
 lower_third, stat, list, quote), HyperFrames рендерит HTML+GSAP (`assets/motion/style.css`) в прозрачный
-MOV, финал накладывает. `compare.py` — `make asr-compare`. Фейки: `fake_asr.py`, `fake_hyperframes.py`.
+MOV, финал накладывает. Этапы действия с процентом и «осталось» — `stages.py` (`project.stages`, ffmpeg
+`-progress`). `compare.py` — `make asr-compare`. Фейки: `fake_asr.py`, `fake_hyperframes.py`.
 
 ## Фронтенд `aiplatform/static/`
 
 Ванильный JS, ES-модули без сборки; страница вкладки = `static/<tab>/index.html` + `app.js`.
 - Общее: `ui.js` (`api()` с `X-AIP`, `narratorApi`, `h()`, `poller`, `jobProgress`,
   `statusChip`/`toneOf`, `modal`, `toast`, `uploadFile`), `nav.js` (шапка из
-  `/api/config` → `tabs`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
+  `/api/config` → `tabs`, меню групп — `core/nav-groups.js`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
   `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`,
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
-- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `montage/` (+`plan.js`),
+- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `montage/` (+`plan.js`, `stages.js`),
   `board/` «Выпуски», `studio/` (`state.js`, `create.js`, `steps.js`, `head.js`,
   `media.js`, `publish.js`, `settings.js`), `library/` «Статьи», `news/`,
   `channels/`, `updates/`, `settings/`.

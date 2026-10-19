@@ -397,6 +397,26 @@ fetch_asr_weights() {
   touch "$dir/.aip-$revision"
 }
 
+# Whisper: токенизатор и признаки звука (WhisperProcessor) из openai/whisper-* — в папку весов
+# mlx-community, где их ищет mlx-audio; без них расшифровка падает на первом куске (BE-015).
+# Проверка — загрузкой процессора: она не трогает GPU и ловит неполный набор файлов.
+fetch_asr_processor() {
+  id="$1" weights_repo="$2"
+  # shellcheck disable=SC2046
+  set -- $("$PYTHON" -m aiplatform.montage.asr processor "$id")
+  [ $# -gt 0 ] || return 0
+  repo="$1" revision="$2" dir="$MODELS_DIR/asr/${weights_repo#*/}"
+  shift 2
+  if [ ! -f "$dir/.aip-processor-$revision" ]; then
+    echo "→ скачиваю токенизатор $repo в $dir"
+    HF_HOME="$MODELS_DIR/asr/.cache" "$ASR_ENV/bin/hf" download "$repo" "$@" --revision "$revision" \
+      --local-dir "$dir" >/dev/null || fail "токенизатор $repo не скачался (нужна сеть к Hugging Face)"
+    touch "$dir/.aip-processor-$revision"
+  fi
+  "$ASR_ENV/bin/python" -I -c 'import sys; from transformers import WhisperProcessor; WhisperProcessor.from_pretrained(sys.argv[1])' \
+    "$dir" 2>/dev/null || fail "WhisperProcessor не загрузился из $dir — удали $dir/.aip-processor-$revision и повтори"
+}
+
 install_asr() {
   # shellcheck disable=SC2046
   set -- $(echo "$ASR_CATALOG" | grep "^$1 ")
@@ -404,6 +424,7 @@ install_asr() {
   install_asr_env
   fetch_asr_weights "$2" "$3"
   [ -z "$4" ] || fetch_asr_weights "$4" "$5"
+  fetch_asr_processor "$id" "$2"
   echo "✓ $id установлена"
 }
 
