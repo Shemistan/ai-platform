@@ -336,6 +336,22 @@ class MontageApiTest(PlatformCase):
         self.assertEqual(self.json("GET", f"/api/montage/projects/{pid}")[0], 404)
         self.assertEqual(self.json("POST", "/api/montage/rules", {"lessons": 5})[0], 400)
 
+    def test_disabled_model_is_hidden_and_refused(self):
+        settings = self.config.settings
+        pid = self.project(model="whisper-large-v3-turbo")["id"]
+        self.upload(pid, "head", self.head)
+        settings.change(lambda data: data["disabled"].update(asr=["whisper-large-v3-turbo"]))
+        try:
+            _, cfg = self.json("GET", "/api/montage/config")
+            self.assertNotIn("whisper-large-v3-turbo", [m["id"] for m in cfg["models"]])
+            self.assertEqual(cfg["default_model"], "whisper-large-v3")
+            self.assertEqual(self.project()["options"]["model"], "whisper-large-v3")
+            status, err = self.json("POST", f"/api/montage/projects/{pid}/start")
+            self.assertEqual(status, 409, err)
+            self.assertIn("Настройки", err["error"])
+        finally:
+            settings.change(lambda data: data["disabled"].update(asr=[]))
+
     def test_cancel_and_failed_asr(self):
         pid = self.project()["id"]
         self.upload(pid, "head", self.head)

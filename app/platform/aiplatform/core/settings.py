@@ -20,7 +20,7 @@ from aiplatform.core.fsutil import atomic_write
 
 FILE = "settings.json"
 SCHEMA = 1  # схема settings.json (core/schema.py, ADR 0009); 1 — поле schema, формат как в схеме 0
-KINDS = ("photo", "video", "audio")  # модели фото, модели видео, движки озвучки
+KINDS = ("photo", "video", "audio", "asr")  # модели фото, модели видео, движки озвучки, расшифровка монтажа
 _STORES: dict[Path, Settings] = {}
 _STORES_LOCK = threading.Lock()
 

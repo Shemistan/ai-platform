@@ -187,7 +187,7 @@ class MontageProjects:
         title = data.get("title", "")
         if not isinstance(title, str) or len(title.strip()) > MAX_TITLE:
             raise ValidationError(f"Название — строка до {MAX_TITLE} знаков.")
-        options = clean_options(data.get("options"))
+        options = clean_options(data.get("options"), DEFAULT_OPTIONS | {"model": asr.default_id(self.config)})
         pid = uuid.uuid4().hex[:12]
         now = time.time()
         project = {
@@ -387,6 +387,8 @@ class MontageProjects:
             if need_words and not (self.dir(pid) / "words.json").is_file():
                 raise Conflict("Сначала расшифровка: нажми «Начать».")
             model = asr.get(project["options"]["model"])
+            if action == "prepare" and model is not None and model.id in self.config.disabled_models():
+                raise Conflict(f"Модель {model.label} выключена во вкладке «Настройки» — выбери другую.")
             if action == "prepare" and model is not None and not asr.installed(model, self.config):
                 raise Conflict(f"Модель {model.label} не установлена: make models M={model.id}.")
             needs_llm = action != "render" or project["options"]["check"] or project["options"]["motion"]

@@ -40,7 +40,7 @@ class MontageModule:
     def describe(self) -> dict:
         return {
             "models": asr.public(self.config),
-            "default_model": asr.DEFAULT_ID,
+            "default_model": asr.default_id(self.config),
             "grades": [{"id": key, "label": label} for key, (label, _) in render.GRADES.items()],
             "layouts": [{"id": key, "label": label} for key, label in edl.LAYOUTS.items()],
             "kinds": [{"id": key, "label": label} for key, label in edl.KINDS.items()],
