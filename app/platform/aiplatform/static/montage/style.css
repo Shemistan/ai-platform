@@ -88,3 +88,35 @@
 .stage-row--running .stage-label { font-weight: var(--fw-semibold); }
 .stage-row--pending .stage-label, .stage-row--skipped .stage-label { color: var(--muted); }
 .stage-row--failed .stage-icon, .stage-row--failed .stage-label { color: var(--danger); }
+
+/* --- MASTER_SPEC: раскадровка, таймлайн, QA (PRD-027) --- */
+
+.scenes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--sp-3); }
+.scene-card { display: grid; gap: var(--sp-2); padding: var(--pad-card); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); align-content: start; }
+.scene-card.off { opacity: 0.6; }
+.scene-card h3 { font-size: var(--fs-md); margin: 0; }
+.scene-thumb {
+  width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--r-sm);
+  background-color: var(--media-bg);
+  background-image: linear-gradient(45deg, var(--sunken) 25%, transparent 25%, transparent 75%, var(--sunken) 75%),
+    linear-gradient(45deg, var(--sunken) 25%, transparent 25%, transparent 75%, var(--sunken) 75%);
+  background-size: 16px 16px; background-position: 0 0, 8px 8px;
+}
+.scene-thumb.empty { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: var(--fs-sm); }
+.scene-card .field.narrow { max-width: 110px; }
+.scene-card .field.narrow input { min-height: var(--control-h-sm); }
+
+.tracks { display: grid; gap: var(--sp-1); }
+.track { display: grid; grid-template-columns: 110px 1fr; gap: var(--sp-2); align-items: center; }
+.track-label { font-size: var(--fs-sm); }
+.track-lane { position: relative; height: 18px; border-radius: var(--r-sm); background: var(--sunken); overflow: hidden; }
+.track-bar { position: absolute; top: 2px; bottom: 2px; border-radius: var(--r-sm); background: var(--accent); opacity: 0.85; }
+.track-bar.scene { background: var(--warn); }
+.track-bar.off { background: var(--muted); opacity: 0.4; }
+
+.qa-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--sp-1); }
+.qa-item { padding: var(--sp-1) var(--sp-2); border-left: 3px solid var(--line); font-size: var(--fs-sm); }
+.qa-error { border-color: var(--danger); }
+.qa-warning { border-color: var(--warning); }
+.qa-info { border-color: var(--info); }
+.list-row.out { opacity: 0.55; }

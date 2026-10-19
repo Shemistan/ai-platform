@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/revision",
+  "title": "revision",
+  "description": "Снимок манифестов проекта (Revision, §7–8).",
+  "type": "object",
+  "required": [
+    "n",
+    "at",
+    "label",
+    "files"
+  ],
+  "properties": {
+    "n": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "label": {
+      "type": "string"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "project_hash": {
+      "type": "string"
+    }
+  },
+  "examples": [
+    {
+      "n": 3,
+      "at": 1760000000.0,
+      "label": "plan edited",
+      "files": [
+        "project.json",
+        "plan.json"
+      ],
+      "project_hash": "ab12"
+    }
+  ]
+}

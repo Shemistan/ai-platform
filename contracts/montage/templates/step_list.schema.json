@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/step_list",
+  "title": "step_list",
+  "description": "Список шагов: 2–5 пунктов или шагов, которые автор перечисляет. Длительность по умолчанию 5.0 с, минимальный кегль 36px.",
+  "type": "object",
+  "required": [
+    "steps"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 40
+      },
+      "minItems": 2,
+      "maxItems": 5
+    }
+  },
+  "examples": [
+    {
+      "title": "Что сделать",
+      "steps": [
+        "Собрать",
+        "Проверить",
+        "Выложить"
+      ]
+    }
+  ]
+}

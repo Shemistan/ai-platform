@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/concept_cards",
+  "title": "concept_cards",
+  "description": "Карточки понятий: 2–4 понятия рядом: термин и что он значит. Длительность по умолчанию 6.0 с, минимальный кегль 30px.",
+  "type": "object",
+  "required": [
+    "cards"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "cards": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": [
+          "title",
+          "text"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 24
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 60
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "title": "Три кита",
+      "cards": [
+        {
+          "title": "Горутина",
+          "text": "лёгкий поток"
+        },
+        {
+          "title": "Канал",
+          "text": "очередь между горутинами"
+        }
+      ]
+    }
+  ]
+}

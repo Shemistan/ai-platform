@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/source_media",
+  "title": "source_media",
+  "description": "Запись-источник (SourceMedia, §7): probe и контрольная сумма.",
+  "type": "object",
+  "required": [
+    "role",
+    "ext",
+    "duration",
+    "width",
+    "height",
+    "has_audio",
+    "size",
+    "sha256"
+  ],
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "head",
+        "screen"
+      ]
+    },
+    "ext": {
+      "type": "string"
+    },
+    "duration": {
+      "type": "number",
+      "minimum": 0
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "has_audio": {
+      "type": "boolean"
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fps": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "audio_rate": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "role": "head",
+      "ext": "mp4",
+      "duration": 1512.4,
+      "width": 3840,
+      "height": 2160,
+      "has_audio": true,
+      "size": 9000000000,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "fps": 29.97,
+      "audio_rate": 48000
+    }
+  ]
+}

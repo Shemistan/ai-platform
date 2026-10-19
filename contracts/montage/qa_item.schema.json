@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/qa_item",
+  "title": "qa_item",
+  "description": "Замечание QA (QAItem, §5.8): проверка, серьёзность, улика, что сделать, статус.",
+  "type": "object",
+  "required": [
+    "id",
+    "kind",
+    "check",
+    "severity",
+    "message",
+    "evidence",
+    "attempts",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "mechanical",
+        "semantic"
+      ]
+    },
+    "check": {
+      "type": "string"
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "error",
+        "warning",
+        "info"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "t_start": {
+          "type": "number",
+          "minimum": 0
+        },
+        "t_end": {
+          "type": "number",
+          "minimum": 0
+        },
+        "frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scene_id": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    },
+    "proposed_fix": {
+      "type": "string"
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "fixed",
+        "escalated",
+        "accepted"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "id": "qa_001",
+      "kind": "mechanical",
+      "check": "black_frames",
+      "severity": "error",
+      "message": "чёрные кадры 2.1 с",
+      "evidence": {
+        "t_start": 10.0,
+        "t_end": 12.1
+      },
+      "proposed_fix": "проверить вырезку на 10 с",
+      "attempts": 0,
+      "status": "open"
+    }
+  ]
+}

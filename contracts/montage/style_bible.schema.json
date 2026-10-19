@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/style_bible",
+  "title": "style_bible",
+  "description": "Стиль-библия проекта (§5.4): палитра, типографика, движение, субтитры; версионируется.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "revision",
+    "name",
+    "palette",
+    "font",
+    "mono",
+    "motion",
+    "captions",
+    "density"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^style_[0-9]{3}$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "palette": {
+      "type": "object",
+      "required": [
+        "bg",
+        "surface",
+        "ink",
+        "muted",
+        "accent",
+        "accent2",
+        "ok",
+        "warn",
+        "bad"
+      ],
+      "properties": {
+        "bg": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        },
+        "surface": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        },
+        "ink": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        },
+        "muted": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        },
+        "accent": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        },
+        "accent2": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        },
+        "ok": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        },
+        "warn": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        },
+        "bad": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        }
+      }
+    },
+    "font": {
+      "type": "string"
+    },
+    "mono": {
+      "type": "string"
+    },
+    "spacing": {
+      "type": "object",
+      "required": [
+        "unit",
+        "margin"
+      ],
+      "properties": {
+        "unit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "margin": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "motion": {
+      "type": "object",
+      "required": [
+        "enter",
+        "exit"
+      ],
+      "properties": {
+        "enter": {
+          "type": "string"
+        },
+        "exit": {
+          "type": "string"
+        },
+        "hold_ease": {
+          "type": "string"
+        },
+        "enter_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "exit_s": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "captions": {
+      "type": "object",
+      "required": [
+        "size",
+        "position",
+        "max_chars"
+      ],
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "bottom",
+            "top"
+          ]
+        },
+        "margin": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_chars": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "safe_margin_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 20
+    },
+    "logo": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "usage": {
+          "type": "string"
+        }
+      }
+    },
+    "density": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "composition": {
+      "type": "string"
+    },
+    "iconography": {
+      "type": "string"
+    },
+    "camera": {
+      "type": "string"
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1.0",
+      "revision": "style_001",
+      "name": "Тёмный технический",
+      "palette": {
+        "bg": "#0f1420",
+        "surface": "#1a2233",
+        "ink": "#eef2f8",
+        "muted": "#8a96ab",
+        "accent": "#4fc3f7",
+        "accent2": "#ffb454",
+        "ok": "#5fd38d",
+        "warn": "#ffd166",
+        "bad": "#ff6b6b"
+      },
+      "font": "system",
+      "mono": "sf-mono",
+      "spacing": {
+        "unit": 8,
+        "margin": 96
+      },
+      "motion": {
+        "enter": "power3.out",
+        "exit": "power2.in",
+        "hold_ease": "none",
+        "enter_s": 0.5,
+        "exit_s": 0.4
+      },
+      "captions": {
+        "size": 64,
+        "position": "bottom",
+        "margin": 90,
+        "max_chars": 42
+      },
+      "safe_margin_pct": 5,
+      "logo": {
+        "usage": "нет"
+      },
+      "density": "medium"
+    }
+  ]
+}

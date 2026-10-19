@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/edit_decision",
+  "title": "edit_decision",
+  "description": "Решение чернового монтажа (EditDecision, §7): что вырезать и почему.",
+  "type": "object",
+  "required": [
+    "id",
+    "source_id",
+    "source_in",
+    "source_out",
+    "action",
+    "reason",
+    "confidence",
+    "handles",
+    "approved"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "source_in": {
+      "type": "number",
+      "minimum": 0
+    },
+    "source_out": {
+      "type": "number",
+      "minimum": 0
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "remove",
+        "keep",
+        "layout"
+      ]
+    },
+    "kind": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "handles": {
+      "type": "object",
+      "required": [
+        "before",
+        "after"
+      ],
+      "properties": {
+        "before": {
+          "type": "number",
+          "minimum": 0
+        },
+        "after": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "approved": {
+      "type": "boolean"
+    },
+    "words": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "minItems": 2,
+      "maxItems": 2
+    }
+  },
+  "examples": [
+    {
+      "id": "cut_001",
+      "source_id": "head",
+      "source_in": 12.3,
+      "source_out": 13.1,
+      "action": "remove",
+      "kind": "filler",
+      "reason": "слово-паразит",
+      "confidence": 0.8,
+      "handles": {
+        "before": 0.125,
+        "after": 0.125
+      },
+      "approved": false,
+      "words": [
+        40,
+        40
+      ]
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/flow_diagram",
+  "title": "flow_diagram",
+  "description": "Схема-поток: процесс из 2–5 шагов со стрелками: запрос идёт по слоям, данные по стадиям. Длительность по умолчанию 6.0 с, минимальный кегль 32px.",
+  "type": "object",
+  "required": [
+    "nodes"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 18
+      },
+      "minItems": 2,
+      "maxItems": 5
+    },
+    "direction": {
+      "type": "string",
+      "enum": [
+        "right",
+        "down"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "title": "Путь запроса",
+      "nodes": [
+        "HTTP",
+        "TCP",
+        "IP",
+        "Ethernet"
+      ],
+      "direction": "right"
+    }
+  ]
+}
