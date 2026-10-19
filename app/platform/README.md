@@ -155,7 +155,7 @@ FLUX.2 сам докладывает `mlx.metallib` к Flux2CLI и ставит 
 | `ltx-2.5-q4` | видео | ~27 ГБ (энкодер внутри) | модель видео по умолчанию, нужен `HF_TOKEN` |
 | `wan-2.2-t2v-q4` | видео | ~27 ГБ | только по промпту, без звука |
 | `sadtalker` | диктор | ~2,4 ГБ + окружение ~1 ГБ в `~/.local/share/avatar` | идёт на процессоре |
-| `whisper-large-v3-turbo`, `whisper-large-v3`, `qwen3-asr-1.7b`; `hyperframes` | монтаж | 1,5 / 2,9 / 5,5 ГБ + mlx-audio ~1 ГБ; HyperFrames с Chrome | расшифровка (сравнить: `make asr-compare`); моушн, Node 22+ |
+| `whisper-large-v3-turbo`, `whisper-large-v3`, `qwen3-asr-1.7b`; `hyperframes` | монтаж, моушн | 1,5 / 2,9 / 5,5 ГБ + mlx-audio ~1 ГБ; HyperFrames с Chrome | расшифровка (сравнить: `make asr-compare`); моушн-вставки и вкладка «Моушн», Node 22+ |
 
 Размеры — `du` каталогов (у LTX — файлы режима `--distilled`, `FULL=1` — весь репозиторий);
 сверху — пайплайны (~2 ГБ) и SeedVR2 (~7 ГБ, при первом увеличении). Обновил пайплайн —

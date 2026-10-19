@@ -37,13 +37,15 @@ def main(argv: list[str] | None = None) -> int:
     document = Path(args.composition).read_text(encoding="utf-8")
     found = re.search(r'id="stage"[^>]*data-duration="([\d.]+)"', document)
     duration = float(found[1]) if found else 4.0
+    size = re.search(r'id="stage"[^>]*data-width="(\d+)" data-height="(\d+)"', document)
+    width, height = (int(size[1]), int(size[2])) if size else (1920, 1080)
     text_file = Path(args.output).with_suffix(".txt")
     text_file.write_text(motion.first_text(document) or "вставка", encoding="utf-8")
     font = next((f for f in platform_config.FONT_CANDIDATES if Path(f).is_file()), "")
     draw = f"drawtext=textfile='{text_file}':fontcolor=white:fontsize=56:x=140:y=h-300"
     if font:
         draw += f":fontfile='{font}'"
-    graph = f"color=c=black@0.0:s=1920x1080:r={args.fps}:d={duration},format=yuva444p10le," \
+    graph = f"color=c=black@0.0:s={width}x{height}:r={args.fps}:d={duration},format=yuva444p10le," \
             f"drawbox=x=96:y=h-360:w=1100:h=150:color=0x1c1e21@0.85:t=fill,{draw}"  # fmt: skip
     argv_ = ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", graph, "-c:v", "prores_ks",
              "-profile:v", "4444", "-pix_fmt", "yuva444p10le", args.output]  # fmt: skip
