@@ -10,6 +10,7 @@ from pathlib import Path
 
 from aiplatform import config as platform_config
 from aiplatform.config import Config, pick
+from aiplatform.core.settings import Settings
 
 FAKES = Path(__file__).resolve().parent.parent / "fakes"
 WORKER = Path(__file__).resolve().parent / "asr_worker.py"
@@ -31,6 +32,7 @@ class MontageConfig:
     llm_cmd: tuple[str, ...]
     hyperframes_cmd: tuple[str, ...]
     max_upload_bytes: int
+    settings: Settings | None = None  # что выключено во вкладке «Настройки»
 
     @property
     def fake(self) -> bool:
@@ -63,6 +65,10 @@ class MontageConfig:
     def hyperframes_available(self) -> bool:
         return self.fake or shutil.which(self.hyperframes_cmd[0]) is not None
 
+    def disabled_models(self) -> set[str]:
+        """Модели расшифровки, выключенные во вкладке «Настройки»."""
+        return self.settings.disabled("asr") if self.settings else set()
+
 
 def load(config: Config) -> MontageConfig:
     # LLM — та же команда, что у студии (claude -p без инструментов, SEC-004): модуль не тянет студию целиком.
@@ -92,4 +98,5 @@ def load(config: Config) -> MontageConfig:
         llm_cmd=llm_cmd,
         hyperframes_cmd=hyperframes,
         max_upload_bytes=int(max(0.1, max_gb) * 2**30),
+        settings=config.settings,
     )

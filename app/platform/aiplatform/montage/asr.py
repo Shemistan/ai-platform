@@ -107,6 +107,19 @@ def installed(model: Model, config: MontageConfig) -> bool:
     return not missing(model, config)
 
 
+def enabled(config: MontageConfig) -> list[Model]:
+    """Каталог без выключенных во вкладке «Настройки»."""
+    off = config.disabled_models()
+    return [m for m in CATALOG if m.id not in off]
+
+
+def default_id(config: MontageConfig) -> str:
+    """Модель по умолчанию: первая включённая установленная, иначе первая включённая."""
+    models = enabled(config)
+    ready = [m for m in models if installed(m, config)]
+    return (ready or models or list(CATALOG))[0].id
+
+
 def public(config: MontageConfig) -> list[dict]:
     return [
         {
@@ -116,7 +129,7 @@ def public(config: MontageConfig) -> list[dict]:
             "size_gb": m.size_gb,
             "installed": installed(m, config),
         }
-        for m in CATALOG
+        for m in enabled(config)
     ]
 
 

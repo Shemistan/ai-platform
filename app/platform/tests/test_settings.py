@@ -93,6 +93,25 @@ class SettingsTabTest(PlatformCase):
         self.assertNotIn("higgs", [e["id"] for e in studio["engines"]])
         self.assertNotEqual(studio["defaults"]["engine"], "higgs")
 
+    def test_asr_models_and_tools(self):
+        _, body = self.json("GET", "/api/settings/state")
+        asr = {m["id"]: m for m in body["sections"]["asr"]}
+        self.assertEqual(list(asr), ["whisper-large-v3-turbo", "whisper-large-v3", "qwen3-asr-1.7b"])
+        self.assertTrue(asr["whisper-large-v3-turbo"]["installed"] and asr["whisper-large-v3-turbo"]["enabled"])
+        tools = {t["id"]: t for t in body["tools"]}
+        self.assertEqual(set(tools), {"sadtalker", "hyperframes"})
+        self.assertTrue(all(t["installed"] and t["missing"] is None for t in tools.values()))
+
+        _, body = self.toggle(kind="asr", id="whisper-large-v3-turbo", enabled=False)
+        self.assertFalse({m["id"]: m for m in body["sections"]["asr"]}["whisper-large-v3-turbo"]["enabled"])
+        _, cfg = self.json("GET", "/api/montage/config")
+        self.assertNotIn("whisper-large-v3-turbo", [m["id"] for m in cfg["models"]])
+
+        for model in asr:
+            self.toggle(kind="asr", id=model, enabled=False)
+        self.assertTrue(any("модели расшифровки" in p for p in self.json("GET", "/api/config")[1]["problems"]))
+        self.assertEqual(self.toggle(kind="asr", id="nope", enabled=False)[0], 400)
+
     def test_bad_toggles(self):
         for body in (
             {"kind": "photo", "id": "nope", "enabled": False},

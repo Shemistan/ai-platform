@@ -243,7 +243,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | Метод | Путь | Тело / query | Ответ | Что делает |
 |---|---|---|---|---|
 | GET | `/api/settings/state` | — | JSON | — |
-| POST | `/api/settings/toggle` | JSON | JSON | {kind: photo\|video\|audio, id, enabled} или {kind: voice, engine, id, enabled} |
+| POST | `/api/settings/toggle` | JSON | JSON | {kind: photo\|video\|audio\|asr, id, enabled} или {kind: voice, engine, id, enabled} |
 | POST | `/api/settings/section/{name}` | JSON | JSON | Часть раздела: {enabled, time, day} расписания, {enabled} уведомлений и т.п. Мусор — 400 |
 | GET | `/api/settings/cleanup` | — | JSON | — |
 | POST | `/api/settings/cleanup/run` | — | JSON | — |

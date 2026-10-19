@@ -1,6 +1,7 @@
 """Вкладка «Настройки»: общие настройки платформы, API под /api/settings/.
 
-Что включено (модели фото и видео, движки озвучки и их голоса), расписание
+Что включено (модели фото и видео, движки озвучки и их голоса, модели расшифровки
+монтажа), что стоит из инструментов диктора и моушн-графики, расписание
 дайджеста, уведомления, отклик каналов и уборка. Хранятся в
 <data>/settings.json (core/settings.py) и действуют сразу, без перезапуска.
 """
@@ -11,10 +12,13 @@ from http import HTTPStatus
 
 from aiplatform import backup
 from aiplatform.audio import voices
+from aiplatform.avatar import models as avatar_models
+from aiplatform.avatar.jobs import INSTALL_HINT as AVATAR_HINT
 from aiplatform.core import schema
 from aiplatform.core import settings as settings_module
 from aiplatform.core.cleanup import Cleaner
 from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
+from aiplatform.montage import asr
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import service as studio_service
 from aiplatform.video import models as video_models
@@ -24,8 +28,14 @@ CATALOGS = {
     "photo": {m.id: m.label for m in photo_models.CATALOG},
     "video": {m.id: m.label for m in video_models.CATALOG},
     "audio": {e.id: e.label for e in voices.ENGINES.values()},
+    "asr": {m.id: m.label for m in asr.CATALOG},
 }
-KIND_LABELS = {"photo": "модели фото", "video": "модели видео", "audio": "движки озвучки"}
+KIND_LABELS = {
+    "photo": "модели фото",
+    "video": "модели видео",
+    "audio": "движки озвучки",
+    "asr": "модели расшифровки",
+}
 # Разделы настроек вне «что выключено»: имя → путь к словарю в settings.json.
 SECTIONS = {
     "schedule": ("schedule", "digest"),
@@ -87,20 +97,52 @@ class SettingsModule:
 
     def _installed(self, kind: str) -> dict[str, bool]:
         """Что стоит на этой машине — по полному каталогу, без учёта выключенного."""
-        module = self.ctx.modules.get(kind)
+        module = self.ctx.modules.get("montage" if kind == "asr" else kind)
         if module is None or kind == "audio":
             return {}
         config = module.config
+        if kind == "asr":
+            return {m.id: asr.installed(m, config) for m in asr.CATALOG}
         if kind == "photo":
             found = photo_models.resolve(models_dir=config.models_dir, fake=config.fake)
         else:
             found = video_models.resolve(models_dir=config.models_dir, explicit=config.model, fake=config.fake)
         return {m.id: m.installed for m in found}
 
+    def _tools(self) -> list[dict]:
+        """Инструменты без выбора — только установлены или нет: диктор (SadTalker) и моушн-графика монтажа."""
+        out = []
+        avatar = self.ctx.modules.get("avatar")
+        if avatar is not None:
+            lack = avatar_models.missing(avatar.config)
+            out.append(
+                {
+                    "id": "sadtalker",
+                    "label": "Диктор: SadTalker",
+                    "note": "анимирует персонажа по фото во вкладке «Диктор»",
+                    "installed": not lack,
+                    "missing": f"Нет {' и '.join(lack)}. {AVATAR_HINT}" if lack else None,
+                }
+            )
+        montage = self.ctx.modules.get("montage")
+        if montage is not None:
+            ready = montage.config.hyperframes_available()
+            out.append(
+                {
+                    "id": "hyperframes",
+                    "label": "Моушн-графика: HyperFrames",
+                    "note": "заголовки, цифры и списки поверх ролика во вкладке «Монтаж»",
+                    "installed": ready,
+                    "missing": None if ready else "Нужен Node 22+, затем make models M=hyperframes в app/platform.",
+                }
+            )
+        return out
+
     def state(self) -> dict:
         data = self.settings.load()["disabled"]
         sections = {}
-        for kind, catalog_models in (("photo", photo_models.CATALOG), ("video", video_models.CATALOG)):
+        catalogs = (("photo", photo_models.CATALOG), ("video", video_models.CATALOG), ("asr", asr.CATALOG))
+        for kind, catalog_models in catalogs:
             installed = self._installed(kind)
             sections[kind] = [
                 {
@@ -128,6 +170,7 @@ class SettingsModule:
         studio = self.ctx.modules.get("studio")
         return {
             "sections": sections,
+            "tools": self._tools(),
             "file": str(self.settings.path),
             "schedule": full["schedule"]["digest"],
             "notify": full["notify"],
@@ -209,7 +252,7 @@ class SettingsModule:
         return self.state()
 
     def toggle(self, payload: object) -> dict:
-        """{kind: photo|video|audio, id, enabled} или {kind: voice, engine, id, enabled}."""
+        """{kind: photo|video|audio|asr, id, enabled} или {kind: voice, engine, id, enabled}."""
         if not isinstance(payload, dict):
             raise bad_request("Тело запроса — не объект JSON.")
         kind, item, enabled = payload.get("kind"), payload.get("id"), payload.get("enabled")
@@ -236,7 +279,7 @@ class SettingsModule:
                 data["disabled"][kind] = sorted(names - {item} if enabled else names | {item})
 
         else:
-            raise bad_request(malformed("kind — photo, video, audio или voice."))
+            raise bad_request(malformed("kind — photo, video, audio, asr или voice."))
         self.settings.change(apply)
         return self.state()
 

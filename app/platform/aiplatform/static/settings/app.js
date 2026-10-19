@@ -1,4 +1,5 @@
-// Вкладка «Настройки»: какие модели фото и видео, движки озвучки и голоса включены; расписание, уведомления, уборка.
+// Вкладка «Настройки»: какие модели фото и видео, движки озвучки, голоса и модели расшифровки включены;
+// что стоит из инструментов диктора и моушн-графики; расписание, уведомления, уборка.
 import { $, api, busyClick, chip, fill, h, icon, plural, toast } from "/ui.js";
 
 const API = "/api/settings";
@@ -79,6 +80,28 @@ function voiceButtons(engine) {
         },
         v.id,
         v.id === engine.default_voice ? [icon("star"), h("span", { class: "sr-only" }, "голос по умолчанию")] : null,
+      ),
+    ),
+  );
+}
+
+// Диктор и моушн-графика: без переключателя — название, «установлена / не установлена» и что поставить.
+function toolList(tools) {
+  if (!tools.length) return h("p", { class: "muted" }, "Вкладки «Диктор» и «Монтаж» не подключены.");
+  return h(
+    "div",
+    { class: "toggle-list" },
+    ...tools.map((t) =>
+      h(
+        "div",
+        { class: "toggle-row" },
+        h(
+          "div",
+          { class: "toggle-body" },
+          h("div", { class: "toggle-title" }, h("span", { class: "toggle-name" }, t.label), installedChip(t)),
+          h("span", { class: "hint" }, t.note),
+          t.missing ? h("span", { class: "hint" }, t.missing) : null,
+        ),
       ),
     ),
   );
@@ -270,9 +293,11 @@ function render(data) {
   renderSchedule(data);
   renderUpkeep(data);
   renderDefaults(data);
-  const { photo, video, audio } = data.sections;
+  const { photo, video, audio, asr } = data.sections;
   fill($("photo"), h("div", { class: "toggle-list" }, ...photo.map((m) => row(m, "photo", m.note))));
   fill($("video"), h("div", { class: "toggle-list" }, ...video.map((m) => row(m, "video", m.note))));
+  fill($("asr"), h("div", { class: "toggle-list" }, ...asr.map((m) => row(m, "asr", m.note))));
+  fill($("tools"), toolList(data.tools || []));
   const engines = audio.map((e) => {
     const on = e.voices.filter((v) => v.enabled).length;
     return row(e, "audio", `${e.note} · голосов включено: ${on} из ${e.voices.length}`, voiceButtons(e));
