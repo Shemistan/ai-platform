@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/knowledge_claim",
+  "title": "knowledge_claim",
+  "description": "Утверждение из материалов или речи (KnowledgeClaim, §7) с цитатами.",
+  "type": "object",
+  "required": [
+    "id",
+    "statement",
+    "citations",
+    "confidence",
+    "contradiction_status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "doc",
+          "chunk",
+          "quote"
+        ],
+        "properties": {
+          "doc": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "quote": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "transcript": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "contradiction_status": {
+      "type": "string",
+      "enum": [
+        "none",
+        "contradicted",
+        "unsupported"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "id": "claim_001",
+      "statement": "Горутина блокируется на полном буфере.",
+      "citations": [
+        {
+          "doc": "doc_1",
+          "chunk": 3,
+          "quote": "блокируется, пока буфер полон"
+        }
+      ],
+      "transcript": [
+        120,
+        140
+      ],
+      "confidence": 0.9,
+      "contradiction_status": "none"
+    }
+  ]
+}

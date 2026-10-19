@@ -212,12 +212,13 @@ class StagesTest(unittest.TestCase):
     """Этапы действия (PRD-025): состав, переходы, общий процент и оценка «осталось»."""
 
     def test_plan_depends_on_action_and_options(self):
-        auto = {"auto": True, "check": True, "motion": False}
+        auto = {"mode": "autonomous", "check": True, "motion": False}
         self.assertEqual(
             stages.plan_for("prepare", auto, screen_audio=True),
             ["audio", "sync", "silences", "transcribe", "plan", "segments", "join", "final", "check"],
         )
-        self.assertEqual(stages.plan_for("prepare", {"auto": False}), ["audio", "silences", "transcribe", "plan"])
+        self.assertEqual(stages.plan_for("prepare", {"mode": "reviewed"}), ["audio", "silences", "transcribe", "plan"])
+        self.assertEqual(stages.plan_for("prepare", {"mode": "manual"}), ["audio", "silences", "transcribe"])
         self.assertEqual(stages.plan_for("revise", auto), ["plan"])
         self.assertEqual(stages.plan_for("render", {"check": False, "motion": True}),
                          ["segments", "join", "final", "motion"])  # fmt: skip
@@ -310,6 +311,8 @@ class MontageApiTest(PlatformCase):
         _, view2 = self.json("GET", f"/api/montage/projects/{pid}/plan")
         self.assertEqual(view2["cuts"][0], {"from": 0, "to": 0, "kind": "human", "reason": "лишнее приветствие"})
 
+        self.assertEqual(self.json("POST", f"/api/montage/projects/{pid}/render")[0], 409, "план не подтверждён")
+        self.assertEqual(self.json("POST", f"/api/montage/projects/{pid}/approve", {"gate": "edl"})[0], 200)
         self.assertEqual(self.json("POST", f"/api/montage/projects/{pid}/render")[0], 200)
         done = self.settle(pid, ("done", "failed", "canceled"))
         self.assertEqual(done["status"], "done", done)

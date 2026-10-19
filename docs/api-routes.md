@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 154. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 159. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -185,6 +185,8 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | Метод | Путь | Тело / query | Ответ | Что делает |
 |---|---|---|---|---|
 | GET | `/api/montage/config` | — | JSON | — |
+| GET | `/api/montage/capabilities` | — | JSON | Реестр возможностей (MASTER_SPEC §3): без запуска команд; probe — с настоящими вызовами |
+| POST | `/api/montage/capabilities/probe` | — | JSON | — |
 | GET | `/api/montage/rules` | — | JSON | — |
 | POST | `/api/montage/rules` | JSON | JSON | — |
 | GET | `/api/montage/projects` | — | JSON | — |
@@ -198,6 +200,9 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/montage/projects/{pid}/replan` | — | JSON | — |
 | GET | `/api/montage/projects/{pid}/plan` | — | JSON | — |
 | POST | `/api/montage/projects/{pid}/plan` | JSON | JSON | — |
+| POST | `/api/montage/projects/{pid}/approve` | JSON | JSON | Ворота (§1, §6): человек подтверждает план вырезок, раскадровку или экспорт |
+| GET | `/api/montage/projects/{pid}/decisions` | — | JSON | Журнал решений (§6, §10): роли, версии промптов, хэши входа и выхода |
+| GET | `/api/montage/projects/{pid}/timemap` | — | JSON | Карта времени (§4): сегменты результата в кадрах ↔ исходник в секундах |
 | POST | `/api/montage/projects/{pid}/render` | — | JSON | — |
 | POST | `/api/montage/projects/{pid}/revise` | JSON | JSON | — |
 | POST | `/api/montage/projects/{pid}/cancel` | — | JSON | — |

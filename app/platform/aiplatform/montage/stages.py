@@ -30,9 +30,12 @@ MIN_PERCENT_FOR_ETA = 2.0  # раньше скорость этапа не ви�
 def plan_for(action: str, options: dict, *, screen_audio: bool = False) -> list[str]:
     """Этапы действия по порядку: prepare (и сборка, если auto), replan, revise, render."""
     render = [*RENDER, *(["check"] if options.get("check") else []), *(["motion"] if options.get("motion") else [])]
+    auto = options.get("mode") == "autonomous" or options.get("auto")
     if action == "prepare":
-        head = ["audio", *(["sync"] if screen_audio else []), "silences", "transcribe", "plan"]
-        return [*head, *(render if options.get("auto") else [])]
+        head = ["audio", *(["sync"] if screen_audio else []), "silences", "transcribe"]
+        if options.get("mode") != "manual":
+            head.append("plan")
+        return [*head, *(render if auto else [])]
     if action in ("replan", "revise"):
         return ["plan"]
     return render

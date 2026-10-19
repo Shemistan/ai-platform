@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/motion_spec",
+  "title": "motion_spec",
+  "description": "Движение сцены (MotionSpec, §7): кадры входа, удержания, выхода и easing.",
+  "type": "object",
+  "required": [
+    "entrance_frames",
+    "hold_frames",
+    "exit_frames"
+  ],
+  "properties": {
+    "entrance_frames": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "hold_frames": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exit_frames": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "easing": {
+      "type": "object",
+      "required": [
+        "enter",
+        "exit"
+      ],
+      "properties": {
+        "enter": {
+          "type": "string"
+        },
+        "exit": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "entrance_frames": 15,
+      "hold_frames": 105,
+      "exit_frames": 12,
+      "easing": {
+        "enter": "power3.out",
+        "exit": "power2.in"
+      }
+    }
+  ]
+}

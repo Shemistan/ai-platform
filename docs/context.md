@@ -30,6 +30,7 @@
 | `app/platform/` | веб-платформа: Python stdlib HTTP-сервер (ADR 0003) + ванильный JS без сборки. Пакет `aiplatform` |
 | `app/narrator/` | движок озвучки, новостей и Telegram-бота. CLI `./narrate`, пакет `narrator` (uv). Своих страниц нет; свой регламент — `app/narrator/CLAUDE.md` |
 | `contracts/bridge/` | JSON-схемы ответов моста `narrate bridge <cmd>`; проверяют тесты обеих сторон (QA-004) |
+| `contracts/montage/` | JSON-схемы файлов конвейера «Монтажа» по MASTER_SPEC §7 (`montage/schemas.py`) |
 | `tools/` | гейты `./check`, релиз, сдвиг staging, шаблоны `.claude/` |
 | `docs/` | спеки, планы, ADR, гайды (ниже) |
 | `backlog/` | задачи вне git, только в главном checkout (см. CLAUDE.md) |
@@ -120,6 +121,11 @@
 lower_third, stat, list, quote), HyperFrames рендерит HTML+GSAP (`assets/motion/style.css`) в прозрачный
 MOV, финал накладывает. Этапы действия с процентом и «осталось» — `stages.py` (`project.stages`, ffmpeg
 `-progress`). `compare.py` — `make asr-compare`. Фейки: `fake_asr.py`, `fake_hyperframes.py`.
+По MASTER_SPEC (PRD-027, ADR 0011): режимы `reviewed | autonomous | manual` и ворота `edl | storyboard |
+export` (`approvals`, `approve`); `schemas.py` — JSON Schema из `contracts/montage/` (§7); `timemap.py` —
+результат в целых кадрах ↔ исходник (§4, `docs/TIMEBASE.md`); `decisions.py` — `decisions.jsonl` (роль,
+модель, версия промпта, хэши); `capabilities.py` — реестр возможностей с probe и маршрутизацией (§3);
+`source_manifest.json`, `edl.json`. Аудит машины — `docs/ENVIRONMENT_AUDIT.md`.
 
 ## Моушн `motion/`
 
@@ -189,7 +195,8 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
 - `motion/projects/<id>/`: `project.json`, `source.<ext>`, `words.json`, `moments.json`, `design.json`,
   `scenes/<sid>/` (`storyboard.json`, `code.json`, `index.html`, `scene.mov`, `preview.mp4`, `poster.jpg`), `package.zip`.
 - `montage/projects/<id>/`: `project.json`, `sources/`, `audio.wav`, `words.json`, `silences.json`,
-  `plan.json`, `segments/` (кэш), `output.mp4`, `subtitles.srt`; `montage/lessons.md` — выученные правила.
+  `plan.json`, `edl.json`, `timemap.json`, `source_manifest.json`, `decisions.jsonl`, `segments/` (кэш),
+  `output.mp4`, `subtitles.srt`; `montage/lessons.md` — выученные правила.
 - `studio/projects/<id>/`: `project.json`, `text.md`, `post.md`, `poster.*`,
   `plan.json`, `images/`, `clips/`, `voice.*`, `video.mp4`, `short.mp4`,
   `published.json`, `narrator/` (review.md судьи), `publish/<канал>/`;
@@ -213,7 +220,8 @@ ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): �
 ставит `bootstrap.sh` · 0003 stdlib `http.server` · 0004 один GPU-замок · 0005 narrator
 подпроцессом: CLI для долгого, мост `bridge` для данных · 0006 LLM через `claude -p` ·
 0007 файлы вместо БД · 0008 Telegram ботом, остальное ручным пакетом · 0009 версия
-схемы данных, миграции, карантин · 0010 лицензии движков озвучки и голос Charon.
+схемы данных, миграции, карантин · 0010 лицензии движков озвучки и голос Charon · 0011 MASTER_SPEC
+(студия видеопродакшена) внутри платформы: проекция ТЗ на стек, что не делается.
 
 ## Запуск и проверки
 
@@ -239,4 +247,5 @@ ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): �
 | спеки и планы | `docs/superpowers/` (главная — `specs/2026-10-15-ai-platform-design.md`) |
 | релизы | `docs/CHANGELOG.md` |
 | прошлые системные ошибки | `docs/грабли.md` |
+| MASTER_SPEC: аудит машины, шкалы времени, матрица приёмки | `docs/ENVIRONMENT_AUDIT.md`, `docs/TIMEBASE.md`, `docs/ACCEPTANCE.md` |
 | что уже сделано / открыто | `backlog/CHANGELOG.md`, `backlog/README.md` |

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/source_document",
+  "title": "source_document",
+  "description": "Материал проекта (SourceDocument, §5.3): текст для привязки знаний.",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "ext",
+    "sha256",
+    "chars",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "ext": {
+      "type": "string",
+      "enum": [
+        "md",
+        "txt",
+        "docx",
+        "pdf"
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "chars": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "pages": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "unavailable",
+        "failed"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "chunks": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "added_at": {
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "examples": [
+    {
+      "id": "doc_1",
+      "name": "конспект.md",
+      "ext": "md",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "chars": 12000,
+      "pages": null,
+      "status": "ready",
+      "error": null,
+      "chunks": 16,
+      "added_at": 1760000000.0
+    }
+  ]
+}

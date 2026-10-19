@@ -5,12 +5,14 @@ from __future__ import annotations
 from http import HTTPStatus
 
 from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
-from aiplatform.montage import asr, edl, plan, render
+from aiplatform.montage import asr, capabilities, edl, plan, render
 from aiplatform.montage import config as montage_config
 from aiplatform.montage.projects import (
     DEFAULT_OPTIONS,
+    GATES,
     INSTALL_HINT,
     MAX_FEEDBACK,
+    MODES,
     ROLES,
     Conflict,
     MontageProjects,
@@ -21,7 +23,11 @@ PREFIX = "montage"
 URL_BASE = f"/api/{PREFIX}"
 MAX_BODY = 512 * 1024  # план целиком: вырезки и планы по индексам слов
 MISSING = "Проект не найден."
-FILES = {"subtitles.srt": ("subtitles.srt", "application/x-subrip")}
+FILES = {
+    "subtitles.srt": ("subtitles.srt", "application/x-subrip"),
+    "edl.json": ("edl.json", "application/json"),
+    "source_manifest.json": ("source_manifest.json", "application/json"),
+}
 
 
 def _conflict(exc: Exception) -> HttpError:
@@ -45,6 +51,8 @@ class MontageModule:
             "layouts": [{"id": key, "label": label} for key, label in edl.LAYOUTS.items()],
             "kinds": [{"id": key, "label": label} for key, label in edl.KINDS.items()],
             "roles": [{"id": key, "label": label} for key, label in ROLES.items()],
+            "modes": [{"id": key, "label": label} for key, label in MODES.items()],
+            "gates": list(GATES),
             "defaults": DEFAULT_OPTIONS,
             "backend": self.config.backend,
             "llm_available": self.config.llm_available(),
@@ -73,6 +81,11 @@ class MontageModule:
         match (req.method, req.sub):
             case ("GET", ["config"]):
                 return req.send_json(self.describe())
+            # Реестр возможностей (MASTER_SPEC §3): без запуска команд; probe — с настоящими вызовами.
+            case ("GET", ["capabilities"]):
+                return req.send_json(capabilities.public(self.config))
+            case ("POST", ["capabilities", "probe"]):
+                return req.send_json(capabilities.public(self.config, probed=True))
             case ("GET", ["rules"]):
                 return req.send_json({"base": plan.base_rules(), "lessons": projects.lessons()})
             case ("POST", ["rules"]):
@@ -108,6 +121,15 @@ class MontageModule:
                 return req.send_json(found(projects.plan_view(pid), MISSING))
             case ("POST", ["projects", pid, "plan"]):
                 return req.send_json(found(projects.save_plan(pid, req.json(MAX_BODY)), MISSING))
+            # Ворота (§1, §6): человек подтверждает план вырезок, раскадровку или экспорт.
+            case ("POST", ["projects", pid, "approve"]):
+                return req.send_json(found(projects.approve(pid, _field(req.json(MAX_BODY), "gate")), MISSING))
+            # Журнал решений (§6, §10): роли, версии промптов, хэши входа и выхода.
+            case ("GET", ["projects", pid, "decisions"]):
+                return req.send_json({"decisions": found(projects.decisions(pid), MISSING)})
+            # Карта времени (§4): сегменты результата в кадрах ↔ исходник в секундах.
+            case ("GET", ["projects", pid, "timemap"]):
+                return req.send_json(found(projects.timemap_view(pid), MISSING))
             case ("POST", ["projects", pid, "render"]):
                 return req.send_json(found(projects.render(pid), MISSING))
             case ("POST", ["projects", pid, "revise"]):

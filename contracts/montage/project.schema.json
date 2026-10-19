@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/project",
+  "title": "project",
+  "description": "project.json «Монтажа» (Project, §7): обязательные поля; остальное — по PRD-021/025.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "title",
+    "status",
+    "mode",
+    "created_at",
+    "updated_at",
+    "options",
+    "sources",
+    "approvals",
+    "progress"
+  ],
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{12}$"
+    },
+    "title": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "queued",
+        "running",
+        "review",
+        "waiting_approval",
+        "blocked",
+        "done",
+        "failed",
+        "canceled",
+        "interrupted"
+      ]
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "reviewed",
+        "autonomous",
+        "manual"
+      ]
+    },
+    "created_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "updated_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "options": {
+      "type": "object"
+    },
+    "sources": {
+      "type": "object"
+    },
+    "approvals": {
+      "type": "object",
+      "required": [
+        "edl",
+        "storyboard",
+        "export"
+      ],
+      "properties": {
+        "edl": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "storyboard": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "export": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      }
+    },
+    "progress": {
+      "type": "object"
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema": 2,
+      "id": "0123456789ab",
+      "title": "Обзор недели",
+      "status": "draft",
+      "mode": "reviewed",
+      "created_at": 1760000000.0,
+      "updated_at": 1760000000.0,
+      "options": {},
+      "sources": {
+        "head": null,
+        "screen": null
+      },
+      "approvals": {
+        "edl": null,
+        "storyboard": null,
+        "export": null
+      },
+      "progress": {
+        "stage": "Ждёт записи",
+        "percent": 0.0
+      },
+      "stages": []
+    }
+  ]
+}

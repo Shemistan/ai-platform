@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/transcript_word",
+  "title": "transcript_word",
+  "description": "Слово расшифровки: w — текст с пунктуацией, s/e — секунды исходника (PTS), c — уверенность 0–1 (если модель отдаёт), src — индекс слова исходника у слов результата. id слова = его индекс в массиве words.json; source_id — в корне файла.",
+  "type": "object",
+  "required": [
+    "w",
+    "s",
+    "e"
+  ],
+  "properties": {
+    "w": {
+      "type": "string",
+      "minLength": 1
+    },
+    "s": {
+      "type": "number",
+      "minimum": 0
+    },
+    "e": {
+      "type": "number",
+      "minimum": 0
+    },
+    "c": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "src": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "speaker_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "w": "Привет,",
+      "s": 0.52,
+      "e": 0.9,
+      "c": 0.97
+    }
+  ]
+}

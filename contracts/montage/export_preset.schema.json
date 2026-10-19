@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/export_preset",
+  "title": "export_preset",
+  "description": "Пресет экспорта (ExportPreset, §5.7).",
+  "type": "object",
+  "required": [
+    "id",
+    "label",
+    "container",
+    "vcodec",
+    "acodec",
+    "width",
+    "height",
+    "fps",
+    "aspect"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "label": {
+      "type": "string"
+    },
+    "container": {
+      "type": "string",
+      "enum": [
+        "mp4",
+        "mov"
+      ]
+    },
+    "vcodec": {
+      "type": "string"
+    },
+    "acodec": {
+      "type": "string"
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 16
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 16
+    },
+    "fps": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "crf": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 51
+    },
+    "aspect": {
+      "type": "string",
+      "enum": [
+        "16:9",
+        "9:16",
+        "1:1"
+      ]
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "examples": [
+    {
+      "id": "youtube_1080p",
+      "label": "YouTube 1080p (H.264/AAC)",
+      "container": "mp4",
+      "vcodec": "libx264",
+      "acodec": "aac",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "crf": 18,
+      "aspect": "16:9"
+    }
+  ]
+}

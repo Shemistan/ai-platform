@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/storyboard_scene",
+  "title": "storyboard_scene",
+  "description": "Сцена раскадровки (StoryboardScene, §7): привязка к биту и кадрам результата, шаблон, props, статус.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "beat_id",
+    "edit_start_frame",
+    "duration_frames",
+    "fps",
+    "intent",
+    "grounding_claim_ids",
+    "visual_type",
+    "engine",
+    "template_id",
+    "style_bible_revision",
+    "props",
+    "animation",
+    "layers",
+    "status",
+    "enabled"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^scene_[0-9]{3}$"
+    },
+    "beat_id": {
+      "type": "string"
+    },
+    "edit_start_frame": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "duration_frames": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "fps": {
+      "type": "object",
+      "required": [
+        "num",
+        "den"
+      ],
+      "properties": {
+        "num": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "den": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "intent": {
+      "type": "string"
+    },
+    "grounding_claim_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "visual_type": {
+      "type": "string",
+      "enum": [
+        "presenter",
+        "callout",
+        "diagram",
+        "code",
+        "chart",
+        "list",
+        "comparison",
+        "timeline",
+        "title",
+        "kinetic",
+        "cards",
+        "flow"
+      ]
+    },
+    "engine": {
+      "type": "string",
+      "enum": [
+        "hyperframes",
+        "none"
+      ]
+    },
+    "template_id": {
+      "type": "string"
+    },
+    "style_bible_revision": {
+      "type": "string"
+    },
+    "props": {
+      "type": "object"
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "animation": {
+      "type": "object",
+      "required": [
+        "entrance_frames",
+        "hold_frames",
+        "exit_frames"
+      ],
+      "properties": {
+        "entrance_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hold_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exit_frames": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "approved",
+        "rendered",
+        "blocked",
+        "failed",
+        "disabled"
+      ]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "necessity": {
+      "type": "object",
+      "required": [
+        "clarity",
+        "novelty",
+        "cognitive_load",
+        "production_cost",
+        "factual_risk"
+      ],
+      "properties": {
+        "clarity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "novelty": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "cognitive_load": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "production_cost": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "factual_risk": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      }
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 25
+    },
+    "hash": {
+      "type": "string"
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1.0",
+      "id": "scene_014",
+      "beat_id": "beat_008",
+      "edit_start_frame": 1260,
+      "duration_frames": 240,
+      "fps": {
+        "num": 30,
+        "den": 1
+      },
+      "intent": "Explain Go goroutine scheduling",
+      "grounding_claim_ids": [
+        "claim_018"
+      ],
+      "visual_type": "diagram",
+      "engine": "hyperframes",
+      "template_id": "task_scheduler",
+      "style_bible_revision": "style_003",
+      "props": {
+        "title": "Планировщик",
+        "workers": [
+          "P0",
+          "P1"
+        ],
+        "tasks": [
+          "G1",
+          "G2",
+          "G3"
+        ]
+      },
+      "assets": [],
+      "animation": {
+        "entrance_frames": 20,
+        "hold_frames": 180,
+        "exit_frames": 40
+      },
+      "layers": [
+        "presenter",
+        "diagram",
+        "captions"
+      ],
+      "status": "proposed",
+      "enabled": true,
+      "rationale": "механизм понятнее картинкой",
+      "necessity": {
+        "clarity": 5,
+        "novelty": 4,
+        "cognitive_load": 2,
+        "production_cost": 2,
+        "factual_risk": 2
+      },
+      "score": 18,
+      "hash": "0f3a9c1e2b4d5e6f"
+    }
+  ]
+}
