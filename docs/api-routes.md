@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 118. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 138. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -177,6 +177,33 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/library/unsent/{mode}` | — | JSON 202 | `{mode}`: send, mark |
 | GET | `/api/library/tasks/{task_id}` | — | JSON | — |
 | POST | `/api/library/tasks/{task_id}/cancel` | — | JSON | — |
+
+### `montage`
+
+Код: `app/platform/aiplatform/montage/service.py`
+
+| Метод | Путь | Тело / query | Ответ | Что делает |
+|---|---|---|---|---|
+| GET | `/api/montage/config` | — | JSON | — |
+| GET | `/api/montage/rules` | — | JSON | — |
+| POST | `/api/montage/rules` | JSON | JSON | — |
+| GET | `/api/montage/projects` | — | JSON | — |
+| POST | `/api/montage/projects` | JSON | JSON 201 | — |
+| GET | `/api/montage/projects/{pid}` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}` | JSON | JSON | — |
+| POST | `/api/montage/projects/{pid}/sources/{role}` | файл | JSON 201 | — |
+| POST | `/api/montage/projects/{pid}/sources/{role}/delete` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/source/{role}` | — | файл | — |
+| POST | `/api/montage/projects/{pid}/start` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/replan` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/plan` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/plan` | JSON | JSON | — |
+| POST | `/api/montage/projects/{pid}/render` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/revise` | JSON | JSON | — |
+| POST | `/api/montage/projects/{pid}/cancel` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/delete` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/video` | ?download | файл | — |
+| GET | `/api/montage/projects/{pid}/{name}` | — | файл | — |
 
 ### `news`
 

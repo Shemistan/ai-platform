@@ -1,0 +1,73 @@
+/* Только своё для вкладки «Монтаж»: токены — в /tokens.css, общие элементы — в /ui.css. */
+
+.page-head { grid-template-columns: 1fr auto; align-items: center; }
+.montage-layout { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr); }
+@media (max-width: 960px) {
+  .montage-layout { grid-template-columns: minmax(0, 1fr); }
+  .page-head { grid-template-columns: 1fr; }
+}
+
+.main-col { display: grid; gap: var(--sp-5); min-width: 0; align-content: start; }
+.stack { display: grid; gap: var(--sp-4); }
+.grow { flex: 1; }
+.narrow { max-width: 260px; }
+.field-label .muted, .check .muted { font-weight: var(--fw-regular); }
+
+/* --- записи --- */
+
+.sources { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-3); }
+.source {
+  display: grid;
+  gap: var(--sp-2);
+  align-content: start;
+  padding: var(--pad-card);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+  background: var(--sunken);
+}
+.source.ready { border-style: solid; background: var(--panel); }
+.source.drag { border-color: var(--accent); }
+.source video { width: 100%; aspect-ratio: 16 / 9; background: var(--media-bg); border-radius: var(--r-sm); }
+
+/* --- сводка и итог --- */
+
+.player { width: 100%; max-height: 62vh; border-radius: var(--r-md); display: block; background: var(--media-bg); }
+.player--source { max-height: 34vh; }
+.facts { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); margin: 0; padding: 0; list-style: none; }
+.facts b { font-size: var(--fs-lg); }
+.callout { padding: var(--pad-card); border-radius: var(--r-md); background: var(--warning-bg); color: var(--warning); white-space: pre-wrap; }
+.issues { margin: 0; padding-left: var(--sp-5); }
+
+/* --- расшифровка с вырезками --- */
+
+.transcript {
+  display: grid;
+  gap: var(--sp-1);
+  max-height: 70vh;
+  overflow: auto;
+  padding: var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+.phrase { display: grid; grid-template-columns: auto auto 1fr auto; gap: var(--sp-2); align-items: baseline; padding: 2px 0; }
+.phrase:not(:has(select)) { grid-template-columns: auto 1fr auto; }
+.phrase.out .words { opacity: 0.55; }
+.phrase-time { font: inherit; font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); background: none; border: 0; padding: 0 var(--sp-1); cursor: pointer; }
+.phrase-time:hover { color: var(--accent); }
+.phrase select { font-size: var(--fs-xs); min-height: var(--control-h-sm); padding: 0 var(--sp-1); }
+.words { line-height: 1.9; overflow-wrap: anywhere; }
+.word { cursor: pointer; border-radius: var(--r-sm); padding: 1px; }
+.word:hover { background: var(--sunken); }
+.word.cut { text-decoration: line-through; text-decoration-thickness: 2px; color: var(--danger); background: var(--danger-bg); }
+.word.cut.k-filler, .word.cut.k-slip { color: var(--warning); background: var(--warning-bg); }
+.word.cut.k-human { color: var(--muted); background: var(--sunken); }
+.pause { font-size: var(--fs-xs); color: var(--muted); padding-left: 4.5em; }
+.legend { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); font-size: var(--fs-sm); }
+.save-state { font-size: var(--fs-sm); }
+
+/* --- правила --- */
+
+.rules-form { display: grid; gap: var(--sp-3); min-width: min(720px, 86vw); }
+.rules-form textarea { min-height: 40vh; font-family: var(--mono); font-size: var(--fs-sm); }
+.rules-form pre { max-height: 30vh; overflow: auto; white-space: pre-wrap; font-size: var(--fs-sm); }

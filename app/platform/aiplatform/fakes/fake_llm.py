@@ -1,10 +1,11 @@
 """Имитация LLM-CLI (`claude -p`) для демо и тестов: промпт со stdin, ответ в stdout.
 
-Задачу узнаёт по первой строке промпта (`### task: poster|plan|short|summary|registry`)
+Задачу узнаёт по первой строке промпта (`### task: poster|plan|short|summary|registry|montage_*`)
 и отвечает детерминированно по тексту: промпт постера, план слайдов на
 каждую фразу (картинки вперемешку с динамическими сценами), сценарий шортса из первых фраз, выжимку из
 первых фраз абзацев, реестр организаций —
-текущий список плюс одна демо-запись.
+текущий список плюс одна демо-запись; монтаж — вырезки по простым правилам (паразиты, повторы,
+команды в кадр «покажи экран», «вырежи это»), FAKE_LLM_MONTAGE_ISSUE=1 — проверка находит оговорку.
 
 Окружение: FAKE_LLM_FAIL=1 — упасть; FAKE_LLM_GARBAGE=1 — ответить не JSON.
 """
@@ -107,7 +108,86 @@ def answer(prompt: str) -> str:
         entries = [e for e in current["entries"] if e.get("id") != DEMO_ENTRY["id"]] + [DEMO_ENTRY]
         data = {"entries": entries, "notes": "Демо: добавлена вымышленная запись, проверь её перед применением."}
         return "```json\n" + json.dumps(data, ensure_ascii=False, indent=2) + "\n```"
+    if task.startswith("montage_"):
+        return json.dumps(montage(task, prompt), ensure_ascii=False)
     return "Не знаю такой задачи."
+
+
+# ---------- монтаж: план по простым правилам вместо модели ----------
+
+_LINE = re.compile(r"^\[(\d+)\]\s+\d+(?:\.\d+)?\s+(.+)$", re.M)
+FILLERS = {"э-э", "ээ", "эм", "ну"}
+
+
+def _bare(word: str) -> str:
+    return re.sub(r"[^\w-]", "", word.lower())
+
+
+def _phrases(prompt: str) -> list[tuple[int, list[str]]]:
+    body = prompt.split("Расшифровка:", 1)[-1]
+    return [(int(first), text.split()) for first, text in _LINE.findall(body)]
+
+
+_TIMED = re.compile(r"^\[\d+\]\s+(\d+(?:\.\d+)?)\s+(.+)$", re.M)
+
+
+def motion(prompt: str) -> dict:
+    """Вставки: подпись к первой фразе с латиницей и заголовок через 25+ с — в пределах ролика."""
+    duration = float(re.search(r"Длительность ролика: (\d+)", prompt)[1])
+    body = prompt.split("Расшифровка:", 1)[-1]
+    inserts: list[dict] = []
+    for at_raw, text in _TIMED.findall(body):
+        at = float(at_raw)
+        if at < 3 or at + 4 > duration - 5 or (inserts and at < inserts[-1]["at"] + 25):
+            continue
+        latin = " ".join(w for w in text.split() if re.search(r"[A-Za-z]", w)).strip(",.")
+        if latin and not inserts:
+            fields = {"title": latin, "subtitle": "демо-вставка"}
+            inserts.append({"at": at, "duration": 4, "template": "lower_third", "fields": fields})
+        elif inserts:
+            inserts.append({"at": at, "duration": 4, "template": "title", "fields": {"title": _words(text, 4)}})
+    return {"inserts": inserts}
+
+
+def montage(task: str, prompt: str) -> dict:
+    if task == "montage_motion":
+        return motion(prompt)
+    if task == "montage_check":
+        issues = (
+            [{"from": 0, "to": 0, "kind": "slip", "reason": "демо: оговорка"}]
+            if os.environ.get("FAKE_LLM_MONTAGE_ISSUE")
+            else []
+        )
+        return {"issues": issues}
+    phrases = _phrases(prompt)
+    screen = "Есть запись экрана" in prompt
+    cuts, layout = [], []
+    for n, (first, words) in enumerate(phrases):
+        bare = [_bare(w) for w in words]
+        if bare and bare[0] in FILLERS:
+            cuts.append({"from": first, "to": first, "kind": "filler", "reason": "демо: слово-паразит"})
+        for k in (1, 2, 3):  # «новый режим, новый режим» — первый повтор — дубль
+            for i in range(len(bare) - 2 * k + 1):
+                if bare[i : i + k] == bare[i + k : i + 2 * k]:
+                    cuts.append(
+                        {"from": first + i, "to": first + i + k - 1, "kind": "retake", "reason": "демо: повтор"}
+                    )
+        text = " ".join(bare)
+        if text in ("покажи экран", "переключи на меня"):
+            cuts.append({"from": first, "to": first + len(words) - 1, "kind": "command", "reason": "демо: команда"})
+            if screen and n + 1 < len(phrases):
+                layout.append({"from": phrases[n + 1][0], "layout": "split" if "экран" in text else "head"})
+        if text == "вырежи это":
+            cuts.append({"from": first, "to": first + len(words) - 1, "kind": "command", "reason": "демо: команда"})
+            if n:
+                prev_first, prev_words = phrases[n - 1]
+                cuts.append({"from": prev_first, "to": prev_first + len(prev_words) - 1, "kind": "command",
+                             "reason": "демо: просили вырезать"})  # fmt: skip
+    out = {"cuts": cuts, "layout": [{"from": 0, "layout": "head"}, *layout] if screen else [], "notes": "демо-план"}
+    if task == "montage_revise":
+        feedback = prompt.split("Замечание человека к монтажу:", 1)[-1].strip().splitlines()[0]
+        out["lesson"] = f"демо-правило: {_words(feedback, 8)}"
+    return out
 
 
 def main() -> int:

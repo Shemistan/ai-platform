@@ -1,0 +1,30 @@
+/* Вставки монтажа: цвета и шрифт — как у тёмной темы платформы (static/tokens.css). Фон — прозрачный. */
+html, body { margin: 0; background: transparent; }
+#stage {
+  position: relative; width: 1920px; height: 1080px; overflow: hidden; background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+  color: #ecebe7;
+}
+.card {
+  position: absolute; box-sizing: border-box; padding: 36px 48px; border-radius: 28px;
+  background: rgba(28, 30, 33, 0.92); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+  border: 2px solid rgba(126, 162, 255, 0.35);
+}
+.accent { color: #7ea2ff; }
+.bar { position: absolute; left: 0; top: 24px; bottom: 24px; width: 8px; border-radius: 4px; background: #7ea2ff; }
+.kicker { font-size: 30px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #7ea2ff; }
+.headline { font-size: 76px; font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; }
+.sub { font-size: 36px; color: #9b9a94; margin-top: 10px; }
+.value { font-size: 180px; font-weight: 800; line-height: 1; letter-spacing: -0.04em; color: #7ea2ff; }
+.label { font-size: 42px; font-weight: 600; margin-top: 12px; max-width: 760px; }
+.items { list-style: none; margin: 24px 0 0; padding: 0; display: grid; gap: 18px; }
+.items li { font-size: 46px; font-weight: 600; display: flex; gap: 24px; align-items: baseline; }
+.items li b { color: #7ea2ff; font-size: 40px; min-width: 52px; }
+.quote { font-size: 64px; font-weight: 700; line-height: 1.15; max-width: 1300px; }
+.author { font-size: 34px; color: #9b9a94; margin-top: 20px; }
+
+/* Места: низ-лево над субтитрами; верх-лево — карточки; угол справа внизу занят головой в плане split. */
+.pos-lower { left: 96px; bottom: 210px; padding-left: 64px; max-width: 1100px; }
+.pos-left { left: 96px; top: 120px; max-width: 980px; }
+/* Центр — через xPercent/yPercent в таймлайне: CSS transform GSAP перезаписал бы. */
+.pos-center { left: 50%; top: 50%; text-align: center; max-width: 1500px; }
