@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from aiplatform.avatar import models as avatar_models
+from aiplatform.montage import asr
 from aiplatform.photo import models as photo_models
 from aiplatform.updates import checks
 from aiplatform.video import models as video_models
@@ -226,6 +227,49 @@ class Flux2ExtrasTest(unittest.TestCase):
             proc = run("flux2-klein-9b", cwd=root, env={**env, "MLX_METALLIB": str(root / "нет-файла")})
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(len(calls.read_text().splitlines()), 1)
+
+
+class WhisperProcessorTest(unittest.TestCase):
+    """К уже скачанным весам Whisper докачивается WhisperProcessor из openai (BE-015, на фейках)."""
+
+    def test_processor_is_fetched_into_weights_dir_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_tree(root)
+            models_dir = root / "models"
+            model = asr.get("whisper-large-v3-turbo")
+            weights = models_dir / "asr" / model.weights.dirname
+            weights.mkdir(parents=True)
+            (weights / f".aip-{model.weights.revision}").touch()  # веса стоят с прошлой установки
+            montage_home = root / "montage"
+            env_bin = montage_home / "mlx-audio-0.5.8" / ".venv" / "bin"
+            env_bin.mkdir(parents=True)
+            calls = root / "hf-calls"
+            # hf пишет, с чем его позвали, и кладёт названные файлы в --local-dir.
+            (env_bin / "hf").write_text(
+                f'#!/bin/sh\necho "$*" >> "{calls}"\nshift 2\nfiles=""\n'
+                'while [ "$1" != "--revision" ]; do files="$files $1"; shift; done\n'
+                'for f in $files; do touch "$4/$f"; done\n'
+            )
+            # python окружения: проверка процессора проходит, только если токенизатор на месте.
+            (env_bin / "python").write_text('#!/bin/sh\n[ -f "$4/tokenizer.json" ]\n')
+            for name in ("hf", "python"):
+                (env_bin / name).chmod(0o755)
+            env = {"AIP_MODELS_DIR": str(models_dir), "MONTAGE_HOME": str(montage_home)}
+
+            proc = run("whisper-large-v3-turbo", cwd=root, env=env)
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            call = calls.read_text().split()
+            self.assertEqual(call[:2], ["download", model.processor.repo])
+            self.assertEqual(call[2:-4], list(model.processor.files))
+            self.assertNotIn("config.json", call, "config.json оригинала затёр бы config.json весов MLX")
+            self.assertEqual(call[-3:], [model.processor.revision, "--local-dir", str(weights)])
+            self.assertTrue((weights / "tokenizer.json").is_file())
+
+            proc = run("whisper-large-v3-turbo", cwd=root, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(len(calls.read_text().splitlines()), 1, "второй прогон ничего не качает")
 
 
 if __name__ == "__main__":

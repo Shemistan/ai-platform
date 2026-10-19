@@ -1,7 +1,9 @@
 """Модели расшифровки (ASR) монтажа: каталог, установленность, команда воркера, разбор его вывода.
 
 Веса — <AIP_MODELS_DIR>/asr/<имя репозитория>, ревизии закреплены (SEC-011): так их
-качает tools/setup-model.sh (`make models M=<id>`). Воркер — montage/asr_worker.py в
+качает tools/setup-model.sh (`make models M=<id>`). У Whisper в репозиториях mlx-community
+только веса, а mlx-audio берёт токенизатор и признаки звука (WhisperProcessor) из той же
+папки — их докачиваем из оригинала openai (BE-015). Воркер — montage/asr_worker.py в
 окружении mlx-audio; протокол: строки `PROGRESS <процент> <этап>` в stdout, итог —
 JSON в файле --out.
 """
@@ -9,6 +11,7 @@ JSON в файле --out.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,9 +42,16 @@ class Model:
     note: str
     size_gb: float
     aligner: Weights | None = None  # Qwen3-ASR: время слов даёт отдельный выравниватель
+    processor: Weights | None = None  # Whisper: файлы WhisperProcessor — в папку весов, не в свою
 
 
 QWEN_FILES = ("config.json", "model.safetensors.index.json", "preprocessor_config.json", "vocab.json")
+# WhisperProcessor из openai/whisper-*: без config.json оригинала — он затёр бы config.json весов MLX.
+# generation_config.json — ещё и alignment_heads для времени слов.
+WHISPER_PROCESSOR = (
+    "added_tokens.json", "generation_config.json", "merges.txt", "normalizer.json", "preprocessor_config.json",
+    "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json", "vocab.json",
+)  # fmt: skip
 
 # Порядок = порядок в интерфейсе. Первая — по умолчанию (быстрая и точная на русской речи с латиницей).
 CATALOG = (
@@ -53,6 +63,8 @@ CATALOG = (
                 ("config.json", "weights.safetensors")),
         "быстрая, хорошая точность; время слов — сама модель",
         1.5,
+        processor=Weights("openai/whisper-large-v3-turbo", "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+                          WHISPER_PROCESSOR),
     ),
     Model(
         "whisper-large-v3",
@@ -62,6 +74,7 @@ CATALOG = (
                 ("config.json", "weights.npz")),
         "полная, медленнее Turbo в несколько раз; точнее на редких словах",
         2.9,
+        processor=Weights("openai/whisper-large-v3", "06f233fe06e710322aca913c1bc4249a0d71fce1", WHISPER_PROCESSOR),
     ),
     Model(
         "qwen3-asr-1.7b",
@@ -87,8 +100,8 @@ def weights_dir(config: MontageConfig, weights: Weights) -> Path:
     return config.asr_dir / weights.dirname
 
 
-def _complete(config: MontageConfig, weights: Weights) -> bool:
-    folder = weights_dir(config, weights)
+def _complete(config: MontageConfig, weights: Weights, folder: Path | None = None) -> bool:
+    folder = folder or weights_dir(config, weights)
     return all((folder / name).is_file() for name in weights.files)
 
 
@@ -100,6 +113,9 @@ def missing(model: Model, config: MontageConfig) -> list[str]:
     for weights in (model.weights, model.aligner):
         if weights is not None and not _complete(config, weights):
             out.append(f"весов {weights.repo} в {weights_dir(config, weights)}")
+    folder = weights_dir(config, model.weights)
+    if model.processor is not None and not _complete(config, model.processor, folder):
+        out.append(f"токенизатора {model.processor.repo} в {folder}")
     return out
 
 
@@ -180,5 +196,16 @@ def catalog_lines() -> list[str]:
     return lines
 
 
+def processor_line(model_id: str) -> str:
+    """Для tools/setup-model.sh: `репозиторий ревизия файл…` процессора модели; нет его — пусто."""
+    model = get(model_id)
+    if model is None or model.processor is None:
+        return ""
+    return " ".join([model.processor.repo, model.processor.revision, *model.processor.files])
+
+
 if __name__ == "__main__":
-    print("\n".join(catalog_lines()))
+    if len(sys.argv) == 3 and sys.argv[1] == "processor":
+        print(processor_line(sys.argv[2]))
+    else:
+        print("\n".join(catalog_lines()))
