@@ -2,14 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "montage/project",
   "title": "project",
-  "description": "project.json «Монтажа» (Project, §7): обязательные поля; остальное — по PRD-021/025.",
+  "description": "project.json «Монтажа» (Project, §7): обязательные поля; режим — options.mode; остальное — по PRD-021/025.",
   "type": "object",
   "required": [
     "schema",
     "id",
     "title",
     "status",
-    "mode",
     "created_at",
     "updated_at",
     "options",
@@ -44,14 +43,6 @@
         "interrupted"
       ]
     },
-    "mode": {
-      "type": "string",
-      "enum": [
-        "reviewed",
-        "autonomous",
-        "manual"
-      ]
-    },
     "created_at": {
       "type": "number",
       "minimum": 0
@@ -61,7 +52,20 @@
       "minimum": 0
     },
     "options": {
-      "type": "object"
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "reviewed",
+            "autonomous",
+            "manual"
+          ]
+        }
+      }
     },
     "sources": {
       "type": "object"
@@ -110,10 +114,11 @@
       "id": "0123456789ab",
       "title": "Обзор недели",
       "status": "draft",
-      "mode": "reviewed",
       "created_at": 1760000000.0,
       "updated_at": 1760000000.0,
-      "options": {},
+      "options": {
+        "mode": "reviewed"
+      },
       "sources": {
         "head": null,
         "screen": null
