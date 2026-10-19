@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/stat",
+  "title": "stat",
+  "description": "Цифра: одна цифра, которую важно запомнить. Длительность по умолчанию 4.0 с, минимальный кегль 42px.",
+  "type": "object",
+  "required": [
+    "value"
+  ],
+  "properties": {
+    "value": {
+      "type": "string",
+      "maxLength": 8
+    },
+    "label": {
+      "type": "string",
+      "maxLength": 60
+    }
+  },
+  "examples": [
+    {
+      "value": "×9",
+      "label": "быстрее прошлой версии"
+    }
+  ]
+}

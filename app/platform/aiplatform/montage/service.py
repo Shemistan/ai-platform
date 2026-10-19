@@ -5,7 +5,7 @@ from __future__ import annotations
 from http import HTTPStatus
 
 from aiplatform.core.http import HttpError, Request, bad_request, found, not_found
-from aiplatform.montage import asr, capabilities, edl, plan, render
+from aiplatform.montage import asr, capabilities, documents, edl, plan, render, templates
 from aiplatform.montage import config as montage_config
 from aiplatform.montage.projects import (
     DEFAULT_OPTIONS,
@@ -27,6 +27,12 @@ FILES = {
     "subtitles.srt": ("subtitles.srt", "application/x-subrip"),
     "edl.json": ("edl.json", "application/json"),
     "source_manifest.json": ("source_manifest.json", "application/json"),
+    "storyboard.json": ("storyboard.json", "application/json"),
+}
+SCENE_FILES = {
+    "thumb.png": "image/png",
+    "index.html": "text/plain; charset=utf-8",  # исходник композиции — не страница
+    "scene.json": "application/json",
 }
 
 
@@ -53,6 +59,9 @@ class MontageModule:
             "roles": [{"id": key, "label": label} for key, label in ROLES.items()],
             "modes": [{"id": key, "label": label} for key, label in MODES.items()],
             "gates": list(GATES),
+            "templates": templates.public(),
+            "document_exts": list(documents.EXTS),
+            "max_document_bytes": documents.MAX_BYTES,
             "defaults": DEFAULT_OPTIONS,
             "backend": self.config.backend,
             "llm_available": self.config.llm_available(),
@@ -130,6 +139,38 @@ class MontageModule:
             # Карта времени (§4): сегменты результата в кадрах ↔ исходник в секундах.
             case ("GET", ["projects", pid, "timemap"]):
                 return req.send_json(found(projects.timemap_view(pid), MISSING))
+            # Материалы (§5.3): файл телом, имя — в заголовке X-File-Name.
+            case ("GET", ["projects", pid, "documents"]):
+                return req.send_json({"documents": found(projects.documents(pid), MISSING)})
+            case ("POST", ["projects", pid, "documents"]):
+                name = req.headers.get("X-File-Name", "")
+                data = req.body(documents.MAX_BYTES, f"Материал больше {documents.MAX_BYTES // 2**20} МБ.")
+                return req.send_json(found(projects.add_document(pid, name, data), MISSING), HTTPStatus.CREATED)
+            case ("POST", ["projects", pid, "documents", doc_id, "delete"]):
+                if projects.get(pid) is None:
+                    raise not_found(MISSING)
+                if not projects.remove_document(pid, doc_id):
+                    raise not_found("Материала нет.")
+                return req.send_json({"deleted": doc_id})
+            # Раскадровка (§5.3–5.4): запуск, экран, правки сцен, одна сцена по замечанию.
+            case ("POST", ["projects", pid, "storyboard", "run"]):
+                return req.send_json(found(projects.story(pid), MISSING))
+            case ("GET", ["projects", pid, "storyboard"]):
+                return req.send_json(found(projects.story_view(pid), MISSING))
+            case ("POST", ["projects", pid, "storyboard"]):
+                return req.send_json(found(projects.save_storyboard(pid, req.json(MAX_BODY)), MISSING))
+            case ("POST", ["projects", pid, "scenes", sid, "redo"]):
+                return req.send_json(found(projects.redo_scene(pid, sid, _field(req.json(MAX_BODY), "text")), MISSING))
+            case ("GET", ["projects", pid, "scenes", sid, name]) if name in SCENE_FILES:
+                path = projects.scene_file(pid, sid, name)
+                if path is None:
+                    raise not_found("Файла сцены ещё нет.")
+                return req.send_file(path, SCENE_FILES[name])
+            # Стиль-библия (§5.4): правка → новая ревизия.
+            case ("GET", ["projects", pid, "style"]):
+                return req.send_json({"style": found(projects.story_view(pid), MISSING)["style"]})
+            case ("POST", ["projects", pid, "style"]):
+                return req.send_json({"style": found(projects.save_style(pid, req.json(MAX_BODY)), MISSING)})
             case ("POST", ["projects", pid, "render"]):
                 return req.send_json(found(projects.render(pid), MISSING))
             case ("POST", ["projects", pid, "revise"]):

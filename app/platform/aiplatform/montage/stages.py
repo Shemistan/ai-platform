@@ -22,22 +22,40 @@ STAGES = {
     "final": ("Громкость и субтитры", 8),
     "check": ("Проверка результата", 20),
     "motion": ("Моушн-вставки", 12),
+    "timemap": ("Карта времени", 1),
+    "knowledge": ("Карта знаний (ИИ)", 6),
+    "beats": ("Нарративные биты (ИИ)", 6),
+    "style": ("Стиль-библия (ИИ)", 3),
+    "storyboard": ("Раскадровка (ИИ)", 8),
+    "scenes": ("Моушн-сцены", 15),
 }
 RENDER = ("segments", "join", "final")
+STORY = ("timemap", "knowledge", "beats", "style", "storyboard")
 MIN_PERCENT_FOR_ETA = 2.0  # раньше скорость этапа не видна — оценка врала бы
 
 
-def plan_for(action: str, options: dict, *, screen_audio: bool = False) -> list[str]:
-    """Этапы действия по порядку: prepare (и сборка, если auto), replan, revise, render."""
-    render = [*RENDER, *(["check"] if options.get("check") else []), *(["motion"] if options.get("motion") else [])]
+def plan_for(action: str, options: dict, *, screen_audio: bool = False, storyboard: bool = False) -> list[str]:
+    """Этапы действия по порядку: prepare (и сборка, если autonomous), replan, revise, story, scene, render.
+
+    storyboard — раскадровка уже есть: сборка рисует её сцены вместо быстрых вставок."""
     auto = options.get("mode") == "autonomous" or options.get("auto")
+    if storyboard or (auto and options.get("motion")):
+        graphics = ["scenes"]
+    else:
+        graphics = ["motion"] if options.get("motion") else []
+    render = [*RENDER, *(["check"] if options.get("check") else []), *graphics]
     if action == "prepare":
         head = ["audio", *(["sync"] if screen_audio else []), "silences", "transcribe"]
         if options.get("mode") != "manual":
             head.append("plan")
-        return [*head, *(render if auto else [])]
+        story = list(STORY) if auto and options.get("motion") else []
+        return [*head, *story, *(render if auto else [])]
     if action in ("replan", "revise"):
         return ["plan"]
+    if action == "story":
+        return list(STORY)
+    if action == "scene":
+        return ["storyboard"]
     return render
 
 

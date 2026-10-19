@@ -1,30 +1,95 @@
-/* Вставки монтажа: цвета и шрифт — как у тёмной темы платформы (static/tokens.css). Фон — прозрачный. */
+/* Шаблоны моушн-сцен (montage/templates.py): цвета и шрифт — переменные стиль-библии (style.css_vars),
+   без них — тёмная тема платформы (static/tokens.css). Фон — прозрачный, кадр 1920×1080. */
 html, body { margin: 0; background: transparent; }
 #stage {
   position: relative; width: 1920px; height: 1080px; overflow: hidden; background: transparent;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
-  color: #ecebe7;
+  font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif);
+  color: var(--ink, #ecebe7);
 }
 .card {
   position: absolute; box-sizing: border-box; padding: 36px 48px; border-radius: 28px;
-  background: rgba(28, 30, 33, 0.92); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
-  border: 2px solid rgba(126, 162, 255, 0.35);
+  background: color-mix(in srgb, var(--surface, #1c1e21) 92%, transparent); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+  border: 2px solid color-mix(in srgb, var(--accent, #7ea2ff) 35%, transparent);
 }
-.accent { color: #7ea2ff; }
-.bar { position: absolute; left: 0; top: 24px; bottom: 24px; width: 8px; border-radius: 4px; background: #7ea2ff; }
-.kicker { font-size: 30px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #7ea2ff; }
+.accent { color: var(--accent, #7ea2ff); }
+.bar { position: absolute; left: 0; top: 24px; bottom: 24px; width: 8px; border-radius: 4px; background: var(--accent, #7ea2ff); }
+.kicker { font-size: 30px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent, #7ea2ff); }
 .headline { font-size: 76px; font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; }
-.sub { font-size: 36px; color: #9b9a94; margin-top: 10px; }
-.value { font-size: 180px; font-weight: 800; line-height: 1; letter-spacing: -0.04em; color: #7ea2ff; }
+.headline.small { font-size: 44px; max-width: 700px; }
+.sub { font-size: 36px; color: var(--muted, #9b9a94); margin-top: 10px; }
+.value { font-size: 180px; font-weight: 800; line-height: 1; letter-spacing: -0.04em; color: var(--accent, #7ea2ff); }
 .label { font-size: 42px; font-weight: 600; margin-top: 12px; max-width: 760px; }
 .items { list-style: none; margin: 24px 0 0; padding: 0; display: grid; gap: 18px; }
 .items li { font-size: 46px; font-weight: 600; display: flex; gap: 24px; align-items: baseline; }
-.items li b { color: #7ea2ff; font-size: 40px; min-width: 52px; }
+.items li b { color: var(--accent, #7ea2ff); font-size: 40px; min-width: 52px; }
 .quote { font-size: 64px; font-weight: 700; line-height: 1.15; max-width: 1300px; }
-.author { font-size: 34px; color: #9b9a94; margin-top: 20px; }
+.author { font-size: 34px; color: var(--muted, #9b9a94); margin-top: 20px; }
 
-/* Места: низ-лево над субтитрами; верх-лево — карточки; угол справа внизу занят головой в плане split. */
+/* Места: низ-лево над субтитрами; верх-лево — карточки; широкая — слева, голова остаётся справа. */
 .pos-lower { left: 96px; bottom: 210px; padding-left: 64px; max-width: 1100px; }
 .pos-left { left: 96px; top: 120px; max-width: 980px; }
+.pos-wide { left: 96px; top: 100px; width: 1180px; }
+.pos-abs { max-width: 760px; }
 /* Центр — через xPercent/yPercent в таймлайне: CSS transform GSAP перезаписал бы. */
 .pos-center { left: 50%; top: 50%; text-align: center; max-width: 1500px; }
+
+/* kinetic_typography */
+.kinetic { font-size: 72px; font-weight: 800; line-height: 1.15; max-width: 1500px; }
+.kt-word { display: inline-block; }
+.kt-accent { color: var(--accent, #7ea2ff); }
+
+/* concept_cards */
+.concepts { display: grid; grid-auto-flow: column; gap: 24px; margin-top: 20px; }
+.concept { padding: 24px 28px; border-radius: 20px; background: color-mix(in srgb, var(--bg, #0f1420) 70%, transparent); }
+.c-title { font-size: 40px; font-weight: 800; color: var(--accent, #7ea2ff); }
+.c-text { font-size: 30px; margin-top: 8px; color: var(--ink, #ecebe7); }
+
+/* flow_diagram */
+.flow { display: flex; align-items: center; gap: 12px; }
+.flow-down { flex-direction: column; align-items: stretch; }
+.node { padding: 20px 32px; border-radius: 18px; font-size: 38px; font-weight: 700; background: var(--accent, #7ea2ff); color: var(--bg, #0f1420); text-align: center; }
+.arrow { width: 70px; height: 10px; position: relative; }
+.flow-down .arrow { width: 10px; height: 40px; margin: 0 auto; }
+.arrow span { position: absolute; inset: 0; background: var(--muted, #9b9a94); border-radius: 5px; }
+
+/* comparison */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+.col ul { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 12px; }
+.col li { font-size: 34px; padding-left: 28px; position: relative; }
+.col li::before { content: ""; position: absolute; left: 0; top: 16px; width: 12px; height: 12px; border-radius: 6px; background: var(--accent, #7ea2ff); }
+.col.right li::before { background: var(--accent2, #ffb454); }
+.col.right .c-title { color: var(--accent2, #ffb454); }
+
+/* timeline */
+.tl-line { height: 8px; border-radius: 4px; background: var(--muted, #9b9a94); margin: 36px 0 0; }
+.events { display: flex; justify-content: space-between; margin-top: -8px; }
+.event { width: 170px; }
+.dot { width: 26px; height: 26px; border-radius: 13px; background: var(--accent, #7ea2ff); margin-left: 0; margin-top: -9px; }
+.e-label { font-size: 34px; font-weight: 800; margin-top: 14px; }
+.e-text { font-size: 28px; color: var(--muted, #9b9a94); }
+
+/* code_highlight */
+.code-box { margin: 12px 0 0; font-family: var(--mono, "SF Mono", Menlo, monospace); font-size: 32px; line-height: 1.45; }
+.ln { display: flex; gap: 20px; padding: 2px 10px; border-radius: 8px; }
+.ln b { color: var(--muted, #9b9a94); min-width: 40px; text-align: right; font-weight: 500; }
+.ln code { white-space: pre; }
+
+/* task_scheduler */
+.sched { display: grid; grid-template-columns: 300px 1fr; gap: 32px; margin-top: 16px; min-height: 360px; }
+.queue { display: grid; gap: 14px; align-content: start; }
+.task { padding: 14px 20px; border-radius: 14px; background: var(--accent2, #ffb454); color: var(--bg, #0f1420); font-size: 32px; font-weight: 700; width: 120px; text-align: center; }
+.lanes { display: grid; gap: 18px; align-content: start; }
+.lane { display: flex; align-items: center; gap: 16px; height: 100px; border-radius: 16px; background: color-mix(in srgb, var(--bg, #0f1420) 70%, transparent); padding: 0 20px; }
+.lane-name { font-size: 34px; font-weight: 800; color: var(--accent, #7ea2ff); min-width: 110px; }
+
+/* data_chart */
+.chart svg { display: block; margin-top: 8px; overflow: visible; }
+.axis { stroke: var(--muted, #9b9a94); stroke-width: 4; }
+.bar-rect { fill: var(--accent, #7ea2ff); }
+.line { fill: none; stroke: var(--accent, #7ea2ff); stroke-width: 8; stroke-linejoin: round; stroke-dasharray: 3000; }
+.pt { fill: var(--accent2, #ffb454); }
+.val { font-size: 30px; font-weight: 700; fill: var(--ink, #ecebe7); }
+.lbl { font-size: 30px; fill: var(--muted, #9b9a94); }
+
+/* callout_zoom */
+.callout { position: absolute; border-radius: 50%; border: 10px solid var(--accent2, #ffb454); box-shadow: 0 0 0 6px rgba(0, 0, 0, 0.35), 0 0 60px rgba(0, 0, 0, 0.4); }

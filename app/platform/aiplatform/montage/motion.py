@@ -15,13 +15,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from aiplatform.core import runner
-from aiplatform.montage import plan, render
+from aiplatform.montage import plan, render, templates
 from aiplatform.montage.config import MontageConfig
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 RULES = ASSETS / "motion-rules.md"
-STYLE = ASSETS / "motion" / "style.css"
-GSAP = "https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"
+STYLE = templates.STYLE_FILE
+GSAP = templates.GSAP
 FPS = 30
 MIN_S, MAX_S, DEFAULT_S = 2.5, 7.0, 4.0
 SPACING_S = 25.0  # не чаще одной вставки за столько секунд
@@ -115,71 +115,22 @@ def prompt(packed: str, rules: str, duration: float) -> str:
     )
 
 
-def _e(text: str) -> str:
-    return html.escape(text, quote=True)
-
-
-def _body(kind: str, f: dict) -> tuple[str, str]:
-    """Разметка карточки и анимация (строки GSAP) для шаблона."""
-    if kind == "title":
-        kicker = f'<div class="kicker">{_e(f["kicker"])}</div>' if f.get("kicker") else ""
-        card = f'<div class="card pos-center">{kicker}<div class="headline">{_e(f["title"])}</div></div>'
-        anim = 'tl.from(".card", {scale: 0.92, opacity: 0, duration: 0.6, ease: "back.out(1.6)"}, 0.1);'
-    elif kind == "lower_third":
-        sub = f'<div class="sub">{_e(f["subtitle"])}</div>' if f.get("subtitle") else ""
-        title = f'<div class="headline">{_e(f["title"])}</div>'
-        card = f'<div class="card pos-lower"><div class="bar"></div>{title}{sub}</div>'
-        anim = (
-            'tl.from(".card", {x: -80, opacity: 0, duration: 0.55, ease: "power3.out"}, 0.1);'
-            'tl.from(".bar", {scaleY: 0, transformOrigin: "50% 100%", duration: 0.4, ease: "power2.out"}, 0.3);'
-        )
-    elif kind == "stat":
-        card = (
-            f'<div class="card pos-left"><div class="value">{_e(f["value"])}</div>'
-            f'<div class="label">{_e(f["label"])}</div></div>'
-        )
-        anim = (
-            'tl.from(".card", {y: 60, opacity: 0, duration: 0.55, ease: "power3.out"}, 0.1);'
-            'tl.from(".value", {scale: 0.6, opacity: 0, duration: 0.7, ease: "back.out(2)"}, 0.3);'
-        )
-    elif kind == "list":
-        items = "".join(f"<li><b>{n:02d}</b><span>{_e(t)}</span></li>" for n, t in enumerate(f["items"], 1))
-        kicker = f'<div class="kicker">{_e(f["title"])}</div>'
-        card = f'<div class="card pos-left">{kicker}<ol class="items">{items}</ol></div>'
-        anim = (
-            'tl.from(".card", {y: 50, opacity: 0, duration: 0.5, ease: "power3.out"}, 0.1);'
-            'tl.from(".items li", {x: -40, opacity: 0, duration: 0.4, stagger: 0.35, ease: "power2.out"}, 0.4);'
-        )
-    else:
-        author = f'<div class="author">— {_e(f["author"])}</div>' if f.get("author") else ""
-        card = f'<div class="card pos-center"><div class="quote">«{_e(f["text"])}»</div>{author}</div>'
-        anim = 'tl.from(".card", {y: 40, opacity: 0, duration: 0.7, ease: "power2.out"}, 0.1);'
-    return card, anim
+def _fields_to_props(kind: str, f: dict) -> dict:
+    """Поля вставки → props шаблона каталога (list → steps)."""
+    if kind == "list":
+        return {"title": f.get("title", ""), "steps": f.get("items", [])}
+    return dict(f)
 
 
 def composition(insert: dict, style: str) -> str:
-    """HTML-композиция HyperFrames для одной вставки: корень #stage, таймлайн GSAP в window.__timelines."""
-    d = insert["duration"]
-    card, anim = _body(insert["template"], insert["fields"])
-    center = 'gsap.set(".pos-center", {xPercent: -50, yPercent: -50});' if "pos-center" in card else ""
-    return f"""<!doctype html>
-<html lang="ru"><head><meta charset="utf-8">
-<script src="{GSAP}"></script>
-<style>{style}</style>
-</head><body>
-<div id="stage" data-composition-id="insert" data-start="0" data-duration="{d}" data-width="1920" data-height="1080">
-  <div class="clip" data-start="0" data-duration="{d}" data-track-index="0">{card}</div>
-</div>
-<script>
-{center}
-const tl = gsap.timeline({{ paused: true }});
-{anim}
-tl.to(".card", {{opacity: 0, y: -24, duration: 0.45, ease: "power2.in"}}, {max(0.0, d - 0.55):.2f});
-window.__timelines = window.__timelines || {{}};
-window.__timelines.insert = tl;
-</script>
-</body></html>
-"""
+    """HTML-композиция HyperFrames для одной вставки: корень #stage, таймлайн GSAP в window.__timelines.
+
+    Разметка и анимация — из каталога шаблонов (templates.py, через ALIASES); style — CSS каталога.
+    """
+    kind = insert["template"]
+    props = templates.clean_props(kind, _fields_to_props(kind, insert["fields"]))
+    card, anim = templates.render(kind, props, None, insert["duration"])
+    return templates.document(card, anim, duration=insert["duration"], css=style, comp_id="insert")
 
 
 def render_argv(config: MontageConfig, folder: Path) -> list[str]:

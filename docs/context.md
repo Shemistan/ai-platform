@@ -126,6 +126,13 @@ export` (`approvals`, `approve`); `schemas.py` — JSON Schema из `contracts/m
 результат в целых кадрах ↔ исходник (§4, `docs/TIMEBASE.md`); `decisions.py` — `decisions.jsonl` (роль,
 модель, версия промпта, хэши); `capabilities.py` — реестр возможностей с probe и маршрутизацией (§3);
 `source_manifest.json`, `edl.json`. Аудит машины — `docs/ENVIRONMENT_AUDIT.md`.
+Раскадровка (действие `story`, §5.3–5.5): `documents.py` материалы md/txt/docx/pdf → фрагменты;
+`knowledge.py` утверждения с цитатами (LLM `montage_knowledge`); `narrative.py` биты по словам
+исходника (`montage_beats`); `style.py` стиль-библия с ревизиями `styles/` (`montage_style`);
+`storyboard.py` сцены с оценкой нужности, порогом, интервалом, якорем-словом и хэшем
+(`montage_storyboard`); `templates.py` — каталог 12 шаблонов HyperFrames (+ stat, quote; props-схемы
+`contracts/montage/templates/`); `scenes.py` — рендер `scenes/<id>/<hash>.mov` по кэшу, проверка, миниатюра.
+Сборка с раскадровкой рисует сцены вместо быстрых вставок; без HyperFrames сцены `blocked`.
 
 ## Моушн `motion/`
 
@@ -195,8 +202,10 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
 - `motion/projects/<id>/`: `project.json`, `source.<ext>`, `words.json`, `moments.json`, `design.json`,
   `scenes/<sid>/` (`storyboard.json`, `code.json`, `index.html`, `scene.mov`, `preview.mp4`, `poster.jpg`), `package.zip`.
 - `montage/projects/<id>/`: `project.json`, `sources/`, `audio.wav`, `words.json`, `silences.json`,
-  `plan.json`, `edl.json`, `timemap.json`, `source_manifest.json`, `decisions.jsonl`, `segments/` (кэш),
-  `output.mp4`, `subtitles.srt`; `montage/lessons.md` — выученные правила.
+  `plan.json`, `edl.json`, `timemap.json`, `source_manifest.json`, `decisions.jsonl`, `documents/`,
+  `documents.json`, `chunks.json`, `knowledge.json`, `beats.json`, `transcript_edit.json`, `styles/`,
+  `style_bible.json`, `storyboard.json`, `scenes/<id>/`, `segments/` (кэш), `output.mp4`, `subtitles.srt`;
+  `montage/lessons.md` — выученные правила.
 - `studio/projects/<id>/`: `project.json`, `text.md`, `post.md`, `poster.*`,
   `plan.json`, `images/`, `clips/`, `voice.*`, `video.mp4`, `short.mp4`,
   `published.json`, `narrator/` (review.md судьи), `publish/<канал>/`;

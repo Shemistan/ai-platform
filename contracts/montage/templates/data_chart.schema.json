@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/data_chart",
+  "title": "data_chart",
+  "description": "График: 2–8 чисел, которые автор сравнивает: столбцы или линия. Длительность по умолчанию 6.0 с, минимальный кегль 30px.",
+  "type": "object",
+  "required": [
+    "series"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "unit": {
+      "type": "string",
+      "maxLength": 10
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "bar",
+        "line"
+      ]
+    },
+    "series": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": [
+          "label",
+          "value"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "maxLength": 12
+          },
+          "value": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "title": "Задержка",
+      "unit": "мс",
+      "kind": "bar",
+      "series": [
+        {
+          "label": "v1",
+          "value": 120
+        },
+        {
+          "label": "v2",
+          "value": 45
+        },
+        {
+          "label": "v3",
+          "value": 20
+        }
+      ]
+    }
+  ]
+}

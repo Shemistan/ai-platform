@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/quote",
+  "title": "quote",
+  "description": "Цитата: мысль-вывод, которую хочется выделить (редко). Длительность по умолчанию 5.0 с, минимальный кегль 34px.",
+  "type": "object",
+  "required": [
+    "text"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "maxLength": 140
+    },
+    "author": {
+      "type": "string",
+      "maxLength": 40
+    }
+  },
+  "examples": [
+    {
+      "text": "Не общайтесь через память — делитесь памятью через общение",
+      "author": "Go proverbs"
+    }
+  ]
+}

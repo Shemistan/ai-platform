@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/chapter_title",
+  "title": "chapter_title",
+  "description": "Заголовок главы: начало новой части ролика. Длительность по умолчанию 3.5 с, минимальный кегль 30px.",
+  "type": "object",
+  "required": [
+    "title"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "kicker": {
+      "type": "string",
+      "maxLength": 30
+    }
+  },
+  "examples": [
+    {
+      "title": "Планировщик горутин",
+      "kicker": "Часть 2"
+    }
+  ]
+}

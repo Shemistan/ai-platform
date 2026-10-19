@@ -5,7 +5,8 @@
 каждую фразу (картинки вперемешку с динамическими сценами), сценарий шортса из первых фраз, выжимку из
 первых фраз абзацев, реестр организаций —
 текущий список плюс одна демо-запись; монтаж — вырезки по простым правилам (паразиты, повторы,
-команды в кадр «покажи экран», «вырежи это»), FAKE_LLM_MONTAGE_ISSUE=1 — проверка находит оговорку.
+команды в кадр «покажи экран», «вырежи это»), FAKE_LLM_MONTAGE_ISSUE=1 — проверка находит оговорку;
+знания, биты, стиль и раскадровка «Монтажа» по MASTER_SPEC — `story()`.
 
 Окружение: FAKE_LLM_FAIL=1 — упасть; FAKE_LLM_GARBAGE=1 — ответить не JSON.
 """
@@ -151,9 +152,114 @@ def motion(prompt: str) -> dict:
     return {"inserts": inserts}
 
 
+STORY_TEMPLATES = (
+    "chapter_title", "step_list", "data_chart", "flow_diagram", "code_highlight", "comparison", "concept_cards",
+    "timeline", "task_scheduler", "kinetic_typography", "callout_zoom", "lower_third", "stat", "quote",
+)  # fmt: skip
+_BEAT_LINE = re.compile(r"^- (beat_\d+) \[(\d+)–(\d+)\] \w+ \([^)]*\): [^«]*«([^»]*)»((?: claim_\d+)*)$", re.M)
+
+
+def _story_props(tid: str, text: str, n: int) -> dict:
+    words = text.split()
+    title = _words(text, 3)
+    if tid == "chapter_title":
+        return {"title": title, "kicker": f"Часть {n + 1}"}
+    if tid == "step_list":
+        return {"title": title, "steps": [_words(" ".join(words[i : i + 3]), 3) for i in range(0, 9, 3)]}
+    if tid == "data_chart":
+        series = [{"label": _words(w, 1)[:12], "value": len(w)} for w in words[:4]]
+        return {"title": title, "unit": "", "kind": "bar", "series": series}
+    if tid == "flow_diagram":
+        return {"title": title, "nodes": [w[:18] for w in words[:4]], "direction": "right"}
+    if tid == "code_highlight":
+        return {
+            "language": "go",
+            "code": "ch := make(chan int, 2)\nch <- 1\nch <- 2",
+            "highlight": [1],
+            "caption": title,
+        }
+    if tid == "comparison":
+        right = [_words(" ".join(words[3:]) or text, 3)]
+        return {"left_title": "Было", "right_title": "Стало", "left": [_words(text, 3)], "right": right}
+    if tid == "concept_cards":
+        return {"title": title, "cards": [{"title": _words(w, 1)[:24], "text": _words(text, 4)} for w in words[:3]]}
+    if tid == "timeline":
+        return {
+            "title": title,
+            "events": [{"label": f"{2020 + i}", "text": _words(w, 1)} for i, w in enumerate(words[:3])],
+        }
+    if tid == "task_scheduler":
+        return {"title": title, "workers": ["P0", "P1"], "tasks": [w[:12] for w in words[:4]]}
+    if tid == "kinetic_typography":
+        return {"text": _words(text, 8), "accent": words[:1]}
+    if tid == "callout_zoom":
+        return {"text": title, "x_pct": 70, "y_pct": 40, "radius_pct": 12}
+    if tid == "stat":
+        return {"value": str(len(words)), "label": title}
+    if tid == "quote":
+        return {"text": _words(text, 10), "author": "автор"}
+    return {"title": title, "subtitle": "демо-подпись"}
+
+
+def story(task: str, prompt: str) -> dict:
+    """Знания, биты, стиль, раскадровка по простым правилам (MASTER_SPEC через фейк).
+
+    Знания — утверждение на каждую третью фразу (цитата из первого фрагмента материалов, если есть;
+    фрагмент со словом «противоречие» → contradicted). Биты — по две фразы, виды по кругу. Стиль —
+    DEMO_DESIGN. Раскадровка — на каждый бит свой шаблон по кругу, score 20; FAKE_LLM_STORY_RISK=1 —
+    первая сцена с factual_risk 5 без утверждений (её отбросит чистка)."""
+    phrases = _phrases(prompt)
+    if task == "montage_knowledge":
+        chunks = re.findall(r"^\[(doc_\d+)#(\d+)\](?: \([^)]*\))? (.+)$", prompt.split("Материалы:", 1)[-1], re.M)
+        claims = []
+        for n, (first, words) in enumerate(phrases):
+            if n % 3:
+                continue
+            citations, status = [], "none"
+            if chunks:
+                doc, k, text = chunks[0]
+                citations = [{"doc": doc, "chunk": int(k), "quote": _words(text, 8)}]
+                status = "contradicted" if "противоречие" in text.lower() else "none"
+            claims.append({"statement": " ".join(words), "transcript": [first, first + len(words) - 1],
+                           "citations": citations, "confidence": 0.8, "contradiction_status": status})  # fmt: skip
+        return {"claims": claims}
+    if task == "montage_beats":
+        kinds = ("hook", "setup", "explanation", "demo", "explanation", "recap", "cta")
+        claims = re.findall(r"^- (claim_\d+)", prompt, re.M)
+        beats = []
+        for n in range(0, len(phrases), 2):
+            group = phrases[n : n + 2]
+            first = group[0][0]
+            last = group[-1][0] + len(group[-1][1]) - 1
+            k = n // 2
+            beats.append({
+                "from": first, "to": last, "purpose": kinds[k % len(kinds)],
+                "goal": f"демо: {_words(' '.join(group[0][1]), 5)}", "difficulty": k % 5 + 1,
+                "keywords": [_bare(group[0][1][0])] if group[0][1] else [], "visuals_needed": "схема",
+                "claims": claims[k : k + 1], "priority": 3 + k % 3, "confidence": 0.7,
+            })  # fmt: skip
+        return {"beats": beats}
+    if task == "montage_style":
+        motion_spec = {"enter": "power3.out", "exit": "power2.in", "enter_s": 0.4, "exit_s": 0.3}
+        return {**DEMO_DESIGN, "motion": motion_spec, "captions": {"size": 60, "margin": 100}, "density": "medium"}
+    scenes = []
+    for n, (bid, _a, _b, text, claims) in enumerate(_BEAT_LINE.findall(prompt)):
+        tid = STORY_TEMPLATES[n % len(STORY_TEMPLATES)]
+        risk = 5 if (n == 0 and os.environ.get("FAKE_LLM_STORY_RISK")) else 2
+        necessity = {"clarity": 4, "novelty": 4, "cognitive_load": 2, "production_cost": 2, "factual_risk": risk}
+        scenes.append({
+            "beat_id": bid, "template_id": tid, "props": _story_props(tid, text, n), "intent": f"демо: {_words(text, 3)}",  # noqa: E501
+            "claim_ids": [] if risk == 5 else claims.split(), "necessity": necessity, "rationale": "демо-раскадровка",
+            "start_word": None, "duration_s": 4 + n % 3,
+        })  # fmt: skip
+    return {"scenes": scenes}
+
+
 def montage(task: str, prompt: str) -> dict:
     if task == "montage_motion":
         return motion(prompt)
+    if task in ("montage_knowledge", "montage_beats", "montage_style", "montage_storyboard"):
+        return story(task, prompt)
     if task == "montage_check":
         issues = (
             [{"from": 0, "to": 0, "kind": "slip", "reason": "демо: оговорка"}]

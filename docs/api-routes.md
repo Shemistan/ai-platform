@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 159. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 169. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -203,6 +203,16 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/montage/projects/{pid}/approve` | JSON | JSON | Ворота (§1, §6): человек подтверждает план вырезок, раскадровку или экспорт |
 | GET | `/api/montage/projects/{pid}/decisions` | — | JSON | Журнал решений (§6, §10): роли, версии промптов, хэши входа и выхода |
 | GET | `/api/montage/projects/{pid}/timemap` | — | JSON | Карта времени (§4): сегменты результата в кадрах ↔ исходник в секундах |
+| GET | `/api/montage/projects/{pid}/documents` | — | JSON | Материалы (§5.3): файл телом, имя — в заголовке X-File-Name |
+| POST | `/api/montage/projects/{pid}/documents` | файл | JSON 201 | — |
+| POST | `/api/montage/projects/{pid}/documents/{doc_id}/delete` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/storyboard/run` | — | JSON | Раскадровка (§5.3–5.4): запуск, экран, правки сцен, одна сцена по замечанию |
+| GET | `/api/montage/projects/{pid}/storyboard` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/storyboard` | JSON | JSON | — |
+| POST | `/api/montage/projects/{pid}/scenes/{sid}/redo` | JSON | JSON | — |
+| GET | `/api/montage/projects/{pid}/scenes/{sid}/{name}` | — | файл | — |
+| GET | `/api/montage/projects/{pid}/style` | — | JSON | Стиль-библия (§5.4): правка → новая ревизия |
+| POST | `/api/montage/projects/{pid}/style` | JSON | JSON | — |
 | POST | `/api/montage/projects/{pid}/render` | — | JSON | — |
 | POST | `/api/montage/projects/{pid}/revise` | JSON | JSON | — |
 | POST | `/api/montage/projects/{pid}/cancel` | — | JSON | — |

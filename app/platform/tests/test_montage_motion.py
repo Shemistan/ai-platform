@@ -92,12 +92,16 @@ class MotionPipelineTest(PlatformCase):
             subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", video,
                             "-f", "lavfi", "-i", "sine=frequency=330:duration=45", "-shortest", "-c:v", "libx264",
                             "-pix_fmt", "yuv420p", "-c:a", "aac", str(head)], check=True)  # fmt: skip
-            options = {"auto": True, "check": False, "motion": True}
+            # reviewed без раскадровки: быстрые вставки по расшифровке (autonomous + motion идёт через раскадровку).
+            options = {"mode": "reviewed", "check": False, "motion": True}
             _, project = self.json("POST", "/api/montage/projects", {"title": "С графикой", "options": options})
             pid = project["id"]
             status, _ = self.json("POST", f"/api/montage/projects/{pid}/sources/head", head.read_bytes())
             self.assertEqual(status, 201)
         self.json("POST", f"/api/montage/projects/{pid}/start")
+        self.poll(f"/api/montage/projects/{pid}", lambda p: p["status"] in ("review", "failed"), timeout=180)
+        self.assertEqual(self.json("POST", f"/api/montage/projects/{pid}/approve", {"gate": "edl"})[0], 200)
+        self.assertEqual(self.json("POST", f"/api/montage/projects/{pid}/render")[0], 200)
         done = self.poll(f"/api/montage/projects/{pid}", lambda p: p["status"] in ("done", "failed"), timeout=180)
         self.assertEqual(done["status"], "done", done)
         self.assertGreaterEqual(done["motion"]["inserts"], 1, done["motion"])

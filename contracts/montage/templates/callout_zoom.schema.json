@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/callout_zoom",
+  "title": "callout_zoom",
+  "description": "Выноска: кольцо-выноска в точке кадра с подписью: куда смотреть. Длительность по умолчанию 4.0 с, минимальный кегль 36px.",
+  "type": "object",
+  "required": [
+    "text"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "maxLength": 60
+    },
+    "x_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "y_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "radius_pct": {
+      "type": "number",
+      "minimum": 5,
+      "maximum": 40
+    }
+  },
+  "examples": [
+    {
+      "text": "вот здесь буфер полон",
+      "x_pct": 70,
+      "y_pct": 40,
+      "radius_pct": 12
+    }
+  ]
+}

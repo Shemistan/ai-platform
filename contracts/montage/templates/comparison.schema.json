@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/templates/comparison",
+  "title": "comparison",
+  "description": "Сравнение: две колонки: было/стало, А против Б. Длительность по умолчанию 6.0 с, минимальный кегль 32px.",
+  "type": "object",
+  "required": [
+    "left_title",
+    "right_title",
+    "left",
+    "right"
+  ],
+  "properties": {
+    "left_title": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "right_title": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "left": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 30
+      },
+      "minItems": 1,
+      "maxItems": 4
+    },
+    "right": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 30
+      },
+      "minItems": 1,
+      "maxItems": 4
+    }
+  },
+  "examples": [
+    {
+      "left_title": "Mutex",
+      "right_title": "Channel",
+      "left": [
+        "общая память",
+        "блокировка"
+      ],
+      "right": [
+        "передача владения",
+        "очередь"
+      ]
+    }
+  ]
+}
