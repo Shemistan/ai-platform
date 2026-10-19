@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Моушн — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="page-head">
+    <div class="page-title">
+      <h1>Моушн</h1>
+      <span class="chip" id="team-chip">…</span>
+    </div>
+    <div class="toolbar">
+      <button type="button" class="btn btn--primary" id="new-project">Новый проект</button>
+    </div>
+  </header>
+  <div class="banner" id="banner" role="status" hidden></div>
+
+  <main class="layout motion-layout">
+    <div class="main-col" id="project" aria-live="polite"></div>
+
+    <div class="side">
+      <section class="panel">
+        <h2>Проекты</h2>
+        <ul class="history" id="projects"></ul>
+      </section>
+    </div>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

@@ -128,6 +128,7 @@ def default_modules(ctx: Context) -> list[Module]:
     from aiplatform.channels.service import ChannelsModule
     from aiplatform.library.service import LibraryModule
     from aiplatform.montage.service import MontageModule
+    from aiplatform.motion.service import MotionModule
     from aiplatform.news.service import NewsModule
     from aiplatform.photo.service import PhotoModule
     from aiplatform.settings.service import SettingsModule
@@ -141,6 +142,7 @@ def default_modules(ctx: Context) -> list[Module]:
         AudioModule(ctx),
         AvatarModule(ctx),
         MontageModule(ctx),
+        MotionModule(ctx),
         StudioModule(ctx),
         LibraryModule(ctx),
         NewsModule(ctx),
@@ -157,6 +159,7 @@ NAV_GROUPS = {
     "audio": "media",
     "avatar": "media",
     "montage": "media",
+    "motion": "media",
     "library": "texts",
     "news": "texts",
     "channels": "service",

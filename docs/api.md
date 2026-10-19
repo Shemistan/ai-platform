@@ -100,6 +100,7 @@
 | `video` | `config`, `jobs`, `jobs/<id>` (`cancel`, `video`), `living`, `uploads` |
 | `avatar` | `config`, `uploads`, `characters` (`POST` — добавить), `characters/<id>` (`image`, `rename`, `delete`), `jobs`, `jobs/<id>` (`cancel`, `face`, `video`) |
 | `montage` | `config`, `rules`, `projects` (`POST` — создать), `projects/<id>` (`POST` — название, настройки, сдвиг экрана) и действия `sources/<head\|screen>` (тело — видео), `sources/<role>/delete`, `source/<role>`, `start`, `plan` (`GET`, `POST` — правка), `replan`, `revise`, `render`, `cancel`, `delete`, `video`, `subtitles.srt` |
+| `motion` | `config`, `montage` (готовые ролики «Монтажа»), `projects` (`POST` — создать; `montage: <id>` — из «Монтажа»), `projects/<id>` (`POST` — название, настройки) и действия `source` (`POST` — видео телом, `GET` — смотреть), `start`, `scenes` (`POST` — своя сцена `{at, text}`), `scenes/<sid>` (`POST` — `{enabled}`), `scenes/<sid>/redo` (`{text}`), `scenes/<sid>/<preview.mp4\|poster.jpg\|scene.mov\|index.html>`, `package`, `cancel`, `delete` |
 | `audio` | `config`, `preview`, `split`, `library`, `jobs` (`batch`), `jobs/<id>` (`cancel`, `audio`), `voices`, `tasks/<id>` |
 | `channels` | `state`, `items` (`POST` — добавить), `items/import`, `items/<id>` (`POST` — правка, `…/delete`), `bot/check`, `subscribers`, `serve` (`start`, `stop`) |
 | `library` | `state`, `articles`, `articles/<id>` и действия, `render`, `unsent/<mode>`, `tasks/<id>` |

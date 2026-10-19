@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 138. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 154. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -204,6 +204,29 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/montage/projects/{pid}/delete` | — | JSON | — |
 | GET | `/api/montage/projects/{pid}/video` | ?download | файл | — |
 | GET | `/api/montage/projects/{pid}/{name}` | — | файл | — |
+
+### `motion`
+
+Код: `app/platform/aiplatform/motion/service.py`
+
+| Метод | Путь | Тело / query | Ответ | Что делает |
+|---|---|---|---|---|
+| GET | `/api/motion/config` | — | JSON | — |
+| GET | `/api/motion/montage` | — | JSON | — |
+| GET | `/api/motion/projects` | — | JSON | — |
+| POST | `/api/motion/projects` | JSON | JSON 201 | — |
+| GET | `/api/motion/projects/{pid}` | — | JSON | — |
+| POST | `/api/motion/projects/{pid}` | JSON | JSON | — |
+| POST | `/api/motion/projects/{pid}/source` | файл | JSON 201 | — |
+| GET | `/api/motion/projects/{pid}/source` | — | файл | — |
+| POST | `/api/motion/projects/{pid}/start` | — | JSON | — |
+| POST | `/api/motion/projects/{pid}/scenes` | JSON | JSON | — |
+| POST | `/api/motion/projects/{pid}/scenes/{sid}/redo` | JSON | JSON | — |
+| POST | `/api/motion/projects/{pid}/scenes/{sid}` | JSON | JSON | — |
+| GET | `/api/motion/projects/{pid}/scenes/{sid}/{name}` | — | файл | — |
+| GET | `/api/motion/projects/{pid}/package` | — | файл | — |
+| POST | `/api/motion/projects/{pid}/cancel` | — | JSON | — |
+| POST | `/api/motion/projects/{pid}/delete` | — | JSON | — |
 
 ### `news`
 

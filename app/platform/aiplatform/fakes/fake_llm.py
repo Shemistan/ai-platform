@@ -110,6 +110,8 @@ def answer(prompt: str) -> str:
         return "```json\n" + json.dumps(data, ensure_ascii=False, indent=2) + "\n```"
     if task.startswith("montage_"):
         return json.dumps(montage(task, prompt), ensure_ascii=False)
+    if task.startswith("motion_"):
+        return json.dumps(motion_team(task, prompt), ensure_ascii=False)
     return "Не знаю такой задачи."
 
 
@@ -188,6 +190,71 @@ def montage(task: str, prompt: str) -> dict:
         feedback = prompt.split("Замечание человека к монтажу:", 1)[-1].strip().splitlines()[0]
         out["lesson"] = f"демо-правило: {_words(feedback, 8)}"
     return out
+
+
+# ---------- моушн: команда агентов по простым правилам ----------
+
+DEMO_DESIGN = {
+    "name": "Демо-стиль",
+    "palette": {
+        "bg": "#101522",
+        "surface": "#1b2335",
+        "ink": "#f1f4fa",
+        "muted": "#8d98ad",
+        "accent": "#56c8f5",
+        "accent2": "#ffb454",
+        "ok": "#5fd38d",
+        "warn": "#ffd166",
+        "bad": "#ff6b6b",
+    },  # fmt: skip
+    "font": "system",
+    "mono": "sf-mono",
+    "background": "тёмный фон с сеткой точек",
+    "panel": "полупрозрачная подложка",
+    "motion": "мягкие выходы",
+    "characters": [{"id": "gopher", "name": "Гофер", "look": "голубой круг с глазами"}],
+}
+
+
+def motion_team(task: str, prompt: str) -> dict:
+    """Роли «Моушна»: моменты — каждая третья фраза от 2-й секунды; раскадровка — три бита на слова момента;
+    техред соглашается; аниматор — карточка с заголовком. FAKE_LLM_MOTION_BADCODE=1 — первая версия кода с
+    таймером (проверка просит починить), FAKE_LLM_MOTION_DROP=1 — техред снимает сцены."""
+    if task == "motion_moments":
+        body = prompt.split("Расшифровка:", 1)[-1]
+        found = re.findall(r"^\[(\d+)\]\s+(\d+(?:\.\d+)?)\s+(.+)$", body, re.M)
+        lines = [(int(i), float(t), text) for i, t, text in found]
+        moments = []
+        for n, (first, at, text) in enumerate(lines):
+            if at < 2 or n % 3:
+                continue
+            last = lines[n + 1][0] - 1 if n + 1 < len(lines) else first + len(text.split()) - 1
+            moments.append({"from": first, "to": max(first, last), "title": _words(text, 3), "kind": "mechanism",
+                            "concept": f"демо: {_words(text, 8)}", "why": "демо", "score": 8})  # fmt: skip
+        return {"topic": "демо-тема", "moments": moments}
+    if task == "motion_design":
+        return DEMO_DESIGN
+    if task == "motion_storyboard":
+        a, b = (int(x) for x in re.search(r"со слова \[(\d+)\] до \[(\d+)\]", prompt).groups())
+        layout = ("side", "lower", "full")[a % 3]
+        title = "Правка" if "Замечание автора" in prompt else f"Сцена {a}"
+        beats = [{"word": w, "action": f"демо-действие на слове {w}", "text": f"шаг {k}"}
+                 for k, w in enumerate(sorted({a, (a + b) // 2, b}), 1)]  # fmt: skip
+        if len(beats) < 2:
+            beats.append({"word": b + 1, "action": "демо-итог", "text": "итог"})
+        return {"title": title, "layout": layout, "idea": "демо-нить", "from": a, "to": b, "hold": 1,
+                "characters": ["gopher"], "camera": "", "enter": "fade", "exit": "fade", "beats": beats}  # fmt: skip
+    if task == "motion_review":
+        if os.environ.get("FAKE_LLM_MOTION_DROP"):
+            return {"verdict": "drop", "issues": ["демо: не о том"], "reason": "демо: техред снял сцену"}
+        return {"verdict": "ok", "issues": []}
+    if task == "motion_animate":
+        title = re.search(r"Сцена «(.+?)»", prompt)[1]
+        js = 'tl.from("#scene .card", {opacity: 0, y: 30, duration: 0.4}, 0);'
+        if os.environ.get("FAKE_LLM_MOTION_BADCODE") and "Прошлая версия кода" not in prompt:
+            js += "setTimeout(() => 0, 10);"
+        return {"html": f'<div class="card">{title}</div>', "css": "#scene .card{font-size:48px}", "js": js}
+    return {}
 
 
 def main() -> int:
