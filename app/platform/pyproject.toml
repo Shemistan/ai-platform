@@ -15,3 +15,9 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 # Разметка и GSAP-таймлайны шаблонов: строки-шаблоны длиннее 120 знаков читаются целиком.
 "aiplatform/montage/templates.py" = ["E501"]
+# Роли ревью и сравнение версий: тексты замечаний и подсказок для человека читаются одной строкой.
+"aiplatform/montage/review/*.py" = ["E501"]
+"aiplatform/montage/progress.py" = ["E501"]
+"aiplatform/fakes/fake_llm.py" = ["E501"]
+"tests/test_montage_review*.py" = ["E501"]
+"tests/test_montage_progress.py" = ["E501"]

@@ -143,8 +143,22 @@ provenance.json и project.zip, экспорт при красных ворот�
 `policy.py` настройки, профили весов, безопасные правки, защищённые области, бюджеты; `state.py` запуск
 и раунды (state machine, чекпоинт `review/runs/<id>/run.json`, после рестарта активный → `paused`);
 `versions.py` версии `review/versions/V<n>/` (V0 baseline неизменяем, жёсткая ссылка на ролик, откат,
-diff); `engine.py` — `projects.review`: создать запуск, start/pause/resume/stop, optimistic lock по
-хэшу манифестов (`stale_revision`); `rounds.py` — стадии раунда (действие воркера `review`).
+diff); `engine.py` — `projects.review`: создать запуск, start/pause/resume/stop, решения человека по
+замечаниям и плану, спорное сравнение, выбор версии, optimistic lock по хэшу манифестов (`stale_revision`);
+`rounds.py` — стадии раунда (действие воркера `review`): `bundle.py` один проход ffmpeg по версии (прокси
+640p, кадры сцен и раз в 10 с, signalstats, ebur128, тишина; тексты для LLM) в `review/bundles/V<n>/`;
+`reviewers.py` 10 ролей трёх видов — measure (QA, звук, доступность: observed_*), heuristic (моушн, арт,
+композиция: без VLM `degraded` + `manual_check`), llm (`montage_review_<role>`); `issues.py` контракт
+замечания, валидатор, дедуп, конфликты, арбитр, ранг, политика; `planner.py` план с DAG, impact, оценкой,
+бюджетом, воротами по режиму, осцилляцией; `repair.py` правки манифестов (сцены через `storyboard.edit`,
+`caption_words`, `cut_words`) и пересборка `_render` с попытками; `compare.py` regression gate (hard gates,
+объективные метрики, судья `montage_review_judge` по профилю весов, решение; идентичный файл — не улучшение).
+Наблюдаемость (§14): `progress.py` — `Events` (append-only `events.jsonl` проекта, `seq`-курсор, ротация, фильтры,
+экспорт JSONL/CSV, ожидание для SSE), `Stats` (`montage/stats.json`: секунды на единицу веса стадии на этой машине),
+`eta` с уверенностью, `tree` (Project → Run → Phase → Round → Stage → Job → Task → Attempt из событий и
+`project.stages`), `resources` (только измеримое; GPU `unavailable`); `observe.py` — `projects.observe`: дерево,
+события по курсору, SSE-поток (снапшот + backfill + heartbeat), экспорт, агенты, история запусков, прогресс раунда.
+Воркер пишет события в `projects.py` (`emit`, стадии, jobs ffmpeg/asr/llm с fps из `-progress`, сцены) и `rounds.py`.
 
 ## Моушн `motion/`
 
@@ -165,7 +179,8 @@ LLM — ADR 0006, файлы — 0007).
   `/api/config` → `tabs`, меню групп — `core/nav-groups.js`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
   `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`,
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
-- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`),
+- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`,
+  `review.js`/`review-ui.js` — панель ревью, `progress.js`/`progress-ui.js` — панель прогресса с SSE и виртуализацией логов),
   `board/` «Выпуски», `studio/` (`state.js`, `create.js`, `steps.js`, `head.js`,
   `media.js`, `publish.js`, `settings.js`), `library/` «Статьи», `news/`,
   `channels/`, `updates/`, `settings/`.
@@ -218,7 +233,9 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
   `documents.json`, `chunks.json`, `knowledge.json`, `beats.json`, `transcript_edit.json`, `styles/`,
   `style_bible.json`, `storyboard.json`, `scenes/<id>/`, `segments/` (кэш), `output.mp4`, `subtitles.srt`,
   `subtitles.vtt`, `timeline.json`, `qa_report.json`, `exports/<n>/`, `revisions/<n>.json`,
-  `review/runs/<run_id>/` (run.json, `rounds/<n>/`), `review/versions/V<n>/`;
+  `review/runs/<run_id>/` (run.json, `rounds/<n>/` — reports/, issues.json, repair_plan.json, comparison.json),
+  `review/versions/V<n>/`, `review/bundles/V<n>/`, `events.jsonl` (события конвейера, курсор `seq`); `montage/stats.json` — секунды на
+  единицу стадии для ETA;
   `montage/lessons.md` — выученные правила.
 - `studio/projects/<id>/`: `project.json`, `text.md`, `post.md`, `poster.*`,
   `plan.json`, `images/`, `clips/`, `voice.*`, `video.mp4`, `short.mp4`,
@@ -272,5 +289,5 @@ ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): �
 | релизы | `docs/CHANGELOG.md` |
 | прошлые системные ошибки | `docs/грабли.md` |
 | MASTER_SPEC: аудит машины, шкалы времени, матрица приёмки | `docs/ENVIRONMENT_AUDIT.md`, `docs/TIMEBASE.md`, `docs/ACCEPTANCE.md` |
-| ITERATIVE_REVIEW_SPEC: gap analysis, миграции, риски, порядок | `docs/ITERATIVE_REVIEW_IMPLEMENTATION_PLAN.md` |
+| ITERATIVE_REVIEW_SPEC: gap analysis, миграции, риски, порядок; бенчмарк | `docs/ITERATIVE_REVIEW_IMPLEMENTATION_PLAN.md`, `docs/REVIEW_BENCHMARK.md` |
 | что уже сделано / открыто | `backlog/CHANGELOG.md`, `backlog/README.md` |

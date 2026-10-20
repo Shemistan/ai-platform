@@ -8,14 +8,18 @@
 
 from __future__ import annotations
 
+import re
 import threading
+import time
 from pathlib import Path
 
 from aiplatform.montage import decisions
+from aiplatform.montage.review import issues as issues_module
+from aiplatform.montage.review import planner, state, versions
 from aiplatform.montage.review import policy as policy_module
-from aiplatform.montage.review import state, versions
 
 STALE = "Проект изменён вне запуска ревью (план, раскадровка или пересборка) — этот запуск устарел, начни новый."
+_BUNDLE_FILE = re.compile(r"^(frames/f\d{6}\.jpg|proxy\.mp4|bundle\.json)$")
 
 
 class ReviewError(ValueError):
@@ -111,9 +115,14 @@ class Review:
         """V0 (или следующая версия, если ролик пересобран после прошлого запуска): неизменяемый baseline."""
         known = versions.listing(folder)
         current = decisions.file_sha(folder / "output.mp4")
-        for record in reversed(known):
-            if record["output"]["sha256"] == current and versions.integrity(folder, record["n"]) is None:
-                return record
+        same = [
+            r
+            for r in reversed(known)
+            if r["output"]["sha256"] == current and versions.integrity(folder, r["n"]) is None
+        ]
+        accepted = [r for r in same if r["accepted"]]
+        if accepted or same:  # принятая версия с тем же файлом важнее отклонённого кандидата-близнеца
+            return (accepted or same)[0]
         n = (known[-1]["n"] + 1) if known else 0
         return versions.save(folder, n, round_n=0, parent=known[-1]["label"] if known else None, accepted=True,
                              ffmpeg=self.config.ffmpeg, reason="baseline")  # fmt: skip
@@ -220,3 +229,203 @@ class Review:
     def after_cancel(self, run_id: str) -> str:
         """Подпись карточки после прерывания действия ревью: пауза или остановка человеком."""
         return "Ревью остановлено" if run_id else "Готово"
+
+    # ---------- раунд: замечания, решения, план, сравнение (§10) ----------
+
+    def _round(self, pid: str, run_id: str, n: str) -> tuple[dict, dict]:
+        if self.projects.get(pid) is None:
+            raise ReviewConflict("Проект не найден.")
+        run = self._run(pid, run_id)
+        number = int(n) if str(n).isdigit() else 0
+        rnd = state.load_round(self.folder(pid), run_id, number)
+        if rnd is None:
+            raise ReviewConflict("Такого раунда нет.")
+        return run, rnd
+
+    def issues(self, pid: str, run_id: str, n: str) -> dict:
+        run, rnd = self._round(pid, run_id, n)
+        data = state.read_json(self.folder(pid), run_id, rnd["n"], "issues.json") or {"issues": []}
+        reports = []
+        for role_id in run["policy"]["reviewer_roles"]:
+            report = state.read_json(self.folder(pid), run_id, rnd["n"], f"reports/{role_id}.json")
+            if report:
+                keys = ("role", "kind", "status", "degraded", "manual_check", "elapsed_s", "evidence_types", "error",
+                        "measurements", "degraded_reason")  # fmt: skip
+                reports.append({k: report.get(k) for k in keys} | {"issues": len(report["issues"])})
+        return {"round": rnd, "issues": data["issues"], "reports": reports,
+                "counts": issues_module.counts(data["issues"])}  # fmt: skip
+
+    def repair_plan(self, pid: str, run_id: str, n: str) -> dict:
+        _run, rnd = self._round(pid, run_id, n)
+        return state.read_json(self.folder(pid), run_id, rnd["n"], "repair_plan.json") or {
+            "actions": [],
+            "round_id": rnd["round_id"],
+        }
+
+    def comparison(self, pid: str, run_id: str, n: str) -> dict:
+        _run, rnd = self._round(pid, run_id, n)
+        data = state.read_json(self.folder(pid), run_id, rnd["n"], "comparison.json")
+        if data is None:
+            return {"round_id": rnd["round_id"], "decision": None, "pending": True}
+        if rnd.get("candidate_version"):
+            data["diff"] = versions.diff(self.folder(pid), versions.number(rnd["base_version"]),
+                                         versions.number(rnd["candidate_version"]))  # fmt: skip
+        return data
+
+    def decisions(self, pid: str, run_id: str, n: str, payload: object) -> dict:
+        """Решения человека по замечаниям, locked сцены, утверждение плана (§2, §6.6)."""
+        data = payload if isinstance(payload, dict) else {}
+        raw = data.get("issues") or data.get("decisions") or []
+        if not isinstance(raw, list):
+            raise ReviewError("issues — список {issue_id, status, comment?}.")
+        chosen: dict[str, str] = {}
+        comments: dict[str, str] = {}
+        for item in raw:
+            if not isinstance(item, dict) or not isinstance(item.get("issue_id"), str):
+                raise ReviewError("issues — список {issue_id, status, comment?}.")
+            if item.get("status") not in ("accepted", "rejected", "deferred"):
+                raise ReviewError("status — accepted, rejected или deferred.")
+            chosen[item["issue_id"]] = item["status"]
+            if isinstance(item.get("comment"), str) and item["comment"].strip():
+                comments[item["issue_id"]] = item["comment"].strip()[:500]
+        approve_all = bool(data.get("approve_plan"))
+        locked = data.get("locked_scenes")
+        if locked is not None and (not isinstance(locked, list) or not all(isinstance(s, str) for s in locked)):
+            raise ReviewError("locked_scenes — список id сцен.")
+        enqueue = False
+        with self.projects._lock:
+            project = self.projects._projects[pid]
+            run, rnd = self._round(pid, run_id, n)
+            folder = self.folder(pid)
+            if run["state"] != "awaiting_approval" or rnd["n"] != run["round"]:
+                raise ReviewConflict("Запуск сейчас не ждёт утверждения плана.")
+            issues = (state.read_json(folder, run_id, rnd["n"], "issues.json") or {}).get("issues") or []
+            plan_data = state.read_json(folder, run_id, rnd["n"], "repair_plan.json") or {"actions": []}
+            if locked is not None:
+                run["policy"]["locked_scenes"] = list(dict.fromkeys([*run["policy"]["locked_scenes"], *locked]))
+                for issue in issues:
+                    if issue["change"].get("scene_id") in run["policy"]["locked_scenes"] and issue["status"] in (
+                        "proposed",
+                        "accepted",
+                    ):
+                        chosen.setdefault(issue["issue_id"], "rejected")
+            for issue in issues:
+                if issue["issue_id"] in comments:
+                    issue["comments"].append(
+                        {"at": round(time.time(), 3), "by": "human", "text": comments[issue["issue_id"]]}
+                    )
+            planner.approve(plan_data, issues, decisions=chosen, approve_all=approve_all)
+            state.write_json(
+                folder, run_id, rnd["n"], "issues.json", {"issues": issues, "made_at": round(time.time(), 3)}
+            )
+            state.write_json(folder, run_id, rnd["n"], "repair_plan.json", plan_data)
+            rnd["counts"] = issues_module.counts(issues)
+            decisions.record(folder, "human", "review:decisions", ids=list(chosen)[:50],
+                             rationale=f"решений {len(chosen)}, план: {plan_data['approval']}, locked: {len(locked or [])}")  # fmt: skip
+            approved = any(a["status"] == "approved" for a in plan_data["actions"])
+            if plan_data["approval"] == "given" and approved:
+                state.round_stage(rnd, "approve", "done", "утверждено человеком")
+                state.save_round(folder, run, rnd)
+                state.advance(run, "repairing", reason="approved", blocking_reason=None)
+                state.checkpoint(folder, run)
+                self.projects._idle(project)
+                enqueue = True
+            elif plan_data["approval"] == "denied":
+                rnd["decision"], rnd["decision_reason"] = "no_actions", "человек отклонил все правки"
+                rnd["finished_at"] = round(time.time(), 3)
+                state.round_stage(rnd, "approve", "done", "отклонено")
+                state.save_round(folder, run, rnd)
+                state.advance(run, "completed", reason="user", stop_reason="no_approved_actions", blocking_reason=None)
+                state.checkpoint(folder, run)
+            else:
+                state.save_round(folder, run, rnd)
+                state.checkpoint(folder, run)
+        if enqueue:
+            self.projects._enqueue(pid, "review", run_id)
+        return self.issues(pid, run_id, n)
+
+    def execute(self, pid: str, run_id: str, n: str) -> dict:
+        """Утвердить план целиком и исполнить (§10 `execute`)."""
+        return self.decisions(pid, run_id, n, {"approve_plan": True})
+
+    def decide(self, pid: str, run_id: str, n: str, payload: object) -> dict:
+        """Спорное сравнение: человек принимает кандидата или откатывает (§8)."""
+        data = payload if isinstance(payload, dict) else {}
+        choice = data.get("decision")
+        if choice not in ("accept", "reject"):
+            raise ReviewError("decision — accept или reject.")
+        reason = str(data.get("reason") or "").strip()[:300]
+        with self.projects._lock:
+            project = self.projects._projects[pid]
+            run, rnd = self._round(pid, run_id, n)
+            if run["state"] != "awaiting_decision" or rnd["n"] != run["round"]:
+                raise ReviewConflict("Запуск сейчас не ждёт решения по версии.")
+            self.projects._idle(project)
+            from aiplatform.montage.review import rounds
+
+            ctx = rounds.Round(self, project, run, threading.Event())
+            decision = "accepted" if choice == "accept" else "rejected"
+            comparison = ctx.read_round("comparison.json")
+            comparison.update(decision=decision, decided_by="human", reason=reason or f"решение человека: {decision}")
+            ctx.write_round("comparison.json", comparison)
+            ctx.settle(decision, comparison["reason"], "human")
+            state.checkpoint(self.folder(pid), run)
+        self.projects._enqueue(pid, "review", run_id)
+        return self.get(pid, run_id)
+
+    def select_revision(self, pid: str, run_id: str, payload: object) -> dict | None:
+        """Вернуть в проект любую версию запуска (V0..Vn): манифесты и ролик копией, запуск запоминает выбор."""
+        data = payload if isinstance(payload, dict) else {}
+        n = versions.number(data.get("version"))
+        if n is None:
+            raise ReviewError("version — метка вида V2.")
+        with self.projects._lock:
+            project = self.projects._projects.get(pid)
+            if project is None:
+                return None
+            self.projects._idle(project)
+            run = self._run(pid, run_id)
+            if run["state"] in state.ACTIVE:
+                raise ReviewConflict("Запуск ещё работает — дождись конца раунда или поставь на паузу.")
+            folder = self.folder(pid)
+            if versions.get(folder, n) is None:
+                raise ReviewConflict("Такой версии нет.")
+            problem = versions.integrity(folder, n)
+            if problem:
+                raise ReviewConflict(f"{versions.label(n)}: {problem}.")
+            versions.restore(folder, n)
+            board = (self.projects._read_json(pid, "storyboard.json") or {}).get("scenes") or []
+            from aiplatform.montage import storyboard
+
+            project["storyboard"] = storyboard.summary(board) if board else None
+            project["timeline"] = None
+            timeline = self.projects._read_json(pid, "timeline.json")
+            if timeline:
+                from aiplatform.montage import timeline as timeline_module
+
+                project["timeline"] = timeline_module.summary(timeline)
+            report = self.projects._read_json(pid, "qa_report.json") or {}
+            if report:
+                project["qa"] = {"gates": report.get("gates"), "counts": report.get("counts"),
+                                 "attempts": report.get("repair_attempts", 0)}  # fmt: skip
+            run["selected_version"] = versions.label(n)
+            self.relock(run)
+            state.checkpoint(folder, run)
+            decisions.record(folder, "human", "review:select_revision", ids=[run_id, versions.label(n)],
+                             rationale=f"в проект возвращена версия {versions.label(n)}")  # fmt: skip
+            self.projects._history(project, "review", f"выбрана версия {versions.label(n)}")
+            self.projects._touch(project)
+            self.projects._snapshot(project, f"review select {versions.label(n)}")
+            return state.public(run)
+
+    def bundle_file(self, pid: str, run_id: str, n: str, name: str) -> Path | None:
+        """Файл бандла раунда (кадр-улика или прокси) по базовой версии раунда."""
+        if self.projects.get(pid) is None or not _BUNDLE_FILE.match(name):
+            return None
+        rnd = state.load_round(self.folder(pid), run_id, int(n) if str(n).isdigit() else 0)
+        if rnd is None:
+            return None
+        from aiplatform.montage.review import rounds
+
+        path = rounds.bundle_dir(self.folder(pid), rnd["base_version"]) / name
+        return path if path.is_file() else None

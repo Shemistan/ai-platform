@@ -134,6 +134,98 @@
 | ARCHITECTURE / AGENTS / MODEL_ADAPTERS / TIMEBASE / QA / SECURITY / API | `context.md`, этот файл + спека (роли), `capabilities.py` + `ENVIRONMENT_AUDIT.md`, `TIMEBASE.md`, `qa.py` + §5.8 выше, `configuration.md` (доступ), `api.md` |
 | Пример проекта, ≥3 сцены, видео, QA-отчёт | на фейках создаёт `EndToEndTest` (в `AIP_DATA_DIR` тестов); настоящий пример — после `make models M=hyperframes` |
 
+## ITERATIVE_REVIEW_SPEC (PRD-028, ADR 0012)
+
+Код — `app/platform/aiplatform/montage/review/`, `montage/progress.py`, `montage/observe.py`;
+тесты — `tests/test_montage_review.py`, `tests/test_montage_review_e2e.py`, `tests/test_montage_progress.py`,
+`tests/js/montage-review.test.mjs`, `tests/js/montage-progress.test.mjs`. План и gap analysis —
+`ITERATIVE_REVIEW_IMPLEMENTATION_PLAN.md`.
+
+### §1–2 Правила внедрения и настройки
+
+| Требование | Код | Тест | Статус |
+|---|---|---|---|
+| Аудит, переиспользование QA/revision/agents, без переписывания | ADR 0012, `IMPLEMENTATION_PLAN.md` §1 | — | реализовано |
+| Модуль после сборки, до экспорта; V0 неизменяемый baseline | `engine.create` (нужен `output.mp4` + QA), `versions.save` отказывает перезаписать | `VersionsTest`, `ReviewE2ETest` (sha V0 до/после) | реализовано |
+| 1–5 раундов, остановка после любого | `policy.max_rounds`, `rounds.next_round`, `control(stop)` | `test_budget_exhaustion_stops_early_and_rounds_bounds`, `test_user_stop…` | реализовано |
+| Local-first через реестр возможностей; без VLM — явная деградация | `engine.capabilities` (`vision: unavailable`), роли heuristic → `degraded`, `manual_check` | `test_two_rounds…` (reports), `NoModelsTest` | реализовано |
+| Обратимость, оригиналы и baseline не меняются, улучшение только с измерениями | `versions.restore`, hard gate `sources`, `compare.decide(identical=…)` | `test_rejected_candidate_rolls_back…`, `CompareDecideTest` | реализовано |
+| Панель настроек: все поля §2 | `policy.clean`, `review-ui.js` (форма) | `PolicyTest`, JS | реализовано; `quality_target` хранится, в решении не участвует (частично) |
+| Плановая стоимость, фактическая длительность, раунд, задачи, версии, причины | `planner.estimate`, `run.budget`, `rounds_done`, `blocking_reason`, панель | `PlannerTest`, JS `runSummary` | реализовано |
+| Кнопки Start/Pause/Resume/Stop/Approve/Reject/Lock/Compare/Restore/Export | `control`, `decisions` (+`locked_scenes`), `comparison`, `select_revision`, экспорт — обычный | `ReviewApiTest`, `test_manual_approval_gate…` | реализовано |
+| autonomous — только в пределах policy; смысловое через ворота | `planner._approval` (`scene_disable`, `cut_words`, эвристика без улик → required) | `PlannerTest.test_actions_dag_estimate_and_modes` | реализовано |
+
+### §3–5 Агенты, анализ, контракт замечания
+
+| Требование | Код | Тест | Статус |
+|---|---|---|---|
+| Один immutable bundle: preview, транскрипт с alignment, knowledge, storyboard, style, manifest, QA, история, кадры/клипы | `bundle.build` (прокси, кадры сцен + раз в 10 с, signalstats, ebur128), `bundle.texts` | `ReviewApiTest` (bundle.json), E2E | реализовано; клипы движения — кадры начала/середины/конца сцены, видеоклипов нет (частично) |
+| 10 независимых ролей, конфигурируемы | `reviewers.ROLES`, `policy.reviewer_roles` | E2E reports | реализовано; LLM-роли — одна модель с разными промптами |
+| Arbiter, Validator, Repair Planner, Regression Judge раздельно; судья без самооценки исполнителя | `issues.arbitrate`, `issues.validate`, `planner`, `compare.subjective` (промпт без результатов исполнителя) | `IssuesTest`, `CompareDecideTest` | реализовано; арбитр — правила, не LLM |
+| Review proxies, shot boundaries, кадры, аудиозамеры; движение — по последовательности кадров | `bundle` | `bundle.json` в E2E | частично (см. выше) |
+| Hierarchical review для длинных видео | — | — | не реализовано: один проход по сценам, без отдельного global pass |
+| Проверять фактический рендер; `evidence_type` и уверенность | measure-роли по файлу версии; `issues.make` (`evidence_type`, `confidence`) | `IssuesTest` | реализовано |
+| Замечания без проверяемого evidence не запускают перегенерацию | `issues.needs_approval` → `approval: required` | `PlannerTest` | реализовано |
+| Контракт §5 (id, round, revision, роль, категория, severity, confidence, диапазоны, evidence, change, статус, комментарии, версия) | `contracts/montage/review_issue.schema.json`, `issues.make/validate` | `test_every_schema_has_a_valid_example`, `IssuesTest` | реализовано |
+
+### §6–8 Консолидация, исполнение, regression gate
+
+| Требование | Код | Тест | Статус |
+|---|---|---|---|
+| Дедуп, группировка по сцене/корню | `issues.dedup` | `IssuesTest.test_dedup…` | реализовано |
+| Конфликты, арбитр документирует или эскалирует | `issues.conflicts/arbitrate` → `decisions.jsonl`, ничья → `deferred` | `IssuesTest`, `test_conflict_arbitration_and_blocker` | реализовано |
+| Ранжирование technical > factual > clarity > aesthetic, затем уверенность/стоимость/риск/защита | `issues.order_key`, `apply_policy` | `IssuesTest` | реализовано |
+| Минимальное изменение | ops по одной сцене/субтитрам, перерисовка только изменившихся хэшей | E2E (mtime MOV нетронутых сцен) | реализовано |
+| RepairPlan: DAG, impact, кадры, хэши, оценка, тесты, rollback | `planner.plan` | `PlannerTest` | реализовано |
+| Политика и бюджеты, approval по режиму | `planner._approval/_budget` | `PlannerTest.test_budget_and_oscillation` | реализовано |
+| Задачи — существующим production-агентам | `repair.apply` → `storyboard.edit`, `_write_edl`, `_render` | E2E | реализовано |
+| Staging-ревизия, optimistic locking, идемпотентный job id | `engine.check_lock` (хэш манифестов → `stale_revision`), стадии пропускают готовые артефакты | `ReviewApiTest` (409 устарел), `test_manual_approval…` (пауза не пересчитывает отчёты) | реализовано |
+| Пересчёт TimeMap, якорей, субтитров при правке речи; речь по умолчанию не меняется | `repair.apply(cut_words)` → `_write_edl`; `allow_narrative_edits=false` | `IssuesTest.test_policy…` | реализовано (путь `cut_words` покрыт политикой, E2E-правки речи нет — частично) |
+| Рендер только изменённых сцен, инвалидация кэша по хэшам | `storyboard.scene_hash`, `scenes.render_all` | E2E | реализовано; финальный композит пересобирается целиком (ffmpeg overlay), сегменты и сцены — из кэша |
+| Финал = тот же манифест; тех. QA каждого кандидата | `_render` → `timeline.json` + `qa_report.json`; `versions.save` снимает их вместе с файлом | E2E (`hard_ok`) | реализовано |
+| Retry с лимитом, потом failed; раунд с blocker не успешен | `repair.render(attempts_left)`, `rounds.consolidate` (blocker без правки → `blocked`) | `test_conflict_arbitration_and_blocker` | реализовано |
+| Hard gates: файл, длительность/кадры, AV sync, новые blockers, защищённые фрагменты, источники | `compare.hard_gates` | E2E (`gates`), `CompareDecideTest` | реализовано |
+| Objective metrics | `compare.objective` | E2E | реализовано (QA-счётчики, субтитры, сцены, ассеты, дрейф); loudness берётся из QA `clipping` |
+| Subjective pairwise с evidence, весовые профили, раздельный показ | `compare.subjective`, `policy.PROFILES`, UI три таблицы | `CompareDecideTest`, JS `comparisonView` | реализовано |
+| Принятие только при hard pass и без деградации; спорное — человек/откат | `compare.decide`, `rounds.comparing` | `test_rejected_candidate…`, `CompareDecideTest` | реализовано |
+| Обе версии и diff; следующий раунд от принятой | `versions.diff`, `run.accepted_version` | `test_rejected_candidate…` | реализовано |
+| Stop early: нет gain, бюджет, повторы, нет правок, пользователь | `rounds.next_round` | E2E (бюджет, стоп, `no_executable_actions`) | реализовано |
+
+### §9–11 Состояния, данные, API, UI
+
+| Требование | Код | Тест | Статус |
+|---|---|---|---|
+| State machine §9 + paused/cancelled/failed/blocked, чекпоинты, resume без повторного GPU | `state.TRANSITIONS`, `checkpoint`, `interrupted` → paused; стадии идемпотентны | `StateTest`, `test_manual_approval_gate_and_pause_resume` | реализовано |
+| Параллелизм/таймауты/ретраи/бюджет/осцилляция | один воркер, `runner` таймауты, `planner` (осцилляция, бюджет) | `PlannerTest` | реализовано |
+| Snapshot версий, immutable артефакты, аудит (кто/что/почему, модель, промпт) | `versions`, `decisions.jsonl` (роли ролей, арбитр, судья, человек) | E2E (роли в журнале) | реализовано |
+| Prompt injection: данные, не команды; sandbox как в проекте | тексты в промптах как данные, ответ только JSON по контракту, `claude -p` без инструментов | — | реализовано (валидатор); отдельного теста на инъекцию нет |
+| Таблицы §10 | файлы (ADR 0012, `IMPLEMENTATION_PLAN.md` §2) | схемы в `test_montage_spec` | реализовано файлами |
+| API §10 | `review-runs…`, `rounds/<n>/issues|decisions|repair-plan|execute|comparison|decide`, `select-revision` | `ReviewApiTest`, E2E | реализовано |
+| События WebSocket/SSE §10 | `events/stream` (SSE) с типами round_started … run_completed/blocked | `ProgressApiTest` | реализовано |
+| UI §11: раунды, лента, карточки агентов, замечания с фильтрами, таймкод и плеер, diff, A/B синхронно, план и стоимость, кнопки, журнал версий, экспорт | `review-ui.js`, `progress-ui.js` | JS-тесты чистых функций | реализовано; визуальный diff — таблицы сравнения и A/B, покадрового diff нет (частично) |
+
+### §12 Тесты
+
+| Требование | Тест | Статус |
+|---|---|---|
+| Unit: схемы, кадры, дедуп/конфликты, приоритет, защита, бюджет, early-stop, lineage, policy gates | `test_montage_review.py`, `test_montage_spec.py` | реализовано |
+| Integration: адаптеры (mock + локальная модель), выборка кадров, persistence, resume, incremental render, stale-revision, SSE | `ReviewApiTest`, `ReviewE2ETest`, `ProgressApiTest` | реализовано на фейках; «доступная локальная модель» — только `claude -p` вручную |
+| E2E: 2–5 мин, два раунда, ≥2 правки, новый MP4, sync, история; отказ+откат; без VLM; стоп; бюджет; 1 и 5 раундов | `ReviewE2ETest` (фикстура 150 с, `make_video`) | реализовано |
+| Acceptance: evidence у каждого, правка реально меняет кадры/звук, нетронутые сцены не рендерятся, версии сравниваются и восстанавливаются, QA не деградирует, без silent failures | `test_two_rounds_real_fixes_cache_and_history` | реализовано |
+
+### §14 Панель наблюдаемости
+
+| Требование | Код | Тест | Статус |
+|---|---|---|---|
+| 14.1 Всё из backend, без таймеров и моков | события воркера (`projects.emit`), UI рисует только ответы API | `ProgressApiTest` | реализовано |
+| 14.2 Иерархия Project → … → Attempt, поля узла, remaining, динамический total, indeterminate, 100 % после валидации, awaiting_approval | `progress.tree`, `_counts`, `indeterminate`, `run_queued.metrics.stages` | `TreeTest`, `ProgressApiTest` | реализовано; `plan_changed` при динамических задачах — в `run_queued` (частично) |
+| 14.3 Проценты по единицам, веса по истории машины с fallback и низкой достоверностью, ETA диапазоном, elapsed/finish/last updated | `_stage(units=…)`, `Stats` (EMA), `progress.eta` | `TreeTest.test_eta…` | реализовано; единицы у стадий ASR (секунды), сегменты, сцены, роли; остальные — проценты |
+| 14.4 Экраны: Overview, Pipeline, Agents, Round, Logs (фильтры, пауза, поиск, копирование, экспорт, виртуализация), Resources, Run history; mobile, не только цвет, a11y | `progress-ui.js`, `style.css` | JS `montage-progress.test.mjs` | реализовано; GPU/VRAM/fps Remotion/Blender — `unavailable` честно |
+| 14.5 Append-only события, стабильный id и порядок, idempotency, retention, лимиты, персистентность, без секретов | `progress.Events` (seq, ротация, файл проекта), в события не попадают промпты и токены | `EventsTest` | реализовано; role-based redaction — не реализовано (один пользователь, ADR 0012) |
+| 14.6 API, SSE с last_event_id, reconnect/backfill, дедуп, heartbeat, fallback polling, snapshot + delta, нормализация ffmpeg | `observe.py`, `Request.send_sse`, `progress.ffmpeg_metrics`, `progress-ui.js` (EventSource → polling) | `ProgressApiTest` (SSE backfill без дублей) | реализовано |
+| 14.7 Сложные случаи: зависание, retry N/M, failed/blocked/awaiting, отмена, pause/resume, partial, откат, early-stop, динамический total, восстановление после рестарта | `runner` idle-timeout → `job_failed`, статусы событий, `interrupted` → paused, `tree` из файлов | `ProgressApiTest.test_failed_run…`, рестарт в тестах | реализовано; heartbeat timeout задачи = idle-таймаут `runner` |
+| 14.8 Unit/Integration/E2E, 100 000 событий, стабильный SSE | `EventsTest.test_rotation…` (100 000), `ProgressApiTest` | реализовано; UI-E2E в браузере — ручная проверка (см. ниже) |
+
 ## Команды
 
 ```sh

@@ -11,6 +11,7 @@
 | `ENVIRONMENT_AUDIT.md` | MASTER_SPEC: подтверждённые факты о машине, инструментах и моделях (ADR 0011) |
 | `TIMEBASE.md` | MASTER_SPEC: шкалы времени «Монтажа» — исходник в секундах, результат в кадрах, TimeMap |
 | `ACCEPTANCE.md` | MASTER_SPEC и ITERATIVE_REVIEW_SPEC: матрица приёмки — требование → код → тест → статус |
+| `REVIEW_BENCHMARK.md` | ITERATIVE_REVIEW_SPEC R7: что измеряется в раундах ревью и результаты прогона на этой машине |
 | `ITERATIVE_REVIEW_IMPLEMENTATION_PLAN.md` | ITERATIVE_REVIEW_SPEC: gap analysis, «миграции» (файлы), зависимости, риски, порядок R0–R7, критерии приёмки (ADR 0012) |
 | `runbook.md` | эксплуатация живого сервиса: 5 сценариев сбоев, карта конфигурации, ограничения |
 | `CHANGELOG.md` | журнал версий: что вошло в каждый релиз |
