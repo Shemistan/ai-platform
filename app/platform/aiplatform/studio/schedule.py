@@ -2,7 +2,8 @@
 
 Поток раз в AIP_SCHEDULE_TICK_S секунд (по умолчанию 30) зовёт tick(сейчас).
 Наступило время из настроек, а сегодня дайджест ещё не удался — создать
-выпуск за вчера (или за сегодня) и запустить. Если платформа была выключена
+выпуск за вчера (или за сегодня) с параметрами запуска из настроек (постер,
+картинки, ролики, шортс, проверка текста, автопубликация — PRD-030) и запустить. Если платформа была выключена
 во время запуска, он догоняется в тот же день, но не на следующий.
 
 Итог дайджеста — в `<data>/studio/schedule.json`:
@@ -33,6 +34,7 @@ from aiplatform.config import pick
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError
 from aiplatform.core.log import event as log_event
+from aiplatform.core.settings import DIGEST_RUN
 
 STATE = "schedule.json"
 DEFAULT_TICK_S = 30.0
@@ -138,7 +140,7 @@ class Scheduler:
             today = now.date().isoformat()
             plan = self.module.ctx.config.settings.load()["schedule"]["digest"]
             if plan["enabled"] and now.strftime("%H:%M") >= plan["time"] and self._digest_due(now):
-                done.append(self._digest(now, plan["day"]))
+                done.append(self._digest(now, plan))
             # Своя обложка не пришла к сроку — постер рисуется локально (PRD-002).
             deadlines = getattr(self.module, "poster_deadlines", None)
             if deadlines is not None:
@@ -172,11 +174,11 @@ class Scheduler:
             self.module.notify(f"Ежедневная работа «{name}» упала", _brief(exc), important=True)
             return f"{name}: сбой — {_brief(exc)}"
 
-    def _digest(self, now: datetime, which: str) -> str:
+    def _digest(self, now: datetime, plan: dict) -> str:
         today = now.date().isoformat()
         run = self.digest_run()
         attempts = (run.get("attempts", 0) if run.get("day") == today else 0) + 1
-        day = (now.date() - timedelta(days=1) if which == "yesterday" else now.date()).isoformat()
+        day = (now.date() - timedelta(days=1) if plan["day"] == "yesterday" else now.date()).isoformat()
 
         def finish(error: str | None) -> None:
             self._mark(
@@ -196,7 +198,8 @@ class Scheduler:
             if archived:  # убранный в архив выпуск за этот день — решение человека, заново не собираем
                 finish(None)
                 return f"дайджест за {day}: есть в архиве"
-            project = self.module.create({"scenario": "digest", "day": day, "run": True})
+            run_settings = {k: plan[k] for k in DIGEST_RUN if k in plan}  # параметры запуска (PRD-030)
+            project = self.module.create({"scenario": "digest", "day": day, "run": True, "settings": run_settings})
         except HttpError as exc:
             existing = exc.extra.get("existing")
             if existing:

@@ -154,6 +154,32 @@ function renderSchedule(data) {
             h("option", { value: "today", selected: plan.day === "today" }, "за сегодня"),
           ),
         ),
+        h(
+          "label",
+          { class: "field" },
+          h("span", { class: "hint" }, "Постер"),
+          h(
+            "select",
+            { onchange: (e) => section("schedule", { poster_mode: e.target.value }) },
+            h("option", { value: "upload", selected: plan.poster_mode === "upload" }, "жду свою обложку"),
+            h("option", { value: "local", selected: plan.poster_mode === "local" }, "рисовать локально"),
+          ),
+        ),
+      ),
+      // Параметры запуска выпуска по расписанию (PRD-030): уходят в настройки нового выпуска.
+      h(
+        "fieldset",
+        { class: "settings-stack" },
+        h("legend", { class: "hint" }, "Параметры запуска"),
+        h(
+          "div",
+          { class: "settings-stack" },
+          checkRow("Картинки на слайдах", "Локальной моделью; иначе фон слайдов — градиент.", plan.draw_images, (v) => section("schedule", { draw_images: v })),
+          checkRow("Ролики", "До трёх коротких роликов локальной моделью видео — долго.", plan.clips, (v) => section("schedule", { clips: v })),
+          checkRow("Вертикальное видео 9:16", "Шортс для YouTube Shorts, TikTok, Reels.", plan.shorts, (v) => section("schedule", { shorts: v })),
+          checkRow("Пауза после текста", "Выпуск ждёт, пока я проверю текст, и только потом генерирует.", plan.review_text, (v) => section("schedule", { review_text: v })),
+          checkRow("Публиковать сам", "Готовое видео уходит в каналы дайджеста без моего нажатия.", plan.auto_publish, (v) => section("schedule", { auto_publish: v })),
+        ),
       ),
       last ? h("p", { class: "hint" }, `Последний запуск по расписанию: ${last}. Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день.`) : h("p", { class: "hint" }, "Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день."),
       checkRow("Уведомлять меня", "Когда выпуск ждёт тебя, упал или опубликован. В Telegram — если указан чат ниже; на Mac — системное уведомление; своя команда — AIP_NOTIFY_CMD.", data.notify.enabled, (v) => section("notify", { enabled: v })),
