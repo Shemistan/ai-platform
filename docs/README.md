@@ -27,7 +27,7 @@
 ## Шапки артефактов
 
 У каждой спеки, плана и ADR — YAML-шапка; её проверяет `tools/docs_gate.py`
-(зовётся из `./check`, значит из pre-commit и `./finish`):
+(зовётся из `./check`, в том числе `--fast`, значит из pre-commit и `./finish`):
 
 ```yaml
 ---

@@ -1,8 +1,17 @@
 #!/bin/sh
-# Проектные проверки: зовутся pre-commit'ом и вручную (./check).
+# Проектные проверки: зовутся pre-commit'ом, ./finish и вручную (./check).
+#   ./check         — всё, включая тесты сервисов (минуты): ./finish и ручной прогон.
+#   ./check --fast  — гейты и линт без pytest (секунды): pre-commit (DX-018).
 set -e
 cd "$(dirname "$0")" || exit 1
 # PreToolUse-guard агента живёт вне репо (~/.claude/hooks) и здесь не проверяется.
+
+SVC_TARGET=check
+case "$1" in
+  --fast) SVC_TARGET=check-fast ;;
+  "") ;;
+  *) echo "⛔ check: неизвестный аргумент $1 (есть только --fast)" >&2; exit 2 ;;
+esac
 
 # Тесты тулинга: зелёные — одна строка итога, красные — весь вывод и выход.
 # (`… | tail -1` глотал код возврата: упавший тест проходил молча.)
@@ -57,9 +66,9 @@ if [ -f tools/release.py ]; then
   quiet_test tools/test_release.py
 fi
 
-# --- код: `make check` в каждом сервисе app/<svc>/ с Makefile ---
+# --- код: `make check` (с --fast — `make check-fast`, без тестов) в каждом сервисе app/<svc>/ ---
 # В pre-commit — только сервисы с файлами в индексе; вручную и в ./finish — все.
-# Новый сервис: каталог app/<svc>/ с Makefile и целью check.
+# Новый сервис: каталог app/<svc>/ с Makefile и целями check и check-fast.
 if [ -d app ]; then
   if [ -n "$GIT_INDEX_FILE" ]; then
     svcs=$(git diff --cached --name-only --diff-filter=ACMR -- app/ | \
@@ -69,8 +78,8 @@ if [ -d app ]; then
   fi
   for d in $svcs; do
     [ -f "$d/Makefile" ] || continue
-    echo "→ make check: $d"
-    make -C "$d" check
+    echo "→ make $SVC_TARGET: $d"
+    make -C "$d" "$SVC_TARGET"
   done
 fi
 

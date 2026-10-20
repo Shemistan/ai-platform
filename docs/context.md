@@ -272,8 +272,9 @@ ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): �
   `make install-agent` (launchd + чекер дайджеста) · `make release-prep/release-tag`.
 - Свой порт и данные для проверки UI: `AIP_PORT=8791 AIP_BACKEND=fake AIP_DATA_DIR=<копия> python3 -m aiplatform.server`.
 - Корень: `./check` — secret_scan, docs_gate, readme_gate, api_routes `--check`,
-  tasks_gate, context_gate, тесты тулинга, `make check` каждого `app/<svc>/`.
-  `./finish` — check → push ветки → fast-forward `staging` → PR `staging → main`.
+  tasks_gate, context_gate, тесты тулинга, `make check` каждого `app/<svc>/`;
+  `./check --fast` (pre-commit) — то же, но `make check-fast`: линт без pytest.
+  `./finish` — полный check → push ветки → fast-forward `staging` → PR `staging → main`.
 - Тесты бэкенда: `app/platform/tests/` (`helpers.py`: `PlatformCase`, `StudioCase` на фейках).
 
 ## Где что искать
