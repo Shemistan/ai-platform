@@ -282,6 +282,7 @@ ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): �
 | Нужно | Где |
 |---|---|
 | как пользоваться вкладками | `docs/user-guide.md` |
+| правила текста для озвучки (капс, цифры, ссылки); выжимка — `studio/prompts.py` `TTS_RULES` | `app/narrator/docs/tts-guide.md` |
 | переменные `AIP_*`, автозапуск, деплой, бэкап | `docs/configuration.md` |
 | HTTP API: контракт / все маршруты | `docs/api.md` / `docs/api-routes.md` (собирает `tools/api_routes.py`) |
 | что делать при сбое живого сервиса | `docs/runbook.md` |

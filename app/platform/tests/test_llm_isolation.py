@@ -58,6 +58,11 @@ class DataNoteTest(unittest.TestCase):
                 self.assertIn(prompts.DATA_NOTE, prompt)
                 self.assertTrue(prompt.startswith(prompts.TASK))  # фейковая LLM узнаёт задачу по первой строке
 
+    def test_narration_prompts_carry_tts_rules(self):
+        for prompt in (prompts.short("Текст.", "T", 100), prompts.summary("Текст.", "T", 600)):
+            with self.subTest(prompt.splitlines()[0]):
+                self.assertIn(prompts.TTS_RULES, prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
