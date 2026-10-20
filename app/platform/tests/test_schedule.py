@@ -26,8 +26,23 @@ class ScheduleTest(StudioCase):
     def test_section_validation(self):
         status, body = self.section("schedule", {"enabled": True, "time": "06:30", "day": "today"})
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["schedule"], {"enabled": True, "time": "06:30", "day": "today"})
-        for bad in ({"time": "25:00"}, {"day": "завтра"}, {"enabled": "да"}, {"nope": 1}, {}):
+        self.assertEqual(
+            body["schedule"],
+            {
+                "enabled": True, "time": "06:30", "day": "today", "poster_mode": "upload", "draw_images": True,
+                "clips": False, "shorts": False, "review_text": False, "auto_publish": False,
+            },
+        )  # fmt: skip
+        bad_values = (
+            {"time": "25:00"},
+            {"day": "завтра"},
+            {"enabled": "да"},
+            {"nope": 1},
+            {},
+            {"poster_mode": "ai"},
+            {"clips": "да"},
+        )
+        for bad in bad_values:
             status, body = self.section("schedule", bad)
             self.assertEqual(status, 400, (bad, body))
         self.assertEqual(self.json("GET", "/api/settings/state")[1]["schedule"]["time"], "06:30")
@@ -56,6 +71,46 @@ class ScheduleTest(StudioCase):
         self.assertEqual(again, [f"дайджест за {yesterday}: уже есть «{projects[0]['title']}»"])
         log = (self.folder("x").parents[2] / "notifications.log").read_text(encoding="utf-8")
         self.assertIn("Дайджест запущен по расписанию", log)
+
+    def test_digest_runs_with_chosen_options(self):
+        """Параметры запуска из «Настроек» становятся настройками выпуска (PRD-030)."""
+        self.section("stats", {"auto": False})
+        options = {
+            "poster_mode": "local",
+            "draw_images": False,
+            "shorts": True,
+            "review_text": True,
+            "auto_publish": True,
+        }
+        status, body = self.section("schedule", {"enabled": True, "time": "07:00", **options})
+        self.assertEqual(status, 200, body)
+        create = self.studio.create
+        calls = []
+
+        def spy(body):
+            calls.append(body)
+            return create(body)
+
+        with mock.patch.object(self.studio, "create", spy):
+            done = self.studio.scheduler.tick(datetime.combine(TODAY, time(8, 0)))
+        self.assertIn("запущен", done[0])
+        self.assertEqual(calls[0]["settings"], options | {"clips": False})
+        project = self.json("GET", "/api/studio/projects?scenario=digest")[1]["projects"][0]
+        self.settle(project["id"])
+        settings = self.studio.studio.get(project["id"])["settings"]
+        self.assertEqual({k: settings[k] for k in options}, options)
+        self.assertTrue(settings["branding"])  # остальное — по умолчанию сценария
+
+    def test_old_settings_keep_digest_defaults(self):
+        """settings.json без параметров запуска читается с прежним поведением."""
+        from aiplatform.core.settings import DIGEST_RUN, normalize
+
+        plan = normalize({"schedule": {"digest": {"enabled": True, "time": "07:00", "day": "today"}}})["schedule"][
+            "digest"
+        ]
+        self.assertEqual({k: plan[k] for k in DIGEST_RUN}, DIGEST_RUN)
+        base = self.studio.defaults() | self.studio.scenario_defaults("digest")
+        self.assertEqual({k: base[k] for k in DIGEST_RUN}, DIGEST_RUN)
 
     def test_digest_failure_is_reported_and_retried(self):
         self.section("stats", {"auto": False})

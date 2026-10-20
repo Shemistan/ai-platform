@@ -36,6 +36,17 @@ def at(data_dir: Path) -> Settings:
 
 
 DIGEST_DAYS = ("yesterday", "today")  # дайджест по расписанию — за вчера или за сегодня
+# Параметры запуска дайджеста по расписанию (PRD-030): уходят в settings выпуска; по умолчанию —
+# как у дайджеста, созданного руками (обложку ждём свою, картинки рисуем, остальное выключено).
+DIGEST_RUN = {
+    "poster_mode": "upload",
+    "draw_images": True,
+    "clips": False,
+    "shorts": False,
+    "review_text": False,
+    "auto_publish": False,
+}
+POSTER_MODES = ("local", "upload")  # как studio.service.POSTER_MODES
 _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 CLEANUP_DAYS = (7, 14, 30, 60, 90)
 _CHAT = re.compile(r"-?\d+|@\w+")  # личный чат владельца: id или @username
@@ -50,7 +61,7 @@ SCENARIO_IDS = ("digest", "article", "post")  # как studio.service.SCENARIOS
 def _empty() -> dict:
     return {
         "disabled": {**{kind: [] for kind in KINDS}, "voices": {}},
-        "schedule": {"digest": {"enabled": False, "time": "07:00", "day": "yesterday"}},
+        "schedule": {"digest": {"enabled": False, "time": "07:00", "day": "yesterday", **DIGEST_RUN}},
         "notify": {"enabled": False, "telegram_chat": ""},
         "stats": {"auto": True},
         # Уборка (core/cleanup.py): days — задачи вкладок, кэш, архив и загрузки старше; trim_days —
@@ -126,6 +137,10 @@ def normalize(raw: object) -> dict:
         plan["time"] = digest["time"]
     if digest.get("day") in DIGEST_DAYS:
         plan["day"] = digest["day"]
+    if digest.get("poster_mode") in POSTER_MODES:
+        plan["poster_mode"] = digest["poster_mode"]
+    for name in ("draw_images", "clips", "shorts", "review_text", "auto_publish"):
+        plan[name] = _flag(digest.get(name), DIGEST_RUN[name])
     notify = _section(raw, "notify")
     chat = notify.get("telegram_chat")
     out["notify"]["telegram_chat"] = chat.strip() if isinstance(chat, str) and _CHAT.fullmatch(chat.strip()) else ""
