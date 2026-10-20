@@ -40,6 +40,8 @@ SADTALKER_TORCH="torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2"
 # Расшифровка монтажа (вкладка «Монтаж»): Whisper и Qwen3-ASR на mlx-audio в своём окружении.
 MLX_AUDIO_VERSION=0.5.8
 # Моушн-графика монтажа: HyperFrames CLI (Apache-2.0) — HTML + GSAP → прозрачный MOV; нужен Node 22+.
+# В npm CLI зовётся `hyperframes` (bin/hyperframes.mjs); `@hyperframes/*` — библиотеки монорепо, не CLI.
+HYPERFRAMES_PKG=hyperframes
 HYPERFRAMES_VERSION=0.8.172
 
 DEFAULT_MODELS_DIR="/Volumes/External SSD/local_models"
@@ -54,7 +56,7 @@ SADTALKER_SRC="$AVATAR_HOME/sadtalker-$(printf %.7s "$SADTALKER_REVISION")"
 MONTAGE_HOME="${MONTAGE_HOME:-$HOME/.local/share/montage}"
 ASR_ENV="$MONTAGE_HOME/mlx-audio-$MLX_AUDIO_VERSION/.venv"
 HYPERFRAMES_HOME="$MONTAGE_HOME/hyperframes-$HYPERFRAMES_VERSION"
-HYPERFRAMES_BIN="$HYPERFRAMES_HOME/node_modules/@hyperframes/cli/bin/hyperframes.mjs"
+HYPERFRAMES_BIN="$HYPERFRAMES_HOME/node_modules/$HYPERFRAMES_PKG/bin/hyperframes.mjs"
 GEMMA_NAME="${GEMMA_REPO#*/}"
 GEMMA_CACHE="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--mlx-community--$GEMMA_NAME"
 SETTINGS=local.mk
@@ -437,8 +439,9 @@ install_hyperframes() {
   if [ ! -f "$HYPERFRAMES_BIN" ]; then
     echo "→ ставлю HyperFrames $HYPERFRAMES_VERSION в $HYPERFRAMES_HOME (с ним — headless Chrome)"
     mkdir -p "$HYPERFRAMES_HOME"
-    npm install --silent --prefix "$HYPERFRAMES_HOME" "@hyperframes/cli@$HYPERFRAMES_VERSION" ||
-      fail "@hyperframes/cli@$HYPERFRAMES_VERSION не встал (нужна сеть к npm)"
+    # --loglevel error: причина отказа (404, сеть, права) видна сразу, а не только в ~/.npm/_logs.
+    npm install --loglevel error --no-fund --no-audit --prefix "$HYPERFRAMES_HOME" "$HYPERFRAMES_PKG@$HYPERFRAMES_VERSION" ||
+      fail "$HYPERFRAMES_PKG@$HYPERFRAMES_VERSION не встал — причина в выводе npm выше"
   fi
   node "$HYPERFRAMES_BIN" doctor || echo "⚠ hyperframes doctor недоволен — вывод выше"
   echo "✓ hyperframes установлен"

@@ -70,6 +70,13 @@ class CatalogTest(unittest.TestCase):
         for name in ("MFLUX_VERSION=", "FLUX2_VERSION=", "LTX_VERSION=", "WAN_REVISION=", "SADTALKER_REVISION="):
             self.assertIn(name, text)
 
+    def test_hyperframes_is_the_unscoped_npm_package(self):
+        """CLI в npm — `hyperframes`; `@hyperframes/cli` не существует (DX-019)."""
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("HYPERFRAMES_PKG=hyperframes\n", text)
+        self.assertNotIn("@hyperframes/cli", text)
+        self.assertIn("node_modules/$HYPERFRAMES_PKG/bin/hyperframes.mjs", text)
+
 
 @unittest.skipUnless(platform.system() == "Darwin" and platform.machine() == "arm64", "только Mac на Apple Silicon")
 @unittest.skipUnless(shutil.which("uv"), "нет uv")
@@ -270,6 +277,67 @@ class WhisperProcessorTest(unittest.TestCase):
             proc = run("whisper-large-v3-turbo", cwd=root, env=env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(len(calls.read_text().splitlines()), 1, "второй прогон ничего не качает")
+
+
+@unittest.skipUnless(platform.system() == "Darwin" and platform.machine() == "arm64", "только Mac на Apple Silicon")
+@unittest.skipUnless(shutil.which("uv"), "нет uv")
+class HyperframesTest(unittest.TestCase):
+    """`hyperframes` ставится npm под Node 22+, local.mk получает полный путь к node и bin (DX-019, на фейках)."""
+
+    def test_installs_unscoped_package_and_writes_local_mk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_tree(root)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            calls = root / "npm-calls"
+            (fake_bin / "node").write_text(
+                '#!/bin/sh\ncase "$1" in --version) echo v22.21.1;; -p) echo 22;; *) exit 0;; esac\n'
+            )
+            # npm запоминает аргументы и «ставит» пакет туда, куда просит --prefix.
+            (fake_bin / "npm").write_text(
+                f'#!/bin/sh\necho "$*" >> "{calls}"\nprefix=""\n'
+                'while [ $# -gt 1 ]; do [ "$1" = --prefix ] && prefix="$2"; shift; done\n'
+                'bin="$prefix/node_modules/hyperframes/bin"\nmkdir -p "$bin" && touch "$bin/hyperframes.mjs"\n'
+            )
+            for name in ("node", "npm"):
+                (fake_bin / name).chmod(0o755)
+            montage_home = root / "montage"
+            env = {
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "AIP_MODELS_DIR": str(root / "models"),
+                "MONTAGE_HOME": str(montage_home),
+            }
+
+            proc = run("hyperframes", cwd=root, env=env)
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            call = calls.read_text().split()
+            self.assertEqual(call[-1], "hyperframes@0.8.172")
+            self.assertNotIn("--silent", call, "вывод npm нужен, чтобы видеть причину отказа")
+            bin_path = montage_home / "hyperframes-0.8.172" / "node_modules" / "hyperframes" / "bin" / "hyperframes.mjs"
+            expected = f'AIP_MONTAGE_HYPERFRAMES_CMD="{fake_bin / "node"}" "{bin_path}"'
+            self.assertIn(expected, (root / "local.mk").read_text())
+
+            proc = run("hyperframes", cwd=root, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(len(calls.read_text().splitlines()), 1, "второй прогон ничего не ставит")
+
+    def test_old_node_is_refused_before_npm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_tree(root)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "node").write_text('#!/bin/sh\ncase "$1" in --version) echo v20.20.0;; -p) echo 20;; esac\n')
+            (fake_bin / "node").chmod(0o755)
+            env = {"PATH": f"{fake_bin}:{os.environ['PATH']}", "AIP_MODELS_DIR": str(root / "models"),
+                   "MONTAGE_HOME": str(root / "montage")}  # fmt: skip
+
+            proc = run("hyperframes", cwd=root, env=env)
+
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("нужен Node 22+, сейчас v20.20.0", proc.stderr)
 
 
 if __name__ == "__main__":
