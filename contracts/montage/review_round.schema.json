@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/review_round",
+  "title": "review_round",
+  "description": "Раунд ревью (ReviewRound): стадии analyze → compare, счётчики замечаний, затронутые сцены, решение.",
+  "type": "object",
+  "required": [
+    "n",
+    "round_id",
+    "base_version",
+    "state",
+    "stages",
+    "counts",
+    "started_at"
+  ],
+  "properties": {
+    "n": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "round_id": {
+      "type": "string"
+    },
+    "base_version": {
+      "type": "string"
+    },
+    "candidate_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "preparing",
+        "reviewing",
+        "consolidating",
+        "awaiting_approval",
+        "repairing",
+        "rendering",
+        "validating",
+        "comparing",
+        "awaiting_decision",
+        "accepted",
+        "rejected",
+        "completed",
+        "paused",
+        "cancelled",
+        "failed",
+        "blocked"
+      ]
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "analyze",
+              "consolidate",
+              "approve",
+              "repair",
+              "render",
+              "validate",
+              "compare"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "done",
+              "failed",
+              "skipped",
+              "awaiting",
+              "blocked"
+            ]
+          },
+          "started_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "open": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "accepted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rejected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deferred": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fixed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invalid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "scenes_touched": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "frames_changed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "qa_delta": {
+      "type": "object"
+    },
+    "decision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "decision_reason": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "finished_at": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "job_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "examples": [
+    {
+      "n": 1,
+      "round_id": "round-001",
+      "base_version": "V0",
+      "candidate_version": "V1",
+      "state": "accepted",
+      "stages": [
+        {
+          "id": "analyze",
+          "status": "done",
+          "started_at": 1.0,
+          "finished_at": 2.0,
+          "detail": ""
+        }
+      ],
+      "counts": {
+        "open": 0,
+        "accepted": 2,
+        "rejected": 1,
+        "deferred": 0,
+        "fixed": 2,
+        "failed": 0,
+        "invalid": 0,
+        "total": 3
+      },
+      "scenes_touched": [
+        "scene_001"
+      ],
+      "frames_changed": [
+        {
+          "from": 300,
+          "to": 450
+        }
+      ],
+      "qa_delta": {
+        "error": 0,
+        "warning": -1
+      },
+      "decision": "accepted",
+      "decision_reason": "",
+      "started_at": 1.0,
+      "finished_at": 10.0,
+      "attempt": 1,
+      "job_ids": [
+        "run-r1-render"
+      ]
+    }
+  ]
+}

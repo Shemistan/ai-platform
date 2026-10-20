@@ -1,0 +1,357 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/review_issue",
+  "title": "review_issue",
+  "description": "Замечание ревью (ITERATIVE_REVIEW_SPEC §5): роль, категория, серьёзность, evidence, структурная правка change, статус.",
+  "type": "object",
+  "required": [
+    "issue_id",
+    "round_id",
+    "revision_id",
+    "reviewer_role",
+    "category",
+    "severity",
+    "confidence",
+    "scene_ids",
+    "start_frame",
+    "end_frame",
+    "evidence",
+    "observation",
+    "impact",
+    "proposed_change",
+    "acceptance_check",
+    "risk",
+    "estimated_cost",
+    "status",
+    "change",
+    "evidence_type"
+  ],
+  "properties": {
+    "issue_id": {
+      "type": "string",
+      "pattern": "^rev-\\d{3}-[a-z_]+-\\d{3}$"
+    },
+    "round_id": {
+      "type": "string",
+      "pattern": "^round-\\d{3}$"
+    },
+    "revision_id": {
+      "type": "string",
+      "pattern": "^V\\d+$"
+    },
+    "reviewer_role": {
+      "type": "string"
+    },
+    "reviewer_roles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "category": {
+      "type": "string"
+    },
+    "rank": {
+      "type": "string",
+      "enum": [
+        "technical",
+        "factual",
+        "clarity",
+        "aesthetic"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "blocker",
+        "major",
+        "minor",
+        "suggestion"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "scene_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "start_frame": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "end_frame": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "observed_video",
+              "observed_audio",
+              "transcript",
+              "source_document",
+              "heuristic"
+            ]
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "frame": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "frame_end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "t": {
+            "type": "number",
+            "minimum": 0
+          },
+          "words": {
+            "type": "object",
+            "required": [
+              "from",
+              "to"
+            ],
+            "properties": {
+              "from": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "to": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "doc": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "value": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "minItems": 1
+    },
+    "evidence_type": {
+      "type": "string",
+      "enum": [
+        "observed_video",
+        "observed_audio",
+        "transcript",
+        "source_document",
+        "heuristic"
+      ]
+    },
+    "observation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "impact": {
+      "type": "string"
+    },
+    "proposed_change": {
+      "type": "string"
+    },
+    "acceptance_check": {
+      "type": "string"
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "estimated_cost": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "render_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "assets": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "accepted",
+        "rejected",
+        "deferred",
+        "fixed",
+        "failed",
+        "regressed",
+        "invalid"
+      ]
+    },
+    "status_reason": {
+      "type": "string"
+    },
+    "change": {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "scene_extend",
+            "scene_shorten",
+            "scene_shift",
+            "scene_disable",
+            "scene_props",
+            "caption_words",
+            "cut_words",
+            "none"
+          ]
+        },
+        "scene_id": {
+          "type": "string"
+        },
+        "frames": {
+          "type": "integer"
+        },
+        "props": {
+          "type": "object"
+        },
+        "max_words": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "from": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "degraded": {
+      "type": "boolean"
+    },
+    "fingerprint": {
+      "type": "string"
+    },
+    "merged_from": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "conflicts_with": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "at",
+          "by",
+          "text"
+        ],
+        "properties": {
+          "at": {
+            "type": "number",
+            "minimum": 0
+          },
+          "by": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "examples": [
+    {
+      "issue_id": "rev-002-motion_director-014",
+      "round_id": "round-002",
+      "revision_id": "V1",
+      "reviewer_role": "motion_director",
+      "reviewer_roles": [
+        "motion_director"
+      ],
+      "category": "motion_timing",
+      "rank": "clarity",
+      "severity": "major",
+      "confidence": 0.91,
+      "scene_ids": [
+        "scene_014"
+      ],
+      "start_frame": 1340,
+      "end_frame": 1450,
+      "evidence": [
+        {
+          "type": "observed_video",
+          "artifact_id": "preview_V1",
+          "frame": 1380
+        }
+      ],
+      "evidence_type": "observed_video",
+      "observation": "Анимация заканчивается раньше пояснения",
+      "impact": "Потеря синхронизации смысла и изображения",
+      "proposed_change": "Удлинить hold и сдвинуть exit до конца реплики",
+      "acceptance_check": "Exit начинается не ранее последнего ключевого слова",
+      "risk": "low",
+      "estimated_cost": {
+        "render_seconds": 30,
+        "assets": 1
+      },
+      "status": "proposed",
+      "change": {
+        "op": "scene_extend",
+        "scene_id": "scene_014",
+        "frames": 45
+      },
+      "degraded": false,
+      "fingerprint": "motion_timing:scene_014:scene_extend",
+      "merged_from": [],
+      "conflicts_with": [],
+      "comments": [],
+      "version": 1
+    }
+  ]
+}

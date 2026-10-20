@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import queue
 import re
 import shutil
@@ -37,7 +38,9 @@ from aiplatform.montage import (
     knowledge,
     motion,
     narrative,
+    observe,
     plan,
+    progress,
     qa,
     render,
     revisions,
@@ -53,6 +56,7 @@ from aiplatform.montage import (
 from aiplatform.montage import schemas as montage_schemas
 from aiplatform.montage import style as style_module
 from aiplatform.montage.config import MontageConfig
+from aiplatform.montage.review import engine as review_engine
 from aiplatform.studio import llm
 
 SCHEMA = 2  # 2: mode и approvals вместо галочки auto (PRD-027)
@@ -91,6 +95,7 @@ DEFAULT_OPTIONS = {
     "check": True,  # повторная расшифровка результата и поиск пропущенного
     "motion": False,  # моушн-вставки (HyperFrames)
     "max_pause": edl.MAX_PAUSE_S,
+    "caption_words": 3,  # слов в куске субтитров (1–3); ревью может укоротить (PRD-028)
 }
 
 
@@ -150,6 +155,11 @@ def clean_options(payload: object, base: dict | None = None) -> dict:
         if not isinstance(value, int | float) or isinstance(value, bool) or not 0.3 <= value <= 3:
             raise ValidationError("Самая длинная пауза — от 0,3 до 3 секунд.")
         out["max_pause"] = float(value)
+    if "caption_words" in data:
+        value = data["caption_words"]
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 3:
+            raise ValidationError("Слов в куске субтитров — от 1 до 3.")
+        out["caption_words"] = value
     return out
 
 
@@ -162,12 +172,22 @@ class MontageProjects:
         self.config = config
         self._gate = gate
         self._url = url_base
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # повторный вход: события пишутся изнутри _stage/_enqueue под замком
         self._projects: dict[str, dict] = {}
         self._cancels: dict[str, threading.Event] = {}
         self._queue: queue.Queue[tuple[str, str, str] | None] = queue.Queue()
         config.projects_dir.mkdir(parents=True, exist_ok=True)
         self.load_problems: list[str] = []
+        self.review = review_engine.Review(self)  # итеративное ревью (PRD-028)
+        self.observe = observe.Observer(self)  # прогресс, события, SSE (PRD-028 §14)
+        # Наблюдаемость (PRD-028 §14): события проекта, статистика стадий машины, последний подпроцесс.
+        self._events: dict[str, progress.Events] = {}
+        self._stats = progress.Stats(config.data_dir / "stats.json")
+        self._jobs: dict[str, dict] = {}
+        self._job_seq = 0
+        self._current: dict | None = None  # проект, который воркер исполняет сейчас (jobs подпроцессов)
+        self.retries = 0
+        self.closing = threading.Event()
         self._load()
         self._worker = threading.Thread(target=self._work, name="montage-worker", daemon=True)
         self._worker.start()
@@ -721,6 +741,13 @@ class MontageProjects:
             (folder / name).unlink(missing_ok=True)
         self._reset_gate(project, "storyboard")
 
+    def _cancel_quiet(self, pid: str) -> None:
+        """Прервать идущее действие, не меняя статус проекта (пауза ревью): воркер сам доведёт статус."""
+        project = self._projects.get(pid)
+        event = self._cancels.get(pid)
+        if project and project["status"] in ACTIVE and event:
+            event.set()
+
     def cancel(self, pid: str) -> dict | None:
         with self._lock:
             project = self._projects.get(pid)
@@ -748,11 +775,14 @@ class MontageProjects:
         return True
 
     def close(self) -> None:
+        self.closing.set()
         with self._lock:
             for event in self._cancels.values():
                 event.set()
         self._queue.put(None)
         self._worker.join(timeout=15)
+        for events in self._events.values():
+            events.close()
 
     # ---------- уроки ----------
 
@@ -790,7 +820,7 @@ class MontageProjects:
                 raise Conflict("В режиме «Вручную» план ИИ не строится — правь вырезки в тексте.")
             if action == "scene" and not (self.dir(pid) / "storyboard.json").is_file():
                 raise Conflict("Раскадровки ещё нет.")
-            if action == "export" and not (self.dir(pid) / "output.mp4").is_file():
+            if action in ("export", "review") and not (self.dir(pid) / "output.mp4").is_file():
                 raise Conflict("Ролик ещё не собран.")
             model = asr.get(project["options"]["model"])
             if action == "prepare" and model is not None and model.id in self.config.disabled_models():
@@ -820,7 +850,11 @@ class MontageProjects:
             ids = stages.plan_for(action, project["options"], screen_audio=bool(screen.get("has_audio")),
                                   storyboard=has_board)  # fmt: skip
             project["stages"] = stages.new(ids)
+            project["run_id"] = progress.new_run_id()
+            project.pop("review_round", None)
             self._touch(project)
+            self.emit(project, "run_queued", status="queued", message=f"{action}: в очереди",
+                      metrics={"stages": ids, "queue_depth": self._queue.qsize()})  # fmt: skip
             self._queue.put((pid, action, arg))
             return self._view(project)
 
@@ -856,6 +890,7 @@ class MontageProjects:
                 self._save(project)
             self._projects[project["id"]] = project
             self._cancels[project["id"]] = threading.Event()
+            self.review.on_load(project["id"])
 
     def _history(self, project: dict, action: str, text: str) -> None:
         project.setdefault("history", []).append({"at": time.time(), "action": action, "text": text})
@@ -864,7 +899,10 @@ class MontageProjects:
     def _finish(self, project: dict, status: str, *, error: str | None = None, stage: str | None = None) -> None:
         project["status"] = status
         project["error"] = error
-        stages.finish(project.setdefault("stages", []), status)
+        before = {s["id"]: s["status"] for s in project.setdefault("stages", [])}
+        stages.finish(project["stages"], status)
+        self._stage_events(project, before)
+        self._run_event(project, status, error=error, stage=stage)
         if status == "done":
             project["progress"] = {"stage": "Готово", "percent": 100.0}
         elif status == "review":
@@ -879,7 +917,7 @@ class MontageProjects:
         self._touch(project)
 
     def _stage(self, project: dict, cancel: threading.Event, stage_id: str, percent: float, detail: str = "",
-               *, restart: bool = False) -> None:  # fmt: skip
+               *, restart: bool = False, units: tuple[float, float, str] | None = None) -> None:  # fmt: skip
         """Этап идёт: процент внутри него и деталь; общая строка progress — для списка роликов.
 
         restart — процент этапа можно сбросить (второй круг проверки).
@@ -892,32 +930,166 @@ class MontageProjects:
                 for item in items:
                     if item["id"] == stage_id:
                         item["percent"] = 0.0
+            before = {s["id"]: s["status"] for s in items}
             stages.advance(items, stage_id, percent, detail)
             label = stages.STAGES.get(stage_id, (stage_id, 0))[0]
             project["progress"] = {"stage": f"{label}: {detail}" if detail else label, "percent": stages.overall(items)}
+            self._stage_events(project, before)
+            key = f"{project['id']}:{stage_id}"
+            if percent >= 100 or self.events_of(project["id"]).throttled(key):
+                done, total, unit = units or (round(percent, 1), 100, "percent")
+                self.emit(project, "stage_progress", status="running", stage_id=stage_id, message=detail or label,
+                          progress={"completed_units": done, "total_units": total, "unit": unit})  # fmt: skip
 
     def _ffmpeg_run(self, argv: list[str], cancel: threading.Event, total_s: float,
-                    on_percent: Callable[[float], None], lines: list[str] | None = None) -> list[str]:  # fmt: skip
+                    on_percent: Callable[[float], None], lines: list[str] | None = None,
+                    what: str = "") -> list[str]:  # fmt: skip
         """ffmpeg с -progress: доля обработанного времени к total_s → on_percent; остальное — в lines."""
         lines = [] if lines is None else lines
         argv = [argv[0], "-progress", "pipe:1", "-nostats", *argv[1:]]
+        project = self._project_of_thread()
+        job = self._job_start(project, "ffmpeg", what or Path(argv[-1]).name, kind="render")
 
         def on_line(line: str) -> None:
             text = line.strip()
             found = _FF_TIME.match(text)
             if found:
                 if total_s > 0:
-                    on_percent(min(100.0, int(found[1]) / 1e6 / total_s * 100))
+                    pct = min(100.0, int(found[1]) / 1e6 / total_s * 100)
+                    on_percent(pct)
+                    self._job_progress(project, job, pct, total_s)
             elif text and not _FF_KEY.match(text):
                 lines.append(line)
+            else:
+                metrics = progress.ffmpeg_metrics(text)
+                if metrics and job:
+                    job["metrics"].update(metrics)
 
-        runner.run(argv, on_line, cancel, kind="render")
+        try:
+            runner.run(argv, on_line, cancel, kind="render")
+        except runner.RunFailed as exc:
+            self._job_end(project, job, "failed", str(exc))
+            raise
+        except runner.Canceled:
+            self._job_end(project, job, "cancelled", "")
+            raise
+        self._job_end(project, job, "completed", "")
         return lines
 
     def _note(self, project: dict, line: str) -> None:
         with self._lock:
             project["log"].append(line.rstrip()[:500])
             del project["log"][:-LOG_TAIL]
+        job = self._jobs.get(project["id"]) or {}
+        self.emit(project, "log", message=line.rstrip(), job_id=job.get("job_id") if job.get("open") else None)
+
+    # ---------- наблюдаемость (PRD-028 §14): события проекта ----------
+
+    def events_of(self, pid: str) -> progress.Events:
+        with self._lock:
+            found = self._events.get(pid)
+            if found is None:
+                found = self._events[pid] = progress.Events(self.dir(pid), pid)
+            return found
+
+    def emit(self, project: dict | None, type_: str, **fields) -> dict | None:
+        """Событие конвейера; run/phase/round — из проекта, stage — идущая стадия, если не задана."""
+        if project is None:
+            return None
+        try:
+            fields.setdefault("run_id", project.get("run_id"))
+            fields.setdefault("phase_id", progress.PHASES.get(project.get("action") or "", project.get("action")))
+            fields.setdefault("round_id", project.get("review_round"))
+            if "stage_id" not in fields:
+                current = stages.current(project.get("stages") or [])
+                fields["stage_id"] = current["id"] if current else None
+            if fields.get("status") in ("failed",) and "severity" not in fields:
+                fields["severity"] = "error"
+            return self.events_of(project["id"]).append(type_, **fields)
+        except Exception as exc:  # noqa: BLE001 — журнал не должен ронять действие
+            log.event("montage.event_failed", level=logging.WARNING, error=str(exc)[:200])
+            return None
+
+    def _stage_events(self, project: dict, before: dict[str, str]) -> None:
+        """Переходы стадий после advance/finish: started/finished, замер длительности в статистику машины."""
+        for s in project.get("stages") or []:
+            was, now = before.get(s["id"]), s["status"]
+            if was == now:
+                continue
+            label = stages.STAGES.get(s["id"], (s["id"], 0))[0]
+            if now == "running":
+                self.emit(project, "stage_started", status="running", stage_id=s["id"], message=label)
+            elif now in ("done", "failed", "canceled", "skipped"):
+                status = {"done": "completed", "canceled": "cancelled"}.get(now, now)
+                self.emit(project, "stage_finished", status=status, stage_id=s["id"], message=label,
+                          reason=s.get("detail") if now == "failed" else "",
+                          progress={"completed_units": 100 if now == "done" else round(s["percent"], 1),
+                                    "total_units": 100, "unit": "percent"})  # fmt: skip
+                if now == "done" and s.get("started_at") and s.get("finished_at"):
+                    self._stats.observe(s["id"], s["finished_at"] - s["started_at"], s["weight"])
+
+    def _run_event(self, project: dict, status: str, *, error: str | None, stage: str | None) -> None:
+        kind, event_status = {
+            "done": ("run_finished", "completed"), "review": ("approval_required", "awaiting_approval"),
+            "waiting_approval": ("approval_required", "awaiting_approval"), "failed": ("run_failed", "failed"),
+            "canceled": ("run_cancelled", "cancelled"), "blocked": ("run_blocked", "blocked"),
+        }.get(status, ("run_finished", "completed"))  # fmt: skip
+        if project.get("action") == "review":  # проект «готов», а запуск ревью может ждать человека или паузу
+            run = self.review.open_run(project["id"])
+            if run is not None:
+                kind, event_status = {
+                    "awaiting_approval": ("approval_required", "awaiting_approval"),
+                    "awaiting_decision": ("approval_required", "awaiting_approval"),
+                    "paused": ("run_finished", "paused"), "blocked": ("run_blocked", "blocked"),
+                    "failed": ("run_failed", "failed"), "cancelled": ("run_cancelled", "cancelled"),
+                }.get(run["state"], ("run_finished", "completed"))  # fmt: skip
+                if run["state"] in review_engine.state.ACTIVE:
+                    event_status = "running"
+                stage = run.get("blocking_reason") or stage
+        self.emit(project, kind, status=event_status, stage_id=None, message=project["progress"].get("stage", ""),
+                  reason=(error or stage or "") if event_status != "completed" else "",
+                  severity="error" if status == "failed" else "info")  # fmt: skip
+
+    def _project_of_thread(self) -> dict | None:
+        return self._current if threading.current_thread() is self._worker else None
+
+    def _job_start(self, project: dict | None, agent: str, what: str, *, kind: str) -> dict | None:
+        if project is None:
+            return None
+        with self._lock:
+            self._job_seq += 1
+            job = {"job_id": f"{project.get('run_id') or 'run'}-job{self._job_seq}", "agent_id": agent, "kind": kind,
+                   "metrics": {}, "open": True, "started": time.time(), "what": what, "pid": project["id"]}  # fmt: skip
+            self._jobs[project["id"]] = job
+        self.emit(project, "job_started", status="running", job_id=job["job_id"], agent_id=agent, message=what,
+                  attempt=1)  # fmt: skip
+        return job
+
+    def _job_progress(self, project: dict | None, job: dict | None, percent: float, total_s: float) -> None:
+        if project is None or job is None:
+            return
+        if not self.events_of(project["id"]).throttled(job["job_id"]):
+            return
+        self.emit(project, "job_progress", status="running", job_id=job["job_id"], agent_id=job["agent_id"],
+                  message=job["what"], attempt=1,
+                  progress={"completed_units": round(percent / 100 * total_s, 2), "total_units": round(total_s, 2),
+                            "unit": "seconds"}, metrics=dict(job["metrics"]))  # fmt: skip
+
+    def _job_end(self, project: dict | None, job: dict | None, status: str, error: str, *,
+                 metrics: dict | None = None) -> None:  # fmt: skip
+        if project is None or job is None:
+            return
+        job["open"] = False
+        elapsed = round(time.time() - job["started"], 2)
+        if status == "failed":
+            self.retries += 1
+        self.emit(project, "job_failed" if status == "failed" else "job_finished", status=status, job_id=job["job_id"],
+                  agent_id=job["agent_id"], message=job["what"], reason=error, attempt=1,
+                  metrics={**job["metrics"], **(metrics or {}), "elapsed_s": elapsed})  # fmt: skip
+
+    def last_job(self, pid: str) -> dict | None:
+        job = self._jobs.get(pid)
+        return {"job_id": job["job_id"], "metrics": job["metrics"], "open": job["open"]} if job else None
 
     def _set_plan_summary(self, project: dict, words: list[dict], cuts: list[dict], layout: list[dict]) -> None:
         duration = project["sources"]["head"]["duration"]
@@ -938,7 +1110,12 @@ class MontageProjects:
                 project["status"] = "running"
                 project["progress"] = {"stage": "Запуск", "percent": 0.0}
                 self._touch(project)
-            self._run(project, action, arg, cancel)
+                self.emit(project, "run_started", status="running", message=f"{action}: запуск")
+            self._current = project
+            try:
+                self._run(project, action, arg, cancel)
+            finally:
+                self._current = None
 
     def _run(self, project: dict, action: str, arg: str, cancel: threading.Event) -> None:
         mode = project["options"]["mode"]
@@ -971,13 +1148,19 @@ class MontageProjects:
             elif action == "export":
                 self._export(project, json.loads(arg), cancel)
                 status = "done"
+            elif action == "review":  # раунды ревью (PRD-028): ролик остаётся готовым, запуск живёт в review/
+                stage_text = self.review.run(project, arg, cancel)
+                status = "done"
             elif action in ("story", "scene"):
                 status, stage_text = "waiting_approval", "Ждёт подтверждения раскадровки"
             else:
                 status = "review"
         except runner.Canceled:
             with self._lock:
-                self._finish(project, "canceled")
+                if action == "review":
+                    self._finish(project, "done", stage=self.review.after_cancel(arg))
+                else:
+                    self._finish(project, "canceled")
         except (runner.RunFailed, llm.StudioError, ValueError) as exc:
             with self._lock:
                 self._finish(project, "failed", error=str(exc))
@@ -1065,7 +1248,16 @@ class MontageProjects:
 
         with self._gate.hold(GPU_OWNER, on_wait, cancel):
             self._stage(project, cancel, stage, lo, f"{what}{model.label}")
-            runner.run(argv, on_line, cancel, missing_hint=INSTALL_HINT, kind="asr")
+            job = self._job_start(project, "asr", f"{what}{model.label}", kind="asr")
+            try:
+                runner.run(argv, on_line, cancel, missing_hint=INSTALL_HINT, kind="asr")
+            except runner.RunFailed as exc:
+                self._job_end(project, job, "failed", str(exc))
+                raise
+            except runner.Canceled:
+                self._job_end(project, job, "cancelled", "")
+                raise
+            self._job_end(project, job, "completed", "")
         try:
             data = json.loads(out.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
@@ -1135,8 +1327,17 @@ class MontageProjects:
 
     def _llm(self, prompt: str, project: dict, cancel: threading.Event, *, role: str = "", ids=()) -> object:
         """Вызов LLM; с role — запись в журнал решений (модель, версия промпта, хэши)."""
-        answer = llm.complete(prompt, cmd=self.config.llm_cmd, cancel=cancel)
-        data = llm.extract_json(answer)
+        job = self._job_start(project, role or "llm", f"LLM: {role or 'запрос'}", kind="llm")
+        try:
+            answer = llm.complete(prompt, cmd=self.config.llm_cmd, cancel=cancel)
+            data = llm.extract_json(answer)
+        except llm.StudioError as exc:
+            self._job_end(project, job, "failed", str(exc))
+            raise
+        except runner.Canceled:
+            self._job_end(project, job, "cancelled", "")
+            raise
+        self._job_end(project, job, "completed", "", metrics={"model": " ".join(self.config.llm_cmd[-2:])})
         if role:
             decisions.record(self.dir(project["id"]), role, f"{role}:llm", model=" ".join(self.config.llm_cmd),
                              prompt=prompt, inputs=prompt, output=data, ids=ids)  # fmt: skip
@@ -1327,6 +1528,15 @@ class MontageProjects:
             progress=lambda detail, percent: self._stage(project, cancel, "scenes", percent * 0.9, detail),
         )  # fmt: skip
         self._write_storyboard(project, items, source=board.get("source", "llm"))
+        for scene in items:
+            if not scene.get("enabled", True):
+                continue
+            status = {"rendered": "completed", "failed": "failed", "blocked": "blocked"}.get(scene["status"], "skipped")
+            severity = "error" if status == "failed" else "warning" if status == "blocked" else "info"
+            made = [f"scenes/{scene['id']}/{scene['hash']}.mov"] if status == "completed" else []
+            self.emit(project, "scene_rendered", status=status, stage_id="scenes", task_id=scene["id"],
+                      message=f"{scene['id']}: {scene['template_id']} — {scene['status']}",
+                      reason=scene.get("error") or "", severity=severity, artifact_ids=made)  # fmt: skip
         summary = storyboard.summary(items)
         blocked = [s for s in items if s["status"] == "blocked"]
         if blocked:
@@ -1386,7 +1596,7 @@ class MontageProjects:
         else:
             stage_id = "final"
         # Таймлайн-манифест (§5.7): финал берёт наложения из него, а не из раскадровки напрямую.
-        captions = render.chunks(out_words)
+        captions = render.chunks(out_words, max_words=self._caption_words(project))
         manifest = timeline.build(tm, board_scenes, captions, has_screen=bool(project["sources"].get("screen")),
                                   inserts=inserts)  # fmt: skip
         problems = timeline.check(manifest)
@@ -1542,7 +1752,7 @@ class MontageProjects:
         self._ffmpeg(["-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(folder / "joined.mp4")],
                      cancel, "склейка", total_s, lambda pct: step("join", pct))  # fmt: skip
         out_words = edl.output_words(words, result)
-        items = render.chunks(out_words)
+        items = render.chunks(out_words, max_words=self._caption_words(project))
         atomic_write(folder / "subtitles.srt", render.srt(items))
         atomic_write(folder / "subtitles.vtt", render.vtt(items))
         self._final(project, out_words, [], cancel, stage=None if not rebuild else ("check", 90, 100, "пересборка"))
@@ -1556,7 +1766,8 @@ class MontageProjects:
         if project["options"]["subtitles"]:
             if media.has_filter(self.config.ffmpeg, "subtitles"):
                 ass = folder / "subtitles.ass"
-                atomic_write(ass, render.ass(render.chunks(out_words), self.config.font))
+                chunks = render.chunks(out_words, max_words=self._caption_words(project))
+                atomic_write(ass, render.ass(chunks, self.config.font))
             else:
                 self._note(project, "Субтитры в кадр пропущены: в ffmpeg нет фильтра subtitles (нужен ffmpeg-full).")
         self._stage(project, cancel, stage_id, lo, detail)
@@ -1571,6 +1782,10 @@ class MontageProjects:
         for line in lines:
             self._note(project, line)
         tmp.replace(folder / "output.mp4")
+
+    @staticmethod
+    def _caption_words(project: dict) -> int:
+        return int(project["options"].get("caption_words") or 3)
 
     def _note_line(self, project: dict) -> Callable[[str], None]:
         return lambda line: self._note(project, line) if line.strip() else None

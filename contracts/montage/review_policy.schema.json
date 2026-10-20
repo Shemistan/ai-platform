@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/review_policy",
+  "title": "review_policy",
+  "description": "Настройки запуска ревью (ITERATIVE_REVIEW_SPEC §2): раунды, режим, профиль, бюджеты, защита.",
+  "type": "object",
+  "required": [
+    "max_rounds",
+    "mode",
+    "review_profile",
+    "allow_narrative_edits",
+    "stop_when_no_material_gain"
+  ],
+  "properties": {
+    "enabled": {
+      "type": "boolean"
+    },
+    "max_rounds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "manual_approval",
+        "auto_safe",
+        "autonomous"
+      ]
+    },
+    "review_profile": {
+      "type": "string",
+      "enum": [
+        "balanced",
+        "educational",
+        "dynamic_youtube",
+        "minimalist"
+      ]
+    },
+    "quality_target": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "max_gpu_minutes": {
+      "type": "number",
+      "minimum": 0
+    },
+    "max_wall_time_minutes": {
+      "type": "number",
+      "minimum": 0
+    },
+    "max_new_assets": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_render_attempts_per_issue": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "allow_narrative_edits": {
+      "type": "boolean"
+    },
+    "protected_ranges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "locked_scenes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "protected_claims": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reviewer_roles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stop_when_no_material_gain": {
+      "type": "boolean"
+    }
+  },
+  "examples": [
+    {
+      "enabled": true,
+      "max_rounds": 2,
+      "mode": "manual_approval",
+      "review_profile": "balanced",
+      "quality_target": 0.8,
+      "max_gpu_minutes": 30,
+      "max_wall_time_minutes": 60,
+      "max_new_assets": 10,
+      "max_render_attempts_per_issue": 2,
+      "allow_narrative_edits": false,
+      "protected_ranges": [
+        {
+          "from": 0,
+          "to": 12
+        }
+      ],
+      "locked_scenes": [
+        "scene_001"
+      ],
+      "protected_claims": [],
+      "reviewer_roles": [
+        "technical_qa",
+        "motion_director"
+      ],
+      "stop_when_no_material_gain": true
+    }
+  ]
+}

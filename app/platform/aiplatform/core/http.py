@@ -217,6 +217,51 @@ class Request:
         if not self.head:
             h.wfile.write(data)
 
+    def send_sse(self, chunks, *, headers: dict[str, str] | None = None) -> None:
+        """Server-Sent Events: заголовки потока, затем каждый chunk (готовый текст `id:/event:/data:`
+        или комментарий `: ping`) пишется и сбрасывается; соединение закрывается после генератора.
+        Обрыв клиента (BrokenPipe) — тихий выход. Тело без Content-Length: `Connection: close`."""
+        h = self._h
+        self.started = True
+        h.send_response(HTTPStatus.OK)
+        h.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        h.send_header("Cache-Control", "no-store")
+        h.send_header("Connection", "close")
+        h.send_header("X-Accel-Buffering", "no")
+        for name, value in (headers or {}).items():
+            h.send_header(name, value)
+        h.end_headers()
+        h.close_connection = True
+        if self.head:
+            return
+        try:
+            for chunk in chunks:
+                h.wfile.write(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
+                h.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def send_text_stream(self, chunks, ctype: str, *, attachment: str | None = None) -> None:
+        """Текст кусками без Content-Length (экспорт логов): `Connection: close`, обрыв клиента — тихо."""
+        h = self._h
+        self.started = True
+        h.send_response(HTTPStatus.OK)
+        h.send_header("Content-Type", f"{ctype}; charset=utf-8")
+        h.send_header("Cache-Control", "no-store")
+        h.send_header("Connection", "close")
+        if attachment:
+            h.send_header("Content-Disposition", f'attachment; filename="{attachment}"')
+        h.end_headers()
+        h.close_connection = True
+        if self.head:
+            return
+        try:
+            for chunk in chunks:
+                h.wfile.write(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
+            h.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
     def redirect(self, location: str) -> None:
         h = self._h
         self.started = True

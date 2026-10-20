@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/review_run",
+  "title": "review_run",
+  "description": "Запуск итеративного ревью (ReviewRun, ITERATIVE_REVIEW_SPEC §9–10): политика, состояние, раунды, версии, бюджет, чекпоинт, optimistic lock.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "project_id",
+    "schema_version",
+    "state",
+    "policy",
+    "round",
+    "rounds",
+    "versions",
+    "budget",
+    "created_at",
+    "updated_at",
+    "lock",
+    "checkpoint"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "preparing",
+        "reviewing",
+        "consolidating",
+        "awaiting_approval",
+        "repairing",
+        "rendering",
+        "validating",
+        "comparing",
+        "awaiting_decision",
+        "accepted",
+        "rejected",
+        "completed",
+        "paused",
+        "cancelled",
+        "failed",
+        "blocked"
+      ]
+    },
+    "policy": {
+      "type": "object"
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "rounds": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "versions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "accepted_version": {
+      "type": "string"
+    },
+    "selected_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "budget": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "gpu_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "wall_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "new_assets": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "llm_calls": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "stop_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "blocking_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "updated_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "started_at": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "finished_at": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "lock": {
+      "type": "object",
+      "required": [
+        "project_updated_at"
+      ],
+      "properties": {
+        "project_updated_at": {
+          "type": "number",
+          "minimum": 0
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "required": [
+        "state",
+        "at"
+      ],
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "at": {
+          "type": "number",
+          "minimum": 0
+        },
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "at",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "at": {
+            "type": "number",
+            "minimum": 0
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object"
+    }
+  },
+  "examples": [
+    {
+      "run_id": "rv_ab12cd34",
+      "project_id": "0123456789ab",
+      "schema_version": "1.0",
+      "state": "completed",
+      "policy": {
+        "enabled": true,
+        "max_rounds": 2,
+        "mode": "manual_approval",
+        "review_profile": "balanced",
+        "quality_target": 0.8,
+        "max_gpu_minutes": 30,
+        "max_wall_time_minutes": 60,
+        "max_new_assets": 10,
+        "max_render_attempts_per_issue": 2,
+        "allow_narrative_edits": false,
+        "protected_ranges": [
+          {
+            "from": 0,
+            "to": 12
+          }
+        ],
+        "locked_scenes": [
+          "scene_001"
+        ],
+        "protected_claims": [],
+        "reviewer_roles": [
+          "technical_qa",
+          "motion_director"
+        ],
+        "stop_when_no_material_gain": true
+      },
+      "round": 2,
+      "rounds": [],
+      "versions": [
+        "V0",
+        "V1"
+      ],
+      "accepted_version": "V1",
+      "selected_version": null,
+      "budget": {
+        "gpu_s": 40.0,
+        "wall_s": 120.0,
+        "new_assets": 1,
+        "llm_calls": 6
+      },
+      "stop_reason": "max_rounds",
+      "blocking_reason": null,
+      "error": null,
+      "created_at": 1.0,
+      "updated_at": 9.0,
+      "started_at": 1.0,
+      "finished_at": 9.0,
+      "lock": {
+        "project_updated_at": 1.0,
+        "revision": 5
+      },
+      "checkpoint": {
+        "state": "completed",
+        "at": 9.0,
+        "round": 2
+      },
+      "history": [
+        {
+          "at": 1.0,
+          "from": "idle",
+          "to": "preparing",
+          "reason": "start"
+        }
+      ],
+      "capabilities": {
+        "vision": "unavailable"
+      }
+    }
+  ]
+}

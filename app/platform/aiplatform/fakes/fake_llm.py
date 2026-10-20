@@ -255,7 +255,94 @@ def story(task: str, prompt: str) -> dict:
     return {"scenes": scenes}
 
 
+_SCENE_LINE = re.compile(r"^- (scene_\d+) \[[^\]]*кадры (\d+)–(\d+)\] (\w+) \(\w+, бит (\w+), утв\. ([^)]*)\):", re.M)
+_CAPTION_WORDS = re.compile(r"субтитры до (\d) слов")
+_FIX_LINE = re.compile(r"^- (rev-\d{3}-[a-z_]+-\d{3})", re.M)
+_WORD_EVIDENCE = {"type": "transcript", "words": {"from": 0, "to": 0}, "note": "демо-улика"}
+
+
+def review(task: str, prompt: str) -> dict:
+    """Роли ревью и судья по простым правилам (ITERATIVE_REVIEW_SPEC через фейк).
+
+    executive — повтор шаблона → suggestion без правки; narrative — субтитры короче (caption_words −1);
+    retention — minor без правки; educational — сцена без утверждений → major scene_disable.
+    FAKE_REVIEW_NONE=1 — ролям нечего сказать; FAKE_REVIEW_CONFLICT=1 — executive просит удлинить первую
+    сцену, retention — укоротить (ничья для арбитра); FAKE_REVIEW_BLOCKER=1 — educational даёт blocker без
+    правки. Судья: FAKE_REVIEW_JUDGE=worse|same, иначе кандидат лучше на 1, если закрыто хоть одно замечание."""
+    role = task.removeprefix("montage_review_")
+    if role == "judge":
+        fixed = len(
+            _FIX_LINE.findall(
+                prompt.split("Замечания, которые должны быть закрыты:", 1)[-1].split("Что изменилось", 1)[0]
+            )
+        )
+        mode = os.environ.get("FAKE_REVIEW_JUDGE", "")
+        items = []
+        for dim in ("clarity", "style", "motion", "pacing", "distraction", "accuracy"):
+            a = 3
+            b = a - 1 if mode == "worse" else a if mode == "same" or not fixed else a + 1
+            items.append({"dimension": dim, "a": a, "b": b, "evidence": f"демо: закрыто {fixed}"})
+        return {"items": items, "summary": "демо-судья"}
+    if os.environ.get("FAKE_REVIEW_NONE"):
+        return {"issues": []}
+    scenes = [{"id": sid, "a": int(a), "b": int(b), "tpl": tpl, "beat": beat, "claims": claims.strip()}
+              for sid, a, b, tpl, beat, claims in _SCENE_LINE.findall(prompt)]  # fmt: skip
+    first = scenes[0] if scenes else None
+    issues: list[dict] = []
+
+    def issue(**kw) -> None:
+        base = {"confidence": 0.8, "scene_ids": [], "start_frame": 0, "end_frame": 0, "risk": "low",
+                "evidence": [_WORD_EVIDENCE], "impact": "демо", "acceptance_check": "демо-проверка",
+                "change": {"op": "none"}}  # fmt: skip
+        issues.append(base | kw)
+
+    conflict = os.environ.get("FAKE_REVIEW_CONFLICT") and first
+    if role == "executive":
+        if conflict:
+            issue(category="motion_timing", severity="major", confidence=0.9, scene_ids=[first["id"]],
+                  start_frame=first["a"], end_frame=first["b"], observation="демо: сцену надо удлинить",
+                  proposed_change="удлинить", change={"op": "scene_extend", "scene_id": first["id"], "frames": 30})  # fmt: skip
+        by_tpl: dict[str, list[dict]] = {}
+        for s in scenes:
+            by_tpl.setdefault(s["tpl"], []).append(s)
+        for tpl, group in by_tpl.items():
+            if len(group) >= 2:
+                issue(category="redundancy", severity="suggestion", confidence=0.6, scene_ids=[s["id"] for s in group[:2]],
+                      start_frame=group[0]["a"], end_frame=group[1]["b"], observation=f"демо: шаблон {tpl} повторяется",
+                      proposed_change="оставить одну из сцен", risk="medium")  # fmt: skip
+                break
+    elif role == "narrative":
+        words = _CAPTION_WORDS.search(prompt)
+        n = int(words[1]) if words else 3
+        if n > 1:
+            issue(category="caption_pacing", severity="minor", confidence=0.75, observation="демо: субтитры длинноваты для темпа",
+                  proposed_change="короче куски субтитров", change={"op": "caption_words", "max_words": n - 1})  # fmt: skip
+    elif role == "retention":
+        if conflict:
+            issue(category="motion_timing", severity="major", confidence=0.9, scene_ids=[first["id"]],
+                  start_frame=first["a"], end_frame=first["b"], observation="демо: сцену надо укоротить",
+                  proposed_change="укоротить", change={"op": "scene_shorten", "scene_id": first["id"], "frames": 30})  # fmt: skip
+        else:
+            issue(category="hook_visual", severity="minor", confidence=0.5, observation="демо: первые 15 секунд без акцента",
+                  proposed_change="акцент во вступлении", risk="medium")  # fmt: skip
+    elif role == "educational":
+        if os.environ.get("FAKE_REVIEW_BLOCKER"):
+            issue(category="factual_error", severity="blocker", confidence=0.95, observation="демо: тезис противоречит материалам",
+                  proposed_change="переписать фрагмент", risk="high",
+                  evidence=[{"type": "source_document", "doc": "doc_001", "chunk": 1, "value": "демо-цитата"}])  # fmt: skip
+        for s in scenes:
+            if s["claims"] == "—":
+                issue(category="factual_grounding", severity="major", confidence=0.85, scene_ids=[s["id"]],
+                      start_frame=s["a"], end_frame=s["b"], observation=f"демо: {s['id']} без утверждения карты знаний",
+                      proposed_change="выключить сцену", risk="medium",
+                      change={"op": "scene_disable", "scene_id": s["id"]})  # fmt: skip
+                break
+    return {"issues": issues}
+
+
 def montage(task: str, prompt: str) -> dict:
+    if task.startswith("montage_review_"):
+        return review(task, prompt)
     if task == "montage_motion":
         return motion(prompt)
     if task in ("montage_knowledge", "montage_beats", "montage_style", "montage_storyboard"):

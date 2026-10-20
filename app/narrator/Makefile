@@ -202,6 +202,9 @@ move-models: ## перенести модели из ~/.cache в папку мо
 check: ## линтер и тесты (зовётся из корневого ./check)
 	sh tools/check.sh
 
+check-fast: ## только линтер, без тестов (корневой ./check --fast из pre-commit)
+	sh tools/check.sh --fast
+
 cov: ## покрытие кода тестами: отчёт по модулям и html в tmp/cov/html
 	sh tools/cov.sh
 

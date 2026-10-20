@@ -124,8 +124,11 @@ lint:
 	  node --test --test-timeout=20000 tests/js/ >/dev/null || node --test --test-timeout=20000 tests/js/; \
 	  else echo "node не установлен — проверка JS пропущена"; fi
 
-# Зовётся из корневого ./check (pre-commit, ./finish). Красный → коммит отменяется.
+# Зовётся из корневого ./check (./finish, ручной прогон). Красный → push отменяется.
 check: python-check lint test
+
+# Зовётся из корневого ./check --fast (pre-commit): линт и JS без pytest, секунды (DX-018).
+check-fast: python-check lint
 
 # Понятная ошибка вместо SyntaxError на старом Python.
 python-check:

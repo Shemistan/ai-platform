@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 176. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 198. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -220,6 +220,28 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | GET | `/api/montage/projects/{pid}/exports/{n}/{name}` | — | файл | — |
 | GET | `/api/montage/projects/{pid}/revisions` | — | JSON | Ревизии (§8): снимки манифестов и откат |
 | POST | `/api/montage/projects/{pid}/revisions/{n}/restore` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/review-runs` | — | JSON | Итеративное ревью (ITERATIVE_REVIEW_SPEC §10, PRD-028): запуски, управление, версии |
+| POST | `/api/montage/projects/{pid}/review-runs` | JSON | JSON 201 | — |
+| GET | `/api/montage/projects/{pid}/review-runs/{rid}` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/review-runs/{rid}/{verb}` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/review-runs/{rid}/rounds/{n}/issues` | — | JSON | Раунд: замечания с отчётами ролей, решения человека, план, исполнение, сравнение, спорное решение |
+| POST | `/api/montage/projects/{pid}/review-runs/{rid}/rounds/{n}/decisions` | JSON | JSON | — |
+| GET | `/api/montage/projects/{pid}/review-runs/{rid}/rounds/{n}/repair-plan` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/review-runs/{rid}/rounds/{n}/execute` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/review-runs/{rid}/rounds/{n}/comparison` | — | JSON | — |
+| POST | `/api/montage/projects/{pid}/review-runs/{rid}/rounds/{n}/decide` | JSON | JSON | — |
+| GET | `/api/montage/projects/{pid}/review-runs/{rid}/rounds/{n}/bundle/{rest…}` | — | файл | — |
+| POST | `/api/montage/projects/{pid}/review-runs/{rid}/select-revision` | JSON | JSON | — |
+| GET | `/api/montage/projects/{pid}/progress` | — | JSON | Наблюдаемость (§14.6): дерево прогресса, события по курсору, SSE, экспорт, ресурсы, агенты, история |
+| GET | `/api/montage/projects/{pid}/events` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/events/stream` | ?last_event_id | — | — |
+| GET | `/api/montage/projects/{pid}/logs/export` | ?format | — | — |
+| GET | `/api/montage/projects/{pid}/resources` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/agents` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/runs` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/review-runs/{rid}/rounds/{n}/progress` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/versions` | — | JSON | — |
+| GET | `/api/montage/projects/{pid}/versions/{label}/{name}` | — | файл | — |
 | POST | `/api/montage/projects/{pid}/render` | — | JSON | — |
 | POST | `/api/montage/projects/{pid}/revise` | JSON | JSON | — |
 | POST | `/api/montage/projects/{pid}/cancel` | — | JSON | — |

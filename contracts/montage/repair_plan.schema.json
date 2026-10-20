@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/repair_plan",
+  "title": "repair_plan",
+  "description": "План исправлений раунда (ITERATIVE_REVIEW_SPEC §6): действия с DAG зависимостей, impact, оценка, утверждение, проверка политики и бюджета.",
+  "type": "object",
+  "required": [
+    "plan_id",
+    "round_id",
+    "revision_id",
+    "made_at",
+    "actions",
+    "estimate",
+    "approval",
+    "policy"
+  ],
+  "properties": {
+    "plan_id": {
+      "type": "string"
+    },
+    "round_id": {
+      "type": "string"
+    },
+    "revision_id": {
+      "type": "string"
+    },
+    "made_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "action_id",
+          "issue_ids",
+          "op",
+          "status",
+          "depends_on",
+          "affected_frames",
+          "estimate",
+          "approval",
+          "attempts"
+        ],
+        "properties": {
+          "action_id": {
+            "type": "string"
+          },
+          "issue_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "scene_extend",
+              "scene_shorten",
+              "scene_shift",
+              "scene_disable",
+              "scene_props",
+              "caption_words",
+              "cut_words",
+              "none"
+            ]
+          },
+          "scene_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "params": {
+            "type": "object"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "proposed",
+              "approved",
+              "rejected",
+              "deferred",
+              "blocked",
+              "done",
+              "failed",
+              "skipped"
+            ]
+          },
+          "status_reason": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "affected_frames": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "from",
+                "to"
+              ],
+              "properties": {
+                "from": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "to": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "asset_hash_before": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "asset_hash_after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "estimate": {
+            "type": "object",
+            "required": [],
+            "properties": {
+              "render_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "assets": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "approval": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "required",
+              "given",
+              "denied"
+            ]
+          },
+          "safe": {
+            "type": "boolean"
+          },
+          "test": {
+            "type": "string"
+          },
+          "rollback": {
+            "type": "string"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fingerprint": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "estimate": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "render_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "assets": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "within_budget": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "approval": {
+      "type": "string",
+      "enum": [
+        "not_needed",
+        "required",
+        "given",
+        "denied"
+      ]
+    },
+    "approved_at": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "approved_by": {
+      "type": "string"
+    },
+    "policy": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "rejected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deferred": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "plan_id": "plan-001",
+      "round_id": "round-001",
+      "revision_id": "V0",
+      "made_at": 1760000000.0,
+      "actions": [
+        {
+          "action_id": "act-001",
+          "issue_ids": [
+            "rev-001-motion_director-001"
+          ],
+          "op": "scene_extend",
+          "scene_id": "scene_001",
+          "params": {
+            "frames": 30
+          },
+          "status": "proposed",
+          "status_reason": "",
+          "depends_on": [],
+          "affected_frames": [
+            {
+              "from": 300,
+              "to": 450
+            }
+          ],
+          "asset_hash_before": "ab12",
+          "asset_hash_after": null,
+          "estimate": {
+            "render_s": 12,
+            "assets": 1
+          },
+          "approval": "auto",
+          "safe": true,
+          "test": "сцена кончается не раньше слова",
+          "rollback": "V0",
+          "attempts": 0,
+          "error": null,
+          "fingerprint": "scene_001:scene_extend"
+        }
+      ],
+      "estimate": {
+        "render_s": 40,
+        "assets": 1,
+        "within_budget": true,
+        "reason": ""
+      },
+      "approval": "not_needed",
+      "approved_at": null,
+      "approved_by": "",
+      "policy": {
+        "mode": "auto_safe",
+        "rejected": 0,
+        "deferred": 0,
+        "notes": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/review_comparison",
+  "title": "review_comparison",
+  "description": "Сравнение baseline и кандидата (ITERATIVE_REVIEW_SPEC §8): hard gates, объективные метрики, субъективная парная оценка — раздельно; решение.",
+  "type": "object",
+  "required": [
+    "round_id",
+    "baseline",
+    "candidate",
+    "made_at",
+    "hard_gates",
+    "objective",
+    "subjective",
+    "decision"
+  ],
+  "properties": {
+    "round_id": {
+      "type": "string"
+    },
+    "baseline": {
+      "type": "string"
+    },
+    "candidate": {
+      "type": "string"
+    },
+    "made_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "hard_gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "ok",
+          "detail"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "hard_ok": {
+      "type": "boolean"
+    },
+    "objective": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "baseline": {
+          "type": "object"
+        },
+        "candidate": {
+          "type": "object"
+        },
+        "worse": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "better": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "subjective": {
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "judge",
+            "human_review",
+            "skipped"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "dimension",
+              "a",
+              "b",
+              "evidence"
+            ],
+            "properties": {
+              "dimension": {
+                "type": "string"
+              },
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              },
+              "evidence": {
+                "type": "string"
+              },
+              "weight": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "profile": {
+          "type": "string"
+        },
+        "weighted_delta": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "prompt_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "fixed_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "regressed_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "rejected",
+        "ambiguous"
+      ]
+    },
+    "decided_by": {
+      "type": "string",
+      "enum": [
+        "gates",
+        "judge",
+        "human",
+        "policy",
+        "pending"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "examples": [
+    {
+      "round_id": "round-001",
+      "baseline": "V0",
+      "candidate": "V1",
+      "made_at": 1760000000.0,
+      "hard_gates": [
+        {
+          "id": "file",
+          "ok": true,
+          "detail": "ffprobe ok"
+        }
+      ],
+      "hard_ok": true,
+      "objective": {
+        "baseline": {
+          "qa_errors": 0
+        },
+        "candidate": {
+          "qa_errors": 0
+        },
+        "worse": [],
+        "better": []
+      },
+      "subjective": {
+        "mode": "judge",
+        "items": [
+          {
+            "dimension": "motion",
+            "a": 3,
+            "b": 4,
+            "evidence": "сцена 1 держится до конца фразы",
+            "weight": 0.2
+          }
+        ],
+        "profile": "balanced",
+        "weighted_delta": 0.2,
+        "model": "fake",
+        "prompt_version": "abc",
+        "summary": ""
+      },
+      "fixed_issues": [
+        "rev-001-motion_director-001"
+      ],
+      "regressed_issues": [],
+      "decision": "accepted",
+      "decided_by": "judge",
+      "reason": "замечание закрыто, ухудшений нет"
+    }
+  ]
+}

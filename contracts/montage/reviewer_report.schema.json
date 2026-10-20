@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "montage/reviewer_report",
+  "title": "reviewer_report",
+  "description": "Отчёт роли-ревьюера за раунд (ITERATIVE_REVIEW_SPEC §3): вид адаптера, замечания, деградация без мультимодальной модели.",
+  "type": "object",
+  "required": [
+    "role",
+    "kind",
+    "round_id",
+    "revision_id",
+    "made_at",
+    "issues",
+    "degraded",
+    "manual_check",
+    "evidence_types",
+    "status"
+  ],
+  "properties": {
+    "role": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "measure",
+        "heuristic",
+        "llm"
+      ]
+    },
+    "round_id": {
+      "type": "string"
+    },
+    "revision_id": {
+      "type": "string"
+    },
+    "made_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "elapsed_s": {
+      "type": "number",
+      "minimum": 0
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "issue_id",
+          "round_id",
+          "revision_id",
+          "reviewer_role",
+          "category",
+          "severity",
+          "confidence",
+          "scene_ids",
+          "start_frame",
+          "end_frame",
+          "evidence",
+          "observation",
+          "impact",
+          "proposed_change",
+          "acceptance_check",
+          "risk",
+          "estimated_cost",
+          "status",
+          "change",
+          "evidence_type"
+        ],
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "pattern": "^rev-\\d{3}-[a-z_]+-\\d{3}$"
+          },
+          "round_id": {
+            "type": "string",
+            "pattern": "^round-\\d{3}$"
+          },
+          "revision_id": {
+            "type": "string",
+            "pattern": "^V\\d+$"
+          },
+          "reviewer_role": {
+            "type": "string"
+          },
+          "reviewer_roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "category": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "string",
+            "enum": [
+              "technical",
+              "factual",
+              "clarity",
+              "aesthetic"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocker",
+              "major",
+              "minor",
+              "suggestion"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "scene_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "start_frame": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end_frame": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "observed_video",
+                    "observed_audio",
+                    "transcript",
+                    "source_document",
+                    "heuristic"
+                  ]
+                },
+                "artifact_id": {
+                  "type": "string"
+                },
+                "frame": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "frame_end": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "t": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "words": {
+                  "type": "object",
+                  "required": [
+                    "from",
+                    "to"
+                  ],
+                  "properties": {
+                    "from": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "to": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                "doc": {
+                  "type": "string"
+                },
+                "chunk": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "value": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              }
+            },
+            "minItems": 1
+          },
+          "evidence_type": {
+            "type": "string",
+            "enum": [
+              "observed_video",
+              "observed_audio",
+              "transcript",
+              "source_document",
+              "heuristic"
+            ]
+          },
+          "observation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "impact": {
+            "type": "string"
+          },
+          "proposed_change": {
+            "type": "string"
+          },
+          "acceptance_check": {
+            "type": "string"
+          },
+          "risk": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "estimated_cost": {
+            "type": "object",
+            "required": [],
+            "properties": {
+              "render_seconds": {
+                "type": "number",
+                "minimum": 0
+              },
+              "assets": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "proposed",
+              "accepted",
+              "rejected",
+              "deferred",
+              "fixed",
+              "failed",
+              "regressed",
+              "invalid"
+            ]
+          },
+          "status_reason": {
+            "type": "string"
+          },
+          "change": {
+            "type": "object",
+            "required": [
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "scene_extend",
+                  "scene_shorten",
+                  "scene_shift",
+                  "scene_disable",
+                  "scene_props",
+                  "caption_words",
+                  "cut_words",
+                  "none"
+                ]
+              },
+              "scene_id": {
+                "type": "string"
+              },
+              "frames": {
+                "type": "integer"
+              },
+              "props": {
+                "type": "object"
+              },
+              "max_words": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3
+              },
+              "from": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "to": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "merged_from": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "conflicts_with": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "at",
+                "by",
+                "text"
+              ],
+              "properties": {
+                "at": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "by": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "degraded": {
+      "type": "boolean"
+    },
+    "manual_check": {
+      "type": "boolean"
+    },
+    "degraded_reason": {
+      "type": "string"
+    },
+    "evidence_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "done",
+        "failed",
+        "skipped",
+        "unavailable"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model": {
+      "type": "string"
+    },
+    "prompt_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "measurements": {
+      "type": "object"
+    }
+  },
+  "examples": [
+    {
+      "role": "sound",
+      "kind": "measure",
+      "round_id": "round-001",
+      "revision_id": "V0",
+      "made_at": 1760000000.0,
+      "elapsed_s": 2.5,
+      "issues": [],
+      "degraded": false,
+      "manual_check": false,
+      "evidence_types": [
+        "observed_audio"
+      ],
+      "status": "done",
+      "error": null,
+      "model": "",
+      "prompt_version": null,
+      "measurements": {
+        "integrated_lufs": -14.2
+      }
+    }
+  ]
+}

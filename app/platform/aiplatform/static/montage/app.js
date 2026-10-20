@@ -4,6 +4,8 @@ import { $, api, chip, confirmAction, debounce, fill, h, icon, jobProgress, logB
 import { clock, cutOf, layoutAt, phrases, projectPayload, setLayout, togglePhrase, toggleWord } from "./plan.js";
 import { stageRows, summary } from "./stages.js";
 import { GATE_TEXT, GATE_TONE, beatRows, frameClock, gateState, qaGroups, sceneCard, scenePatch, trackBars } from "./storyboard.js";
+import { loadReview, resetReviewCache, reviewData, reviewPanel } from "./review-ui.js";
+import { attachProgress, detachProgress, progressPanel } from "./progress-ui.js";
 
 const API = "/api/montage";
 const STATUS_LABEL = { draft: "черновик", review: "ждёт вас", waiting_approval: "ждёт утверждения", blocked: "заблокирован", interrupted: "прерван" };
@@ -25,6 +27,7 @@ const state = {
   afterFor: null,
   docs: null, // GET documents
   docsFor: null,
+  reviewFor: null, // ревью (PRD-028): ключ, для которого загружен запуск
 };
 
 const isActive = (p) => p?.status === "queued" || p?.status === "running";
@@ -65,6 +68,8 @@ async function select(id) {
   history.replaceState(null, "", id ? `?id=${id}` : location.pathname);
   state.plan = null;
   state.planFor = null;
+  detachProgress();
+  resetReviewCache();
   renderList();
   await refresh();
 }
@@ -105,6 +110,17 @@ async function refresh(signal) {
     state.story = await api("GET", `${API}/projects/${project.id}/storyboard`, undefined, { signal });
     state.storyFor = key;
   }
+  if (project.status === "done" || project.storyboard) {
+    try {
+      await loadReview(reviewCtx(project), signal);
+    } catch (err) {
+      if (err.status !== 404) throw err;
+    }
+  }
+  if (!isActive(project) || state.progressFor !== project.id) {
+    state.progressFor = project.id;
+    attachProgress(reviewCtx(project)).catch(() => {});
+  }
   if (project.status === "done" && state.afterFor !== key) {
     const base = `${API}/projects/${project.id}`;
     const [timeline, qa, exportsList, revisions] = await Promise.all(
@@ -140,7 +156,8 @@ function renderProject() {
   if (p.status === "failed" || p.status === "interrupted") blocks.push(h("section", { class: "panel" }, h("p", { class: "job-error", role: "alert" }, p.error), retry(p)));
   if (p.status === "canceled") blocks.push(h("section", { class: "panel" }, h("p", { class: "muted" }, "Отменено."), retry(p)));
   if (p.status === "done") blocks.push(result(p));
-  if (p.status === "done" && state.after) blocks.push(qaPanel(p), exportsPanel(p), timelinePanel(p), revisionsPanel(p));
+  if (p.status === "done" && state.after) blocks.push(reviewPanel(reviewCtx(p)), qaPanel(p), exportsPanel(p), timelinePanel(p), revisionsPanel(p));
+  if (p.run_id || isActive(p)) blocks.push(progressPanel(reviewCtx(p), reviewData().run));
   if (state.story && !isActive(p) && p.storyboard) blocks.push(storyboardPanel(p));
   if (state.plan && !isActive(p) && p.transcript) blocks.push(review(p));
   if (!fresh && !isActive(p) && p.transcript) blocks.push(materials(p));
@@ -473,6 +490,16 @@ function qaPanel(p) {
 }
 
 let resultPlayer = null;
+
+// Контекст панелей ревью и прогресса (review-ui.js, progress-ui.js): API, проект, перерисовка, переход по времени.
+function reviewCtx(p) {
+  return {
+    base: `${API}/projects/${p.id}`, project: p, config: state.config, story: state.story,
+    refresh: async () => { renderedKey = ""; await refresh(); listPoll.now(); },
+    rerender: () => { renderedKey = ""; renderProject(); },
+    seek: (t) => seekResult(t), setBanner,
+  };
+}
 
 function seekResult(t) {
   if (!resultPlayer) return;

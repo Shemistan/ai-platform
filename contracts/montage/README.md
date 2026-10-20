@@ -22,6 +22,11 @@ pattern) для файлов конвейера `montage/projects/<id>/`. Про
 | `export_preset` | `exports/<n>/provenance.json` → `preset` |
 | `capability` | `GET /api/montage/capabilities` → `items[]` |
 | `revision` | `revisions/index.json` |
+| `review_policy`, `review_run`, `review_round` | `review/runs/<id>/run.json` → `policy`, сам запуск, `rounds/<n>/round.json` |
+| `reviewer_report`, `review_issue` | `rounds/<n>/reports/<role>.json`, `rounds/<n>/issues.json` → `issues[]` |
+| `repair_plan`, `repair_action` | `rounds/<n>/repair_plan.json` (→ `actions[]`) |
+| `review_comparison`, `review_version` | `rounds/<n>/comparison.json`, `review/versions/V<n>/version.json` |
+| `run_event` | `events.jsonl` (события конвейера, курсор `seq`) |
 
 Шаблоны сцен: `templates/<id>.schema.json` — props каждого шаблона
 (`montage/templates.py`).
