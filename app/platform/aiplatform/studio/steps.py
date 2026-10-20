@@ -5,6 +5,8 @@
 
 Файлы проекта:
   text.md            — текст для озвучки (пересказ новостей или статья)
+  source.md          — статья, как её вставил человек: из неё LLM готовит text.md (adapt_text)
+  screen.json        — код для экрана из статьи: [{para, sent, kind: code, title, code, language}]
   post.md            — подпись к посту
   poster_prompt.md   — промпт постера (первого кадра)
   poster.png|jpg|webp — постер: сгенерирован локально или загружен
@@ -27,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import json
 import os
 import re
@@ -52,6 +55,7 @@ from aiplatform.studio.render import LANDSCAPE, VERTICAL, Branding, Renderer, in
 from aiplatform.updates import registry
 
 TEXT, POST, POSTER_PROMPT, PLAN, SHORT = "text.md", "post.md", "poster_prompt.md", "plan.json", "short.json"
+SOURCE, SCREEN = "source.md", "screen.json"
 VIDEO, SHORT_VIDEO, PUBLISHED = "video.mp4", "short.mp4", "published.json"
 IMAGE_EXT = (".png", ".jpg", ".webp")
 AUDIO_EXT = (".mp3", ".wav", ".m4a")
@@ -401,11 +405,48 @@ def step_text(ctx: StepContext) -> None:
         take_narrator_cover(ctx, folder)
         take_review(ctx, folder)
         ctx.log(f"выпуск: {folder}")
+    if ctx.project["scenario"] == "article" and ctx.settings.get("adapt_text", True):
+        adapt_text(ctx)
     text = require_text(ctx)
     words = len(text.split())
     ctx.log(f"{words} слов, {len(slides.paragraphs(text))} абзацев, ~{max(round(words / 130), 1)} мин озвучки")
     if ctx.settings.get("review_text") and not ctx.state.get("approved"):
         raise Waiting("Проверь и при необходимости поправь текст, затем нажми «Продолжить».")
+
+
+def adapt_text(ctx: StepContext) -> None:
+    """Статья человека → текст для озвучки по правилам tts-guide и код для экрана (PRD-029).
+
+    Исходник — source.md; его нет (выпуск до PRD-029, часть серии, клон) — им становится text.md.
+    Тот же исходник второй раз не адаптируется: правки text.md после адаптации остаются."""
+    source = ctx.read(SOURCE).strip()
+    if not source:
+        source = require_text(ctx)
+        ctx.write(SOURCE, source + "\n")
+    digest = hashlib.sha256(source.encode()).hexdigest()
+    if ctx.state.get("adapted") == digest and ctx.read(TEXT).strip():
+        return
+    ctx.progress("LLM готовит текст к озвучке…")
+    data = extract_json(llm(ctx, prompts.narration(source, ctx.project["title"])))
+    marked = str(data.get("text") or "").strip() if isinstance(data, dict) else ""
+    items = data.get("screen") if isinstance(data, dict) and isinstance(data.get("screen"), list) else []
+    text, screen = slides.split_screen(marked, items)
+    if not text:
+        raise StudioError("LLM не вернул текст для озвучки — перезапусти шаг или выключи «Готовить текст к озвучке».")
+    ctx.write(TEXT, text + "\n")
+    ctx.write(SCREEN, json.dumps(screen, ensure_ascii=False, indent=2) + "\n")
+    ctx.remember(adapted=digest)
+    words = f"{len(source.split())} → {len(text.split())} слов"
+    ctx.log(f"текст подготовлен к озвучке: {words}, кода на экране: {len(screen)}")
+
+
+def load_screen(ctx: StepContext) -> list[dict]:
+    """Код для экрана из screen.json; нет файла или он битый — пусто."""
+    try:
+        data = json.loads(ctx.read(SCREEN) or "[]")
+    except json.JSONDecodeError:
+        return []
+    return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
 
 
 def verdict(text: str) -> str | None:
@@ -545,9 +586,10 @@ def step_plan(ctx: StepContext) -> None:
     aspect = "16:9" if ctx.settings.get("frame", "landscape") == "landscape" else "1:1"
     seconds = float(ctx.settings.get("slide_s") or slides.TARGET_SLIDE_S)
     target = slides.target_slides(paras, seconds)
-    answer = llm(ctx, prompts.plan(paras, ctx.project["title"], target, aspect, seconds))
+    screen = load_screen(ctx)
+    answer = llm(ctx, prompts.plan(paras, ctx.project["title"], target, aspect, seconds, screen))
     data = extract_json(answer)
-    plan = slides.parse_plan(data, paras)
+    plan = slides.with_screen(slides.parse_plan(data, paras), screen, paras)
     title = str(data.get("title") or "").strip() if isinstance(data, dict) else ""
     post = str(data.get("post") or "").strip() if isinstance(data, dict) else ""
     out = {"title": title or ctx.project["title"], "post": post, "slides": [s.to_dict() for s in plan]}

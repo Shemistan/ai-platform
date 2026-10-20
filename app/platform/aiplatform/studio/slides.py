@@ -39,6 +39,7 @@ KINDS = (IMAGE, *DYNAMIC)
 CHARTS = ("bar", "line")
 
 _SENTENCE = re.compile(r"(?<=[.!?…])\s+")
+_MARK = re.compile(r"\[\s*экран\s*(\d+)\s*\]", re.I)  # prompts.SCREEN_MARK
 
 
 @dataclass
@@ -253,6 +254,56 @@ def chapters(plan: list[Slide]) -> list[str]:
             current = slide.title
         out.append(current)
     return out
+
+
+def split_screen(marked: str, items: list[dict]) -> tuple[str, list[dict]]:
+    """Текст озвучки с метками «[экран N]» → текст без меток и код для экрана с местом показа.
+
+    Место (para, sent) — по абзацам и фразам чистого текста, как их делит `paragraphs`:
+    фраза, перед которой стоит метка. Абзац из одной метки — код к началу следующего.
+    Код без метки показывается с начала последнего абзаца; метка без кода — просто снимается."""
+    out, inserts, pending = [], [], []
+    count = 0
+    for block in re.split(r"\n[ \t]*\n", marked.strip()):
+        lines = [line for line in block.splitlines() if line.strip()]
+        joined = " ".join(line.strip().lstrip("#").strip() for line in lines)
+        found = []
+        for m in _MARK.finditer(joined):
+            prefix = _MARK.sub(" ", joined[: m.start()]).split()
+            sent = len(sentences(" ".join(prefix) + " x")) - 1 if prefix else 0
+            found.append((int(m[1]), sent))
+        clean = [" ".join(_MARK.sub(" ", line).split()) for line in lines]
+        clean = [line for line in clean if line.lstrip("#").strip()]
+        if not clean:
+            pending += [n for n, _ in found]
+            continue
+        out.append("\n".join(clean))
+        inserts += [(n, count, 0) for n in pending] + [(n, count, s) for n, s in found]
+        pending = []
+        count += 1
+    placed = {}
+    for n, para, sent in inserts:
+        placed.setdefault(n, (para, sent))
+    screen = []
+    for n, item in enumerate(items, start=1):
+        data = scene_data("code", item) if isinstance(item, dict) else None
+        if data is None:
+            continue
+        para, sent = placed.get(n, (max(count - 1, 0), 0))
+        title = _short(item.get("title"), MAX_TITLE) or "Код"
+        screen.append({"para": para, "sent": sent, "kind": "code", "title": title} | data)
+    return "\n\n".join(out), screen
+
+
+def with_screen(plan: list[Slide], screen: list[dict], paras: list[str]) -> list[Slide]:
+    """План с кодом для экрана: слайд кода встаёт на свою фразу, вытесняя слайд модели на ней."""
+    taken = {(s.para, s.sent): s for s in plan}
+    for item in screen:
+        para = min(max(_int(item.get("para")), 0), max(len(paras) - 1, 0))
+        sent = min(max(_int(item.get("sent")), 0), len(sentences(paras[para])) - 1) if paras else 0
+        title = _short(item.get("title"), MAX_TITLE) or "Код"
+        taken[(para, sent)] = _slide(item | {"kind": "code"}, para, sent, title)
+    return [taken[k] for k in sorted(taken)]
 
 
 def fallback_plan(paras: list[str], title: str) -> list[Slide]:

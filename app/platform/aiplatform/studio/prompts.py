@@ -5,7 +5,8 @@ from __future__ import annotations
 from aiplatform.studio import slides
 
 TASK = "### task: "
-POSTER, PLAN, SHORT, SUMMARY = "poster", "plan", "short", "summary"
+POSTER, PLAN, SHORT, SUMMARY, NARRATION = "poster", "plan", "short", "summary", "narration"
+SCREEN_MARK = "[экран {n}]"  # метка в тексте озвучки: здесь на экране код N (PRD-029)
 MAX_TEXT_CHARS = 60_000  # длиннее — обрезаем: модели хватит, а CLI не захлебнётся
 # Материал приходит извне (статьи, новости, веб): внедрённые в него «инструкции» — данные, не команды (SEC-004).
 DATA_NOTE = (
@@ -75,8 +76,24 @@ def numbered(paragraphs: list[str]) -> str:
     return "\n\n".join(out)
 
 
+def _screen_note(screen: list[dict]) -> str:
+    """Где уже стоит код из статьи (PRD-029): своих слайдов туда не ставить."""
+    if not screen:
+        return ""
+    taken = ", ".join(f"[{s.get('para', 0)}] ({s.get('sent', 0)}) — {s.get('title', 'код')}" for s in screen)
+    return (
+        f"\nНа этих фразах уже будет слайд с кодом из статьи, своих слайдов туда не ставь: {taken}.\n"
+        "Других слайдов с kind code не делай — кода в тексте нет.\n"
+    )
+
+
 def plan(
-    paragraphs: list[str], title: str, target: int, aspect: str = "16:9", seconds: float = slides.TARGET_SLIDE_S
+    paragraphs: list[str],
+    title: str,
+    target: int,
+    aspect: str = "16:9",
+    seconds: float = slides.TARGET_SLIDE_S,
+    screen: list[dict] | None = None,
 ) -> str:
     words = max(round(seconds * slides.READING["normal"] * 0.8), 6)
     return f"""{TASK}{PLAN}
@@ -135,7 +152,7 @@ def plan(
   {{"para": 1, "sent": 1, "kind": "flow", "title": "…", "steps": ["…", "…", "…"]}}
 ]}}
 ```
-
+{_screen_note(screen or [])}
 Рабочее название: {title}
 
 {DATA_NOTE}Абзацы:
@@ -155,6 +172,36 @@ Reels) по тексту ниже: 3–5 смысловых частей, все
 ```json
 {{"beats": [{{"title": "…", "text": "…"}}]}}
 ```
+
+Название: {title}
+
+{DATA_NOTE}Текст:
+{_clip(text)}
+"""
+
+
+def narration(text: str, title: str) -> str:
+    """Статья, как её вставил человек, → текст для озвучки и код для экрана (PRD-029)."""
+    mark = SCREEN_MARK.format(n=1)
+    return f"""{TASK}{NARRATION}
+Подготовь статью к озвучке в видео. Это не выжимка: сохрани всё содержание,
+порядок и логику автора, все аргументы, примеры и выводы. Статья на другом языке —
+переведи на русский естественно, не дословно. Абзацы по 2–6 фраз разделяй пустой
+строкой; заголовок раздела — отдельный абзац, который начинается с «# », не короче
+трёх слов. Без markdown, кроме этих заголовков, без списков — связным текстом.
+{TTS_RULES}
+Код, запросы, команды и их вывод зритель увидит на экране, а не услышит. Убери их из
+текста и вынеси в screen. В начале фразы, к которой относится фрагмент, поставь метку
+{mark} (номер — по порядку в screen) и скажи этой фразой словами, что на экране и что
+в нём важно: «{mark} На экране запрос, который выбирает все строки таблицы.» Сам код
+не пересказывай построчно. Фрагмент — до 14 строк по 60 знаков, как в оригинале;
+длинный раздели на несколько или оставь главную часть.
+
+Ответь только JSON такого вида:
+```json
+{{"text": "…", "screen": [{{"title": "…", "language": "sql", "code": "…"}}]}}
+```
+title — подпись к коду на экране, до 60 знаков, по-русски. Кода нет — screen пустой.
 
 Название: {title}
 

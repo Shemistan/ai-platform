@@ -1,7 +1,7 @@
 """Имитация LLM-CLI (`claude -p`) для демо и тестов: промпт со stdin, ответ в stdout.
 
-Задачу узнаёт по первой строке промпта (`### task: poster|plan|short|summary|registry|montage_*`)
-и отвечает детерминированно по тексту: промпт постера, план слайдов на
+Задачу узнаёт по первой строке промпта (`### task: poster|plan|short|summary|narration|registry|montage_*`)
+и отвечает детерминированно по тексту: промпт постера, текст статьи для озвучки (код — на экран), план слайдов на
 каждую фразу (картинки вперемешку с динамическими сценами), сценарий шортса из первых фраз, выжимку из
 первых фраз абзацев, реестр организаций —
 текущий список плюс одна демо-запись; монтаж — вырезки по простым правилам (паразиты, повторы,
@@ -100,6 +100,8 @@ def answer(prompt: str) -> str:
         ]
         beats.append({"title": "Подписывайся", "text": "Подписывайся, чтобы не пропустить следующий выпуск."})
         return json.dumps({"beats": beats}, ensure_ascii=False)
+    if task == "narration":
+        return json.dumps(narration(_body(prompt)), ensure_ascii=False)
     if task == "summary":
         paras = [p.strip() for p in _body(prompt).split("\n\n") if p.strip() and not p.startswith("#")]
         firsts = [re.split(r"(?<=[.!?])\s+", p)[0] for p in paras[:8]] or ["Коротко о главном."]
@@ -114,6 +116,21 @@ def answer(prompt: str) -> str:
     if task.startswith("motion_"):
         return json.dumps(motion_team(task, prompt), ensure_ascii=False)
     return "Не знаю такой задачи."
+
+
+_FENCE = re.compile(r"```(\w*)\n(.*?)```", re.S)
+
+
+def narration(text: str) -> dict:
+    """Подготовка статьи к озвучке: блоки кода — на экран, на их месте фраза с меткой, ссылки — прочь."""
+    screen = []
+
+    def to_screen(m: re.Match) -> str:
+        screen.append({"title": f"Фрагмент {len(screen) + 1}", "language": m[1], "code": m[2]})
+        return f"\n\n[экран {len(screen)}] На экране фрагмент кода из статьи.\n\n"
+
+    spoken = re.sub(r"https?://\S+", "", _FENCE.sub(to_screen, text))
+    return {"text": spoken.strip(), "screen": screen}
 
 
 # ---------- монтаж: план по простым правилам вместо модели ----------

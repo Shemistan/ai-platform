@@ -151,3 +151,5 @@
 .auto-publish { padding: var(--sp-2) var(--sp-2); border-radius: var(--r-md); background: var(--warn-bg); }
 /* Сам тумблер — общий input[role=switch] из ui.css; здесь только тон «включено». */
 .auto-publish input[role="switch"] { --switch-on: var(--warning); }
+/* Исходная статья под текстом озвучки (PRD-029): только для сверки, не правится. */
+.source-text { white-space: pre-wrap; max-height: 24rem; overflow: auto; font-size: var(--fs-sm); }
