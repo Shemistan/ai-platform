@@ -84,7 +84,14 @@ function stepBody(step) {
           h("details", { class: "disclosure" }, h("summary", {}, "Текст для озвучки"), editor("text", a.text, 6)),
         ];
       }
-      return [verdictBox(p.review), a.text || step.status !== "pending" ? editor("text", a.text, 12) : h("p", { class: "muted" }, "Текст появится после сбора новостей.")];
+      return [
+        verdictBox(p.review),
+        a.text || step.status !== "pending" ? editor("text", a.text, 12) : h("p", { class: "muted" }, "Текст появится после сбора новостей."),
+        // Статья, как её вставили: из неё LLM готовит текст для озвучки (PRD-029).
+        a.source && a.source !== a.text
+          ? h("details", { class: "disclosure" }, h("summary", {}, "Исходная статья"), h("pre", { class: "muted source-text" }, a.source))
+          : null,
+      ];
     case "poster_prompt":
       return a.poster_prompt
         ? [

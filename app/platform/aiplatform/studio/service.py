@@ -28,8 +28,10 @@ from aiplatform.studio import history, metrics, news, prompts, publish, schedule
 from aiplatform.studio.cache import MediaCache, place
 from aiplatform.studio.llm import StudioError, complete, missing_cli
 from aiplatform.studio.pipeline import (
+    DONE,
     LABELS,
     STEP_IDS,
+    WAITING,
     Conflict,
     ProjectNotFound,
     Studio,
@@ -82,6 +84,7 @@ SETTING_STEPS = {
     "draft": ("images", "clips", "render", "short"),  # черновик: без картинок и роликов, половинный кадр
     "frame": "render",  # готовые картинки остаются — кадр берёт их с обрезкой; новые рисуются под кадр
     "review_text": None,
+    "adapt_text": "text",  # статья через LLM: текст для озвучки и код на экран (PRD-029)
     # «Видео по статье»: источник — в конце поста и на последнем слайде (CMP-005).
     "source_url": ("render", "short"),
     "source_author": ("render", "short"),
@@ -945,6 +948,7 @@ class StudioModule:
             "speed": None,
             "shorts": False,
             "review_text": False,
+            "adapt_text": True,
             "draft": False,
             "disclaimers": True,
             "ai_badge": True,
@@ -1096,7 +1100,7 @@ class StudioModule:
             raise bad_request(malformed("upscale_images — none, 2k или 4k."))
         bools = (
             "draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "ai_badge", "branding",
-            "draft",
+            "draft", "adapt_text",
         )  # fmt: skip
         for key in bools:
             if not isinstance(out[key], bool):
@@ -1210,7 +1214,9 @@ class StudioModule:
             title = title or (paras[0][:90] if paras else "Видео по статье")
             extra["source"] = source_id(scenario, text=text)
             project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
-            (self.studio.project_dir(project["id"]) / steps.TEXT).write_text(text.strip() + "\n", encoding="utf-8")
+            folder = self.studio.project_dir(project["id"])
+            atomic_write(folder / steps.SOURCE, text.strip() + "\n")  # исходник: из него шаг «Текст» готовит озвучку
+            atomic_write(folder / steps.TEXT, text.strip() + "\n")
         if payload.get("run"):
             self.studio.run(project["id"])
         return self.view(project["id"])
@@ -1463,6 +1469,7 @@ class StudioModule:
         ]
         project["artifacts"] = {
             "text": read(steps.TEXT),
+            "source": read(steps.SOURCE),
             "post": read(steps.POST),
             "poster_prompt": read(steps.POSTER_PROMPT),
             "plan": as_json(steps.PLAN),
@@ -1688,6 +1695,14 @@ class StudioModule:
             self.studio.note(project_id, kind, note)
         return self.view(project_id)
 
+    def awaits_adapting(self, project_id: str) -> bool:
+        """Статья ещё не прошла подготовку к озвучке: text.md пока — то, что вставил человек."""
+        project = self.studio.get(project_id)
+        if project is None or project["scenario"] != "article" or not project["settings"].get("adapt_text", True):
+            return False
+        state = project["steps"]["text"]
+        return state["status"] not in (DONE, WAITING) and not state.get("adapted")
+
     def save_artifact(self, project_id: str, name: str, payload: object) -> dict:
         if name not in ARTIFACTS:
             raise not_found("Нет такого результата.")
@@ -1714,8 +1729,13 @@ class StudioModule:
             except (json.JSONDecodeError, StudioError) as exc:
                 raise bad_request(f"Сценарий шортса не годится: {exc}") from exc
             text = json.dumps({"beats": beats}, ensure_ascii=False, indent=2)
+        raw = name == "text" and self.awaits_adapting(project_id)
         with self.studio.idle(project_id):  # выпуск не запустится между проверкой и записью
             atomic_write(folder / filename, text.strip() + "\n")
+            if raw:  # правка статьи до адаптации — правка исходника: шаг «Текст» подготовит её сам
+                atomic_write(folder / steps.SOURCE, text.strip() + "\n")
+        if raw:
+            return self.view(project_id)
         if name == "short":
 
             def keep_script(project: dict) -> set[str]:

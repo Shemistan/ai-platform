@@ -190,6 +190,14 @@ export function fieldsOf(values, prefix) {
     erid: () =>
       h("label", { class: "field" }, h("span", { class: "hint" }, "erid — токен от оператора рекламных данных (ОРД)"), h("input", { type: "text", id: id("erid"), value: values.erid || "", placeholder: "2Vtzqx…" })),
     review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
+    // Статья через LLM по правилам озвучки: код — на экран, а не в озвучку (PRD-029).
+    adapt_text: () =>
+      check(
+        "adapt_text",
+        "Готовить текст к озвучке",
+        "LLM перескажет статью по правилам озвучки: числа и латиница словами, без ссылок, код покажется на экране, а не прочитается.",
+        values.adapt_text !== false,
+      ),
     draft: () =>
       check(
         "draft",
@@ -251,6 +259,7 @@ export function settingsForm(values, prefix) {
     group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
     group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish(), f.ad(), f.erid()),
     scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author(), f.source_license()) : null,
+    scenario === "article" ? f.adapt_text() : null,
     f.review_text(),
   );
 }
@@ -271,7 +280,7 @@ const POST_SETTINGS = [
 // У статьи ещё источник: ссылка и автор оригинала.
 export const SOURCE_SETTINGS = ["source_url", "source_author", "source_license"];
 export const AD_SETTINGS = ["ad", "erid"];
-const ARTICLE_SETTINGS = [...SETTING_NAMES, ...SOURCE_SETTINGS];
+const ARTICLE_SETTINGS = [...SETTING_NAMES, ...SOURCE_SETTINGS, "adapt_text"];
 const DIGEST_SETTINGS = [...SETTING_NAMES, "poster_deadline"]; // срок своей обложки (PRD-002)
 
 export function readSettings(prefix, names = { post: POST_SETTINGS, article: ARTICLE_SETTINGS, digest: DIGEST_SETTINGS }[scenario] || SETTING_NAMES) {

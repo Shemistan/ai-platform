@@ -85,7 +85,8 @@
 озвучку, подпись в `post.md`).
 
 Шаги (`pipeline.py` `STEPS`, в скобках зависимости):
-1. `text` — текст для озвучки (digest — из narrator; post — из подписи).
+1. `text` — текст для озвучки (digest — из narrator; post — из подписи; article — LLM готовит
+   `source.md` по `TTS_RULES`, код уходит в `screen.json` и слайдом на свою фразу — `adapt_text`, PRD-029).
 2. `poster_prompt` (text) — LLM пишет промпт постера.
 3. `poster` (poster_prompt) — первый кадр: локальная модель или загрузка человеком (дедлайн).
 4. `plan` (text) — LLM: `plan.json`, слайды и промпты картинок/роликов (`slides.py`).
@@ -237,7 +238,7 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
   `review/versions/V<n>/`, `review/bundles/V<n>/`, `events.jsonl` (события конвейера, курсор `seq`); `montage/stats.json` — секунды на
   единицу стадии для ETA;
   `montage/lessons.md` — выученные правила.
-- `studio/projects/<id>/`: `project.json`, `text.md`, `post.md`, `poster.*`,
+- `studio/projects/<id>/`: `project.json`, `source.md`, `text.md`, `screen.json`, `post.md`, `poster.*`,
   `plan.json`, `images/`, `clips/`, `voice.*`, `video.mp4`, `short.mp4`,
   `published.json`, `narrator/` (review.md судьи), `publish/<канал>/`;
   `studio/cache/`, `studio/schedule.json`.
@@ -282,6 +283,7 @@ ffmpeg — только `ffmpeg-full` (keg-only, в PATH или `AIP_FFMPEG`): �
 | Нужно | Где |
 |---|---|
 | как пользоваться вкладками | `docs/user-guide.md` |
+| правила текста для озвучки (капс, цифры, ссылки); выжимка — `studio/prompts.py` `TTS_RULES` | `app/narrator/docs/tts-guide.md` |
 | переменные `AIP_*`, автозапуск, деплой, бэкап | `docs/configuration.md` |
 | HTTP API: контракт / все маршруты | `docs/api.md` / `docs/api-routes.md` (собирает `tools/api_routes.py`) |
 | что делать при сбое живого сервиса | `docs/runbook.md` |
