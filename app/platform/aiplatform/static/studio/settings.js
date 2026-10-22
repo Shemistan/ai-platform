@@ -50,7 +50,7 @@ export function fieldsOf(values, prefix) {
       check(
         "clips",
         "Добавить ролики в ключевые моменты",
-        "LLM выберет до 3 самых динамичных слайдов — там вместо картинки будет ролик (крутится по кругу без своего звука). Остальные слайды — картинка с медленным наездом.",
+        "LLM выберет до 3 самых динамичных слайдов — там вместо картинки будет ролик (крутится по кругу без своего звука). Остальные слайды — картинка с наездом при появлении.",
         values.clips,
       ),
     clips_mode: () => modes("clips_mode", "Сгенерировать локальной моделью", "Сделаю сам по промптам во внешней модели"),
@@ -103,6 +103,13 @@ export function fieldsOf(values, prefix) {
         "Плашка «ИИ» в углу видео",
         "Мелкая метка в правом нижнем углу: озвучка и картинки сделаны нейросетью. Строка об ИИ в посте и метка в файле видео ставятся всегда.",
         values.ai_badge,
+      ),
+    slide_motion: () =>
+      check(
+        "slide_motion",
+        "Анимация появления слайдов",
+        "Картинка плавно приближается в первые полторы секунды, пункты и схемы выезжают по очереди, дальше слайд стоит. Выключи — ничего не движется, элементы только проявляются.",
+        values.slide_motion !== false,
       ),
     disclaimers: () =>
       check(
@@ -255,7 +262,7 @@ export function settingsForm(values, prefix) {
     group("Ролики", f.clips(), f.clips_mode(), f.video_model()),
     group("Озвучка", f.voice_mode(), f.engine()),
     group("Шортс", f.shorts()),
-    group("Слайды", f.slide_s(), f.reading()),
+    group("Слайды", f.slide_s(), f.reading(), f.slide_motion()),
     group("Оформление", f.frame(), f.branding(), f.ai_badge(), f.disclaimers()),
     group("Публикация", channelAdder(prefix), f.tempo(), f.channels(), f.auto_publish(), f.ad(), f.erid()),
     scenario === "article" ? group("Источник — обязателен для публикации", f.source_url(), f.source_author(), f.source_license()) : null,
@@ -267,7 +274,7 @@ export function settingsForm(values, prefix) {
 const SETTING_NAMES = [
   "poster_mode", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode", "video_model",
   "voice_mode", "engine", "shorts", "review_text", "disclaimers", "ai_badge", "branding", "tempo", "frame", "auto_publish", "channels",
-  "post_format", "draft", "slide_s", "reading", "ad", "erid",
+  "post_format", "draft", "slide_s", "reading", "slide_motion", "ad", "erid",
 ]; // prettier-ignore
 
 // Поля формы поста: остальные настройки у него не меняются.
@@ -341,8 +348,8 @@ export const STEP_FIELDS = {
   clips: ["clips", "clips_mode", "video_model"],
   voice: ["voice_mode", "engine"],
   plan: ["slide_s"],
-  render: ["draft", "frame", "tempo", "reading", "branding", "disclaimers", "ai_badge"],
-  short: ["shorts", "tempo", "reading", "branding", "disclaimers", "ai_badge"],
+  render: ["draft", "frame", "tempo", "reading", "slide_motion", "branding", "disclaimers", "ai_badge"],
+  short: ["shorts", "tempo", "reading", "slide_motion", "branding", "disclaimers", "ai_badge"],
 };
 
 export function stepSettings(step) {

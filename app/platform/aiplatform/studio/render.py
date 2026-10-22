@@ -1,12 +1,13 @@
 """Сборка видео ffmpeg'ом: постер, «живые» слайды под озвучку, склейка со звуком.
 
 Слайд-картинка — видео-фон (ролик из внешней модели: по кругу, без своего
-звука) или картинка-фон планами до SHOT_MAX_S секунд, у каждого своё
-движение камеры (zoompan: наезд, панорама, отъезд), затемнение снизу,
+звука) или картинка-фон: плавный наезд первые ENTER_S секунд, дальше кадр
+стоит — движение только при появлении (PRD-031), затемнение снизу,
 заголовок и тезисы, которые появляются по очереди, растянуто по слайду
 (drawtext с alpha по времени). Динамические слайды (и картинка без картинки)
 — тёмный фон и сцена из motion.py. Внизу кадра — мелкая пометка о
 запрещённой в РФ организации, если она упоминается на слайде.
+Renderer.animate=False (настройка slide_motion) — без наезда, выезда и роста.
 
 Постер — первый кадр: картинка целиком (не влезла по пропорциям — по бокам
 её же размытая копия). С оформлением (Branding), как у видео narrator:
@@ -24,7 +25,6 @@
 
 from __future__ import annotations
 
-import math
 import struct
 import subprocess
 import textwrap
@@ -45,9 +45,8 @@ SIZES = {LANDSCAPE: (1920, 1080), VERTICAL: (1080, 1920)}
 # Кроме двух раскладок — любой кадр строкой «ШxВ»: видео дайджеста в пропорциях постера, как у narrator.
 POSTER_SIDE = 1080  # ширина кадра «как постер» — как VIDEO_SIDE у narrator
 FPS = 25
-SHOT_MAX_S = 5.0  # дольше план картинки не держится: дальше — следующий план с другим движением
-ZOOM_SHOT = 1.15  # наезд и отъезд плана
-ZOOM_PAN = 1.12  # запас по краям для панорамы
+ENTER_S = 1.5  # наезд на картинку при появлении слайда, дальше кадр стоит
+ZOOM_IN = 1.08  # насколько картинка увеличивается за наезд
 BACKGROUND = "0x141a26"
 ACCENT = "0x7ea2ff"
 INTRO_S = 2.0
@@ -184,31 +183,22 @@ def _even(value: float) -> int:
     return max(2, int(round(value / 2)) * 2)
 
 
-def shots(seconds: float) -> list[int]:
-    """Планы картинки в кадрах: слайд дольше SHOT_MAX_S режется на равные планы не длиннее его."""
-    frames = max(int(seconds * FPS), 1)
-    count = max(1, math.ceil(seconds / SHOT_MAX_S - 1e-9))
-    base = frames // count
-    return [base + (1 if i < frames % count else 0) for i in range(count)]
+def _zoompan(frames: int, w: int, h: int, animate: bool) -> str:
+    """Картинка на весь слайд: плавный наезд (smoothstep) за ENTER_S секунд и неподвижный кадр до конца."""
+    zoom = "1"
+    if animate:
+        p = f"min(1,on/{max(round(ENTER_S * FPS), 1)})"
+        zoom = f"1+{ZOOM_IN - 1:g}*{p}*{p}*(3-2*{p})"
+    x, y = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+    return f"zoompan=z='{zoom}':x='{x}':y='{y}':d={frames}:s={w}x{h}:fps={FPS}"
 
 
-def _zoompan(n: int, frames: int, w: int, h: int) -> str:
-    """Движение камеры плана n: наезд, панорама вправо, отъезд, панорама влево — по кругу."""
-    d = max(frames - 1, 1)
-    center_x, center_y = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
-    z, x, y = [
-        (f"1+{ZOOM_SHOT - 1}*on/{d}", center_x, center_y),
-        (f"{ZOOM_PAN}", f"(iw-iw/zoom)*on/{d}", center_y),
-        (f"{ZOOM_SHOT}-{ZOOM_SHOT - 1}*on/{d}", center_x, center_y),
-        (f"{ZOOM_PAN}", f"(iw-iw/zoom)*(1-on/{d})", center_y),
-    ][n % 4]
-    return f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={w}x{h}:fps={FPS}"
+def _background(
+    image: Path | None, lay: Layout, frames: int, clip: Path | None = None, animate: bool = True
+) -> tuple[list[str], str]:
+    """Вход и цепочка фильтров фона: видео (по кругу, без звука), картинка или градиент.
 
-
-def _background(image: Path | None, lay: Layout, frames: int, clip: Path | None = None) -> tuple[list[str], str]:
-    """Вход и цепочка фильтров фона: видео (по кругу, без звука), картинка планами или градиент.
-
-    Картинка — без -loop: один кадр на план, zoompan растягивает его на длину плана."""
+    Картинка — без -loop: один кадр, zoompan растягивает его на длину слайда."""
     w, h = lay.width, lay.height
     if clip is not None:
         args = ["-stream_loop", "-1", "-i", str(clip)]
@@ -216,18 +206,8 @@ def _background(image: Path | None, lay: Layout, frames: int, clip: Path | None 
         return args, chain
     if image is not None:
         args = ["-i", str(image)]
-        cuts = shots(frames / FPS)
         head = f"[0:v]scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2},setsar=1"
-        if len(cuts) == 1:
-            return args, f"{head},{_zoompan(0, cuts[0], w, h)},setsar=1"
-        names = [f"[s{n}]" for n in range(len(cuts))]
-        graph = [f"{head},split={len(cuts)}{''.join(names)}"]
-        graph += [
-            f"{name}{_zoompan(n, f, w, h)},setpts=PTS-STARTPTS[z{n}]"
-            for n, (name, f) in enumerate(zip(names, cuts, strict=True))
-        ]
-        joined = "".join(f"[z{n}]" for n in range(len(cuts)))
-        return args, ";".join(graph) + f";{joined}concat=n={len(cuts)}:v=1:a=0,setsar=1"
+        return args, f"{head},{_zoompan(frames, w, h, animate)},setsar=1"
     args = ["-f", "lavfi", "-i", f"color=c={BACKGROUND}:s={w}x{h}:r={FPS}"]
     chain = f"[0:v]drawbox=x=0:y=0:w=iw*0.012:h=ih:color={ACCENT}@0.9:t=fill,setsar=1"
     return args, chain
@@ -354,6 +334,7 @@ class Renderer:
     font: str
     scale: float = 1.0  # доля от 1920×1080 — тестам хватает четверти
     ai_badge: bool = False  # плашка «ИИ» на кадрах (настройка выпуска ai_badge, CMP-011)
+    animate: bool = True  # анимация появления слайдов (настройка slide_motion, PRD-031); False — без движения
 
     def _badge(self, lay: Layout, note_file: Path | None) -> list[str]:
         if not self.ai_badge:
@@ -504,7 +485,7 @@ class Renderer:
                 path = work / f"bullet{n}.txt"
                 path.write_text(wrap("• " + bullet, lay.bullet_chars, 2), encoding="utf-8")
                 bullet_files.append(path)
-            args, chain = _background(image, lay, frames, clip)
+            args, chain = _background(image, lay, frames, clip, self.animate)
             text = slide_filter(lay, self.font, title_file, bullet_files, shown, note_file)
         text = ",".join([text, *self._badge(lay, note_file)])
         if progress is not None:
@@ -551,7 +532,9 @@ class Renderer:
         bottom = round(h * 0.92)
         if note_file is not None:
             bottom = min(bottom, note_top(lay, note_file) - round(min(w, h) * MARGIN))
-        canvas = motion.Canvas(w=w, h=h, margin=lay.margin, font=self.font, work=work, top=top, bottom=bottom)
+        canvas = motion.Canvas(
+            w=w, h=h, margin=lay.margin, font=self.font, work=work, top=top, bottom=bottom, animate=self.animate
+        )
         parts = [motion.draw(canvas, scene, seconds)]
         if note_file is not None:
             parts += note_parts(lay, self.font, note_file)

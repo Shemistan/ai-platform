@@ -77,6 +77,7 @@ SETTING_STEPS = {
     "post_format": "publish",
     "disclaimers": ("render", "short"),
     "ai_badge": ("render", "short"),  # плашка «ИИ» в углу видео (CMP-011)
+    "slide_motion": ("render", "short"),  # анимация появления слайдов; выкл. — без движения (PRD-031)
     "branding": ("render", "short"),
     "tempo": ("render", "short"),
     "slide_s": "plan",  # ориентир для LLM: сколько держится слайд
@@ -952,6 +953,7 @@ class StudioModule:
             "draft": False,
             "disclaimers": True,
             "ai_badge": True,
+            "slide_motion": True,
             "branding": False,
             "tempo": 1.0,
             "slide_s": slides.TARGET_SLIDE_S,
@@ -1100,7 +1102,7 @@ class StudioModule:
             raise bad_request(malformed("upscale_images — none, 2k или 4k."))
         bools = (
             "draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "ai_badge", "branding",
-            "draft", "adapt_text",
+            "draft", "adapt_text", "slide_motion",
         )  # fmt: skip
         for key in bools:
             if not isinstance(out[key], bool):
