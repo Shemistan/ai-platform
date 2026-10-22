@@ -152,19 +152,23 @@ class SlidesTest(unittest.TestCase):
         code = slides.Slide(0, "Код", kind="code", data={"code": "x = 1\n" * 200})
         self.assertEqual(slides.reading_s(code, 3.0), slides.MAX_READ_S)
 
-    def test_durations_wait_for_reading(self):
-        # Каждая фраза — секунда озвучки, а слайд читается 4 с: следующий ждёт, длинный в конце догоняет.
+    def test_reading_delays_slide_at_most_a_second(self):
+        # Фразы звучат с 0, 5 и 6 с, слайд читается 8 с: следующий ждёт, но не дольше READ_LAG_S после фразы.
         paras = ["а. б. в. г г г г г г г г г г г г г г г г"]
         plan = [slides.Slide(0, "a"), slides.Slide(0, "b", sent=1), slides.Slide(0, "c", sent=2)]
-        d = slides.durations(slides.paragraphs(paras[0]), plan, 19.0, minimums=[4.0, 4.0, 4.0])
-        self.assertEqual(d[:2], [4.0, 4.0])
+        at = [0.0, 5.0, 6.0]
+        d = slides.durations(paras, plan, 19.0, minimums=[8.0, 8.0, 8.0], spoken_at=at)
+        self.assertEqual(d[:2], [5.0 + slides.READ_LAG_S, slides.MIN_SLIDE_S])
         self.assertAlmostEqual(sum(d), 19.0, places=2)
-        self.assertEqual(slides.lag(paras, plan, d, 19.0), 6.0)
-        # Без минимумов слайд меняется вместе с фразой.
+        self.assertEqual(slides.lag(paras, plan, d, 19.0, spoken_at=at), 1.5, "отставание — не больше секунды-полторы")
+        # Без минимумов слайд меняется ровно с фразой.
+        self.assertEqual(slides.durations(paras, plan, 19.0, spoken_at=at)[:2], [5.0, 1.5])
+        # Без spoken_at — по доле слов, как раньше: каждая фраза — секунда.
         self.assertEqual(slides.durations(paras, plan, 19.0)[:2], [1.5, 1.5])
-        # Аудио не хватает на все минимумы — сжимаются в одной доле и ровно покрывают звук.
+        # Аудио не хватает на все минимумы — ровно покрывают звук, никто не короче MIN_SLIDE_S.
         tight = slides.durations(paras, plan, 6.0, minimums=[4.0, 4.0, 4.0])
-        self.assertEqual(tight, [2.0, 2.0, 2.0])
+        self.assertAlmostEqual(sum(tight), 6.0, places=2)
+        self.assertTrue(all(x >= slides.MIN_SLIDE_S for x in tight), tight)
 
     def test_parse_plan_errors(self):
         for raw in ({"slides": []}, {"slides": [{"title": ""}]}, {"nope": 1}, "текст"):
