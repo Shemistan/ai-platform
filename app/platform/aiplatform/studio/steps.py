@@ -832,7 +832,11 @@ def render_video(
 
 def renderer(ctx: StepContext) -> Renderer:
     """Черновик собирается в половинном кадре: быстро посмотреть структуру и ритм."""
-    base = dataclasses.replace(services(ctx).renderer, ai_badge=bool(ctx.settings.get("ai_badge", True)))
+    base = dataclasses.replace(
+        services(ctx).renderer,
+        ai_badge=bool(ctx.settings.get("ai_badge", True)),
+        animate=bool(ctx.settings.get("slide_motion", True)),
+    )
     return dataclasses.replace(base, scale=base.scale * DRAFT_SCALE) if ctx.settings.get("draft") else base
 
 

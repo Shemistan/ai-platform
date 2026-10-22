@@ -93,7 +93,8 @@
 5. `images` (plan) — картинки слайдов: «Фото» или загрузка.
 6. `clips` (plan) — до 3 роликов: «Видео» или загрузка.
 7. `voice` (text) — озвучка: «Аудио» или свой mp3.
-8. `render` (poster, plan, images, clips, voice) — ffmpeg `video.mp4` 16:9 (`render.py`, `motion.py`).
+8. `render` (poster, plan, images, clips, voice) — ffmpeg `video.mp4` 16:9 (`render.py`, `motion.py`);
+   движение только при появлении слайда, `slide_motion` выключает и его (PRD-031).
 9. `short` (text, poster, images, clips) — шортс 9:16.
 10. `publish` (render, short) — публикация; после рестарта сама не повторяется.
 

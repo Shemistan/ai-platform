@@ -4,11 +4,12 @@
 столбцами или линией, схема из шагов, сравнение «было / стало», цитата.
 
 Ритм: элементы сцены появляются равномерно по длине слайда, но не реже раза
-в BEAT_S секунд. Всё показано, а слайд ещё идёт — каждые BEAT_S подсветка
-переходит к следующему элементу. Так кадр не стоит дольше 3–5 секунд.
+в BEAT_S секунд. Всё показано — кадр стоит: движение только при появлении
+(PRD-031), бегущая подсветка мешала читать и укачивала.
 
 Как анимируем: у drawtext x, y и alpha считаются на каждом кадре — текст
-выезжает и проявляется плавно. Выражения drawbox ffmpeg считает один раз,
+выезжает и проявляется плавно. Canvas.animate=False (настройка slide_motion) —
+без движения: ни выезда, ни роста, ни счёта, элементы только проявляются. Выражения drawbox ffmpeg считает один раз,
 поэтому рост столбцов, полос и линия графика — ступенями: каждая ступень —
 свой drawbox с enable по времени.
 """
@@ -20,7 +21,7 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
-BEAT_S = 4.0  # дольше кадр не стоит: следующий элемент или подсветка
+BEAT_S = 4.0  # пока не всё показано, новый элемент — не реже раза в BEAT_S секунд
 START_S = 0.5  # первый элемент — сразу за заголовком
 TAIL_S = 1.0  # последний элемент — не позже чем за секунду до конца слайда
 GROW_S = 0.6  # рост столбца или полосы
@@ -56,17 +57,6 @@ def reveal_times(n: int, seconds: float, start: float = START_S, tail: float = T
         return [start]
     gap = min(BEAT_S, max(seconds - start - tail, 0.0) / (n - 1))
     return [round(start + i * gap, 3) for i in range(n)]
-
-
-def beats(after: float, seconds: float, count: int) -> list[tuple[int, float, float]]:
-    """Подсветка после того, как всё показано: (какой элемент, с, по) каждые BEAT_S секунд."""
-    out: list[tuple[int, float, float]] = []
-    t, k = after + BEAT_S, 0
-    while count > 0 and t < seconds - 0.5:
-        out.append((k % count, round(t, 3), round(min(t + BEAT_S, seconds), 3)))
-        t += BEAT_S
-        k += 1
-    return out
 
 
 def windows(t0: float, seconds: float, steps: int) -> list[tuple[float, float | None]]:
@@ -143,6 +133,7 @@ class Canvas:
     work: Path
     top: int
     bottom: int
+    animate: bool = True  # False — без движения: элементы только проявляются
     parts: list[str] = field(default_factory=list)
     files: int = 0
 
@@ -156,6 +147,12 @@ class Canvas:
     @staticmethod
     def chars(width: float, size: int) -> int:
         return max(int(width / (size * 0.55)), 6)
+
+    def slide_x(self, x: int, t0: float, dx: int) -> int | str:
+        return slide_x(x, t0, dx) if self.animate else x
+
+    def slide_y(self, y: int, t0: float, dy: int) -> int | str:
+        return slide_y(y, t0, dy) if self.animate else y
 
     def file(self, text: str) -> Path:
         self.files += 1
@@ -188,10 +185,16 @@ class Canvas:
         self.parts.append(part + (f":enable='{enable}'" if enable else ""))
 
     def grow_right(self, x: int, y: int, w: int, h: int, color: str, t0: float, d: float, steps: int = STEPS) -> None:
+        if not self.animate:
+            self.box(x, y, w, h, color, enable=f"gte(t,{t0:.3f})")
+            return
         for k, (a, b) in enumerate(windows(t0, d, steps), start=1):
             self.box(x, y, round(w * ease(k / steps)), h, color, enable=window(a, b))
 
     def grow_up(self, x: int, base: int, w: int, h: int, color: str, t0: float, d: float, steps: int = STEPS) -> None:
+        if not self.animate:
+            self.box(x, base - h, w, h, color, enable=f"gte(t,{t0:.3f})")
+            return
         for k, (a, b) in enumerate(windows(t0, d, steps), start=1):
             grown = max(round(h * ease(k / steps)), 1)
             self.box(x, base - grown, w, grown, color, enable=window(a, b))
@@ -201,7 +204,7 @@ class Canvas:
         rows = [row.split() for row in text.split("\n")]
         total = sum(len(r) for r in rows)
         groups = min(total, 14)
-        if groups <= 1:
+        if groups <= 1 or not self.animate:
             self.text(text, size, x, y, color=color, alpha=appear(start))
             return
         for g, (a, b) in enumerate(windows(start, span, groups), start=1):
@@ -217,7 +220,7 @@ class Canvas:
         """Заголовок сверху: выезжает снизу, под ним растёт полоска акцента. Возвращает, где начать сцену."""
         size = self.px(62 if self.wide else 58)
         text = wrap(title, self.chars(self.w - 2 * self.margin, size), 2)
-        self.text(text, size, self.margin, slide_y(self.top, t0, self.px(30)), alpha=appear(t0, 0.4))
+        self.text(text, size, self.margin, self.slide_y(self.top, t0, self.px(30)), alpha=appear(t0, 0.4))
         bar_y = self.top + text_h(text, size) + self.px(10)
         self.grow_right(self.margin, bar_y, self.px(160), self.px(8), ACCENT, t0 + 0.25, 0.4, steps=8)
         return bar_y + self.px(60)
@@ -235,12 +238,6 @@ def title_only(c: Canvas, title: str, seconds: float) -> None:
     c.words(text, size, c.margin, y, 0.15, span)
     bar_y = y + text_h(text, size) + c.px(14)
     c.grow_right(c.margin, bar_y, c.px(240), c.px(10), ACCENT, 0.15 + span, 0.5, steps=10)
-    # Долгий слайд: заголовок по очереди вспыхивает акцентом, полоска под ним вытягивается.
-    for k, a, b in beats(0.65 + span, seconds, 2):
-        if k == 0:
-            c.text(text, size, c.margin, y, color=ACCENT, enable=window(a, b))
-        else:
-            c.box(c.margin, bar_y, c.px(480), c.px(10), ACCENT, enable=window(a, b))
 
 
 def bullets(c: Canvas, scene: dict, seconds: float) -> None:
@@ -258,19 +255,13 @@ def bullets(c: Canvas, scene: dict, seconds: float) -> None:
             break
         size = round(size * 0.9)
     times = reveal_times(len(items), seconds)
-    focus = beats(times[-1], seconds, len(items))
     full = c.w - 2 * c.margin
-    for i, (text, height, t0) in enumerate(zip(texts, heights, times, strict=True)):
+    for text, height, t0 in zip(texts, heights, times, strict=True):
         on = f"gte(t,{t0:.3f})"
         tx = c.margin + bar + 2 * pad
         c.box(c.margin, y, full, height, PANEL, enable=on)
         c.box(c.margin, y, bar, height, ACCENT, enable=on)
-        c.text(text, size, slide_x(tx, t0, c.px(60)), y + pad, alpha=appear(t0))
-        for k, a, b in focus:
-            if k == i:
-                c.box(c.margin, y, full, height, "white@0.07", enable=window(a, b))
-                c.box(c.margin, y, bar * 2, height, ACCENT, enable=window(a, b))
-                c.text(text, size, tx, y + pad, color=ACCENT, enable=window(a, b))
+        c.text(text, size, c.slide_x(tx, t0, c.px(60)), y + pad, alpha=appear(t0))
         y += height + gap
 
 
@@ -288,6 +279,25 @@ def stat(c: Canvas, scene: dict, seconds: float) -> None:
     y = max(top, (top + c.bottom) // 2 - block // 2)
     t0, run = 0.4, min(2.5, max(0.8, seconds * 0.4))
     center = "(w-text_w)/2"
+    if c.animate:
+        _count(c, value, digits, (prefix, suffix), size, center, y, t0, run)
+    else:  # без счёта: сразу итоговое число
+        c.text(f"{prefix}{number(value, digits)}{suffix}", size, center, y, color=ACCENT, alpha=appear(0, 0.3))
+    after = y + line_h(size)
+    if percent:
+        track = c.w - 4 * c.margin
+        c.box(2 * c.margin, after, track, bar_h, "white@0.12", enable=f"gte(t,{t0:.3f})")
+        c.grow_right(2 * c.margin, after, round(track * value / 100), bar_h, ACCENT, t0, run, steps=16)
+        after += bar_h + c.px(50)
+    if label:
+        c.text(label, lsize, center, after, alpha=appear(t0 + run * 0.7, 0.5))
+
+
+def _count(
+    c: Canvas, value: float, digits: int, marks: tuple[str, str], size: int, center: str, y: int, t0: float, run: float
+) -> None:
+    """Число набирается от нуля до значения за run секунд."""
+    prefix, suffix = marks
     c.text(
         f"{prefix}{number(0, digits)}{suffix}",
         size,
@@ -301,20 +311,6 @@ def stat(c: Canvas, scene: dict, seconds: float) -> None:
     for k, (a, b) in enumerate(windows(t0, run, steps), start=1):
         shown = value * ease(k / steps)
         c.text(f"{prefix}{number(shown, digits)}{suffix}", size, center, y, color=ACCENT, enable=window(a, b))
-    after = y + line_h(size)
-    if percent:
-        track = c.w - 4 * c.margin
-        c.box(2 * c.margin, after, track, bar_h, "white@0.12", enable=f"gte(t,{t0:.3f})")
-        c.grow_right(2 * c.margin, after, round(track * value / 100), bar_h, ACCENT, t0, run, steps=16)
-        after += bar_h + c.px(50)
-    if label:
-        c.text(label, lsize, center, after, alpha=appear(t0 + run * 0.7, 0.5))
-    final = f"{prefix}{number(value, digits)}{suffix}"
-    for k, a, b in beats(t0 + run, seconds, 2 if label else 1):
-        if k == 0:
-            c.text(final, size, center, y, enable=window(a, b))
-        else:
-            c.text(label, lsize, center, after, color=ACCENT, enable=window(a, b))
 
 
 def _chart_box(c: Canvas, top: int) -> tuple[int, int, int, int]:
@@ -338,7 +334,6 @@ def bar_chart(c: Canvas, scene: dict, seconds: float) -> None:
     lsize = c.px(32 if n <= 5 else 26)
     c.box(x0, base, x1 - x0, c.px(3), "white@0.25", enable="gte(t,0.3)")
     times = reveal_times(n, seconds)
-    focus = beats(times[-1] + GROW_S, seconds, n)
     for i, (point, t0) in enumerate(zip(data, times, strict=True)):
         bx = round(x0 + i * slot + (slot - width) / 2)
         height = max(round((base - y_top) * abs(point["value"]) / peak), c.px(4))
@@ -353,18 +348,6 @@ def bar_chart(c: Canvas, scene: dict, seconds: float) -> None:
             alpha=appear(t0 + GROW_S * 0.6),
         )
         c.text(point["label"], lsize, f"{mid}-text_w/2", base + c.px(16), color=MUTED, alpha=appear(t0))
-        for k, a, b in focus:
-            if k == i:
-                ring = c.px(6)
-                c.box(
-                    bx - ring,
-                    base - height - ring,
-                    width + 2 * ring,
-                    height + ring,
-                    "white@0.9",
-                    enable=window(a, b),
-                    thick=str(ring),
-                )
 
 
 def _segment(c: Canvas, a: tuple[int, int], b: tuple[int, int], t0: float, d: float, dot: int) -> None:
@@ -400,7 +383,6 @@ def line_chart(c: Canvas, scene: dict, seconds: float) -> None:
     draw = min(0.6, gap * 0.8)
     dot, mark = c.px(8), c.px(22)
     vsize, lsize = c.px(34 if n <= 6 else 28), c.px(30 if n <= 6 else 24)
-    focus = beats(times[-1], seconds, n)
     for i, t0 in enumerate(times):
         if i:
             _segment(c, at(i - 1), at(i), t0 - draw, draw, dot)
@@ -411,10 +393,6 @@ def line_chart(c: Canvas, scene: dict, seconds: float) -> None:
         c.box(x - mark // 4, y - mark // 4, mark // 2, mark // 2, DARK, enable=on)
         c.text(_value(data[i], unit), vsize, f"{x}-text_w/2", y - mark - round(vsize * 1.2), alpha=appear(t0))
         c.text(data[i]["label"], lsize, f"{x}-text_w/2", base + c.px(16), color=MUTED, alpha=appear(t0))
-        for k, a, b in focus:
-            if k == i:
-                ring = mark * 2
-                c.box(x - ring // 2, y - ring // 2, ring, ring, "white@0.9", enable=window(a, b), thick=str(c.px(4)))
 
 
 def flow(c: Canvas, scene: dict, seconds: float) -> None:
@@ -422,7 +400,6 @@ def flow(c: Canvas, scene: dict, seconds: float) -> None:
     steps_ = scene["steps"]
     n = len(steps_)
     times = reveal_times(n, seconds)
-    focus = beats(times[-1], seconds, n)
     size = c.px(40 if n <= 3 else 34)
     arrow = c.px(80)
     room = c.bottom - top
@@ -441,11 +418,8 @@ def flow(c: Canvas, scene: dict, seconds: float) -> None:
         on = f"gte(t,{t0:.3f})"
         c.box(bx, by, bw, bh, PANEL, enable=on)
         c.box(bx, by, bw, bh, "white@0.25", enable=on, thick=str(border))
-        until = times[i + 1] if i + 1 < n else (focus[0][1] if focus else None)
-        c.box(bx, by, bw, bh, ACCENT, enable=window(t0, until), thick=str(border * 2))
-        for k, a, b in focus:
-            if k == i:
-                c.box(bx, by, bw, bh, ACCENT, enable=window(a, b), thick=str(border * 2))
+        # Рамка акцента — на последнем появившемся шаге; у последнего — до конца слайда.
+        c.box(bx, by, bw, bh, ACCENT, enable=window(t0, times[i + 1] if i + 1 < n else None), thick=str(border * 2))
         label = wrap(text, c.chars(bw - 2 * c.px(24), size), 3)
         y = f"{by}+({bh}-text_h)/2"
         c.text(label, size, f"{bx}+({bw}-text_w)/2", y, alpha=appear(t0))
@@ -475,8 +449,6 @@ def compare(c: Canvas, scene: dict, seconds: float) -> None:
     for r in range(rows):
         order += [("item", s, r) for s, side in enumerate((left, right)) if r < len(side["items"])]
     times = dict(zip(order, reveal_times(len(order), seconds), strict=True))
-    items = [o for o in order if o[0] == "item"]
-    focus = beats(max(times.values()), seconds, len(items))
     for s, (x, side, title, color, mark) in enumerate(sides):
         t0 = times[("head", s, 0)]
         on = f"gte(t,{t0:.3f})"
@@ -485,7 +457,7 @@ def compare(c: Canvas, scene: dict, seconds: float) -> None:
         c.text(
             wrap(title, c.chars(cw - 2 * pad, hsize), 1),
             hsize,
-            slide_x(x + pad, t0, c.px(40)),
+            c.slide_x(x + pad, t0, c.px(40)),
             top + pad,
             color=color,
             alpha=appear(t0),
@@ -494,10 +466,7 @@ def compare(c: Canvas, scene: dict, seconds: float) -> None:
         for r, item in enumerate(side["items"]):
             text = wrap(f"{mark} {item}", c.chars(cw - 2 * pad, isize), 3)
             ti = times[("item", s, r)]
-            c.text(text, isize, x + pad, slide_y(y, ti, c.px(24)), alpha=appear(ti))
-            for k, a, b in focus:
-                if items[k] == ("item", s, r):
-                    c.text(text, isize, x + pad, y, color=color, enable=window(a, b))
+            c.text(text, isize, x + pad, c.slide_y(y, ti, c.px(24)), alpha=appear(ti))
             y += text_h(text, isize) + c.px(18)
     vs = c.px(44)
     pad_vs = c.px(22)
@@ -523,11 +492,6 @@ def quote_scene(c: Canvas, scene: dict, seconds: float) -> None:
     ay = ty + text_h(text, size) + c.px(50)
     if author:
         c.text(author, asize, c.margin, ay, color=MUTED, alpha=appear(0.35 + span, 0.5))
-    for k, a, b in beats(0.35 + span, seconds, 2):
-        if k == 0:
-            c.text("“", mark, c.margin - c.px(8), y - round(mark * 0.2), enable=window(a, b))
-        elif author:
-            c.text(author, asize, c.margin, ay, color=ACCENT, enable=window(a, b))
 
 
 MONO_FONTS = (
@@ -549,7 +513,7 @@ def chapter(c: Canvas, scene: dict, seconds: float) -> None:
     subtitle = wrap(scene.get("subtitle") or "", c.chars(c.w - 2 * c.margin, ssize), 2) if scene.get("subtitle") else ""
     block = line_h(ksize) + c.px(24) + text_h(text, size) + (c.px(36) + text_h(subtitle, ssize) if subtitle else 0)
     y = max(c.top, (c.top + c.bottom) // 2 - block // 2)
-    c.text(kicker.upper(), ksize, slide_x(c.margin, 0.1, c.px(40)), y, color=ACCENT, alpha=appear(0.1, 0.4))
+    c.text(kicker.upper(), ksize, c.slide_x(c.margin, 0.1, c.px(40)), y, color=ACCENT, alpha=appear(0.1, 0.4))
     ty = y + line_h(ksize) + c.px(24)
     span = min(max(seconds * 0.4, 0.6), len(text.split()) * 0.35)
     c.words(text, size, c.margin, ty, 0.35, span)
@@ -557,12 +521,6 @@ def chapter(c: Canvas, scene: dict, seconds: float) -> None:
     c.grow_right(c.margin, bar_y, c.w - 2 * c.margin, c.px(6), ACCENT, 0.35 + span, 0.8, steps=12)
     if subtitle:
         c.text(subtitle, ssize, c.margin, bar_y + c.px(30), color=MUTED, alpha=appear(0.6 + span, 0.5))
-    # Долгая глава: по очереди вспыхивают надпись «Глава N» и полоса под названием.
-    for k, a, b in beats(1.2 + span, seconds, 2):
-        if k == 0:
-            c.text(kicker.upper(), ksize, c.margin, y, color=INK, enable=window(a, b))
-        else:
-            c.box(c.margin, bar_y, c.w - 2 * c.margin, c.px(12), ACCENT, enable=window(a, b))
 
 
 def code_scene(c: Canvas, scene: dict, seconds: float) -> None:
@@ -609,7 +567,7 @@ def code_scene(c: Canvas, scene: dict, seconds: float) -> None:
 
 
 def summary(c: Canvas, scene: dict, seconds: float) -> None:
-    """Итог: пункты с галочками появляются по очереди, потом по очереди загораются акцентом."""
+    """Итог: пункты с галочками появляются по очереди."""
     y = c.heading(scene["title"]) if scene.get("title") else c.top
     items = scene["items"]
     size, gap = c.px(46 if c.wide else 42), c.px(26)
@@ -623,8 +581,7 @@ def summary(c: Canvas, scene: dict, seconds: float) -> None:
         size = round(size * 0.9)
     times = reveal_times(len(items), seconds)
     tx = c.margin + mark + c.px(30)
-    focus = beats(times[-1], seconds, len(items))
-    for i, (text, height, t0) in enumerate(zip(texts, heights, times, strict=True)):
+    for text, height, t0 in zip(texts, heights, times, strict=True):
         on = f"gte(t,{t0:.3f})"
         my = y + (height - mark) // 2
         ty = y + (height - text_h(text, size)) // 2
@@ -632,10 +589,7 @@ def summary(c: Canvas, scene: dict, seconds: float) -> None:
         c.text(
             "✓", round(mark * 0.8), f"{c.margin + mark // 2}-text_w/2", my + round(mark * 0.08), color=DARK, enable=on
         )
-        c.text(text, size, slide_x(tx, t0, c.px(50)), ty, alpha=appear(t0))
-        for k, a, b in focus:
-            if k == i:
-                c.text(text, size, tx, ty, color=ACCENT, enable=window(a, b))
+        c.text(text, size, c.slide_x(tx, t0, c.px(50)), ty, alpha=appear(t0))
         y += height + gap
 
 
