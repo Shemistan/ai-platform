@@ -47,7 +47,7 @@ from aiplatform.core import audit, disk, log, media, schema
 from aiplatform.core import settings as core_settings
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.runner import Canceled
-from aiplatform.studio import cache, news, prompts, publish, render, slides
+from aiplatform.studio import cache, news, prompts, publish, render, slides, timing
 from aiplatform.studio.config import StudioConfig
 from aiplatform.studio.llm import StudioError, complete, extract_json, plain
 from aiplatform.studio.pipeline import Skip, StepContext, Waiting
@@ -777,12 +777,13 @@ def render_video(
     brand = branding(svc.config) if settings.get("branding") else None
     intro = intro_seconds(brand) if poster is not None and audio_s > intro_seconds(brand) + 1 else 0.0
     paras = slides.paragraphs(text)
-    # Время на чтение: слайд не сменится, пока не прочитан, — следующие догоняют озвучку позже.
+    spoken_at = phrase_times(ctx, paras, plan, audio, audio_s)
+    # Время на чтение: слайд с длинным текстом задерживает следующий, но не дольше READ_LAG_S.
     per_s = slides.READING.get(settings.get("reading", "normal"), 0.0)
     minimums = [slides.reading_s(slide, per_s) for slide in plan] if per_s else None
-    durations = slides.durations(paras, plan, audio_s, intro, minimums)
-    behind = slides.lag(paras, plan, durations, audio_s, intro)
-    if behind >= 2:
+    durations = slides.durations(paras, plan, audio_s, intro, minimums, spoken_at)
+    behind = slides.lag(paras, plan, durations, audio_s, intro, spoken_at)
+    if behind >= 1:
         ctx.log(f"время на чтение: слайды отстают от озвучки до {behind:g} с — помогут слайды подлиннее в плане")
     notes = slide_notes(paras, plan, banned(svc.config)) if settings.get("disclaimers", True) else None
     marked = [n for n, found in enumerate(notes or [], start=1) if found]
@@ -828,6 +829,21 @@ def render_video(
     size = "×".join(map(str, render.size_of(orientation)))
     ctx.log(f"{out.name}: {audio_s:.0f} с, {len(scene_list)} слайдов, кадр {size}")
     ctx.remember(media_s=round(audio_s, 1))  # для оценки времени следующих сборок
+
+
+def phrase_times(
+    ctx: StepContext, paras: list[str], plan: list[slides.Slide], audio: Path, audio_s: float
+) -> list[float] | None:
+    """Когда звучит фраза каждого слайда — по паузам в озвучке (BE-016); не вышло — None, по доле слов."""
+    ctx.progress("Ищу паузы в озвучке…")
+    try:
+        silences = services(ctx).renderer.silences(audio, ctx.cancel)
+    except StudioError as exc:
+        ctx.log(f"паузы в озвучке не нашлись ({exc}) — слайды по доле слов")
+        return None
+    at = timing.phrase_starts(paras, audio_s, silences)
+    ctx.log(f"слайды по паузам в озвучке: {len(silences)} пауз")
+    return [at.get((s.para, s.sent), 0.0) for s in plan]
 
 
 def renderer(ctx: StepContext) -> Renderer:

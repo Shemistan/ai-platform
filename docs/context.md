@@ -94,7 +94,8 @@
 6. `clips` (plan) — до 3 роликов: «Видео» или загрузка.
 7. `voice` (text) — озвучка: «Аудио» или свой mp3.
 8. `render` (poster, plan, images, clips, voice) — ffmpeg `video.mp4` 16:9 (`render.py`, `motion.py`);
-   движение только при появлении слайда, `slide_motion` выключает и его (PRD-031).
+   движение только при появлении слайда, `slide_motion` выключает и его (PRD-031); слайд встаёт на
+   свою фразу по паузам в озвучке — `timing.py` (BE-016).
 9. `short` (text, poster, images, clips) — шортс 9:16.
 10. `publish` (render, short) — публикация; после рестарта сама не повторяется.
 
@@ -107,7 +108,7 @@
 - `publish.py` — каналы `telegram` (Bot API, подпись ≤1024) и `manual` (папка-пакет);
   состояния sending/sent/unknown/failed, разрешение неясных — `publish/resolve`.
 - Остальное: `llm.py`, `prompts.py`, `news.py`, `cache.py` (кэш по sha256 входов),
-  `estimate.py` (оценка времени), `series.py` (статья → серия), `review.py` (ревью из
+  `estimate.py` (оценка времени), `timing.py` (начала фраз по паузам озвучки), `series.py` (статья → серия), `review.py` (ревью из
   бота владельца), `schedule.py` (дайджест по расписанию и ежедневные работы),
   `stats.py` (подписчики, просмотры, окна 24ч/72ч/7д), `metrics.py`, `history.py`
   (архив аналитики), `backfill.py`, `config.py`, `assets/`.

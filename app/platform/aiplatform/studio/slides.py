@@ -28,6 +28,7 @@ TARGET_SLIDE_S = 6
 # под озвучку. Слайд не сменится раньше, чем прочитается его текст.
 READING = {"off": 0.0, "normal": 3.0, "slow": 2.0}
 READ_BASE_S = 1.0  # найти текст глазами
+READ_LAG_S = 1.0  # дольше время на чтение слайд не задерживает: речь уже о следующем (BE-016)
 MAX_READ_S = 15.0  # код и длинные списки — смотрят, а не читают целиком
 
 IMAGE = "image"
@@ -334,9 +335,14 @@ def spoken(paras: list[str], plan: list[Slide], n: int) -> str:
     return " ".join(said or [text for p, s, text in flat if (p, s) >= begin][:1])
 
 
-def _begins(paras: list[str], slides: list[Slide], total_s: float, intro_s: float) -> list[float]:
-    """С какой секунды после интро звучит фраза каждого слайда."""
-    begin = [max(s - intro_s, 0.0) for s in starts(paras, slides, total_s)]
+def _begins(
+    paras: list[str], slides: list[Slide], total_s: float, intro_s: float, spoken_at: list[float] | None = None
+) -> list[float]:
+    """С какой секунды после интро звучит фраза каждого слайда.
+
+    spoken_at — когда фраза звучит на деле, по паузам в звуке (studio/timing.py); нет — по доле слов."""
+    at = spoken_at if spoken_at is not None else starts(paras, slides, total_s)
+    begin = [max(s - intro_s, 0.0) for s in at]
     begin[0] = 0.0
     return begin
 
@@ -347,24 +353,30 @@ def durations(
     total_s: float,
     intro_s: float = 0.0,
     minimums: list[float] | None = None,
+    spoken_at: list[float] | None = None,
 ) -> list[float]:
     """Сколько секунд держится каждый слайд, чтобы вместе с интро ровно покрыть аудио.
 
-    Первые intro_s секунд занимает постер. Слайд не короче MIN_SLIDE_S и своего
-    minimums (время на чтение) — короткий сдвигает начало следующих, они догоняют
-    озвучку на длинных слайдах. Не хватает аудио на все минимумы — все сжимаются
-    в одной доле.
+    Первые intro_s секунд занимает постер. Слайд встаёт на свою фразу (spoken_at —
+    когда она звучит на деле) и не короче MIN_SLIDE_S. minimums (время на чтение)
+    задерживает следующий слайд не дольше READ_LAG_S после его фразы: иначе речь
+    уходит вперёд картинки (BE-016). Не хватает аудио на все минимумы — все
+    сжимаются в одной доле.
     """
     if not slides:
         return []
     body = max(total_s - intro_s, 0.0)
     n = len(slides)
-    floors = [max(MIN_SLIDE_S, m) for m in (minimums or [0.0] * n)]
+    reads = minimums or [0.0] * n
+    floors = [max(MIN_SLIDE_S, m) for m in reads]
     if sum(floors) > body:
-        floors = [f * body / sum(floors) for f in floors]
-    begin = _begins(paras, slides, total_s, intro_s)
+        share = body / sum(floors)
+        floors, reads = [f * share for f in floors], [r * share for r in reads]
+    spoken = _begins(paras, slides, total_s, intro_s, spoken_at)
+    begin = list(spoken)
     for i in range(1, n):
-        begin[i] = max(begin[i], begin[i - 1] + floors[i - 1])
+        read = min(begin[i - 1] + reads[i - 1], spoken[i] + READ_LAG_S)
+        begin[i] = max(begin[i], begin[i - 1] + min(MIN_SLIDE_S, floors[i - 1]), read)
     # Не вылезти за конец: последние слайды поджимаются назад, оставляя каждому его floor.
     for i in range(n - 1, -1, -1):
         limit = body - sum(floors[i:])
@@ -373,9 +385,17 @@ def durations(
     return [round(max(e - b, 0.0), 3) for b, e in zip(begin, ends, strict=True)]
 
 
-def lag(paras: list[str], slides: list[Slide], seconds: list[float], total_s: float, intro_s: float = 0.0) -> float:
+def lag(
+    paras: list[str],
+    slides: list[Slide],
+    seconds: list[float],
+    total_s: float,
+    intro_s: float = 0.0,
+    spoken_at: list[float] | None = None,
+) -> float:
     """На сколько секунд слайд самое большее отстаёт от своей фразы в озвучке."""
     if not slides:
         return 0.0
     shown = [sum(seconds[:i]) for i in range(len(slides))]
-    return round(max(s - b for s, b in zip(shown, _begins(paras, slides, total_s, intro_s), strict=True)), 1)
+    begins = _begins(paras, slides, total_s, intro_s, spoken_at)
+    return round(max(s - b for s, b in zip(shown, begins, strict=True)), 1)

@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiplatform.core import runner
+from aiplatform.montage import transcript
 from aiplatform.studio import motion
 from aiplatform.studio.llm import StudioError
 from aiplatform.studio.motion import quote as _quote
@@ -60,6 +61,7 @@ PLAY_SHARE = 0.26  # кнопка — доля короткой стороны �
 STICKER_BOTTOM = (0.92, 0.28)  # плашка на обложке: доля ширины, не выше доли высоты
 STICKER_CORNER = {"landscape": 0.24, "square": 0.32, "vertical": 0.5}  # плашка в углу: доля ширины
 MARGIN = 0.03  # отступ от края — доля короткой стороны
+SILENCE_MIN_S = 0.15  # короче — не пауза; что из них граница фразы, решает studio/timing.py
 FFMPEG_HINT = "Нужен ffmpeg с drawtext: brew install ffmpeg-full (путь — в PATH или AIP_FFMPEG)."
 
 
@@ -341,10 +343,18 @@ class Renderer:
             return []
         return badge_parts(lay, self.font, note_top(lay, note_file) if note_file is not None else None)
 
-    def _run(self, argv: list[str], cancel: threading.Event, what: str) -> None:
+    def _run(
+        self, argv: list[str], cancel: threading.Event, what: str, on_line: Callable[[str], None] | None = None
+    ) -> None:
         lines: list[str] = []
+
+        def line(text: str) -> None:
+            lines.append(text)
+            if on_line is not None:
+                on_line(text)
+
         try:
-            runner.run(argv, lines.append, cancel, missing_hint=FFMPEG_HINT, kind="render")
+            runner.run(argv, line, cancel, missing_hint=FFMPEG_HINT, kind="render")
         except runner.RunFailed as exc:
             tail = " ".join(x.strip() for x in lines[-3:] if x.strip())
             raise StudioError(f"ffmpeg ({what}): {exc} {tail}".strip()) from exc
@@ -415,6 +425,13 @@ class Renderer:
         self._run(argv, cancel, f"скорость ×{tempo:g}")
         tmp.replace(out)
         return out
+
+    def silences(self, audio: Path, cancel: threading.Event) -> list[tuple[float, float]]:
+        """Паузы в озвучке (начало, конец) — по ним слайды встают на свои фразы (studio/timing.py)."""
+        lines: list[str] = []
+        argv = transcript.silence_argv(self.ffmpeg, audio, min_s=SILENCE_MIN_S)
+        self._run(argv, cancel, "паузы в озвучке", lines.append)
+        return transcript.parse_silences(lines)
 
     def tag_ai(self, audio: Path, cancel: threading.Event) -> Path:
         """Метка ИИ в mp3 без перекодирования: ID3 TXXX:AI_GENERATED=1 и комментарий (CMP-011)."""
