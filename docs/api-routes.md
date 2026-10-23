@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 198. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 209. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -346,6 +346,24 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/studio/projects/{pid}/upload/{what}` | файл | JSON | Постер или озвучка от человека; src — загрузка во временном файле (body_to_file) |
 | POST | `/api/studio/projects/{pid}/upload/{kind}/{key}` | файл | JSON | Картинка или видео слайда от человека. Все на месте — шаг готов, сборка заново |
 | GET | `/api/studio/projects/{pid}/files/{rest…}` | — | файл | — |
+
+### `transcribe`
+
+Код: `app/platform/aiplatform/transcribe/service.py`
+
+| Метод | Путь | Тело / query | Ответ | Что делает |
+|---|---|---|---|---|
+| GET | `/api/transcribe/config` | — | JSON | — |
+| GET | `/api/transcribe/jobs` | — | JSON | — |
+| POST | `/api/transcribe/jobs` | JSON | JSON 201 | — |
+| GET | `/api/transcribe/jobs/{jid}` | — | JSON | — |
+| POST | `/api/transcribe/jobs/{jid}` | JSON | JSON | — |
+| POST | `/api/transcribe/jobs/{jid}/source` | файл | JSON 201 | — |
+| GET | `/api/transcribe/jobs/{jid}/source` | — | файл | — |
+| POST | `/api/transcribe/jobs/{jid}/start` | JSON | JSON | — |
+| GET | `/api/transcribe/jobs/{jid}/files/{name}` | ?inline | файл | — |
+| POST | `/api/transcribe/jobs/{jid}/cancel` | — | JSON | — |
+| POST | `/api/transcribe/jobs/{jid}/delete` | — | JSON | — |
 
 ### `updates`
 

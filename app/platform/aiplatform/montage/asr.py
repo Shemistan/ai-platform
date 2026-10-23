@@ -88,8 +88,12 @@ CATALOG = (
     ),
 )  # fmt: skip
 DEFAULT_ID = CATALOG[0].id
-# Язык речи — как его называет каждая модель.
-LANGUAGE = {"whisper": "ru", "qwen3": "Russian"}
+# Язык речи — как его называет каждая модель. Монтаж и моушн — всегда русский; «Расшифровка» даёт выбор.
+LANGUAGES = {
+    "ru": ("Русский", {"whisper": "ru", "qwen3": "Russian"}),
+    "en": ("English", {"whisper": "en", "qwen3": "English"}),
+}
+LANGUAGE = LANGUAGES["ru"][1]
 
 
 def get(model_id: str | None) -> Model | None:
@@ -157,6 +161,7 @@ def build_argv(
     *,
     splits: list[float] | None = None,
     hotwords: list[str] | None = None,
+    language: str = "ru",
 ) -> list[str]:
     argv = [
         *config.asr_cmd(),
@@ -164,7 +169,7 @@ def build_argv(
         "--model", str(weights_dir(config, model.weights)),
         "--audio", str(audio),
         "--out", str(out),
-        "--language", LANGUAGE[model.kind],
+        "--language", LANGUAGES[language][1][model.kind],
     ]  # fmt: skip
     if model.aligner is not None:
         argv += ["--aligner", str(weights_dir(config, model.aligner))]

@@ -98,6 +98,8 @@ class ArgvTest(unittest.TestCase):
         self.assertEqual(qwen[qwen.index("--language") + 1], "Russian")
         self.assertEqual(qwen[qwen.index("--aligner") + 1], "/r/models/asr/Qwen3-ForcedAligner-0.6B-bf16")
         self.assertNotIn("--splits", qwen)
+        english = asr.build_argv(cfg, asr.get("qwen3-asr-1.7b"), Path("a.wav"), Path("o.json"), language="en")
+        self.assertEqual(english[english.index("--language") + 1], "English", "язык «Расшифровки» (PRD-032)")
 
     def test_progress_lines(self):
         self.assertEqual(asr.parse_progress("PROGRESS 42.5 кусок 3 из 7"), (42.5, "кусок 3 из 7"))

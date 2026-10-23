@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Расшифровка — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="page-head">
+    <div class="page-title">
+      <h1>Расшифровка</h1>
+      <span class="chip" id="mode-chip">…</span>
+    </div>
+    <div class="toolbar">
+      <button type="button" class="btn btn--primary" id="new-job">Новая запись</button>
+    </div>
+  </header>
+  <div class="banner" id="banner" role="status" hidden></div>
+
+  <main class="layout transcribe-layout">
+    <div class="main-col" id="job" aria-live="polite"></div>
+
+    <div class="side">
+      <section class="panel">
+        <h2>Записи</h2>
+        <ul class="history" id="jobs"></ul>
+      </section>
+    </div>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
