@@ -59,6 +59,7 @@
 | `avatar/` | `/api/avatar/` | «Диктор»: персонаж по фото говорит текст — озвучка очередью «Аудио», анимация SadTalker (`sadtalker.py`), персонажи `characters.py` |
 | `montage/` | `/api/montage/` | «Монтаж»: своя запись → ролик (ниже) |
 | `motion/` | `/api/motion/` | «Моушн»: готовое видео → анимации агентов с таймкодами (ниже) |
+| `transcribe/` | `/api/transcribe/` | «Расшифровка»: видео или аудио → текст абзацами, `.md` с таймкодами, `.srt`/`.vtt`; модели и воркер «Монтажа» (`montage/asr.py`), `formats.py` — форматы, `jobs.py` — очередь (PRD-032) |
 | `studio/` | `/api/studio/` | сценарии выпусков и доска «Выпуски» (ниже) |
 | `library/` | `/api/library/` | «Статьи»: библиотека narrator через мост, озвучка/проверка/отправка — фоновые `core.tasks` |
 | `news/` | `/api/news/` | источники, главное за день, добор упавших, обзоры недели/месяца |
@@ -182,7 +183,7 @@ LLM — ADR 0006, файлы — 0007).
   `/api/config` → `tabs`, меню групп — `core/nav-groups.js`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
   `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`,
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
-- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`,
+- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `transcribe/` (+`view.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`,
   `review.js`/`review-ui.js` — панель ревью, `progress.js`/`progress-ui.js` — панель прогресса с SSE и виртуализацией логов),
   `board/` «Выпуски», `studio/` (`state.js`, `create.js`, `steps.js`, `head.js`,
   `media.js`, `publish.js`, `settings.js`), `library/` «Статьи», `news/`,
@@ -229,6 +230,7 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
   `uploads/`, `analytics/publications.jsonl`.
 - `photo/jobs/`, `video/jobs/`, `audio/jobs/`, `avatar/jobs/`, `library/tasks/` — задачи вкладок;
   `avatar/characters/<id>/` — персонажи диктора (картинка, согласие на лицо).
+- `transcribe/jobs/<id>/`: `job.json`, `source.<ext>`, `words.json`, `text.txt`, `text.md`, `subtitles.srt`, `subtitles.vtt`.
 - `motion/projects/<id>/`: `project.json`, `source.<ext>`, `words.json`, `moments.json`, `design.json`,
   `scenes/<sid>/` (`storyboard.json`, `code.json`, `index.html`, `scene.mov`, `preview.mp4`, `poster.jpg`), `package.zip`.
 - `montage/projects/<id>/`: `project.json`, `sources/`, `audio.wav`, `words.json`, `silences.json`,
@@ -250,7 +252,7 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
 Фото: Z-Image Turbo (по умолчанию), Krea-2, Qwen-Image-2512, Ideogram 4,
 FLUX.2 Klein-9B/Dev. Видео: LTX-2.5 Q4 (по умолчанию), LTX-2.3 Q4, Wan 2.2.
 Апскейл: SeedVR2. Диктор: SadTalker (CPU, окружение в `~/.local/share/avatar`).
-Расшифровка монтажа: Whisper Large V3 Turbo (по умолчанию), Whisper Large V3, Qwen3-ASR 1.7B +
+Расшифровка (монтаж, моушн, вкладка «Расшифровка»): Whisper Large V3 Turbo (по умолчанию), Whisper Large V3, Qwen3-ASR 1.7B +
 ForcedAligner — mlx-audio в `~/.local/share/montage`, веса в `<AIP_MODELS_DIR>/asr/`; моушн — HyperFrames
 (Node 22+, `make models M=hyperframes`). Ставит `app/platform/tools/setup-model.sh` (`make models M=`).
 Известная беда: Flux2CLI без `mlx.metallib` — `docs/грабли.md` №1.
