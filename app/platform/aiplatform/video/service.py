@@ -70,6 +70,8 @@ class VideoModule:
                 return req.send_json(found(self.jobs.get(job_id)))
             case ("POST", ["jobs", job_id, "cancel"]):
                 return req.send_json(found(self.jobs.cancel(job_id)))
+            case ("POST", ["jobs", job_id, "delete"]):
+                return core_jobs.delete(req, self.jobs, job_id)
             case ("GET", ["jobs", job_id, "video"]):
                 path = self.jobs.video_path(job_id)
                 if path is None:

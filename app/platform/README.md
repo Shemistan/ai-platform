@@ -62,7 +62,7 @@ PATH под launchd, перезапуск, логи, время чекера, п
 ### Данные и бэкап
 
 Данные — вне рабочей копии, в `~/Library/Application Support/aiplatform`
-(`AIP_DATA_DIR`). Перенос (`make migrate-data`), шифрованный бэкап
+(`AIP_DATA_DIR`). Перенос (`make migrate-data`, на внешний SSD — `TO=<каталог>`), шифрованный бэкап
 (`make backup`, `make restore`), Time Machine (`make tm-exclude`) — [`docs/configuration.md`](../../docs/configuration.md#данные-и-бэкап); сроки хранения личных данных — [«Данные и сроки»](../../docs/configuration.md#данные-и-сроки).
 
 ### Обновление и откат

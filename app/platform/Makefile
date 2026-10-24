@@ -47,8 +47,9 @@ restore: python-check
 	$(PYTHON) -m aiplatform.backup restore "$(FILE)" "$(TO)"
 
 # Один раз: data/ из рабочей копии → ~/Library/Application Support/aiplatform (копия; старое не удаляется).
+# С TO=<пустой каталог> — текущие данные туда, например на внешний SSD; затем AIP_DATA_DIR в local.mk.
 migrate-data: python-check
-	$(PYTHON) -m aiplatform.backup migrate
+	$(PYTHON) -m aiplatform.backup migrate $(if $(TO),"$(TO)")
 
 # Исключить из Time Machine восстановимое и тяжёлое: веса моделей, кэш генераций, .venv движка, кэш HF.
 tm-exclude:

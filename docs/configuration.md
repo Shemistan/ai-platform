@@ -56,7 +56,7 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `AIP_PORT`, `AIP_HOST` | `8780`, `127.0.0.1` | где слушать |
 | `AIP_AUTH_TOKEN` | — | токен доступа; без него сервер на не-loopback адресе не стартует |
 | `AIP_ALLOWED_HOSTS` | — | свои имена в Host через запятую (`box.local,10.0.0.5:8780`) |
-| `AIP_DATA_DIR` | `~/Library/Application Support/aiplatform`; пока его нет, а `app/platform/data` есть — старый путь | задачи, загрузки, выпуски, настройки, каналы (вне рабочей копии — см. [«Данные и бэкап»](#данные-и-бэкап)) |
+| `AIP_DATA_DIR` | `~/Library/Application Support/aiplatform`; пока его нет, а `app/platform/data` есть — старый путь | задачи, загрузки, выпуски, настройки, каналы (вне рабочей копии — см. [«Данные и бэкап»](#данные-и-бэкап)); можно на внешний SSD — тогда без подключённого диска сервер не стартует |
 | `AIP_MODELS_DIR` | `/Volumes/External SSD/local_models` (у автора — внешний диск) | веса фото- и видеомоделей; диска нет — свой каталог, `~/local_models`, см. [«Если не работает при установке»](../app/platform/README.md#если-не-работает-при-установке) |
 | `AIP_LOW_RAM` | — | экономия памяти для фото и видео |
 | `AIP_PHOTO_MFLUX_BIN`, `AIP_PHOTO_FLUX2_CMD` | из PATH | пайплайны фото (или старые `PHOTOGEN_*`) |
@@ -182,6 +182,23 @@ launchctl kickstart -k gui/$(id -u)/com.aiplatform.server
 ```
 
 Проверь доску и каналы — после этого `app/platform/data` можно удалить.
+
+**Данные на внешнем SSD** — чтобы проекты «Монтажа» и выпуски не занимали
+основной диск. Сервис остановлен, SSD подключён:
+
+```sh
+make uninstall-agent                                      # если стоит автозапуск
+make migrate-data TO="/Volumes/External SSD/aiplatform-data"   # копия текущих данных, сверка числа файлов и объёма
+echo 'AIP_DATA_DIR=/Volumes/External SSD/aiplatform-data' >> local.mk
+make install-agent                                        # или make run
+```
+
+Каталог данных на `/Volumes/<диск>/…`, а диск не подключён — сервер не
+стартует («подключи диск»), а не начинает с пустых данных; launchd
+перезапускает его, и он поднимется, когда диск появится. Старый каталог
+остаётся — удали его, когда проверишь доску и каналы. Библиотека narrator
+остаётся в проекте: в неё пишут агенты `claude -p` (дайджест, судья), а их
+sandbox пускает запись только в рабочую копию.
 Библиотека narrator (статьи, база новостей, подписчики бота) лежит в
 `<AIP_NARRATOR_DIR>/library` (сейчас — `~/my_track/07_offline_text-to-word/library`)
 или в `$NARRATOR_LIBRARY`.

@@ -156,6 +156,28 @@ class DataDirTest(unittest.TestCase):
         with self.assertRaisesRegex(backup.BackupError, "не пустой"):
             backup.migrate({"HOME": str(self.home)}, legacy=self.legacy)
 
+    def test_migrate_to_own_dir_copies_and_checks(self):
+        (self.legacy / "montage" / "projects" / "p1").mkdir(parents=True)
+        (self.legacy / "settings.json").write_text("{}")
+        (self.legacy / "montage" / "projects" / "p1" / "output.mp4").write_bytes(b"\0" * 1024)
+        target = backup.migrate({"HOME": str(self.home)}, legacy=self.legacy, target=self.home / "ssd" / "data")
+        self.assertEqual((target / "montage" / "projects" / "p1" / "output.mp4").stat().st_size, 1024)
+        self.assertTrue((self.legacy / "settings.json").is_file(), "старое не удаляется")
+        with self.assertRaisesRegex(backup.BackupError, "не пустой"):
+            backup.migrate({"HOME": str(self.home)}, legacy=self.legacy, target=target)
+        with self.assertRaisesRegex(backup.BackupError, "внутри"):
+            backup.migrate({"HOME": str(self.home)}, legacy=self.legacy, target=self.legacy / "copy")
+
+    def test_migrate_refuses_missing_volume(self):
+        self.legacy.mkdir(parents=True)
+        with self.assertRaisesRegex(backup.BackupError, "не подключён"):
+            backup.migrate({}, legacy=self.legacy, target=Path("/Volumes/aip-test-absent-disk/data"))
+
+    def test_data_dir_on_missing_volume_refuses_start(self):
+        with self.assertRaisesRegex(config_module.ConfigError, "не подключён"):
+            config_module.load({"AIP_DATA_DIR": "/Volumes/aip-test-absent-disk/aiplatform-data"})
+        self.assertIsNone(config_module.missing_volume(self.home / "data"))
+
     def test_tests_refuse_user_data_dir(self):
         with self.assertRaisesRegex(RuntimeError, "боевым каталогом данных"):
             config_module.load({"AIP_DATA_DIR": str(config_module.user_data_dir(os.environ))})

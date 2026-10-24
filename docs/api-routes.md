@@ -89,7 +89,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 ## Маршруты
 
 <!-- gate:begin api-routes -->
-Маршрутов: 209. Собрано `python3 tools/api_routes.py` — руками не править.
+Маршрутов: 212. Собрано `python3 tools/api_routes.py` — руками не править.
 
 ### Общие
 
@@ -118,6 +118,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/audio/jobs/batch` | JSON | JSON 201 | Статьи одного файла — в очередь по порядку, каждая своей задачей с общими настройками |
 | GET | `/api/audio/jobs/{job_id}` | — | JSON | — |
 | POST | `/api/audio/jobs/{job_id}/cancel` | — | JSON | — |
+| POST | `/api/audio/jobs/{job_id}/delete` | — | — | — |
 | GET | `/api/audio/jobs/{job_id}/audio` | ?speed, ?download | файл | — |
 | GET | `/api/audio/voices` | — | JSON | — |
 | GET | `/api/audio/voices/{stem}/sample` | — | файл | — |
@@ -300,6 +301,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/photo/jobs` | JSON | JSON 201 | — |
 | GET | `/api/photo/jobs/{job_id}` | — | JSON | — |
 | POST | `/api/photo/jobs/{job_id}/cancel` | — | JSON | — |
+| POST | `/api/photo/jobs/{job_id}/delete` | — | — | — |
 | POST | `/api/photo/jobs/{job_id}/upscale` | JSON | JSON 201 | — |
 | GET | `/api/photo/jobs/{job_id}/image` | ?download | файл | — |
 
@@ -396,6 +398,7 @@ curl -s -X POST -H 'X-AIP: 1' -H 'Content-Type: application/json' \
 | POST | `/api/video/living` | JSON | JSON 201 | — |
 | GET | `/api/video/jobs/{job_id}` | — | JSON | — |
 | POST | `/api/video/jobs/{job_id}/cancel` | — | JSON | — |
+| POST | `/api/video/jobs/{job_id}/delete` | — | — | — |
 | GET | `/api/video/jobs/{job_id}/video` | ?download | файл | — |
 
 ### Мост `narrate bridge`

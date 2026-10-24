@@ -198,14 +198,33 @@ def status(data_dir: Path, env: Mapping[str, str], *, now: float | None = None) 
     return {"name": "backup", "ok": ok, "detail": detail, "age_h": round(age_h, 1)}
 
 
-def migrate(env: Mapping[str, str], *, legacy: Path = config_module.LEGACY_DATA_DIR) -> Path:
-    """Перенос data/ из рабочей копии в ~/Library/Application Support/aiplatform (копия, старое не удаляется)."""
-    target = config_module.user_data_dir(env)
+def _tally(root: Path) -> tuple[int, int]:
+    """Число файлов и их объём: сверка копии с оригиналом."""
+    files = [p for p in root.rglob("*") if p.is_file() and not p.is_symlink()]
+    return len(files), sum(p.stat().st_size for p in files)
+
+
+def migrate(
+    env: Mapping[str, str],
+    *,
+    legacy: Path = config_module.LEGACY_DATA_DIR,
+    target: Path | None = None,
+) -> Path:
+    """Копия каталога данных в новый (старое не удаляется). Без target — data/ из рабочей копии
+    в ~/Library/Application Support/aiplatform; с target — `legacy` (текущий каталог) в любой
+    пустой каталог, например на внешний SSD (REL-017)."""
+    target = config_module.user_data_dir(env) if target is None else target.expanduser().absolute()
     if not legacy.is_dir():
-        raise BackupError(f"Нет старого каталога {legacy} — переносить нечего.")
+        raise BackupError(f"Нет каталога {legacy} — переносить нечего.")
+    if volume := config_module.missing_volume(target):
+        raise BackupError(f"Диск {volume} не подключён — подключи его и повтори.")
+    if target.resolve() == legacy.resolve() or target.resolve().is_relative_to(legacy.resolve()):
+        raise BackupError(f"{target} внутри переносимого {legacy} — выбери каталог вне него.")
     if target.exists() and any(target.iterdir()):
         raise BackupError(f"{target} уже не пустой — перенос уже был? Сравни каталоги руками.")
     shutil.copytree(legacy, target, symlinks=True, dirs_exist_ok=True)
+    if _tally(target) != _tally(legacy):
+        raise BackupError(f"Копия в {target} не сошлась с {legacy} по числу файлов или объёму — проверь диск.")
     old_channels = SERVICE_DIR / "channels.json"
     if old_channels.is_file() and not (target / "channels.json").exists():
         shutil.copy2(old_channels, target / "channels.json")
@@ -230,8 +249,15 @@ def main(argv: list[str]) -> int:
                 print(f"данные скопированы в {target}; старый {config_module.LEGACY_DATA_DIR} не удалён.")
                 print("перезапусти сервис (launchctl kickstart -k gui/$(id -u)/com.aiplatform.server), проверь")
                 print("доску и каналы — потом старый каталог можно удалить.")
+            case ["migrate", to]:
+                target = migrate(cfg.env, legacy=cfg.data_dir, target=Path(to))
+                print(f"данные скопированы из {cfg.data_dir} в {target}, файлы и объём сошлись; старое не удалено.")
+                print(f"допиши в app/platform/local.mk строку: AIP_DATA_DIR={target}")
+                print("перезапусти сервис (launchctl kickstart -k gui/$(id -u)/com.aiplatform.server), проверь")
+                print("доску и каналы — потом старый каталог можно удалить.")
             case _:
-                print("использование: python -m aiplatform.backup create | restore <архив> <пустой каталог> | migrate")
+                print("использование: python -m aiplatform.backup create | restore <архив> <пустой каталог>"
+                      " | migrate [<пустой каталог>]")  # fmt: skip
                 return 2
     except BackupError as exc:
         print(f"⛔ {exc}", file=sys.stderr)

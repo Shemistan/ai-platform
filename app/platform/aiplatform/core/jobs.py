@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from http import HTTPStatus
+from typing import Protocol
 
-from aiplatform.core.http import Request, bad_request
+from aiplatform.core.http import HttpError, Request, bad_request, found
 
 ACTIVE = ("queued", "running")
 DEFAULT_LIMIT = 100  # столько задач отдаёт GET …/jobs без ?limit: опрос раз в секунду не тащит всю историю
@@ -39,3 +41,20 @@ def list_args(req: Request) -> tuple[int, float | None]:
     if not 1 <= limit <= MAX_LIMIT:
         raise bad_request(f"limit — от 1 до {MAX_LIMIT}.")
     return limit, since
+
+
+class Forgetful(Protocol):
+    def get(self, job_id: str) -> dict | None: ...
+    def forget(self, job_id: str) -> int: ...
+
+
+def delete(req: Request, manager: Forgetful, job_id: str, busy: str = "") -> None:
+    """POST …/jobs/<id>/delete: неудачный результат — из истории и с диска (UX-029).
+    Идущую задачу — нельзя (409); busy — своя причина отказа вкладки (например, идёт апскейл)."""
+    job = found(manager.get(job_id))
+    if job["status"] in ACTIVE:
+        raise HttpError(HTTPStatus.CONFLICT, "Задача в работе — сначала отмени.")
+    if busy:
+        raise HttpError(HTTPStatus.CONFLICT, busy)
+    manager.forget(job_id)
+    req.send_json({"deleted": job_id})

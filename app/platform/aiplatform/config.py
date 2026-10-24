@@ -93,6 +93,18 @@ def default_data_dir(env: Mapping[str, str], legacy: Path = LEGACY_DATA_DIR) -> 
     return new
 
 
+def missing_volume(path: Path) -> Path | None:
+    """Путь на внешнем томе (/Volumes/<том>/…), а том не подключён — сам том; иначе None.
+
+    Без проверки сервис на отключённом SSD создал бы пустой каталог данных и работал «с нуля».
+    """
+    parts = Path(path).expanduser().parts
+    if len(parts) < 3 or parts[:2] != ("/", "Volumes"):
+        return None
+    volume = Path("/Volumes", parts[2])
+    return None if os.path.ismount(volume) else volume
+
+
 def _guard_tests(data_dir: Path) -> None:
     if not flag(os.environ, TEST_GUARD_ENV):
         return
@@ -146,6 +158,8 @@ def load(env: Mapping[str, str] | None = None) -> Config:
     data_dir = Path(data).expanduser()
     if not data_dir.is_absolute():
         data_dir = SERVICE_DIR / data_dir
+    if volume := missing_volume(data_dir):
+        raise ConfigError(f"каталог данных {data_dir} — на диске {volume}, а он не подключён: подключи диск")
     data_dir = data_dir.resolve()
     _guard_tests(data_dir)
     host = pick(env, "AIP_HOST", default="127.0.0.1").strip()

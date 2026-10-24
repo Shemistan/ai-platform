@@ -188,6 +188,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 
 .job { display: grid; gap: var(--sp-3); }
 .job-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.job-delete { margin-left: auto; }
 .job-text { overflow-wrap: anywhere; white-space: pre-wrap; max-height: 7.5em; overflow: auto; }
 .progress { display: grid; gap: var(--sp-2); }
 .progress-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-3); }

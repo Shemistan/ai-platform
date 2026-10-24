@@ -1,6 +1,6 @@
 // Вкладка «Аудио»: текст → mp3 через движок narrator. Произношение на лету, тексты из библиотеки
 // и md-файлов, очередь, проверка распознаванием, образцы голосов.
-import { $, busyClick, chip, countLabel, debounce, errorState, fill, fmtNum, followTask, h, logBlock, modal, narratorApi as api, plural, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { $, busyClick, chip, confirmAction, countLabel, debounce, errorState, fill, fmtNum, followTask, h, logBlock, modal, narratorApi as api, plural, poller, progressBar, safe, seconds, shortDate, statusChip, taskCard, toast, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 import { CONSENT_FORMS, voiceConsent } from "/core/consent.js";
 
 const API = "/api/audio";
@@ -369,6 +369,7 @@ function renderJob(job) {
         job.elapsed_s ? h("span", { class: "muted small" }, `Озвучка заняла ${seconds(job.elapsed_s)}`) : null,
         job.text ? h("button", { type: "button", class: "btn btn--link", onclick: () => setText(job.text) }, "Текст в редактор") : null,
         active ? h("button", { type: "button", class: "btn btn--link btn--danger", onclick: busyClick(() => cancel(job.id), `cancel:${job.id}`) }, "Отменить") : null,
+        active ? null : h("button", { type: "button", class: "btn btn--link btn--danger", onclick: safe(() => remove(job)) }, "Удалить"),
       ),
       checkBlock(job.check),
       logBlock(job.log),
@@ -409,6 +410,23 @@ async function select(id) {
 async function cancel(id) {
   state.selected = await api("POST", `${API}/jobs/${id}/cancel`);
   renderJob(state.selected);
+}
+
+// Неудачную озвучку — из истории и с диска (UX-029); у выпусков студии своя копия.
+async function remove(job) {
+  const ok = await confirmAction({
+    title: "Удалить озвучку?",
+    body: "Озвучка пропадёт из истории и с диска. Выпуски студии не пострадают: у них своя копия.",
+    confirmLabel: "Удалить",
+    danger: true,
+  });
+  if (!ok) return;
+  await api("POST", `${API}/jobs/${job.id}/delete`);
+  state.jobs = state.jobs.filter((j) => j.id !== job.id);
+  state.selected = null;
+  renderJob(null);
+  renderHistory();
+  toast("Озвучка удалена");
 }
 
 // Опрос очереди: раз в секунду, пока есть активные задачи, раз в 5 с в простое (poller из ui.js:
