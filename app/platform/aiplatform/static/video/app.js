@@ -1,6 +1,6 @@
 // Вкладка «Видео» (перенос UI videogen): промпт, лента кадров, живое фото, запуск и статус генерации. Без сборки и зависимостей.
 
-import { $, api, chip, h, icon, iconButton, jobProgress, poller, seconds as fmtElapsed, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { $, api, chip, confirmAction, h, icon, iconButton, jobProgress, poller, seconds as fmtElapsed, STATUS, statusChip, toast, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 import { frameAt, frameCount, frameProblems as problemsOf, keyframeLimit, spread } from "./frames.js";
 
 const state = {
@@ -470,6 +470,7 @@ function renderJob() {
       statusChip(job.status),
       job.backend === "fake" ? chip("Демо — не модель", "warning") : null,
       h("span", { class: "muted small" }, `${job.model_label ? `${job.model_label} · ` : ""}${job.width}×${job.height} · ${job.duration_s} с · seed ${job.seed}${job.audio ? "" : " · без звука"}`),
+      isActive(job) ? null : h("button", { type: "button", class: "btn btn--link btn--danger job-delete", onclick: () => deleteJob(job) }, "Удалить"),
     ),
     h("p", { class: "job-text" }, isLiving(job) ? "Живое фото: снимок стоит посередине ролика, до и после него — по половине." : job.prompt),
     filmstrip(job),
@@ -543,6 +544,26 @@ async function cancelJob(id) {
   try {
     upsertJob(await api("POST", `/api/video/jobs/${id}/cancel`));
     renderJobs();
+  } catch (err) {
+    setBanner(err.message, "error");
+  }
+}
+
+// Неудачный ролик — из истории и с диска (UX-029); у выпусков студии своя копия.
+async function deleteJob(job) {
+  const ok = await confirmAction({
+    title: "Удалить ролик?",
+    body: "Ролик пропадёт из истории и с диска. Выпуски студии не пострадают: у них своя копия.",
+    confirmLabel: "Удалить",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api("POST", `/api/video/jobs/${job.id}/delete`);
+    state.jobs = state.jobs.filter((j) => j.id !== job.id);
+    state.selectedId = state.jobs[0]?.id ?? null;
+    renderJobs();
+    toast("Ролик удалён");
   } catch (err) {
     setBanner(err.message, "error");
   }

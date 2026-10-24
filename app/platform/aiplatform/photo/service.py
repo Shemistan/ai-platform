@@ -90,6 +90,12 @@ class PhotoModule:
                 return req.send_json(found(self.jobs.get(job_id)))
             case ("POST", ["jobs", job_id, "cancel"]):
                 return req.send_json(found(self.jobs.cancel(job_id)))
+            case ("POST", ["jobs", job_id, "delete"]):
+                upscaling = any(
+                    j.get("parent_id") == job_id and j["status"] in core_jobs.ACTIVE for j in self.jobs.list()
+                )
+                busy = "Эту картинку сейчас увеличивают — дождись или отмени апскейл." if upscaling else ""
+                return core_jobs.delete(req, self.jobs, job_id, busy)
             case ("POST", ["jobs", job_id, "upscale"]):
                 payload = req.json()
                 try:

@@ -162,6 +162,8 @@ class AudioModule:
                 return req.send_json(job | {"text": self.jobs.text(job_id)})
             case ("POST", ["jobs", job_id, "cancel"]):
                 return req.send_json(found(self.jobs.cancel(job_id)))
+            case ("POST", ["jobs", job_id, "delete"]):
+                return core_jobs.delete(req, self.jobs, job_id)
             case ("GET", ["jobs", job_id, "audio"]):
                 try:
                     tempo = parse_tempo(req.arg("speed"))

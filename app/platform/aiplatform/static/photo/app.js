@@ -1,6 +1,6 @@
 // Вкладка «Фото» (перенос UI photogen): режим, промпт, исходное фото с маской или полями, запуск и результат. Без сборки и зависимостей.
 
-import { $, api, busyClick, chip, h, jobProgress, poller, STATUS, statusChip, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
+import { $, api, busyClick, chip, confirmAction, h, jobProgress, poller, STATUS, statusChip, toast, toneOf, UPLOAD_LIMITS, uploadFile } from "/ui.js";
 import { loadOriented } from "./exif.js";
 import { geometry as geometryOf } from "./geometry.js";
 
@@ -419,6 +419,7 @@ function renderJob() {
       statusChip(job.status),
       job.backend === "fake" ? chip("Демо — не модель", "warning") : null,
       h("span", { class: "muted small" }, jobMeta(job)),
+      isActive(job) ? null : h("button", { type: "button", class: "btn btn--link btn--danger job-delete", onclick: () => deleteJob(job) }, "Удалить"),
     ),
     h("p", { class: "job-text" }, job.prompt),
   ];
@@ -496,6 +497,26 @@ async function cancelJob(id) {
   try {
     upsertJob(await api("POST", `/api/photo/jobs/${id}/cancel`));
     renderJobs();
+  } catch (err) {
+    showFormError(err.message);
+  }
+}
+
+// Неудачную картинку — из истории и с диска (UX-029); у выпусков студии своя копия.
+async function deleteJob(job) {
+  const ok = await confirmAction({
+    title: "Удалить картинку?",
+    body: "Картинка пропадёт из истории и с диска. Выпуски студии не пострадают: у них своя копия.",
+    confirmLabel: "Удалить",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api("POST", `/api/photo/jobs/${job.id}/delete`);
+    state.jobs = state.jobs.filter((j) => j.id !== job.id);
+    state.selectedId = state.jobs[0]?.id ?? null;
+    renderJobs();
+    toast("Картинка удалена");
   } catch (err) {
     showFormError(err.message);
   }
