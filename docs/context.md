@@ -20,8 +20,8 @@
 - Живой сервис: `http://127.0.0.1:8780`, автозапуск launchd
   (`com.aiplatform.server.plist`), деплой с тега в `~/apps/aiplatform`.
 - Веса моделей: `AIP_MODELS_DIR` (у человека `/Volumes/External SSD/local_models`).
-- Данные: `AIP_DATA_DIR` (по умолчанию `~/Library/Application Support/aiplatform`,
-  старый вариант — `app/platform/data`). Файлы, без БД (ADR 0007).
+- Данные: `AIP_DATA_DIR` (умолчание `~/Library/Application Support/aiplatform`, старое `app/platform/data`;
+  SSD — `make migrate-data TO=`, без тома не стартует). Файлы, без БД (ADR 0007).
 
 ## Сервисы (монорепо)
 
