@@ -14,7 +14,7 @@
 |---|---|---|---|
 | M1 | синтетический (Supertonic) | `src/narrator/voices/` в пакете | не нужно |
 | Charon | синтетический (Gemini TTS) | пакет; перезаписанный — `<папка моделей>/voices/` | не нужно |
-| Shem, Shem-v2 | живой человек | только `<папка моделей>/voices/` | `<имя>.consent.json` рядом |
+| Shem, Shem-v2, Shem-v3 | живой человек | только `<папка моделей>/voices/` | `<имя>.consent.json` рядом |
 
 Папка моделей — `$NARRATOR_MODELS_DIR`, по умолчанию
 `/Volumes/External SSD/local_models`. Файлы `voices/shem*` в пакете

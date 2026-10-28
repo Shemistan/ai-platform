@@ -217,7 +217,7 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
   `audit.py` комплаенс-журнал · `voices/` образцы · `news/` сбор, дайджест,
   обложки, источники, база `news.db`.
 - Движки TTS: `espeech` (по умолчанию, GPU), `silero` (CPU, CC BY-NC), `supertonic`
-  (CPU), mlx-движки; Higgs (MLX) — движок дайджеста. Голоса: Charon, M1, Shem, Shem-v2.
+  (CPU), mlx-движки; Higgs (MLX) — движок дайджеста. Голоса: Charon, M1, Shem, Shem-v2, Shem-v3.
 - Данные движка (вне git): `library/<год>/<мес>/<день>/<slug>/` (source.md,
   script.txt, meta.json, check.md, mp3), `library/news/news.db`,
   `library/telegram.json` (подписчики), `telegram_tems.md` (каналы), `bot_token.md`.

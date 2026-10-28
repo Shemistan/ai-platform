@@ -36,7 +36,7 @@ WebFetch и WebSearch, `source.md`, аннотации в базе пишут п
   сравнения — пять моделей на mlx-audio: `higgs`, `fish`, `moss`, `qwen3`,
   `chatterbox` (`src/narrator/mlx_engines.py`), только Mac на Apple Silicon.
 - Голоса-клоны (`espeech` и mlx): `Charon` (Gemini TTS), `M1`, `Shem`,
-  `Shem-v2` (`CLONE_VOICES` в `synth.py`); синтетические образцы —
+  `Shem-v2`, `Shem-v3` (`CLONE_VOICES` в `synth.py`); синтетические образцы —
   `src/narrator/voices/`, живой голос (Shem) — только `<папка моделей>/voices/`
   с записью о согласии `<имя>.consent.json`, в репозитории его нет
   (`docs/voice-consent.md`); перезаписанные человеком — там же.

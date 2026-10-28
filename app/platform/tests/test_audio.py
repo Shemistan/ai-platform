@@ -37,8 +37,9 @@ class SpecTest(unittest.TestCase):
         for bad in ("быстро", "0.25", "3"):
             with self.assertRaises(ValidationError):
                 parse_tempo(bad)
-        # Shem-v2 — клон второй записи живого голоса: есть у всех движков-клонов.
-        self.assertEqual(build_spec({"text": "т", "engine": "higgs", "voice": "Shem-v2"}).voice, "Shem-v2")
+        # Shem-v2 и Shem-v3 — клоны второй и третьей записи живого голоса: есть у всех движков-клонов.
+        for voice in ("Shem-v2", "Shem-v3"):
+            self.assertEqual(build_spec({"text": "т", "engine": "higgs", "voice": voice}).voice, voice)
 
     def test_rejects(self):
         cases = [

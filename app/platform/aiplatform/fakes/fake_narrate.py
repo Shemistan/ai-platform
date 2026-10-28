@@ -42,7 +42,7 @@ ENGINES = (
     ("qwen3", "Qwen3-TTS", "клон голоса на Apple Silicon, около 4 ГБ", False, (0, 1.0)),
     ("chatterbox", "Chatterbox", "клон голоса на Apple Silicon, около 3 ГБ", False, (0, 1.0)),
 )
-CLONES = {"M1": "m1", "Charon": "charon", "Shem": "shem", "Shem-v2": "shem-v2"}
+CLONES = {"M1": "m1", "Charon": "charon", "Shem": "shem", "Shem-v2": "shem-v2", "Shem-v3": "shem-v3"}
 VOICES = {
     "silero": ["eugene", "aidar", "baya", "kseniya", "xenia"],
     "supertonic": [f"{g}{n}" for g in "FM" for n in range(1, 6)],

@@ -64,10 +64,17 @@ SILERO_MAX_CHARS = 700
 # В пакете (voices/) — только синтетические: M1 из Supertonic и Charon —
 # голос Gemini TTS, отрывок дайджеста за 9 октября 2026; другой образец
 # записывает `./narrate voice charon` в <папка моделей>/voices/, он главнее.
-# Shem и Shem-v2 — живой голос человека: это личные данные, в git их нет
-# (CMP-009). Они лежат только в <папка моделей>/voices/ рядом с записью о
-# согласии `<имя>.consent.json` (consent.py); без неё клон не строится.
-CLONE_VOICES = {"M1": "m1", "Charon": "charon", "Shem": "shem", "Shem-v2": "shem-v2"}
+# Shem, Shem-v2 и Shem-v3 — три записи живого голоса человека: это личные
+# данные, в git их нет (CMP-009). Они лежат только в <папка моделей>/voices/
+# рядом с записью о согласии `<имя>.consent.json` (consent.py); без неё клон
+# не строится.
+CLONE_VOICES = {
+    "M1": "m1",
+    "Charon": "charon",
+    "Shem": "shem",
+    "Shem-v2": "shem-v2",
+    "Shem-v3": "shem-v3",
+}
 # Голоса, которые есть в Gemini TTS: их образец можно записать по ключу.
 GEMINI_VOICES = ("Charon",)
 
