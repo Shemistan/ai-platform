@@ -42,7 +42,7 @@ def test_clone_voice_sample(models_dir, tmp_path, monkeypatch):
     assert "Shem" in synth.ENGINE_VOICES["higgs"] and "Shem" not in synth.ENGINE_VOICES["silero"]
     with pytest.raises(ModelMissingError, match="живой голос в пакете не лежит"):
         ref_sample("Shem")
-    assert not has_voice("higgs", "Shem-v2")
+    assert not has_voice("higgs", "Shem-v2") and not has_voice("higgs", "Shem-v3")
     # Записанный человеком образец главнее.
     own = put_sample(models_dir)
     assert ref_sample("Charon") == own

@@ -858,9 +858,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser(
         "voice",
         help="записать образец голоса для клонирования: charon — голос Charon из Gemini TTS "
-        "(нужны сеть и $GEMINI_API_KEY), shem и shem-v2 — из своей записи через --from и --text",
+        "(нужны сеть и $GEMINI_API_KEY), shem, shem-v2 и shem-v3 — из своей записи "
+        "через --from и --text",
     )
-    s.add_argument("name", help="charon, shem или shem-v2")
+    s.add_argument("name", help="charon, shem, shem-v2 или shem-v3")
     s.add_argument(
         "--from",
         dest="source",
@@ -878,7 +879,7 @@ def build_parser() -> argparse.ArgumentParser:
         "voice-consent",
         help="записать согласие владельца живого голоса рядом с образцом (<имя>.consent.json)",
     )
-    s.add_argument("name", help="shem или shem-v2")
+    s.add_argument("name", help="shem, shem-v2 или shem-v3")
     add_consent_args(s, required=True)
     s.set_defaults(func=cmd_voice_consent)
 

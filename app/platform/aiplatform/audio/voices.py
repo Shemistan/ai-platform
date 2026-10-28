@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 
 from aiplatform.core.settings import Settings
 
-CLONES = ("Charon", "M1", "Shem", "Shem-v2")  # клоны образцов narrator/voices
+CLONES = ("Charon", "M1", "Shem", "Shem-v2", "Shem-v3")  # клоны образцов narrator/voices
 
 
 @dataclass(frozen=True)
