@@ -693,3 +693,8 @@ input.input-auto { width: auto; }
 .album-meta { display: grid; gap: var(--sp-2); }
 .album-meta p { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 800px) { .album-item { grid-template-columns: 1fr; } }
+/* Вход с полем (Новости → Месяц): кнопка во всю карточку и поле под ней. */
+.space-entry:has(.space-entry-main) { cursor: default; }
+.space-entry-main { display: grid; gap: var(--sp-1); padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.space-entry-main strong { font-size: var(--fs-xl); }
+.space-entry-field { display: flex; gap: var(--sp-2); align-items: center; }
