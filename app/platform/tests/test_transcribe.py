@@ -114,7 +114,7 @@ class TranscribeApiTest(PlatformCase):
         self.assertIn("mp3", cfg["accept"])
         status, platform = self.json("GET", "/api/config")
         tab = next(t for t in platform["tabs"] if t["id"] == "transcribe")
-        self.assertEqual((tab["href"], tab["group"]), ("/transcribe/", "media"))
+        self.assertEqual((tab["href"], tab["group"]), ("/transcribe/", "tools"))
         status, _, page = self.call("GET", "/transcribe/")
         self.assertEqual(status, 200)
         self.assertIn("Расшифровка", page.decode())
