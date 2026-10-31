@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { loadStatic } from "./load.mjs";
 
-const { clock, cutOf, layoutAt, phrases, projectPayload, setLayout, setupSummary, togglePhrase, toggleWord } = await loadStatic("montage/plan.js");
+const { clock, cutOf, layoutAt, phrases, projectPayload, redoAction, redoScopes, setLayout, setupSummary, togglePhrase, toggleWord } = await loadStatic("montage/plan.js");
 
 const w = (text, s, e) => ({ w: text, s, e });
 const WORDS = [w("раз", 0.5, 0.8), w("два.", 0.9, 1.2), w("три", 1.3, 1.5), w("четыре", 2.5, 2.9), w("пять", 3.0, 3.2)];
@@ -55,4 +55,16 @@ test("сводка «Как монтировать»: модель, пауза, 
     "Whisper Turbo · пауза до 0,6 с · проверка · С подтверждением",
   );
   assert.equal(setupSummary({ model: "x", max_pause: "1" }), "x · пауза до 1 с");
+});
+
+test("«Переделать…»: охваты и действие воркера (UX-038)", () => {
+  assert.deepEqual(redoScopes({ mode: "reviewed" }), ["plan"]);
+  assert.deepEqual(redoScopes({ mode: "reviewed", storyboard: {} }), ["plan", "storyboard"]);
+  assert.deepEqual(redoScopes({ mode: "manual", storyboard: {} }), ["storyboard"]);
+  assert.deepEqual(redoScopes({ mode: "manual" }), []);
+  // Прежние кнопки: «Переделать с замечанием», «Переделать план (заново)», «Раскадровка заново».
+  assert.deepEqual(redoAction("plan", "  режь дубли  "), { action: "revise", body: { text: "режь дубли" } });
+  assert.deepEqual(redoAction("plan", " "), { action: "replan" });
+  assert.deepEqual(redoAction("storyboard", "что-то"), { action: "storyboard/run" });
+  assert.equal(redoAction("nope"), null);
 });
