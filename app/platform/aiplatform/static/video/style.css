@@ -168,3 +168,5 @@ input.time-input:disabled { background: var(--sunken); color: var(--muted); }
 
 .history-thumb { flex: none; width: 56px; height: 36px; object-fit: cover; border-radius: var(--r-sm); background: var(--sunken); }
 .history-thumb.text { display: grid; place-items: center; color: var(--muted); font-weight: var(--fw-bold); }
+/* Размер кадра — длинные подписи («Горизонтальное 512×768»): две колонки, чтобы не обрезались (UX-035). */
+.settings:has(.field-durations) > .field:has(#preset) { grid-column: span 2; }

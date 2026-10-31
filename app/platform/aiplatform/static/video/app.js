@@ -679,6 +679,9 @@ async function init() {
     const missing = cfg.models.filter((m) => !m.installed).map((m) => `make models M=${m.id}`);
     const note = cfg.models.find((m) => m.id === $("model").value)?.note || "";
     $("model-note").textContent = [note, missing.length ? `Установить: ${missing.join(", ")}` : ""].filter(Boolean).join(". ");
+    // Модель спрятана в «Точных параметрах» (UX-035) — её имя в заголовке блока.
+    const label = cfg.models.find((m) => m.id === $("model").value)?.label;
+    $("precise-brief").textContent = label ? ` · ${label}` : "";
   };
   $("model").addEventListener("change", () => {
     showModelNote();

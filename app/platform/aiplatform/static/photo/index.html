@@ -66,11 +66,13 @@
         <span class="hint" id="prompt-hint"></span>
       </label>
 
+      <fieldset class="field">
+        <legend class="field-label">Качество</legend>
+        <div class="segmented segmented--radio" id="details"></div>
+        <p class="hint" id="model-brief"></p>
+      </fieldset>
+
       <div class="settings">
-        <label class="field">
-          <span class="field-label">Модель</span>
-          <select id="model"></select>
-        </label>
         <label class="field" id="size-field">
           <span class="field-label">Размер</span>
           <select id="size"></select>
@@ -84,15 +86,14 @@
           <select id="style"></select>
         </label>
       </div>
-      <p class="hint" id="model-note"></p>
-
-      <fieldset class="field">
-        <legend class="field-label">Детализация</legend>
-        <div class="segmented segmented--radio" id="details"></div>
-      </fieldset>
-
+      <!-- Модель и шаги — в «Точных параметрах» (UX-035): на виду — качество, размер и стиль. -->
       <details class="disclosure advanced">
         <summary>Точные параметры</summary>
+        <label class="field">
+          <span class="field-label">Модель</span>
+          <select id="model"></select>
+        </label>
+        <p class="hint" id="model-note"></p>
         <div class="settings">
           <label class="field" id="steps-field">
             <span class="field-label">Шаги</span>

@@ -49,11 +49,6 @@
       </section>
 
       <div class="settings">
-        <label class="field">
-          <span class="field-label">Модель</span>
-          <select id="model"></select>
-          <span class="muted small" id="model-note"></span>
-        </label>
         <fieldset class="field field-durations">
           <legend class="field-label">Длительность</legend>
           <div class="segmented segmented--radio" id="durations"></div>
@@ -62,15 +57,26 @@
           <span class="field-label">Размер кадра</span>
           <select id="preset"></select>
         </label>
-        <label class="field">
-          <span class="field-label">Seed</span>
-          <input type="number" id="seed" min="0" max="2147483647" step="1" placeholder="случайный">
-        </label>
         <label class="check">
           <input type="checkbox" id="audio" checked>
           <span>Со звуком</span>
         </label>
       </div>
+      <!-- Модель и Seed — в «Точных параметрах» (UX-035): на виду — длительность, кадр и звук. -->
+      <details class="disclosure advanced">
+        <summary>Точные параметры<span class="muted" id="precise-brief"></span></summary>
+        <div class="settings">
+          <label class="field">
+            <span class="field-label">Модель</span>
+            <select id="model"></select>
+            <span class="muted small" id="model-note"></span>
+          </label>
+          <label class="field">
+            <span class="field-label">Seed</span>
+            <input type="number" id="seed" min="0" max="2147483647" step="1" placeholder="случайный">
+          </label>
+        </div>
+      </details>
 
       <p class="form-error" id="form-error" role="alert" hidden></p>
       <button type="submit" class="btn btn--primary" id="submit">Сгенерировать</button>
