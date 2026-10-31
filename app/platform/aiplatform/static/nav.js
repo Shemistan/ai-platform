@@ -1,7 +1,8 @@
 // Общая шапка платформы: вкладки, состояние GPU и предупреждения — из /api/config.
 // Подключается каждой страницей вкладки: <script type="module" src="/nav.js"></script>.
+import { activityLine, activitySummary } from "/core/activity.js";
 import { currentTab, groupTabs } from "/core/nav-groups.js";
-import { api, loadLast, poller, saveLast } from "/ui.js";
+import { api, icon, loadLast, poller, saveLast } from "/ui.js";
 
 // Раздел «Если не работает при установке» (app/platform/README.md) — ссылка из баннера проблем.
 const HELP_URL =
@@ -22,8 +23,13 @@ function el(tag, attrs = {}, text = "") {
 function tabLink(tab, current) {
   const link = el("a", { href: tab.href }, tab.label);
   if (tab.id === current) link.setAttribute("aria-current", "page");
-  if (tab.badge) link.append(el("span", { class: "badge", id: `platform-${tab.badge}`, hidden: "" }));
+  if (tab.badge) link.append(badgeEl(tab.badge));
   return link;
+}
+
+// Счётчик вкладки: и у ссылки в меню, и у кнопки группы — showBadges() заполняет все по data-badge.
+function badgeEl(name) {
+  return el("span", { class: "badge", "data-badge": name, hidden: "" });
 }
 
 // Меню группы: кнопка «Медиа · Монтаж ▾» и список ссылок. Открыто одно меню за раз; Esc и клик
@@ -39,9 +45,18 @@ function closeMenus(except = null) {
 function menu(group, current, index) {
   const id = `nav-menu-${index}`;
   const button = el("button", { type: "button", "aria-expanded": "false", "aria-controls": id });
-  button.append(el("span", {}, group.label));
-  if (group.current) button.append(el("span", { class: "current" }, ` · ${group.current.label}`));
-  button.append(el("span", { class: "caret", "aria-hidden": "true" }, "▾"));
+  if (group.icon) {
+    // Сервисное — иконкой справа (UX-037): имя кнопке даёт aria-label.
+    button.setAttribute("aria-label", group.label);
+    button.title = group.label;
+    button.append(icon(group.icon, { size: 18 }));
+  } else {
+    button.append(el("span", {}, group.label));
+    // На главной вкладке группы («Все выпуски») подпись группы и так говорит, где ты.
+    if (group.current && !group.current.home) button.append(el("span", { class: "current" }, ` · ${group.current.label}`));
+  }
+  if (group.badge) button.append(badgeEl(group.badge));  // меню закрыто — счётчик виден на кнопке
+  if (!group.icon) button.append(el("span", { class: "caret", "aria-hidden": "true" }, "▾"));
   const list = el("ul", { class: "menu-list", id, hidden: "" });
   for (const tab of group.tabs) {
     const item = el("li");
@@ -73,7 +88,7 @@ function menu(group, current, index) {
       button.focus();
     }
   });
-  const item = el("li", { class: `menu${group.active ? " active" : ""}` });
+  const item = el("li", { class: `menu${group.active ? " active" : ""}${group.icon ? " icon-menu" : ""}` });
   item.append(button, list);
   return item;
 }
@@ -88,7 +103,7 @@ function fillTabs(list, tabs) {
     item.append(tabLink(group.tabs[0], current));
     list.append(item);
   });
-  showAttention();
+  showBadges();
 }
 
 function render() {
@@ -98,7 +113,17 @@ function render() {
   const cached = loadLast(NAV_CACHE)?.data;
   if (Array.isArray(cached)) fillTabs(list, cached);
   nav.append(list);
-  const gpu = el("span", { class: "gpu", id: "platform-gpu", title: "Тяжёлые модели идут по одной" }, "GPU: …");
+  // Центр активности (UX-036): вместо «GPU: свободен» — что идёт во всех вкладках; список — кликом.
+  const gpu = el("span", { class: "menu activity", id: "platform-gpu" });
+  const button = el("button", { type: "button", "aria-expanded": "false", "aria-controls": "platform-activity" }, "…");
+  const panel = el("div", { class: "menu-list activity-list", id: "platform-activity", hidden: "" });
+  button.addEventListener("click", () => {
+    const open = button.getAttribute("aria-expanded") !== "true";
+    closeMenus(button);
+    button.setAttribute("aria-expanded", String(open));
+    panel.hidden = !open;
+  });
+  gpu.append(button, panel);
   nav.append(gpu);
   document.body.prepend(nav);
   // Высота шапки — в --nav-h: под неё встаёт липкий степпер студии.
@@ -119,14 +144,18 @@ function render() {
   return { gpu, list };
 }
 
-// Сколько выпусков ждут человека — счётчик у вкладки с badge: "attention" («Выпуски»).
-let attention = 0;
-function showAttention() {
-  const badge = document.getElementById("platform-attention");
-  if (!badge) return;
-  badge.textContent = attention ? String(attention) : "";
-  badge.hidden = !attention;
-  badge.title = attention ? `Ждут тебя: ${attention}` : "";
+// Счётчики шапки: attention — выпуски ждут человека («Выпуски»), advice — советы по настройке, которые
+// не мешают работать («Настройки», UX-030). Пусто — счётчик скрыт.
+const counts = { attention: 0, advice: 0 };
+const BADGE_TITLES = { attention: "Ждут тебя", advice: "Советы по настройке" };
+function showBadges() {
+  for (const badge of document.querySelectorAll(".platform-nav [data-badge]")) {
+    const name = badge.dataset.badge;
+    const n = counts[name] || 0;
+    badge.textContent = n ? String(n) : "";
+    badge.hidden = !n;
+    badge.title = n ? `${BADGE_TITLES[name] || name}: ${n}` : "";
+  }
 }
 
 // Состояние GPU и счётчик «Выпусков»: раз в 3 с, пока GPU занят, раз в 6 с в простое;
@@ -134,20 +163,27 @@ function showAttention() {
 function pollGpu(gpu) {
   let busy = false;
   const show = (data) => {
-    busy = Boolean(data.gpu);
+    const summary = activitySummary(data);
+    busy = Boolean(data.gpu) || summary.count > 0;
     gpu.classList.toggle("busy", busy);
-    gpu.textContent = busy
-      ? `GPU: ${data.gpu}${data.waiting ? ` · ждут ${data.waiting}` : ""}`
-      : "GPU: свободен";
-    attention = data.studio_attention || 0;
-    showAttention();
+    const [button, panel] = gpu.children;
+    button.textContent = summary.label;
+    button.title = summary.gpu;
+    const items = (data.activity || []).map((item) => {
+      const link = el("a", { href: item.href });
+      link.append(el("strong", {}, item.tab), el("span", {}, item.title || "без названия"), el("span", { class: "muted" }, activityLine(item)));
+      return link;
+    });
+    panel.replaceChildren(el("p", { class: "muted" }, summary.gpu), ...(items.length ? items : [el("p", {}, "Сейчас ничего не идёт.")]));
+    counts.attention = data.studio_attention || 0;
+    showBadges();
   };
   poller({
     run: async (signal) => show(await api("GET", "/api/status", undefined, { signal, timeout: 10000 })),
     fast: 3000,
     slow: 6000,
     isActive: () => busy,
-    onError: () => (gpu.textContent = "Нет связи с сервисом"),
+    onError: () => (gpu.firstElementChild.textContent = "Нет связи с сервисом"),
   }).start();
 }
 
@@ -162,6 +198,9 @@ async function loadConfig(nav, list) {
       // Что сейчас запущено — справа в шапке, после GPU (docs/README.md «Версии»).
       nav.append(el("span", { class: "version", title: "Версия платформы" }, `v${data.version}`));
     }
+    counts.advice = (data.advice || []).length;
+    showBadges();
+    // Баннер на всех страницах — только то, что мешает работать; советы — в «Настройках».
     if (!data.problems || !data.problems.length) return;
     const box = el("div", { class: "platform-problems", role: "status" });
     box.append(el("strong", {}, data.backend === "fake" ? "Демо-режим. " : "Не всё настроено:"));

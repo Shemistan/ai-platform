@@ -25,6 +25,10 @@ DEFAULT_IMAGE_MODEL = "z-image-turbo"  # быстрая и лёгкая: кар�
 # {narrator} и {day} подставляются; команда сбора — как `make news DAY=…` в narrator.
 DEFAULT_NEWS_CMD = "make -C {narrator} news-collect news-agent news-judge DAY={day}"
 DEFAULT_NEWS_WHERE = "{narrator}/narrate news where --date {day}"
+# Обзор недели или месяца (PRD-033): {kind} — weekly|monthly, {period} — месяц ГГГГ-ММ (неделе не нужен).
+# Где лежит обзор — JSON моста: {"reviews": [{kind, folder, …}]}.
+DEFAULT_REVIEW_CMD = "make -C {narrator} news-{kind} MONTH={period}"
+DEFAULT_REVIEW_WHERE = "{narrator}/narrate bridge reviews"
 
 
 @dataclass(frozen=True)
@@ -44,6 +48,8 @@ class StudioConfig:
     sticker: Path  # плашка «подпишись» (PNG с прозрачностью)
     play: Path  # кнопка «плей» на обложке видео
     schedule_tick_s: float = 30.0  # как часто поток расписания смотрит на часы; 0 — не запускать
+    review_cmd: str = DEFAULT_REVIEW_CMD
+    review_where: str = DEFAULT_REVIEW_WHERE
 
     @property
     def projects_dir(self) -> Path:
@@ -67,6 +73,9 @@ class StudioConfig:
     def news_argv(self, template: str, day: str) -> list[str]:
         return [part.format(narrator=self.narrator_dir, day=day) for part in shlex.split(template)]
 
+    def review_argv(self, template: str, kind: str, period: str) -> list[str]:
+        return [part.format(narrator=self.narrator_dir, kind=kind, period=period) for part in shlex.split(template)]
+
 
 def load(config: Config) -> StudioConfig:
     env = config.env
@@ -78,10 +87,13 @@ def load(config: Config) -> StudioConfig:
         fake_news = f"{python} {shlex.quote(str(FAKES / 'fake_news.py'))}"
         news_cmd = f"{fake_news} collect --root {news_root} --date {{day}}"
         news_where = f"{fake_news} where --root {news_root} --date {{day}}"
+        review_cmd = f"{fake_news} review --root {news_root} --kind {{kind}} --date {{period}}"
+        review_where = f"{fake_news} reviews --root {news_root}"
     else:
         llm_cmd = tuple(shlex.split(pick(env, "AIP_LLM_CMD", default=DEFAULT_LLM_CMD)))
         news_cmd = pick(env, "AIP_NEWS_CMD", default=DEFAULT_NEWS_CMD)
         news_where = pick(env, "AIP_NEWS_WHERE", default=DEFAULT_NEWS_WHERE)
+        review_cmd, review_where = DEFAULT_REVIEW_CMD, DEFAULT_REVIEW_WHERE
     # В демо свой список каналов в данных демо: настоящий channels.json не трогаем.
     # Каналы — данные: в каталоге данных (вне рабочей копии). Старый channels.json рядом
     # с Makefile читается, пока в данных своего нет (перенос — make migrate-data).
@@ -96,6 +108,8 @@ def load(config: Config) -> StudioConfig:
         llm_cmd=llm_cmd,
         news_cmd=news_cmd,
         news_where=news_where,
+        review_cmd=review_cmd,
+        review_where=review_where,
         narrator_dir=audio_config.narrator_dir(config),
         image_model=pick(env, "AIP_STUDIO_IMAGE_MODEL", default=DEFAULT_IMAGE_MODEL),
         channels_file=Path(channels).expanduser(),

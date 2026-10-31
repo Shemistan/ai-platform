@@ -56,6 +56,7 @@ from aiplatform.updates import registry
 
 TEXT, POST, POSTER_PROMPT, PLAN, SHORT = "text.md", "post.md", "poster_prompt.md", "plan.json", "short.json"
 SOURCE, SCREEN = "source.md", "screen.json"
+WORDS_PER_MIN = 130  # темп озвучки: оценка минут в журнале шага и оценка времени (estimate)
 VIDEO, SHORT_VIDEO, PUBLISHED = "video.mp4", "short.mp4", "published.json"
 IMAGE_EXT = (".png", ".jpg", ".webp")
 AUDIO_EXT = (".mp3", ".wav", ".m4a")
@@ -405,13 +406,32 @@ def step_text(ctx: StepContext) -> None:
         take_narrator_cover(ctx, folder)
         take_review(ctx, folder)
         ctx.log(f"выпуск: {folder}")
-    if ctx.project["scenario"] == "article" and ctx.settings.get("adapt_text", True):
+    if ctx.project["scenario"] in news.REVIEW_KINDS and not ctx.read(SOURCE).strip():
+        take_news_review(ctx)
+    if ctx.project["scenario"] in ("article", *news.REVIEW_KINDS) and ctx.settings.get("adapt_text", True):
         adapt_text(ctx)
     text = require_text(ctx)
     words = len(text.split())
-    ctx.log(f"{words} слов, {len(slides.paragraphs(text))} абзацев, ~{max(round(words / 130), 1)} мин озвучки")
+    # Ориентир длины у новостей (PRD-033) — не потолок: только сказать, насколько разошлись.
+    target = int(ctx.settings.get("target_minutes") or 0)
+    aim = f" при ориентире {target} мин" if target else ""
+    minutes = max(round(words / WORDS_PER_MIN), 1)
+    ctx.log(f"{words} слов, {len(slides.paragraphs(text))} абзацев, ~{minutes} мин озвучки{aim}")
     if ctx.settings.get("review_text") and not ctx.state.get("approved"):
         raise Waiting("Проверь и при необходимости поправь текст, затем нажми «Продолжить».")
+
+
+def take_news_review(ctx: StepContext) -> None:
+    """Обзор недели или месяца (PRD-033): агент narrator пишет суфлёр — он исходник текста видео, пост — подпись.
+    Готовый исходник (перезапуск шага) агента второй раз не зовёт: обзор — десятки минут."""
+    kind = ctx.project["scenario"]
+    period = ctx.project["day"] if kind == "monthly" else ""
+    ctx.progress("агент narrator пишет обзор " + ("недели…" if kind == "weekly" else f"месяца {period}…"))
+    folder = news.review(kind, period, services(ctx).config, ctx.cancel, lambda line: line.strip() and ctx.log(line))
+    ctx.write(SOURCE, (folder / news.TELEPROMPTER).read_text(encoding="utf-8"))
+    if (folder / news.POST).is_file():
+        ctx.write(POST, (folder / news.POST).read_text(encoding="utf-8"))
+    ctx.log(f"обзор: {folder}")
 
 
 def adapt_text(ctx: StepContext) -> None:
@@ -427,7 +447,8 @@ def adapt_text(ctx: StepContext) -> None:
     if ctx.state.get("adapted") == digest and ctx.read(TEXT).strip():
         return
     ctx.progress("LLM готовит текст к озвучке…")
-    data = extract_json(llm(ctx, prompts.narration(source, ctx.project["title"])))
+    minutes = int(ctx.settings.get("target_minutes") or 0)
+    data = extract_json(llm(ctx, prompts.narration(source, ctx.project["title"], minutes)))
     marked = str(data.get("text") or "").strip() if isinstance(data, dict) else ""
     items = data.get("screen") if isinstance(data, dict) and isinstance(data.get("screen"), list) else []
     text, screen = slides.split_screen(marked, items)

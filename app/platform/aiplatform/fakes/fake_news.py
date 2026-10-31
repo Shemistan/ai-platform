@@ -5,11 +5,14 @@ image_prompt.md (промпт обложки) и review.md судьи (верд�
 FAKE_NEWS_VERDICT, по умолчанию «готово»), как `make news DAY=D`; FAKE_NEWS_COVER=1 —
 ещё и готовую cover.png. `where --root R --date D` печатает строку
 «Озвучить: …», как `narrate news where`. FAKE_NEWS_EMPTY=1 — выпуск не собрался.
+`review --root R --kind weekly|monthly --date P` пишет R/reviews/<kind>-<P>/teleprompter.md и post.md, как
+`make news-weekly|news-monthly` (PRD-033); `reviews --root R` печатает JSON обзоров, как `narrate bridge reviews`.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -28,16 +31,45 @@ IMAGE_PROMPT = (
 )
 
 
+REVIEW = (
+    "Привет! Это обзор: собрал для вас главное за период.",
+    "Первая тема — новый релиз Go. Сборщик мусора стал быстрее, а итераторы наконец в языке.",
+    "Вторая — сбой у облачного провайдера: виноват конфиг балансировщика.",
+    "И третья — локальные модели для видео: теперь они работают на ноутбуке.",
+    "Это всё, увидимся в следующем обзоре.",
+)
+
+
+def review_folders(root: Path) -> list[Path]:
+    base = root / "reviews"
+    return sorted(base.iterdir()) if base.is_dir() else []
+
+
 def folder(root: Path, day: str) -> Path:
     return root / day / "digest"
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fake-news")
-    parser.add_argument("cmd", choices=("collect", "where"))
+    parser.add_argument("cmd", choices=("collect", "where", "review", "reviews"))
     parser.add_argument("--root", required=True)
-    parser.add_argument("--date", required=True)
+    parser.add_argument("--date", default="")
+    parser.add_argument("--kind", default="weekly")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    root = Path(args.root)
+    if args.cmd == "review":
+        print("агент отбирает события и пишет суфлёр", flush=True)
+        if os.environ.get("FAKE_NEWS_EMPTY"):
+            return 0
+        out = root / "reviews" / f"{args.kind}-{args.date or 'now'}"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "teleprompter.md").write_text("\n\n".join(REVIEW) + "\n", encoding="utf-8")
+        (out / "post.md").write_text("**Обзор**\n\n— релиз Go\n— сбой в облаке\n", encoding="utf-8")
+        return 0
+    if args.cmd == "reviews":
+        items = [{"kind": p.name.split("-")[0], "title": p.name, "folder": str(p)} for p in review_folders(root)]
+        print(json.dumps({"reviews": items}, ensure_ascii=False))
+        return 0
     d = folder(Path(args.root), args.date)
     if args.cmd == "collect":
         for stage in ("обход источников: 12 из 12", "агент пишет дайджест", "судья: готово"):

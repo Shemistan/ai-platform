@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from aiplatform import config as config_module
 from aiplatform import server as server_module
@@ -82,12 +83,55 @@ class NavTabsTest(PlatformCase):
         self.assertEqual(len(ids), len(set(ids)))
         groups = [g for i, g in enumerate(t["group"] for t in tabs) if not i or tabs[i - 1]["group"] != g]
         self.assertEqual(len(groups), len(set(groups)), "группа вкладок разорвана другой")
-        self.assertEqual(ids[:8], ["photo", "video", "audio", "avatar", "montage", "motion", "transcribe", "board"])
+        # Три пространства (PRD-033): «Сегодня», Генерация, Новости, Статьи, сервисное — за иконкой.
+        self.assertEqual(groups, ["today", "generate", "newsroom", "articles", "service"])
+        by_group = {g: [t["id"] for t in tabs if t["group"] == g] for g in groups}
+        self.assertEqual(by_group["today"], ["today"])
+        self.assertEqual(by_group["generate"][:4], ["generate", "photo", "video", "audio"])
+        self.assertEqual(by_group["newsroom"], ["newsroom", "digest", "weekly", "monthly", "news"])
+        self.assertEqual(by_group["articles"], ["articles", "article", "post", "library"])
+        self.assertEqual(by_group["service"], ["board", "channels", "updates", "settings"])
+        self.assertEqual([t["id"] for t in tabs if t.get("home")], ["generate", "newsroom", "articles"])
+        self.assertEqual({t["group_icon"] for t in tabs if t.get("group_icon")}, {"settings"})
         self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
-        self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention"])
+        self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention", "advice"])
         labels = {t["group"]: t["group_label"] for t in tabs}
-        self.assertEqual(labels, {"media": "Медиа", "board": "Выпуски", "studio": "Студия", "texts": "Тексты",
-                                  "service": "Сервис"})  # fmt: skip
+        want = {"today": "Сегодня", "generate": "Генерация", "newsroom": "Новости", "articles": "Статьи",
+                "service": "Сервис"}  # fmt: skip
+        self.assertEqual(labels, want)
+        self.assertEqual({t["id"]: t["label"] for t in tabs if t["id"] in ("news", "library")},
+                         {"news": "Источники новостей", "library": "Библиотека статей"})  # fmt: skip
+
+    def test_advice_not_in_problems(self):
+        """UX-030: открытый каталог данных — совет у «Настроек», не баннер на всех страницах и не 503 в /ready."""
+        tip = f"Каталог данных {self.tmp.name} доступен другим пользователям машины — chmod 700 '{self.tmp.name}'."
+        with (
+            mock.patch.object(type(self.config), "fake", new_callable=mock.PropertyMock, return_value=False),
+            mock.patch.object(server_module.perms, "warning", return_value=tip),
+        ):
+            self.assertEqual(self.app.advice(), [tip])
+            self.assertNotIn(tip, self.app.problems())
+        _, body = self.json("GET", "/api/config")
+        self.assertEqual(body["advice"], [])  # в демо права каталога не проверяются
+
+    def test_activity_in_status(self):
+        """UX-036: /api/status → activity — идущие задачи всех вкладок со ссылкой; готовые не попадают."""
+        photo = self.app.modules["photo"]
+        jobs = [
+            {"status": "running", "prompt": "кот  в\nшляпе", "progress": {"stage": "Шаг 3/9", "percent": 33.0}},
+            {"status": "done", "prompt": "готово", "progress": {"stage": "Готово", "percent": 100.0}},
+        ]
+        montage = self.app.modules["montage"]
+        queued = [{"id": "m1", "title": "Обзор", "status": "queued"}]
+        with (
+            mock.patch.object(photo.jobs, "list", return_value=jobs),
+            mock.patch.object(montage.projects, "active", return_value=queued),
+        ):
+            _, body = self.json("GET", "/api/status")
+        found = {(a["tab"], a["href"], a["title"], a["status"], a["stage"], a["percent"]) for a in body["activity"]}
+        self.assertIn(("Фото", "/photo/", "кот в шляпе", "running", "Шаг 3/9", 33.0), found)
+        self.assertIn(("Монтаж", "/montage/?id=m1", "Обзор", "queued", "", None), found)
+        self.assertFalse([a for a in body["activity"] if a["title"] == "готово"])
 
     def test_upload_limits_in_module_config(self):
         """FE-003: страница сверяет размер файла с лимитом до отправки — лимиты в /config модулей."""
@@ -105,10 +149,11 @@ class ShellTest(PlatformCase):
     def modules(ctx):
         return [EchoModule(ctx)]
 
-    def test_root_redirects_to_photo(self):
+    def test_root_redirects_to_today(self):
+        """UX-031: стартовая страница — «Сегодня»."""
         status, headers = self.raw("GET", "/")
         self.assertEqual(status, 302)
-        self.assertEqual(headers["Location"], "/photo/")
+        self.assertEqual(headers["Location"], "/today/")
 
     def test_static_shell(self):
         status, headers, body = self.call("GET", "/nav.js")
@@ -159,7 +204,7 @@ class ShellTest(PlatformCase):
     def test_status(self):
         status, body = self.json("GET", "/api/status")
         self.assertEqual(status, 200)
-        self.assertEqual(body, {"gpu": None, "waiting": 0})
+        self.assertEqual(body, {"gpu": None, "waiting": 0, "activity": []})
 
     def test_module_routing(self):
         status, body = self.json("GET", "/api/echo/hello?q=1")

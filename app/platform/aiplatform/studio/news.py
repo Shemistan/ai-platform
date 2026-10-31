@@ -7,8 +7,10 @@ narrator обходит источники, агент пишет переска
 
 from __future__ import annotations
 
+import json
 import re
 import threading
+import time
 from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
@@ -83,3 +85,51 @@ def collect(
     if not (folder / NARRATION).is_file():
         raise StudioError(f"В {folder} нет {NARRATION}.")
     return folder
+
+
+TELEPROMPTER = "teleprompter.md"  # суфлёр обзора недели или месяца: исходник текста видео (PRD-033)
+REVIEW_KINDS = ("weekly", "monthly")
+
+
+def review(
+    kind: str,
+    period: str,
+    config: StudioConfig,
+    cancel: threading.Event,
+    on_line: Callable[[str], None],
+) -> Path:
+    """Обзор недели или месяца агентом narrator (`make news-weekly|news-monthly`) → каталог с teleprompter.md.
+
+    Где лежит обзор, говорит `narrate bridge reviews` (JSON со списком обзоров): берём свежий своего вида —
+    по времени суфлёра, не раньше запуска (иначе агент ничего не написал)."""
+    cwd = config.narrator_dir if config.narrator_dir.is_dir() else None
+    started = time.time()
+    try:
+        runner.run(config.review_argv(config.review_cmd, kind, period), on_line, cancel, cwd=cwd,
+                   missing_hint=INSTALL_HINT, kind="news")  # fmt: skip
+    except runner.RunFailed as exc:
+        raise StudioError(f"Обзор: {exc}") from exc
+    lines: list[str] = []
+    try:
+        runner.run(config.review_argv(config.review_where, kind, period), lines.append, cancel, cwd=cwd,
+                   missing_hint=INSTALL_HINT, kind="llm")  # fmt: skip
+    except runner.RunFailed as exc:
+        raise StudioError(f"narrate bridge reviews: {exc}") from exc
+    return pick_review(lines, kind, started)
+
+
+def pick_review(lines: list[str], kind: str, since: float) -> Path:
+    """Свежий обзор вида kind из ответа `narrate bridge reviews`, написанный после since."""
+    try:
+        reviews = json.loads("\n".join(lines)).get("reviews") or []
+    except (ValueError, AttributeError) as exc:
+        raise StudioError("narrate bridge reviews ответил не JSON — подробности в журнале шага.") from exc
+    fresh = []
+    for item in reviews:
+        path = Path(str(item.get("folder") or "")) / TELEPROMPTER
+        if item.get("kind") == kind and path.is_file() and path.stat().st_mtime >= since - 1:
+            fresh.append(path)
+    if not fresh:
+        what = "недели" if kind == "weekly" else "месяца"
+        raise StudioError(f"Обзор {what} не собрался: суфлёра нет. Подробности — в журнале шага.")
+    return max(fresh, key=lambda p: p.stat().st_mtime).parent

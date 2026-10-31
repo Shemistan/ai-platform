@@ -1,7 +1,7 @@
 // Вкладка «Монтаж»: ролики, записи, расшифровка с вырезками на подтверждение, сборка и итог. Без сборки.
 
-import { $, api, chip, confirmAction, debounce, fill, h, icon, jobProgress, logBlock, modal, poller, statusChip, toast, toneOf, uploadFile } from "/ui.js";
-import { clock, cutOf, layoutAt, phrases, projectPayload, setLayout, togglePhrase, toggleWord } from "./plan.js";
+import { $, api, chip, confirmAction, debounce, fill, h, icon, jobProgress, logBlock, modal, moreMenu, poller, statusChip, toast, toneOf, uploadFile } from "/ui.js";
+import { clock, cutOf, layoutAt, phrases, projectPayload, redoAction, redoScopes, setLayout, setupSummary, togglePhrase, toggleWord } from "./plan.js";
 import { stageRows, summary } from "./stages.js";
 import { GATE_TEXT, GATE_TONE, beatRows, frameClock, gateState, qaGroups, sceneCard, scenePatch, trackBars } from "./storyboard.js";
 import { loadReview, resetReviewCache, reviewData, reviewPanel } from "./review-ui.js";
@@ -141,9 +141,10 @@ function renderProject() {
   const p = state.project && state.project.id === state.selectedId ? state.project : null;
   if (!p) {
     renderedKey = "";
+    // Одна «Новый ролик» — в шапке страницы (UX-033): здесь только что это и как начать.
     return fill(root, h("section", { class: "panel" }, h("h2", {}, "Монтаж своей записи"),
       h("p", { class: "muted" }, "Загрузи сырую запись — «голову» и, если показываешь экран, запись экрана. Платформа расшифрует речь, ИИ предложит, что вырезать: паузы, оговорки, дубли, твои команды в кадр. Ты проверишь план — и получишь готовый ролик."),
-      h("button", { type: "button", class: "btn btn--primary", onclick: newProject }, "Новый ролик")));
+      h("p", { class: "muted small" }, "Начни с кнопки «Новый ролик» вверху.")));
   }
   // Пока идёт работа, перерисовываем только прогресс: так не сбивается ввод и не дёргается расшифровка.
   const key = JSON.stringify([p.id, p.status, p.updated_at, state.planFor, state.storyFor, state.afterFor, state.docsFor, Object.keys(state.uploads).length]);
@@ -174,7 +175,8 @@ function head(p) {
         statusChipOf(p.status),
         chip(state.config?.modes.find((m) => m.id === p.mode)?.label || p.mode, "neutral"),
         p.backend === "fake" ? chip("Демо — без модели", "warning") : null,
-        h("button", { type: "button", class: "btn btn--link btn--danger", onclick: () => remove(p), disabled: isActive(p) }, "Удалить"),
+        // Удаление — в «⋯», подальше от поля названия (UX-033).
+        moreMenu([{ label: "Удалить ролик", danger: true, disabled: isActive(p), onClick: () => remove(p) }]),
       ),
     ),
   );
@@ -291,7 +293,8 @@ function setup(p) {
   };
   const error = h("p", { class: "form-error", role: "alert", hidden: true });
   const modeHint = h("p", { class: "muted small" }, MODE_HINT[o.mode] || "");
-  const start = h("button", { type: "button", class: "btn btn--primary" }, p.status === "draft" ? "Начать" : "Начать заново");
+  const hasHead = Boolean(p.sources?.head);
+  const start = h("button", { type: "button", class: "btn btn--primary", disabled: !hasHead }, p.status === "draft" ? "Начать" : "Начать заново");
   start.addEventListener("click", async () => {
     const { payload, error: problem } = projectPayload({ ...o, title: p.title, model: model.value, terms: terms.value, maxPause: pause.value });
     if (problem) return ((error.textContent = problem), (error.hidden = false));
@@ -309,13 +312,13 @@ function setup(p) {
       start.disabled = false;
     }
   });
-  return h("section", { class: "panel stack" },
-    h("h2", {}, "Записи"),
-    h("div", { class: "sources" },
-      sourceCard(p, "head", "Голова", "Обязательно: ты в кадре, звук — твой голос. MP4, MOV или WebM."),
-      sourceCard(p, "screen", "Экран — по желанию", "Запись экрана той же сессии: монтаж сам будет переключать «голову» и «экран»."),
-    ),
-    h("h2", {}, "Как монтировать"),
+  // Сначала файл, потом настройки (UX-033): «Как монтировать» свёрнуто, в заголовке — сводка выбранного.
+  const brief = h("span", { class: "muted small setup-brief" });
+  const showBrief = () => (brief.textContent = setupSummary({ ...o, model: model.value, max_pause: pause.value }, cfg));
+  showBrief();
+  const how = h("details", { class: "disclosure disclosure--title setup-how", onchange: showBrief },
+    h("summary", {}, "Как монтировать", brief),
+    h("div", { class: "stack" },
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Расшифровка"), model),
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Термины ролика ", h("span", { class: "muted" }, "— подсказка расшифровке; общие — в «Правилах монтажа»")), terms),
     h("fieldset", { class: "field" }, h("legend", { class: "field-label" }, "Цвет головы"), radios("grade", cfg.grades, o.grade, (g) => (o.grade = g))),
@@ -326,9 +329,18 @@ function setup(p) {
     h("fieldset", { class: "field" }, h("legend", { class: "field-label" }, "Режим"),
       radios("mode", cfg.modes, o.mode, (m) => ((o.mode = m), (modeHint.textContent = MODE_HINT[m] || ""))),
       modeHint),
-    error,
-    h("div", { class: "toolbar" }, start),
     materials(p),
+    ),
+  );
+  return h("section", { class: "panel stack" },
+    h("h2", {}, "Записи"),
+    h("div", { class: "sources" },
+      sourceCard(p, "head", "Голова", "Перетащи сюда запись или выбери файл. Обязательно: ты в кадре, звук — твой голос. MP4, MOV или WebM."),
+      sourceCard(p, "screen", "Экран — по желанию", "Запись экрана той же сессии: монтаж сам будет переключать «голову» и «экран»."),
+    ),
+    how,
+    error,
+    h("div", { class: "toolbar" }, start, hasHead ? null : h("span", { class: "muted small" }, "Сначала добавь запись «головы».")),
   );
 }
 
@@ -416,9 +428,45 @@ function stageRow(s) {
 
 function retry(p) {
   return h("div", { class: "toolbar" },
-    p.transcript ? h("button", { type: "button", class: "btn btn--primary", onclick: () => act(p, "render") }, "Собрать") : null,
-    p.transcript ? h("button", { type: "button", class: "btn btn--secondary", onclick: () => act(p, "replan") }, "Переделать план") : null,
+    p.transcript ? h("button", { type: "button", class: "btn btn--primary", onclick: () => act(p, "render") }, "Собрать ролик") : null,
+    p.transcript ? redoButton(p, false) : null,
   );
+}
+
+const REDO_SCOPES = { plan: "План монтажа", storyboard: "Раскадровку" };
+
+// Одна «Переделать…» на экран (UX-038): окно с «Что не так?» и охватом вместо восьми кнопок.
+// Охват → действие воркера — redoAction из plan.js; сцену по одной переделывают из её карточки.
+function redoButton(p, busy, preferred = "plan") {
+  const scopes = redoScopes(p);
+  if (!scopes.length) return null;
+  const open = () => {
+    let scope = scopes.includes(preferred) ? preferred : scopes[0];
+    const text = h("textarea", { rows: 3, maxlength: String(state.config.max_feedback), placeholder: "«оставляй „вот“, когда я показываю на экран», «режь дубли жёстче»…" });
+    const hint = h("p", { class: "muted small" });
+    const showHint = () => {
+      hint.textContent = scope === "plan"
+        ? "С замечанием ИИ переделает план и запомнит правило; пусто — построит план заново."
+        : "Раскадровка соберётся заново по плану и материалам. Замечание к одной сцене — «Переделать» в её карточке.";
+      text.disabled = scope !== "plan";
+    };
+    showHint();
+    const form = h("form", { class: "stack", novalidate: true },
+      scopes.length > 1 ? h("fieldset", { class: "field" }, h("legend", { class: "field-label" }, "Что переделать"),
+        radios("redo-scope", scopes.map((id) => ({ id, label: REDO_SCOPES[id] })), scope, (id) => ((scope = id), showHint()))) : null,
+      h("label", { class: "field" }, h("span", { class: "field-label" }, "Что не так"), text),
+      hint,
+      h("div", { class: "toolbar" }, h("button", { type: "submit", class: "btn btn--primary" }, "Переделать")),
+    );
+    const dialog = modal("Переделать", form);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const { action, body } = redoAction(scope, text.value);
+      dialog.close();
+      await act(p, action, body);
+    });
+  };
+  return h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: open }, "Переделать…");
 }
 
 async function act(p, action, body) {
@@ -620,8 +668,8 @@ function storyboardPanel(p) {
     cards.length ? h("div", { class: "scenes-grid" }, ...cards) : h("p", { class: "muted" }, "ИИ не нашёл мест, где сцена добавит смысла. Поправь материалы или замечание к плану и запусти раскадровку заново."),
     h("div", { class: "toolbar" },
       gate.show && !gate.approved ? h("button", { type: "button", class: "btn btn--primary", disabled: busy, onclick: () => approve(p, "storyboard") }, "Утвердить раскадровку") : null,
-      h("button", { type: "button", class: gate.show && !gate.approved ? "btn btn--secondary" : "btn btn--primary", disabled: busy || (gate.show && !gate.approved), onclick: () => act(p, "render") }, p.output ? "Пересобрать со сценами" : "Собрать ролик"),
-      h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: () => act(p, "storyboard/run") }, "Раскадровка заново"),
+      h("button", { type: "button", class: gate.show && !gate.approved ? "btn btn--secondary" : "btn btn--primary", disabled: busy || (gate.show && !gate.approved), onclick: () => act(p, "render") }, "Собрать ролик"),
+      redoButton(p, busy, "storyboard"),
       cfg.hyperframes_available ? null : h("span", { class: "muted small" }, "HyperFrames не установлен: сцены останутся заблокированными, ролик соберётся без них."),
     ),
   );
@@ -773,12 +821,13 @@ function renderTranscript() {
 function review(p) {
   const plan = state.plan;
   const s = plan.summary;
-  const feedback = h("textarea", { rows: 3, maxlength: String(state.config.max_feedback), placeholder: "Что не так с монтажом: «оставляй „вот“, когда я показываю на экран», «режь дубли жёстче»… ИИ переделает план и запомнит правило." });
   const busy = isActive(p);
   const gate = gateState(p, "edl");
   const needsApproval = gate.show && !gate.approved;
   player = p.sources_url?.head ? h("video", { class: "player player--source", src: p.sources_url.head, controls: true, preload: "metadata", playsinline: true }) : null;
   const byKind = Object.entries(s.by_kind || {}).map(([k, n]) => `${kindLabel(k)} — ${n}`).join(", ");
+  // Ниже открыта раскадровка — сборка и «Переделать…» живут там, здесь не дублируются (UX-038).
+  const storyShown = Boolean(state.story && p.storyboard && !busy);
   const panel = h("section", { class: "panel stack" },
     h("div", { class: "field-head" },
       h("h2", {}, p.status === "done" ? "План монтажа" : "Проверь план монтажа"),
@@ -796,13 +845,9 @@ function review(p) {
     gate.show ? h("p", { class: "muted small" }, chip(gate.text, gate.approved ? "success" : "warning"), gate.approved ? "" : " — сборка и раскадровка ждут подтверждения.") : null,
     h("div", { class: "toolbar" },
       gate.show && !gate.approved ? h("button", { type: "button", class: "btn btn--primary", disabled: busy, onclick: () => approve(p, "edl") }, "Подтвердить план") : null,
-      h("button", { type: "button", class: needsApproval ? "btn btn--secondary" : "btn btn--primary", disabled: busy || needsApproval, onclick: () => act(p, "render") }, p.status === "done" ? "Пересобрать" : "Собрать ролик"),
-      p.mode === "manual" ? null : h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: () => act(p, "replan") }, "Переделать план заново"),
+      storyShown ? null : h("button", { type: "button", class: needsApproval ? "btn btn--secondary" : "btn btn--primary", disabled: busy || needsApproval, onclick: () => act(p, "render") }, "Собрать ролик"),
+      storyShown ? null : redoButton(p, busy, "plan"),
       p.storyboard ? null : h("button", { type: "button", class: "btn btn--secondary", disabled: busy || needsApproval || !state.config.llm_available, title: "Знания → биты → стиль → раскадровка сцен", onclick: () => act(p, "storyboard/run") }, "Раскадровка"),
-    ),
-    h("label", { class: "field" }, h("span", { class: "field-label" }, "Замечание к монтажу"), feedback),
-    h("div", { class: "toolbar" },
-      h("button", { type: "button", class: "btn btn--secondary", disabled: busy, onclick: () => feedback.value.trim() ? act(p, "revise", { text: feedback.value }) : feedback.focus() }, "Переделать с замечанием"),
     ),
   );
   queueMicrotask(renderTranscript);
@@ -927,7 +972,8 @@ async function init() {
   setBanner(null);
   $("new-project").addEventListener("click", newProject);
   $("rules-open").addEventListener("click", openRules);
-  $("caps-open").addEventListener("click", openCapabilities);
+  // Возможности машины — технический экран, не на каждый день: в «⋯» (UX-033).
+  $("page-more").replaceWith(moreMenu([{ label: "Возможности машины", onClick: openCapabilities }]));
   renderProject();
   listPoll.start();
 }

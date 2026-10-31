@@ -1,5 +1,5 @@
 // Студия: форма нового выпуска, оценка времени и проверка до запуска, серия и копия выпуска.
-import { $, api, busyClick, confirmAction, countLabel, debounce, fmtNum, h } from "/ui.js";
+import { $, api, busyClick, confirmAction, countLabel, debounce, fill, fmtNum, h } from "/ui.js";
 import { API, CAPTION_LIMIT, scenario, state } from "./state.js";
 import { readSettings, settingsForm } from "./settings.js";
 import { act, alertBox, loadProjects, open, show } from "./app.js";
@@ -53,6 +53,10 @@ export function renderCreate() {
             h("span", { class: "hint" }, "narrator обойдёт источники и напишет пересказ дня — это занимает несколько минут."),
           ),
         ]
+      : scenario === "monthly"
+        ? [h("label", { class: "field" }, h("span", { class: "field-label" }, "Месяц обзора"), h("input", { type: "month", id: "month", value: new Date().toISOString().slice(0, 7), max: new Date().toISOString().slice(0, 7) }))]
+      : scenario === "weekly"
+        ? [h("p", { class: "hint" }, "Обзор текущей недели: агент сам отберёт события — это занимает десятки минут.")]
       : scenario === "post"
         ? postFields()
         : [
@@ -66,7 +70,14 @@ export function renderCreate() {
         ]),
   );
   const defaults = { ...state.config.defaults, ...(state.config.scenario_defaults?.[scenario] || {}) };
-  $("create-settings").replaceChildren(settingsForm(defaults, "new"));
+  fill(
+    $("create-settings"),
+    // Откуда умолчания (UX-034): у дайджеста — общие с расписанием, правятся в «Настройках».
+    scenario === "digest"
+      ? h("p", { class: "hint" }, "Умолчания дайджеста — общие с расписанием, меняются в ", h("a", { href: "/settings/" }, "«Настройках»"), ". Здесь — только для этого выпуска.")
+      : null,
+    settingsForm(defaults, "new"),
+  );
   refreshCreateCheck();
 }
 
@@ -104,8 +115,9 @@ export async function create(event, forceNew = false) {
   error.hidden = true;
   const payload = { scenario, settings: readSettings("new"), run: true, force_new: forceNew };
   if (scenario === "digest") payload.day = $("day").value;
+  else if (scenario === "monthly") payload.month = $("month").value;
   else if (scenario === "post") Object.assign(payload, { title: $("title").value, post: $("post").value, text: $("text").value });
-  else Object.assign(payload, { title: $("title").value, text: $("text").value });
+  else if (scenario !== "weekly") Object.assign(payload, { title: $("title").value, text: $("text").value });
   $("create-btn").disabled = true;
   try {
     const project = await api("POST", `${API}/projects`, payload);

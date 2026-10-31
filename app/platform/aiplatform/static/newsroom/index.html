@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Новости — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+  <main class="space">
+    <header class="page-head space-head">
+      <h1>Новости</h1>
+      <p class="muted">Какой выпуск делаем? Длина — ориентир: может выйти короче или длиннее.</p>
+    </header>
+
+    <div class="space-entries" role="group" aria-label="Новый выпуск новостей">
+      <button type="button" class="space-entry" id="new-digest"><strong>День</strong><span class="muted">дайджест за вчера · около 10 минут</span></button>
+      <button type="button" class="space-entry" id="new-weekly"><strong>Неделя</strong><span class="muted">обзор недели · около 20 минут</span></button>
+      <div class="space-entry">
+        <button type="button" class="space-entry-main" id="new-monthly"><strong>Месяц</strong><span class="muted">обзор месяца · около 40 минут</span></button>
+        <label class="space-entry-field"><span class="muted small">Месяц</span><input type="month" id="month"></label>
+      </div>
+    </div>
+    <p class="form-error" id="error" role="alert" hidden></p>
+    <nav class="space-more" aria-label="Ещё">
+      <a href="/news/">Источники новостей</a>
+      <a href="/studio/?scenario=digest">Дайджест в студии</a>
+    </nav>
+
+    <section class="space-album" aria-labelledby="album-title">
+      <h2 id="album-title">Альбом</h2>
+      <div id="album"><p class="muted">Загружаю…</p></div>
+    </section>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

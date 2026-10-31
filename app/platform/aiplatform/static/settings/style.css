@@ -15,3 +15,7 @@
 .usage { border-collapse: collapse; font-size: var(--fs-sm); }
 .usage th { text-align: left; font-weight: var(--fw-regular); padding: var(--sp-1) var(--sp-4) var(--sp-1) 0; color: var(--muted); }
 .usage td { text-align: right; font-variant-numeric: tabular-nums; padding: var(--sp-1) 0; }
+
+/* Советы по настройке (UX-030): текст и кнопка копирования команды в строку. */
+.advice { display: grid; gap: var(--sp-2); list-style: none; padding: 0; margin: var(--sp-2) 0 0; }
+.advice li { display: flex; gap: var(--sp-3); align-items: center; justify-content: space-between; flex-wrap: wrap; font-size: var(--fs-sm); }

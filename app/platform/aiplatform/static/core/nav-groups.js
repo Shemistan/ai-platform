@@ -10,15 +10,16 @@ export function currentTab(tabs, here) {
   return (exact || same.find((t) => t.default) || same[0])?.id;
 }
 
-// [{ id, label, tabs, active, current, badge }]: label — подпись группы, current — активная вкладка
-// группы (её название показывается рядом с подписью), badge — счётчик первой вкладки со счётчиком.
+// [{ id, label, tabs, active, current, badge, icon }]: label — подпись группы, current — активная вкладка
+// группы (её название показывается рядом с подписью), badge — счётчик первой вкладки со счётчиком,
+// icon — группа рисуется иконкой без подписи (UX-037).
 export function groupTabs(tabs, currentId) {
   const groups = [];
   for (const tab of tabs) {
     const id = tab.group || tab.id;
     let group = groups.find((g) => g.id === id);
     if (!group) {
-      group = { id, label: tab.group_label || tab.label, tabs: [], active: false, current: null, badge: null };
+      group = { id, label: tab.group_label || tab.label, tabs: [], active: false, current: null, badge: null, icon: tab.group_icon || null };
       groups.push(group);
     }
     group.tabs.push(tab);

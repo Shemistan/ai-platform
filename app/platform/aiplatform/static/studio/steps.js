@@ -1,6 +1,6 @@
 // Студия: карточки шагов — свёрнутые готовые, раскрытые активные; тело и сводка шага, перезапуск.
 import { $, busyClick, confirmAction, countLabel, h, progressBar, statusChip, toast, toneOf } from "/ui.js";
-import { state, visibleSteps } from "./state.js";
+import { quietRerun, state, visibleSteps } from "./state.js";
 import { STEP_FIELDS, readSettings, stepSettings } from "./settings.js";
 import { captionCounter } from "./create.js";
 import { SLIDE_KINDS, copyButton, dropZone, editor, mediaRows, promptRow, slideItems, upload, uploader } from "./media.js";
@@ -235,18 +235,34 @@ export function renderStep(step) {
   const canApprove = step.status === "waiting" && approveLabel && !localMode;
   const folded = collapsed(step);
   const bodyId = `step-${step.id}-body`;
+  const rerunClass = `btn btn--secondary btn--sm step-rerun${quietRerun(step, folded) ? " step-rerun--quiet" : ""}`;
+  // Строка шага раскрывается кликом в любом месте, кроме кнопок и ссылок (UX-032).
+  const onHeadClick = (event) => {
+    if (!event.target.closest("button, a, input, select, textarea")) toggleStep(step.id);
+  };
   const head = h(
     "div",
-    { class: "step-head" },
+    { class: "step-head", onclick: onHeadClick },
     h("h3", {}, step.label),
     statusChip(step.status),
-    folded ? h("span", { class: "step-summary muted small" }, stepSummary(step)) : null,
-    h("button", { type: "button", class: "btn btn--link", "aria-expanded": String(!folded), "aria-controls": bodyId, onclick: () => toggleStep(step.id) }, folded ? "Развернуть" : "Свернуть"),
+    folded ? h("span", { class: "step-summary muted small" }, stepSummary(step)) : h("span", { class: "step-summary" }),
     step.status !== "running"
       ? step.status === "pending"
         ? h("button", { type: "button", class: "btn btn--link", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Выполнить шаг")
-        : h("button", { type: "button", class: "btn btn--secondary btn--sm", disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Перезапустить шаг")
+        : h("button", { type: "button", class: rerunClass, disabled: p.running, onclick: busyClick(() => rerunStep(step.id)) }, "Перезапустить шаг")
       : null,
+    h(
+      "button",
+      {
+        type: "button",
+        class: "btn btn--ghost btn--sm step-toggle",
+        "aria-expanded": String(!folded),
+        "aria-controls": bodyId,
+        "aria-label": `${folded ? "Развернуть" : "Свернуть"} шаг «${step.label}»`,
+        onclick: () => toggleStep(step.id),
+      },
+      h("span", { "aria-hidden": "true" }, folded ? "▸" : "▾"),
+    ),
   );
   const attrs = { class: `step ${step.status} tone-${toneOf(step.status)}${folded ? " collapsed" : ""}`, id: `step-${step.id}`, tabindex: "-1" };
   if (folded) return h("article", attrs, head);

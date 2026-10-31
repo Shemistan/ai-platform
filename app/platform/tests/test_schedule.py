@@ -112,6 +112,13 @@ class ScheduleTest(StudioCase):
         base = self.studio.defaults() | self.studio.scenario_defaults("digest")
         self.assertEqual({k: base[k] for k in DIGEST_RUN}, DIGEST_RUN)
 
+    def test_manual_digest_uses_settings_defaults(self):
+        """UX-034: умолчания дайджеста одни — «Настройки» меняют и выпуск по расписанию, и форму студии."""
+        self.section("schedule", {"poster_mode": "local", "draw_images": False, "shorts": True, "auto_publish": True})
+        form = self.json("GET", "/api/studio/config")[1]["scenario_defaults"]["digest"]
+        self.assertEqual((form["poster_mode"], form["draw_images"], form["shorts"]), ("local", False, True))
+        self.assertNotIn("auto_publish", form)  # публиковать сам — только выпуск по расписанию
+
     def test_digest_failure_is_reported_and_retried(self):
         self.section("stats", {"auto": False})
         self.section("schedule", {"enabled": True, "time": "07:00"})

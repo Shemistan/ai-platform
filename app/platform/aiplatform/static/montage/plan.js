@@ -92,6 +92,31 @@ export function clock(seconds) {
 }
 
 // Тело запроса «Новый ролик» из формы; ошибка — текстом.
+// «Переделать…» (UX-038): что можно переделать в проекте. План — если ИИ его строит (не ручной режим),
+// раскадровка — если она уже есть. Сцену по одной переделывают из её карточки.
+export function redoScopes(project) {
+  return [project.mode === "manual" ? null : "plan", project.storyboard ? "storyboard" : null].filter(Boolean);
+}
+
+// Охват и замечание → действие воркера: план с замечанием — revise (правило запомнится), без — replan;
+// раскадровка — storyboard/run заново (замечание к ней не передаётся — оно у сцены).
+export function redoAction(scope, text) {
+  const note = (text || "").trim();
+  if (scope === "plan") return note ? { action: "revise", body: { text: note } } : { action: "replan" };
+  if (scope === "storyboard") return { action: "storyboard/run" };
+  return null;
+}
+
+// Сводка свёрнутого «Как монтировать» (UX-033): «Whisper Large V3 Turbo · пауза до 0,6 с · проверка · С подтверждением».
+export function setupSummary(options, { models = [], modes = [] } = {}) {
+  const model = models.find((m) => m.id === options.model)?.label || options.model;
+  const pause = `пауза до ${String(options.max_pause).replace(".", ",")} с`;
+  const mode = modes.find((m) => m.id === options.mode)?.label;
+  return [model, pause, options.check ? "проверка" : null, options.subtitles ? "субтитры" : null, options.motion ? "моушн" : null, mode]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export function projectPayload({ title, model, terms, grade, auto, subtitles, check, motion, maxPause }) {
   const pause = Number(String(maxPause ?? "").replace(",", "."));
   if (!Number.isFinite(pause) || pause < 0.3 || pause > 3) return { error: "Самая длинная пауза — от 0,3 до 3 секунд." };

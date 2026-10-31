@@ -76,7 +76,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 /* --- Кнопка: один компонент .btn — вариант (--primary/--secondary/--ghost/--danger/--link)
    и размер (--sm/--md/--lg, по умолчанию md). Высота — от --control-h-*, а не от паддингов,
    поэтому кнопки одного размера одной высоты на всех вкладках.
-   .btn--link без .btn — ссылка внутри текста и <summary>: строчная, переносится как текст. */
+   .btn--link без .btn — ссылка внутри текста и <summary>: строчная, переносится как текст.
+   Правило (DS-019): в одной панели не больше одной .btn--primary — то, что человеку делать дальше.
+   Второстепенное — --secondary/--ghost, редкое и опасное — в меню «⋯» (moreMenu из ui.js). */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -308,6 +310,38 @@ details.disclosure--title > summary:hover { text-decoration: none; color: var(--
 details.disclosure--title[open] > summary { margin-bottom: var(--sp-3); }
 details.disclosure--rule { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
 @media (prefers-reduced-motion: reduce) { details.disclosure > summary::before { transition: none; } }
+
+/* --- Меню «⋯» (moreMenu, DS-019): второстепенные и опасные действия; список поверх страницы. --- */
+details.more-menu { position: relative; flex: none; }
+details.more-menu > summary { list-style: none; min-width: var(--control-h-sm); justify-content: center; font-size: var(--fs-lg); }
+details.more-menu > summary::-webkit-details-marker { display: none; }
+.more-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--sp-1));
+  z-index: var(--z-nav);
+  display: grid;
+  min-width: 200px;
+  padding: var(--sp-1);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-menu);
+}
+.more-menu-item {
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.more-menu-item:hover:not(:disabled), .more-menu-item:focus-visible { background: var(--sunken); outline: none; }
+.more-menu-item--danger { color: var(--danger); }
+.more-menu-item:disabled { opacity: 0.5; cursor: default; }
 
 dialog.modal {
   width: min(760px, calc(100vw - 32px));
@@ -602,3 +636,70 @@ input.input-auto { width: auto; }
 }
 .upload-row .stage { overflow-wrap: anywhere; }
 .upload-row .bar-fill { width: 0; }
+
+/* --- Пространства (PRD-033): Генерация, Новости, Статьи — входы крупными карточками и альбом. --- */
+.space { display: grid; gap: var(--sp-6); max-width: var(--container); margin: 0 auto; padding: var(--sp-8) var(--sp-5); }
+.space-head { margin: 0; padding: 0; }  /* .page-head центрирует себя margin: auto — в пространстве заголовок слева, как входы */
+.space-head h1 { margin: 0; font-size: var(--fs-2xl); }
+.space-head p { margin: var(--sp-1) 0 0; }
+.space-entries { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-4); }
+.space-entry {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-6) var(--sp-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.space-entry strong { font-size: var(--fs-xl); }
+.space-entry:hover { border-color: var(--accent); }
+.space-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.space-more { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: center; font-size: var(--fs-sm); }
+.space-album { display: grid; gap: var(--sp-3); }
+.space-album h2 { margin: 0; font-size: var(--fs-lg); }
+
+/* Альбом (core/album.js): сетка плиток → просмотр → «← Альбом». */
+.album-filter { justify-self: start; margin-bottom: var(--sp-3); }
+.album-filter[hidden], .album-grid[hidden], .album-viewer[hidden] { display: none; }
+.album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--sp-4); }
+.album-tile {
+  display: grid;
+  gap: var(--sp-1);
+  align-content: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.album-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-lg); }
+.album-thumb { aspect-ratio: 1; overflow: hidden; border-radius: var(--r-lg); background: var(--sunken); }
+.album-tile:hover .album-thumb { outline: 2px solid var(--accent); }
+.album-thumb img, .album-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.album-audio { display: grid; place-items: center; height: 100%; font-size: var(--fs-2xl); color: var(--muted); }
+.album-caption { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: var(--fs-sm); }
+.album-viewer { display: grid; gap: var(--sp-4); }
+.album-back { justify-self: start; }
+.album-item { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: var(--sp-6); align-items: start; }
+.album-media img, .album-media video { width: 100%; max-height: 75vh; object-fit: contain; border-radius: var(--r-lg); background: var(--media-bg); display: block; }
+.album-media audio { width: 100%; }
+.album-meta { display: grid; gap: var(--sp-2); }
+.album-meta p { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 800px) { .album-item { grid-template-columns: 1fr; } }
+/* Вход с полем (Новости → Месяц): кнопка во всю карточку и поле под ней. */
+.space-entry:has(.space-entry-main) { cursor: default; }
+.space-entry-main { display: grid; gap: var(--sp-1); padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.space-entry-main strong { font-size: var(--fs-xl); }
+.space-entry-field { display: flex; gap: var(--sp-2); align-items: center; }
+/* Поле ввода пространства («Статьи»): крупное, как на «Сегодня». */
+.space-input { display: grid; gap: var(--sp-3); }
+.space-input textarea { width: 100%; box-sizing: border-box; padding: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-xl); background: var(--panel); color: var(--text); font: inherit; font-size: var(--fs-lg); resize: vertical; }
+.space-input textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.album-thumb--wide { aspect-ratio: 16 / 9; }

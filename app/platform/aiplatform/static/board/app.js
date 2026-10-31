@@ -2,23 +2,34 @@
 import { $, announce, api, busyClick, captureFocus, confirmPublish, fill, fmtNum, h, plural, poller, reconcile, restoreFocus, STATUS, statusChip, toneOf } from "/ui.js";
 
 const API = "/api/studio";
-const state = { archived: false, busy: new Set(), errors: {}, statuses: null };
+// statsOpen — раскрыта ли сводка «Неделя · Что работает»: блок пересобирается по опросу, состояние живёт тут.
+const state = { archived: false, busy: new Set(), errors: {}, statuses: null, statsOpen: false };
 // Дополнения над группами (сводка отклика и т.п.): sig(data) — подпись блока, build(data) → узел.
 const extras = [
   { key: "autopilot", sig: (d) => [d.offers?.digest_autopilot], build: (d) => autopilotBanner(d) },
-  { key: "week", sig: (d) => [d.week], build: (d) => weekLine(d.week) },
-  { key: "response", sig: (d) => [d.stats, d.response, d.coverage, d.variants], build: (d) => responsePanel(d) },
+  { key: "stats", sig: (d) => [d.week, d.stats, d.response, d.coverage, d.variants], build: (d) => statsBlock(d) },
 ];
 
 // Плашка недели (AN-016): сколько вышло, ждёт и брошено, медиана от готового видео до публикации.
-function weekLine(w) {
-  if (!w) return h("span", {});
+function weekText(w) {
+  if (!w) return "";
   const lead = w.median_lead_h === null ? "—" : `${w.median_lead_h} ч`;
+  return `опубликовано ${w.published} · ждут ${w.waiting} · брошено ${w.abandoned} · медиана до публикации ${lead}`;
+}
+
+// Неделя и «Что работает» — одной свёрнутой строкой (UX-030): первый экран доски — «Ждут тебя».
+function statsBlock(data) {
+  const w = data.week;
   return h(
-    "p",
-    { class: "week-line", title: `за ${w.days} дней; брошено — ждут публикации без движения больше 72 ч` },
-    h("strong", {}, "Неделя: "),
-    `опубликовано ${w.published} · ждут ${w.waiting} · брошено ${w.abandoned} · медиана до публикации ${lead}`,
+    "details",
+    { class: "disclosure board-stats", open: state.statsOpen, ontoggle: (e) => (state.statsOpen = e.currentTarget.open) },
+    h(
+      "summary",
+      { title: w ? `за ${w.days} дней; брошено — ждут публикации без движения больше 72 ч` : null },
+      h("strong", {}, "Неделя"),
+      w ? ` · ${weekText(w)}` : "",
+    ),
+    responsePanel(data),
   );
 }
 

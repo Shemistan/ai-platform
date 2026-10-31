@@ -137,6 +137,7 @@ export const ICONS = {
   play: "M8 5.5v13l10-6.5z",
   external: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  settings: "M4 7h9M17 7h3M15 5v4M4 17h3M11 17h9M9 15v4",
 };
 const SOLID_ICONS = new Set(["star", "play"]); // залитые, остальные — контур
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -276,6 +277,47 @@ export function copyButton(getText, label = "Скопировать") {
     setTimeout(() => (btn.textContent = label), 1500);
   });
   return btn;
+}
+
+// Меню «⋯» (DS-019): второстепенные и опасные действия убраны с глаз, на экране остаётся одна главная
+// кнопка. items: [{ label, onClick, danger?, disabled? }], пустые пропускаются; нет пунктов — null.
+// Пункт закрывает меню; Esc и клик мимо — тоже.
+export function moreMenu(items, { label = "Ещё действия" } = {}) {
+  const list = items.filter(Boolean);
+  if (!list.length) return null;
+  const summary = h("summary", { class: "btn btn--ghost btn--sm", "aria-label": label, title: label }, h("span", { "aria-hidden": "true" }, "⋯"));
+  const box = h("details", { class: "more-menu" }, summary);
+  const pick = (item) => (event) => {
+    box.open = false;
+    item.onClick(event);
+  };
+  box.append(
+    h(
+      "div",
+      { class: "more-menu-list" },
+      ...list.map((item) => h("button", { type: "button", class: `more-menu-item${item.danger ? " more-menu-item--danger" : ""}`, disabled: item.disabled, onclick: pick(item) }, item.label)),
+    ),
+  );
+  box.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && box.open) {
+      box.open = false;
+      summary.focus();
+    }
+  });
+  closeMenusOnOutsideClick();
+  return box;
+}
+
+// Клик мимо закрывает открытые «⋯» — один обработчик на страницу, вешается с первым меню.
+let outsideClickBound = false;
+function closeMenusOnOutsideClick() {
+  if (outsideClickBound) return;
+  outsideClickBound = true;
+  document.addEventListener("click", (event) => {
+    for (const menu of document.querySelectorAll("details.more-menu[open]")) {
+      if (!menu.contains(event.target)) menu.open = false;
+    }
+  });
 }
 
 // Модальное окно на <dialog>: modal("Заголовок", ...содержимое) → { dialog, body, close }.

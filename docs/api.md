@@ -12,6 +12,11 @@
 - Все ручки — под `/api/`; вкладка — первый сегмент (`/api/studio/…`,
   `/api/photo/…`). Свои: `/api/config`, `/api/status`, `/api/health`,
   `/api/ready`.
+- `/api/config` и `/api/ready`: `problems` — что мешает работать (баннер на
+  всех страницах, валит `/api/ready`), `advice` — советы, которые не мешают
+  (счётчик у «Настроек», `/api/ready` не валят; UX-030).
+- `/api/status` → `activity`: идущие и ждущие задачи всех вкладок — `tab`, `href`,
+  `title`, `status`, `stage`, `percent` (центр активности шапки, UX-036).
 - Глаголы: `GET` — чтение без побочных эффектов, `POST` — всё остальное.
   `PUT`/`PATCH`/`DELETE` → `405` с заголовком `Allow: GET, HEAD, POST`.
   Удаление — `POST …/<id>/delete` (браузерная форма и CSRF-проверка одни на

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Генерация — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+  <main class="space">
+    <header class="page-head space-head">
+      <h1>Генерация</h1>
+      <p class="muted">Что делаем?</p>
+    </header>
+
+    <nav class="space-entries" aria-label="Мастерские">
+      <a class="space-entry" href="/photo/"><strong>Фото</strong><span class="muted">картинка по описанию, правка, расширение кадра</span></a>
+      <a class="space-entry" href="/video/"><strong>Видео</strong><span class="muted">ролик по промпту, по кадрам, живое фото</span></a>
+      <a class="space-entry" href="/audio/"><strong>Аудио</strong><span class="muted">текст — в озвучку голосом</span></a>
+    </nav>
+    <nav class="space-more" aria-label="Своё видео">
+      <span class="muted">Своё видео:</span>
+      <a href="/montage/">Монтаж</a>
+      <a href="/motion/">Моушн</a>
+      <a href="/transcribe/">Расшифровка</a>
+      <a href="/avatar/">Диктор</a>
+    </nav>
+
+    <section class="space-album" aria-labelledby="album-title">
+      <h2 id="album-title">Альбом</h2>
+      <div id="album"><p class="muted">Загружаю…</p></div>
+    </section>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

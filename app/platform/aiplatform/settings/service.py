@@ -78,6 +78,10 @@ class SettingsModule:
         found = self.cleaner.run(days, dry=not run)
         return {"days": days, "done": run, "found": found, "usage": self.cleaner.usage()}
 
+    def nav(self) -> list[dict]:
+        """Вкладка с badge: "advice" — число советов по настройке (App.advice, UX-030) у «Настроек»."""
+        return [{"id": PREFIX, "label": self.label, "href": f"/{PREFIX}/", "badge": "advice"}]
+
     def describe(self) -> dict:
         return {"file": str(self.settings.path)}
 

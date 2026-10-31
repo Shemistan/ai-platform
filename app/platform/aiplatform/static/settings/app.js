@@ -1,5 +1,6 @@
 // Вкладка «Настройки»: какие модели фото и видео, движки озвучки, голоса и модели расшифровки включены;
 // что стоит из инструментов диктора и моушн-графики; расписание, уведомления, уборка.
+import { adviceCommand } from "/core/advice.js";
 import { $, api, busyClick, chip, fill, h, icon, plural, toast } from "/ui.js";
 
 const API = "/api/settings";
@@ -166,11 +167,11 @@ function renderSchedule(data) {
           ),
         ),
       ),
-      // Параметры запуска выпуска по расписанию (PRD-030): уходят в настройки нового выпуска.
+      // Умолчания дайджеста (PRD-030, UX-034): одни для выпуска по расписанию и созданного руками в «Студии».
       h(
         "fieldset",
         { class: "settings-stack" },
-        h("legend", { class: "hint" }, "Параметры запуска"),
+        h("legend", { class: "hint" }, "Дайджест по умолчанию — по расписанию и вручную в «Студии»"),
         h(
           "div",
           { class: "settings-stack" },
@@ -178,7 +179,7 @@ function renderSchedule(data) {
           checkRow("Ролики", "До трёх коротких роликов локальной моделью видео — долго.", plan.clips, (v) => section("schedule", { clips: v })),
           checkRow("Вертикальное видео 9:16", "Шортс для YouTube Shorts, TikTok, Reels.", plan.shorts, (v) => section("schedule", { shorts: v })),
           checkRow("Пауза после текста", "Выпуск ждёт, пока я проверю текст, и только потом генерирует.", plan.review_text, (v) => section("schedule", { review_text: v })),
-          checkRow("Публиковать сам", "Готовое видео уходит в каналы дайджеста без моего нажатия.", plan.auto_publish, (v) => section("schedule", { auto_publish: v })),
+          checkRow("Публиковать сам", "Только по расписанию: готовое видео уходит в каналы дайджеста без моего нажатия.", plan.auto_publish, (v) => section("schedule", { auto_publish: v })),
         ),
       ),
       last ? h("p", { class: "hint" }, `Последний запуск по расписанию: ${last}. Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день.`) : h("p", { class: "hint" }, "Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день."),
@@ -377,6 +378,34 @@ async function loadHealth() {
   );
 }
 
+// «Советы по настройке» (UX-030): то, что раньше висело баннером на всех страницах, но работать не мешает.
+async function loadAdvice() {
+  let items;
+  try {
+    items = (await api("GET", "/api/config")).advice || [];
+  } catch {
+    return;  // нет ответа — раздел просто не показываем
+  }
+  $("advice-panel").hidden = !items.length;
+  fill(
+    $("advice"),
+    ...items.map((text) => {
+      const command = adviceCommand(text);
+      const copy = async () => {
+        await navigator.clipboard.writeText(command);
+        toast("Команда скопирована");
+      };
+      return h(
+        "li",
+        {},
+        h("span", {}, text),
+        command ? h("button", { type: "button", class: "btn btn--secondary btn--sm", onclick: busyClick(copy) }, "Скопировать команду") : null,
+      );
+    }),
+  );
+}
+
 load();
 loadCleanup();
 loadHealth();
+loadAdvice();

@@ -224,6 +224,8 @@ function syncControls() {
     missing.length ? `Установить: ${missing.map((m) => `make models M=${m.id}`).join(", ")}.` : "",
   ].filter(Boolean).join(" ");
   $("prompt-hint").textContent = model ? promptHint(model) : "";
+  // Модель спрятана в «Точных параметрах» (UX-035) — какая выбрана, видно под «Качеством».
+  $("model-brief").textContent = model ? `Модель: ${model.label} — сменить в «Точных параметрах».` : "Для этого режима нет установленной модели — см. «Точные параметры».";
 
   // Уровни детализации показывают шаги выбранной модели.
   $("details").replaceChildren(
@@ -241,7 +243,7 @@ function syncControls() {
 
   $("steps-field").hidden = !model.custom_steps;
   $("steps").max = model.max_steps;
-  $("steps").placeholder = `${model.steps[state.detail]} — по детализации`;
+  $("steps").placeholder = `${model.steps[state.detail]} — по качеству`;
   if (Number($("steps").value) > model.max_steps) $("steps").value = "";
   $("guidance-field").hidden = !model.guidance;
   if (model.guidance) {

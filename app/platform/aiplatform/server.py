@@ -30,13 +30,14 @@ from aiplatform import __version__
 from aiplatform import config as config_module
 from aiplatform.config import Config
 from aiplatform.core import disk, log, media, perms, runner
+from aiplatform.core import jobs as jobs_module
 from aiplatform.core.gate import Gate
 from aiplatform.core.http import HttpError, Request, not_found
 from aiplatform.core.notify import Notifier
 from aiplatform.core.uploads import UploadStore
 
 STATIC_DIR = Path(__file__).with_name("static")
-HOME = "/photo/"
+HOME = "/today/"  # «Сегодня» (UX-031): что ждёт тебя и одно поле, чтобы начать
 AUTH_COOKIE = "aip_auth"
 # Служебный заголовок запросов страниц платформы (ui.js api()): чужой сайт поставить
 # его не может без CORS-preflight, а preflight сервер не пропускает (SEC-002).
@@ -154,23 +155,69 @@ def default_modules(ctx: Context) -> list[Module]:
     ]
 
 
-# Группы вкладок шапки: между группами — разделитель. Модуль без записи — сам себе группа.
+# Шапка — три пространства (PRD-033): Генерация, Новости, Статьи; перед ними «Сегодня», сервисное — за
+# иконкой справа. Модуль без записи — сам себе группа; вкладка может задать свою group (студия).
 NAV_GROUPS = {
-    "photo": "media",
-    "video": "media",
-    "audio": "media",
-    "avatar": "media",
-    "montage": "media",
-    "motion": "media",
-    "transcribe": "media",
-    "library": "texts",
-    "news": "texts",
+    "photo": "generate",
+    "video": "generate",
+    "audio": "generate",
+    "avatar": "generate",
+    "montage": "generate",
+    "motion": "generate",
+    "transcribe": "generate",
+    "news": "newsroom",
+    "library": "articles",
     "channels": "service",
     "updates": "service",
     "settings": "service",
 }
 # Подписи групп — меню шапки (UX-028); группа из одной вкладки рисуется простой ссылкой.
-NAV_GROUP_LABELS = {"media": "Медиа", "studio": "Студия", "texts": "Тексты", "service": "Сервис"}
+NAV_GROUP_LABELS = {
+    "today": "Сегодня",
+    "generate": "Генерация",
+    "newsroom": "Новости",
+    "articles": "Статьи",
+    "service": "Сервис",
+}
+# Группа-иконка: кнопка без подписи справа в шапке (имя ICONS из ui.js), подпись — для скринридера.
+NAV_GROUP_ICONS = {"service": "settings"}
+# Порядок разделов в шапке: главное — первым; группы вне списка — после, в порядке модулей.
+NAV_GROUP_ORDER = ["today", "generate", "newsroom", "articles", "service"]
+# Подпись вкладки модуля в меню пространства, если своя сбивает: «Новости» внутри «Новостей».
+NAV_LABELS = {"news": "Источники новостей", "library": "Библиотека статей"}
+# Главные страницы пространств — статика без своего модуля (static/<id>/): первыми в своём меню.
+SPACE_TABS = [
+    {"id": "generate", "label": "Генерация", "href": "/generate/", "group": "generate", "home": True},
+    {"id": "newsroom", "label": "Новости", "href": "/newsroom/", "group": "newsroom", "home": True},
+    {"id": "articles", "label": "Статьи", "href": "/articles/", "group": "articles", "home": True},
+]
+
+
+def activity_item(tab: str, href: str, job: dict) -> dict:
+    """Строка центра активности: вкладка, ссылка, название задачи, статус и прогресс."""
+    progress = job.get("progress") or {}
+    title = job.get("title") or job.get("prompt") or job.get("kind") or ""
+    return {
+        "tab": tab,
+        "href": href,
+        "title": " ".join(str(title).split())[:80],
+        "status": job.get("status"),
+        "stage": progress.get("stage") or "",
+        "percent": progress.get("percent"),
+    }
+
+
+def space_tabs(tabs: list[dict]) -> list[dict]:
+    """Главные страницы пространств — в формате nav_tabs; только те, в чьей группе есть вкладки модулей
+    (без студии «Новостям» нечего показать)."""
+    groups = {tab["group"] for tab in tabs}
+    return [tab | {"group_label": NAV_GROUP_LABELS[tab["group"]]} for tab in SPACE_TABS if tab["group"] in groups]
+
+
+def nav_order(tabs: list[dict]) -> list[dict]:
+    """Вкладки по NAV_GROUP_ORDER; внутри группы — порядок модулей (sorted устойчив)."""
+    rank = {g: i for i, g in enumerate(NAV_GROUP_ORDER)}
+    return sorted(tabs, key=lambda t: rank.get(t["group"], len(rank)))
 
 
 def nav_tabs(module: Module) -> list[dict]:
@@ -178,13 +225,18 @@ def nav_tabs(module: Module) -> list[dict]:
 
     По умолчанию — одна вкладка /<prefix>/; модуль с под-вкладками (студия) отдаёт свои через nav().
     Поля: id, label, href, group, group_label (подпись меню группы); необязательные badge (счётчик в
-    шапке) и default (активна, если в адресе нет своего параметра). Вкладка может задать свою group.
+    шапке), default (активна, если в адресе нет своего параметра), home (главная вкладка группы: на ней
+    к подписи группы не дописывается название вкладки), group_icon (группа рисуется иконкой).
+    Вкладка может задать свою group.
     """
     own = getattr(module, "nav", None)
-    tabs = own() if own else [{"id": module.prefix, "label": module.label, "href": f"/{module.prefix}/"}]
+    label = NAV_LABELS.get(module.prefix, module.label)
+    tabs = own() if own else [{"id": module.prefix, "label": label, "href": f"/{module.prefix}/"}]
     group = NAV_GROUPS.get(module.prefix, module.prefix)
     out = [{"group": group} | tab for tab in tabs]
-    return [tab | {"group_label": NAV_GROUP_LABELS.get(tab["group"], tab["label"])} for tab in out]
+    out = [tab | {"group_label": NAV_GROUP_LABELS.get(tab["group"], tab["label"])} for tab in out]
+    icon = NAV_GROUP_ICONS.get
+    return [tab | ({"group_icon": icon(tab["group"])} if icon(tab["group"]) else {}) for tab in out]
 
 
 class App:
@@ -239,8 +291,6 @@ class App:
                 f"Каталог моделей {models} не найден — внешний диск не примонтирован? "
                 "Подключи его или задай AIP_MODELS_DIR."
             )
-        if not self.config.fake and (loose := perms.warning(self.config.data_dir, "Каталог данных")):
-            out.append(loose)
         for module in self.modules.values():
             out.extend(module.problems())
             # Очереди вкладок: задачи в карантине или записанные более новой версией (BE-008).
@@ -248,12 +298,20 @@ class App:
                 out.extend(getattr(queue, "load_problems", None) or [])
         return list(dict.fromkeys(out))  # общий движок (narrator) жалуется из нескольких вкладок
 
+    def advice(self) -> list[str]:
+        """Советы, которые не мешают работать (UX-030): не баннер на всех страницах, а точка у «Настроек»."""
+        out = []
+        if not self.config.fake and (loose := perms.warning(self.config.data_dir, "Каталог данных")):
+            out.append(loose)
+        return out
+
     def describe(self) -> dict:
         return {
             "backend": self.config.backend,
             "version": __version__,
-            "tabs": [tab for m in self.modules.values() for tab in nav_tabs(m)],
+            "tabs": nav_order(space_tabs(tabs := [tab for m in self.modules.values() for tab in nav_tabs(m)]) + tabs),
             "problems": self.problems(),
+            "advice": self.advice(),
         }
 
     def health(self) -> dict:
@@ -291,7 +349,7 @@ class App:
         if self.stopping:
             check("stopping", False, "сервис останавливается")
         failed = [c["name"] for c in checks if not c["ok"]]
-        return {"ok": not failed, "failed": failed, "checks": checks, "problems": problems}
+        return {"ok": not failed, "failed": failed, "checks": checks, "problems": problems, "advice": self.advice()}
 
     def status(self) -> dict:
         out = {"gpu": self.ctx.gate.holder(), "waiting": self.ctx.gate.waiting()}
@@ -303,6 +361,29 @@ class App:
             badges = getattr(module, "badges", None)
             if badges:
                 out |= badges()
+        out["activity"] = self.activity()
+        return out
+
+    def activity(self) -> list[dict]:
+        """Центр активности шапки (UX-036): что идёт и ждёт очереди во всех вкладках.
+
+        Модуль со своим activity() отвечает сам (студия); иначе — очереди jobs/tasks (list) и проекты
+        (active — дёшево, без копии проекта). Элемент: tab, href, title, status, stage, percent.
+        """
+        out: list[dict] = []
+        for module in self.modules.values():
+            own = getattr(module, "activity", None)
+            if own:
+                out.extend(own())
+                continue
+            href = f"/{module.prefix}/"
+            for queue in (getattr(module, "jobs", None), getattr(module, "tasks", None)):
+                for job in getattr(queue, "list", list)():
+                    if job.get("status") in jobs_module.ACTIVE:
+                        out.append(activity_item(module.label, href, job))
+            projects = getattr(module, "projects", None)
+            for project in getattr(projects, "active", list)():
+                out.append(activity_item(module.label, f"{href}?id={project['id']}", project))
         return out
 
     def close(self) -> None:
@@ -600,7 +681,7 @@ def main() -> None:
     print(f"данные: {config.data_dir}  лог: {log_path}")
     for module in app.modules.values():
         print(f"  вкладка {module.label}: http://{host}:{port}/{module.prefix}/")
-    for problem in app.problems():
+    for problem in app.problems() + app.advice():
         print(f"⚠ {problem}")
         log.event("problem", level=logging.WARNING, error=problem)
     try:

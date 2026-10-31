@@ -12,7 +12,7 @@ import threading
 import time
 import urllib.parse
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from http import HTTPStatus
 from pathlib import Path
 
@@ -21,6 +21,7 @@ from aiplatform.core import events, log, media, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
+from aiplatform.core.settings import DIGEST_RUN
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
@@ -46,7 +47,19 @@ from aiplatform.video import models as video_models
 
 PREFIX = "studio"
 URL_BASE = f"/api/{PREFIX}"
-SCENARIOS = {"digest": "Дайджест новостей", "article": "Видео по статье", "post": "Пост в канал"}
+SCENARIOS = {
+    "digest": "Дайджест новостей",
+    "weekly": "Обзор недели",
+    "monthly": "Обзор месяца",
+    "article": "Видео по статье",
+    "post": "Пост в канал",
+}
+# Новости (PRD-033): день, неделя, месяц — с ориентиром длины видео в минутах (target_minutes): не потолок.
+# Материал — период: день дайджеста, неделя ГГГГ-Wнн, месяц ГГГГ-ММ.
+NEWS_MINUTES = {"digest": 10, "weekly": 20, "monthly": 40}
+# Пространство шапки сценария (PRD-033): новости — в «Новостях», статья и пост — в «Статьях».
+SCENARIO_SPACE = {k: "newsroom" for k in NEWS_MINUTES} | {"article": "articles", "post": "articles"}
+PERIODIC = tuple(NEWS_MINUTES)
 DIGEST_CHANNEL = "tg-voice-news"  # канал дайджеста у narrator (NEWS_CHANNEL = VOICE_NEWS)
 OFFER_DAYS, OFFER_MANUAL = 3, 2  # ≥2 дайджеста руками за 3 дня — предложить расписание (PRD-003)
 MAX_TEXT = 100_000
@@ -86,6 +99,7 @@ SETTING_STEPS = {
     "frame": "render",  # готовые картинки остаются — кадр берёт их с обрезкой; новые рисуются под кадр
     "review_text": None,
     "adapt_text": "text",  # статья через LLM: текст для озвучки и код на экран (PRD-029)
+    "target_minutes": "text",  # ориентир длины видео для LLM, 0 — без него; не потолок (PRD-033)
     # «Видео по статье»: источник — в конце поста и на последнем слайде (CMP-005).
     "source_url": ("render", "short"),
     "source_author": ("render", "short"),
@@ -159,9 +173,9 @@ def prose(answer: str) -> str:
 
 
 def source_id(scenario: str, *, day: str | None = None, text: str = "") -> str:
-    """По чему узнаём тот же материал: у дайджеста — день, у статьи и поста — текст без лишних пробелов."""
-    if scenario == "digest":
-        return f"digest:{day}"
+    """По чему узнаём тот же материал: у новостей — период (день, неделя, месяц), у статьи и поста — текст."""
+    if scenario in PERIODIC:
+        return f"{scenario}:{day}"
     return f"{scenario}:" + hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()[:16]
 
 
@@ -205,10 +219,28 @@ def norm_url(url: str) -> str:
 def material_keys(scenario: str, *, day: str | None = None, title: str = "", url: str = "") -> list[str]:
     """Ключи материала выпуска (PRD-004), первый — главный: дайджест — день; статья и пост —
     адрес источника и нормализованный заголовок. Совпал любой — это похожий выпуск."""
-    if scenario == "digest":
-        return [f"digest:{day}"] if day else []
+    if scenario in PERIODIC:
+        return [f"{scenario}:{day}"] if day else []
     keys = [f"url:{u}"] if (u := norm_url(url)) else []
     return keys + ([f"title:{t}"] if (t := norm_title(title)) else [])
+
+
+MAX_MINUTES = 120
+
+
+def review_period(scenario: str, month: object, today: date | None = None) -> str:
+    """Период обзора: неделя — ISO ГГГГ-Wнн текущей; месяц — ГГГГ-ММ из запроса или текущий."""
+    today = today or date.today()
+    if scenario == "weekly":
+        year, week, _ = today.isocalendar()
+        return f"{year}-W{week:02d}"
+    if month in (None, ""):
+        return today.strftime("%Y-%m")
+    if not isinstance(month, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise bad_request("Месяц обзора — вида ГГГГ-ММ.")
+    if month > today.strftime("%Y-%m"):
+        raise bad_request("Этот месяц ещё не наступил.")
+    return month
 
 
 def board_group(item: dict, project: dict, published: list[dict] | None = None) -> str:
@@ -277,14 +309,16 @@ class StudioModule:
     label = "Сценарии"
 
     def nav(self) -> list[dict]:
-        """Вкладки шапки: доска «Выпуски» со счётчиком ждущих и по вкладке на сценарий."""
-        # Доска — своя группа: в шапке она отдельной ссылкой, сценарии — меню «Студия» (UX-028).
-        board = {"id": "board", "label": "Выпуски", "href": "/board/", "badge": "attention", "group": "board"}
+        """Вкладки шапки (PRD-033): «Сегодня» со счётчиком ждущих, сценарии — в своих пространствах,
+        доска «Все выпуски» — в сервисном меню."""
+        today = {"id": "today", "label": "Сегодня", "href": "/today/", "badge": "attention", "group": "today"}
+        board = {"id": "board", "label": "Все выпуски", "href": "/board/", "group": "service"}
         scenarios = [
-            {"id": k, "label": v, "href": f"/studio/?scenario={k}"} | ({"default": True} if k == "article" else {})
+            {"id": k, "label": v, "href": f"/studio/?scenario={k}", "group": SCENARIO_SPACE[k]}
+            | ({"default": True} if k == "article" else {})
             for k, v in SCENARIOS.items()
         ]
-        return [board, *scenarios]
+        return [today, *scenarios, board]
 
     def __init__(self, ctx) -> None:
         self.ctx = ctx
@@ -893,6 +927,21 @@ class StudioModule:
             return None
         return f"{URL_BASE}/projects/{project_id}/files/{path.name}?v={path.stat().st_mtime_ns}"
 
+    def activity(self) -> list[dict]:
+        """Центр активности шапки (UX-036): выпуски, которые сейчас собираются, — со ссылкой на выпуск."""
+        return [
+            {
+                "tab": SCENARIOS.get(item["scenario"], "Студия"),
+                "href": f"/studio/?scenario={item['scenario']}&project={item['id']}",
+                "title": item["title"],
+                "status": "running",
+                "stage": item["current"] or "",
+                "percent": None,
+            }
+            for item in self.studio.list()
+            if item["running"]
+        ]
+
     def badges(self) -> dict:
         """Для шапки: сколько выпусков ждут человека — по той же группировке, что доска (UX-026)."""
         count = 0
@@ -950,6 +999,7 @@ class StudioModule:
             "shorts": False,
             "review_text": False,
             "adapt_text": True,
+            "target_minutes": 0,
             "draft": False,
             "disclaimers": True,
             "ai_badge": True,
@@ -975,11 +1025,20 @@ class StudioModule:
         if scenario == "digest":
             # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
             # по промпту выпуска — постер загружает человек.
-            out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
+            out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8,
+                   "target_minutes": NEWS_MINUTES["digest"]}  # fmt: skip
+            saved = self.ctx.config.settings.load()
+            # Постер, картинки, ролики, шортс, пауза после текста — одни для выпуска руками и по расписанию
+            # (UX-034): правятся в «Настройках → Дайджест по умолчанию». Автопубликация — только у расписания.
+            plan = saved["schedule"]["digest"]
+            out |= {k: plan[k] for k in DIGEST_RUN if k != "auto_publish" and k in plan}
             # Не дождались своей обложки к сроку — рисуем локально (PRD-002); срок — в «Настройках».
-            deadline = self.ctx.config.settings.load().get("digest_defaults", {}).get("poster_deadline")
+            deadline = saved.get("digest_defaults", {}).get("poster_deadline")
             if deadline:
                 out["poster_deadline"] = deadline
+        elif scenario in ("weekly", "monthly"):
+            # Обзор — длиннее дайджеста: оформление канала, кадр 16:9, ориентир 20 или 40 минут (PRD-033).
+            out = {"branding": True, "target_minutes": NEWS_MINUTES[scenario]}
         elif scenario == "post":
             # Пост — из готового: свой постер и свой mp3, оформление канала, кадр по постеру.
             out = {
@@ -1107,6 +1166,9 @@ class StudioModule:
         for key in bools:
             if not isinstance(out[key], bool):
                 raise bad_request(malformed(f"{key} — true или false."))
+        minutes = out.setdefault("target_minutes", 0)
+        if isinstance(minutes, bool) or not isinstance(minutes, int) or not 0 <= minutes <= MAX_MINUTES:
+            raise bad_request(malformed(f"target_minutes — целое от 0 до {MAX_MINUTES}, 0 — без ориентира."))
         tempo = out["tempo"]
         if isinstance(tempo, bool) or not isinstance(tempo, int | float) or float(tempo) not in steps.TEMPOS:
             raise bad_request(malformed(f"tempo — одно из: {', '.join(f'{t:g}' for t in steps.TEMPOS)}."))
@@ -1171,7 +1233,7 @@ class StudioModule:
             raise bad_request("Тело запроса — не объект JSON.")
         scenario = payload.get("scenario")
         if scenario not in SCENARIOS:
-            raise bad_request("Сценарий — digest, article или post.")
+            raise bad_request(f"Сценарий — одно из: {', '.join(SCENARIOS)}.")
         # У дайджеста, как в narrator: оформление канала (плашка «подпишись», плей) и обложка
         # из ChatGPT по промпту выпуска — постер загружает человек.
         base = self.defaults() | self.scenario_defaults(scenario)
@@ -1190,6 +1252,11 @@ class StudioModule:
             extra["source"] = source_id(scenario, day=extra["day"])
             title = title or f"Дайджест новостей за {day.strftime('%d.%m.%Y')}"
             extra["auto_title"] = False
+            project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
+        elif scenario in ("weekly", "monthly"):
+            period = review_period(scenario, payload.get("month"))
+            extra |= {"day": period, "source": source_id(scenario, day=period), "auto_title": False}
+            title = title or (f"Обзор недели {period}" if scenario == "weekly" else f"Обзор месяца {period}")
             project = self.create_unique(scenario, title, settings, extra, force_new=force_new)
         elif scenario == "post":
             post = payload.get("post")
@@ -1316,8 +1383,8 @@ class StudioModule:
             return item["source"]
         project = self.studio.get(item["id"]) or {}
         folder = self.studio.project_dir(item["id"])
-        if project.get("scenario") == "digest" and project.get("day"):
-            return source_id("digest", day=project["day"])
+        if project.get("scenario") in PERIODIC and project.get("day"):
+            return source_id(project["scenario"], day=project["day"])
         if project.get("scenario") == "article":
             return source_id("article", text=_read_text(folder / steps.TEXT))
         if project.get("scenario") == "post":
@@ -1604,7 +1671,7 @@ class StudioModule:
             raise bad_request("Тело запроса — не объект JSON.")
         scenario = payload.get("scenario")
         if scenario not in SCENARIOS:
-            raise bad_request("Сценарий — digest, article или post.")
+            raise bad_request(f"Сценарий — одно из: {', '.join(SCENARIOS)}.")
         settings = self.check_settings(payload.get("settings"), self.defaults() | self.scenario_defaults(scenario))
         text = payload.get("text") if isinstance(payload.get("text"), str) else ""
         text = text[:MAX_TEXT]

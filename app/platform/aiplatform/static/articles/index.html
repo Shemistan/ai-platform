@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Статьи — AI Platform</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+  <main class="space">
+    <header class="page-head space-head">
+      <h1>Статьи</h1>
+      <p class="muted">Статья → видео: постер, слайды, озвучка, публикация.</p>
+    </header>
+
+    <form class="space-input" id="input" novalidate>
+      <label class="sr-only" for="what">Ссылка или текст статьи</label>
+      <textarea id="what" rows="4" placeholder="Вставь ссылку на статью или её текст"></textarea>
+      <div class="toolbar">
+        <button type="submit" class="btn btn--primary" id="go">Сделать видео</button>
+        <span class="muted small" id="hint">По ссылке текст скачается сам, вставленный текст пойдёт как есть.</span>
+      </div>
+      <p class="form-error" id="error" role="alert" hidden></p>
+    </form>
+    <nav class="space-more" aria-label="Ещё">
+      <a href="/library/">Библиотека статей</a>
+      <a href="/studio/?scenario=post">Пост в канал</a>
+    </nav>
+
+    <section class="space-album" aria-labelledby="album-title">
+      <h2 id="album-title">Альбом</h2>
+      <div id="album"><p class="muted">Загружаю…</p></div>
+    </section>
+  </main>
+
+  <script src="/nav.js" type="module"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

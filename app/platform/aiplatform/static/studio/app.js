@@ -1,7 +1,7 @@
 // Сценарии «Дайджест новостей», «Видео по статье» и «Пост в канал»: выпуск — цепочка шагов от текста до публикации.
 // Каждый шаг виден, его результат можно поправить, загрузить свой или перезапустить шаг.
 // Сборка страницы: действия над выпуском, отрисовка по блокам и опрос. Зоны — в соседних модулях (FE-010).
-import { $, announce, api, busy as busyRequest, captureFocus, debounce, h, logBlock, poller, reconcile, reportError, restoreFocus, safe, STATUS, statusChip } from "/ui.js";
+import { $, announce, api, busy as busyRequest, captureFocus, debounce, h, loadLast, logBlock, poller, reconcile, reportError, restoreFocus, safe, STATUS, statusChip } from "/ui.js";
 import { API, HINTS, scenario, state, visibleSteps } from "./state.js";
 import { renderSettings } from "./settings.js";
 import { checkBox, create, longTextActions, refreshCreateCheck, renderCreate } from "./create.js";
@@ -148,6 +148,9 @@ window.addEventListener("resize", debounce(trackNavHeight, 150));
 
 async function init() {
   trackNavHeight();
+  // Название сценария сразу — из последней шапки (nav.js кладёт её в localStorage), не «Сценарий» до ответа.
+  const cached = loadLast("nav-tabs")?.data?.find?.((t) => t.id === scenario)?.label;
+  if (cached) $("scenario-title").textContent = cached;
   $("scenario-hint").textContent = HINTS[scenario];
   state.config = await api("GET", `${API}/config`);
   $("scenario-title").textContent = state.config.scenarios.find((s) => s.id === scenario)?.label || scenario;
