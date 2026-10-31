@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { loadStatic } from "./load.mjs";
 
-const { clock, cutOf, layoutAt, phrases, projectPayload, setLayout, togglePhrase, toggleWord } = await loadStatic("montage/plan.js");
+const { clock, cutOf, layoutAt, phrases, projectPayload, setLayout, setupSummary, togglePhrase, toggleWord } = await loadStatic("montage/plan.js");
 
 const w = (text, s, e) => ({ w: text, s, e });
 const WORDS = [w("раз", 0.5, 0.8), w("два.", 0.9, 1.2), w("три", 1.3, 1.5), w("четыре", 2.5, 2.9), w("пять", 3.0, 3.2)];
@@ -46,4 +46,13 @@ test("время и форма", () => {
   assert.match(projectPayload({ maxPause: "5" }).error, /пауза/);
   const { payload } = projectPayload({ title: " Обзор ", model: "m", terms: " a ", grade: "none", auto: 1, maxPause: "0,8" });
   assert.deepEqual(payload, { title: "Обзор", options: { model: "m", terms: "a", grade: "none", auto: true, subtitles: false, check: false, motion: false, max_pause: 0.8 } });
+});
+
+test("сводка «Как монтировать»: модель, пауза, включённое и режим (UX-033)", () => {
+  const cfg = { models: [{ id: "turbo", label: "Whisper Turbo" }], modes: [{ id: "reviewed", label: "С подтверждением" }] };
+  assert.equal(
+    setupSummary({ model: "turbo", max_pause: 0.6, check: true, subtitles: false, motion: false, mode: "reviewed" }, cfg),
+    "Whisper Turbo · пауза до 0,6 с · проверка · С подтверждением",
+  );
+  assert.equal(setupSummary({ model: "x", max_pause: "1" }), "x · пауза до 1 с");
 });

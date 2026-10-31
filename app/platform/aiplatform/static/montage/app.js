@@ -1,7 +1,7 @@
 // Вкладка «Монтаж»: ролики, записи, расшифровка с вырезками на подтверждение, сборка и итог. Без сборки.
 
-import { $, api, chip, confirmAction, debounce, fill, h, icon, jobProgress, logBlock, modal, poller, statusChip, toast, toneOf, uploadFile } from "/ui.js";
-import { clock, cutOf, layoutAt, phrases, projectPayload, setLayout, togglePhrase, toggleWord } from "./plan.js";
+import { $, api, chip, confirmAction, debounce, fill, h, icon, jobProgress, logBlock, modal, moreMenu, poller, statusChip, toast, toneOf, uploadFile } from "/ui.js";
+import { clock, cutOf, layoutAt, phrases, projectPayload, setLayout, setupSummary, togglePhrase, toggleWord } from "./plan.js";
 import { stageRows, summary } from "./stages.js";
 import { GATE_TEXT, GATE_TONE, beatRows, frameClock, gateState, qaGroups, sceneCard, scenePatch, trackBars } from "./storyboard.js";
 import { loadReview, resetReviewCache, reviewData, reviewPanel } from "./review-ui.js";
@@ -141,9 +141,10 @@ function renderProject() {
   const p = state.project && state.project.id === state.selectedId ? state.project : null;
   if (!p) {
     renderedKey = "";
+    // Одна «Новый ролик» — в шапке страницы (UX-033): здесь только что это и как начать.
     return fill(root, h("section", { class: "panel" }, h("h2", {}, "Монтаж своей записи"),
       h("p", { class: "muted" }, "Загрузи сырую запись — «голову» и, если показываешь экран, запись экрана. Платформа расшифрует речь, ИИ предложит, что вырезать: паузы, оговорки, дубли, твои команды в кадр. Ты проверишь план — и получишь готовый ролик."),
-      h("button", { type: "button", class: "btn btn--primary", onclick: newProject }, "Новый ролик")));
+      h("p", { class: "muted small" }, "Начни с кнопки «Новый ролик» вверху.")));
   }
   // Пока идёт работа, перерисовываем только прогресс: так не сбивается ввод и не дёргается расшифровка.
   const key = JSON.stringify([p.id, p.status, p.updated_at, state.planFor, state.storyFor, state.afterFor, state.docsFor, Object.keys(state.uploads).length]);
@@ -174,7 +175,8 @@ function head(p) {
         statusChipOf(p.status),
         chip(state.config?.modes.find((m) => m.id === p.mode)?.label || p.mode, "neutral"),
         p.backend === "fake" ? chip("Демо — без модели", "warning") : null,
-        h("button", { type: "button", class: "btn btn--link btn--danger", onclick: () => remove(p), disabled: isActive(p) }, "Удалить"),
+        // Удаление — в «⋯», подальше от поля названия (UX-033).
+        moreMenu([{ label: "Удалить ролик", danger: true, disabled: isActive(p), onClick: () => remove(p) }]),
       ),
     ),
   );
@@ -291,7 +293,8 @@ function setup(p) {
   };
   const error = h("p", { class: "form-error", role: "alert", hidden: true });
   const modeHint = h("p", { class: "muted small" }, MODE_HINT[o.mode] || "");
-  const start = h("button", { type: "button", class: "btn btn--primary" }, p.status === "draft" ? "Начать" : "Начать заново");
+  const hasHead = Boolean(p.sources?.head);
+  const start = h("button", { type: "button", class: "btn btn--primary", disabled: !hasHead }, p.status === "draft" ? "Начать" : "Начать заново");
   start.addEventListener("click", async () => {
     const { payload, error: problem } = projectPayload({ ...o, title: p.title, model: model.value, terms: terms.value, maxPause: pause.value });
     if (problem) return ((error.textContent = problem), (error.hidden = false));
@@ -309,13 +312,13 @@ function setup(p) {
       start.disabled = false;
     }
   });
-  return h("section", { class: "panel stack" },
-    h("h2", {}, "Записи"),
-    h("div", { class: "sources" },
-      sourceCard(p, "head", "Голова", "Обязательно: ты в кадре, звук — твой голос. MP4, MOV или WebM."),
-      sourceCard(p, "screen", "Экран — по желанию", "Запись экрана той же сессии: монтаж сам будет переключать «голову» и «экран»."),
-    ),
-    h("h2", {}, "Как монтировать"),
+  // Сначала файл, потом настройки (UX-033): «Как монтировать» свёрнуто, в заголовке — сводка выбранного.
+  const brief = h("span", { class: "muted small setup-brief" });
+  const showBrief = () => (brief.textContent = setupSummary({ ...o, model: model.value, max_pause: pause.value }, cfg));
+  showBrief();
+  const how = h("details", { class: "disclosure disclosure--title setup-how", onchange: showBrief },
+    h("summary", {}, "Как монтировать", brief),
+    h("div", { class: "stack" },
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Расшифровка"), model),
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Термины ролика ", h("span", { class: "muted" }, "— подсказка расшифровке; общие — в «Правилах монтажа»")), terms),
     h("fieldset", { class: "field" }, h("legend", { class: "field-label" }, "Цвет головы"), radios("grade", cfg.grades, o.grade, (g) => (o.grade = g))),
@@ -326,9 +329,18 @@ function setup(p) {
     h("fieldset", { class: "field" }, h("legend", { class: "field-label" }, "Режим"),
       radios("mode", cfg.modes, o.mode, (m) => ((o.mode = m), (modeHint.textContent = MODE_HINT[m] || ""))),
       modeHint),
-    error,
-    h("div", { class: "toolbar" }, start),
     materials(p),
+    ),
+  );
+  return h("section", { class: "panel stack" },
+    h("h2", {}, "Записи"),
+    h("div", { class: "sources" },
+      sourceCard(p, "head", "Голова", "Перетащи сюда запись или выбери файл. Обязательно: ты в кадре, звук — твой голос. MP4, MOV или WebM."),
+      sourceCard(p, "screen", "Экран — по желанию", "Запись экрана той же сессии: монтаж сам будет переключать «голову» и «экран»."),
+    ),
+    how,
+    error,
+    h("div", { class: "toolbar" }, start, hasHead ? null : h("span", { class: "muted small" }, "Сначала добавь запись «головы».")),
   );
 }
 
@@ -927,7 +939,8 @@ async function init() {
   setBanner(null);
   $("new-project").addEventListener("click", newProject);
   $("rules-open").addEventListener("click", openRules);
-  $("caps-open").addEventListener("click", openCapabilities);
+  // Возможности машины — технический экран, не на каждый день: в «⋯» (UX-033).
+  $("page-more").replaceWith(moreMenu([{ label: "Возможности машины", onClick: openCapabilities }]));
   renderProject();
   listPoll.start();
 }

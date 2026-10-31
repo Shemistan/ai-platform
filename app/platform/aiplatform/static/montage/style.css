@@ -181,3 +181,7 @@
   .tree-row { grid-template-columns: 18px 16px minmax(0, 1fr); }
 }
 .review-panel .toolbar select, .progress-panel .toolbar select, .progress-panel .toolbar input[type="search"] { width: auto; min-width: 150px; max-width: 240px; }
+
+/* «Как монтировать» свёрнуто, в заголовке — сводка выбранного (UX-033). */
+.setup-how > summary { flex-wrap: wrap; }
+.setup-how .setup-brief { font-weight: var(--fw-regular); }

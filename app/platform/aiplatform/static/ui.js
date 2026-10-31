@@ -278,6 +278,47 @@ export function copyButton(getText, label = "Скопировать") {
   return btn;
 }
 
+// Меню «⋯» (DS-019): второстепенные и опасные действия убраны с глаз, на экране остаётся одна главная
+// кнопка. items: [{ label, onClick, danger?, disabled? }], пустые пропускаются; нет пунктов — null.
+// Пункт закрывает меню; Esc и клик мимо — тоже.
+export function moreMenu(items, { label = "Ещё действия" } = {}) {
+  const list = items.filter(Boolean);
+  if (!list.length) return null;
+  const summary = h("summary", { class: "btn btn--ghost btn--sm", "aria-label": label, title: label }, h("span", { "aria-hidden": "true" }, "⋯"));
+  const box = h("details", { class: "more-menu" }, summary);
+  const pick = (item) => (event) => {
+    box.open = false;
+    item.onClick(event);
+  };
+  box.append(
+    h(
+      "div",
+      { class: "more-menu-list" },
+      ...list.map((item) => h("button", { type: "button", class: `more-menu-item${item.danger ? " danger" : ""}`, disabled: item.disabled, onclick: pick(item) }, item.label)),
+    ),
+  );
+  box.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && box.open) {
+      box.open = false;
+      summary.focus();
+    }
+  });
+  closeMenusOnOutsideClick();
+  return box;
+}
+
+// Клик мимо закрывает открытые «⋯» — один обработчик на страницу, вешается с первым меню.
+let outsideClickBound = false;
+function closeMenusOnOutsideClick() {
+  if (outsideClickBound) return;
+  outsideClickBound = true;
+  document.addEventListener("click", (event) => {
+    for (const menu of document.querySelectorAll("details.more-menu[open]")) {
+      if (!menu.contains(event.target)) menu.open = false;
+    }
+  });
+}
+
 // Модальное окно на <dialog>: modal("Заголовок", ...содержимое) → { dialog, body, close }.
 export function modal(title, ...children) {
   const body = h("div", { class: "modal-body" }, ...children);

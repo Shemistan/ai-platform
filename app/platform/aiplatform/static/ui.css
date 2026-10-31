@@ -309,6 +309,38 @@ details.disclosure--title[open] > summary { margin-bottom: var(--sp-3); }
 details.disclosure--rule { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
 @media (prefers-reduced-motion: reduce) { details.disclosure > summary::before { transition: none; } }
 
+/* --- Меню «⋯» (moreMenu, DS-019): второстепенные и опасные действия; список поверх страницы. --- */
+details.more-menu { position: relative; flex: none; }
+details.more-menu > summary { list-style: none; min-width: var(--control-h-sm); justify-content: center; font-size: var(--fs-lg); }
+details.more-menu > summary::-webkit-details-marker { display: none; }
+.more-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--sp-1));
+  z-index: var(--z-nav);
+  display: grid;
+  min-width: 200px;
+  padding: var(--sp-1);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-menu);
+}
+.more-menu-item {
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.more-menu-item:hover:not(:disabled), .more-menu-item:focus-visible { background: var(--sunken); outline: none; }
+.more-menu-item.danger { color: var(--danger); }
+.more-menu-item:disabled { opacity: 0.5; cursor: default; }
+
 dialog.modal {
   width: min(760px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);

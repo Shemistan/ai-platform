@@ -92,6 +92,16 @@ export function clock(seconds) {
 }
 
 // Тело запроса «Новый ролик» из формы; ошибка — текстом.
+// Сводка свёрнутого «Как монтировать» (UX-033): «Whisper Large V3 Turbo · пауза до 0,6 с · проверка · С подтверждением».
+export function setupSummary(options, { models = [], modes = [] } = {}) {
+  const model = models.find((m) => m.id === options.model)?.label || options.model;
+  const pause = `пауза до ${String(options.max_pause).replace(".", ",")} с`;
+  const mode = modes.find((m) => m.id === options.mode)?.label;
+  return [model, pause, options.check ? "проверка" : null, options.subtitles ? "субтитры" : null, options.motion ? "моушн" : null, mode]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export function projectPayload({ title, model, terms, grade, auto, subtitles, check, motion, maxPause }) {
   const pause = Number(String(maxPause ?? "").replace(",", "."));
   if (!Number.isFinite(pause) || pause < 0.3 || pause > 3) return { error: "Самая длинная пауза — от 0,3 до 3 секунд." };
