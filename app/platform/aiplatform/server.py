@@ -37,7 +37,7 @@ from aiplatform.core.notify import Notifier
 from aiplatform.core.uploads import UploadStore
 
 STATIC_DIR = Path(__file__).with_name("static")
-HOME = "/photo/"
+HOME = "/today/"  # «Сегодня» (UX-031): что ждёт тебя и одно поле, чтобы начать
 AUTH_COOKIE = "aip_auth"
 # Служебный заголовок запросов страниц платформы (ui.js api()): чужой сайт поставить
 # его не может без CORS-preflight, а preflight сервер не пропускает (SEC-002).

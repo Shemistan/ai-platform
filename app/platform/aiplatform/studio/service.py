@@ -279,13 +279,14 @@ class StudioModule:
 
     def nav(self) -> list[dict]:
         """Вкладки шапки: доска «Выпуски» со счётчиком ждущих и по вкладке на сценарий."""
-        # Доска и сценарии — один раздел «Выпуски» (UX-037): доска — его главная вкладка.
-        board = {"id": "board", "label": "Все выпуски", "href": "/board/", "badge": "attention", "home": True}
+        # Раздел «Выпуски» (UX-037): «Сегодня» — главная вкладка и стартовая страница (UX-031), доска и сценарии.
+        today = {"id": "today", "label": "Сегодня", "href": "/today/", "home": True}
+        board = {"id": "board", "label": "Все выпуски", "href": "/board/", "badge": "attention"}
         scenarios = [
             {"id": k, "label": v, "href": f"/studio/?scenario={k}"} | ({"default": True} if k == "article" else {})
             for k, v in SCENARIOS.items()
         ]
-        return [board, *scenarios]
+        return [today, board, *scenarios]
 
     def __init__(self, ctx) -> None:
         self.ctx = ctx

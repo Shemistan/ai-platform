@@ -40,7 +40,7 @@
 - `server.py` — `App`: собирает `Context` (Notifier, GPU `Gate`, `UploadStore`) и
   модули в порядке шапки; роутинг `/api/<prefix>/…` → `module.handle(req)`
   (`req.sub` — остаток пути, разбор через `match`). Общие ручки
-  `/api/config|status|health|ready`. Статика `static/<prefix>/index.html`, `/` → `/photo/`.
+  `/api/config|status|health|ready`. Статика `static/<prefix>/index.html`, `/` → `/today/` (UX-031).
   Защита: Host, Origin или `X-AIP: 1` на POST, токен `AIP_AUTH_TOKEN`, CSP.
   Протокол модуля: `prefix, label, handle, describe, problems, close`
   (+ `nav, bind, badges, ready_checks`). Вкладки шапки — `server.nav_tabs`, группы `NAV_GROUPS`.
@@ -183,7 +183,7 @@ LLM — ADR 0006, файлы — 0007).
   `/api/config` → `tabs`, меню групп — `core/nav-groups.js`, «Задачи: N» и бейдж `studio_attention` из `/api/status`, баннер `problems`),
   `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`, `core/advice.js` (советы `advice`), `core/activity.js` (центр активности),
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
-- Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `transcribe/` (+`view.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`,
+- Вкладки: `today/` «Сегодня» (+`core/today.js`), пространства (PRD-033) `generate/` (альбом — `core/album.js`), `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `transcribe/` (+`view.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`,
   `review.js`/`review-ui.js` — панель ревью, `progress.js`/`progress-ui.js` — панель прогресса с SSE и виртуализацией логов),
   `board/` «Выпуски», `studio/` (`state.js`, `create.js`, `steps.js`, `head.js`,
   `media.js`, `publish.js`, `settings.js`), `library/` «Статьи», `news/`,

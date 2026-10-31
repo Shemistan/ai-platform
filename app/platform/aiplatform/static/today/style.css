@@ -1,0 +1,50 @@
+/* «Сегодня» (UX-031): одна колонка, много воздуха, один акцент — на главной кнопке. */
+.today { display: grid; gap: var(--sp-8); max-width: 760px; margin: 0 auto; padding: var(--sp-12) var(--sp-5); }
+.today-head { padding: 0; }
+.today-head h1 { margin: 0; font-size: var(--fs-2xl); font-weight: var(--fw-bold); }
+
+.today-input { display: grid; gap: var(--sp-3); }
+.today-input textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-lg);
+  resize: vertical;
+}
+.today-input textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.today-input.drag textarea { border-color: var(--accent); background: var(--info-bg); }
+.today-suggest { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: center; }
+.today-suggest p { flex: 1 1 280px; margin: 0; }
+
+.today-block { display: grid; gap: var(--sp-3); justify-items: start; }
+.today-block h2 { margin: 0; font-size: var(--fs-lg); }
+.today-cards { display: grid; gap: var(--sp-3); width: 100%; }
+.today-card {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  gap: var(--sp-4);
+  align-items: center;
+  padding: var(--pad-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+.today-card img, .today-card .ph { width: 64px; height: 64px; object-fit: cover; border-radius: var(--r-md); background: var(--sunken); }
+.today-card h3 { margin: 0; font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-card p { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); color: var(--muted); }
+
+.today-running { display: grid; gap: var(--sp-2); width: 100%; margin: 0; padding: 0; list-style: none; }
+.today-running a { display: grid; gap: 2px; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); color: var(--text); text-decoration: none; }
+.today-running a:hover { background: var(--sunken); }
+
+@media (max-width: 600px) {
+  .today { padding-top: var(--sp-6); }
+  .today-card { grid-template-columns: 48px minmax(0, 1fr); }
+  .today-card img, .today-card .ph { width: 48px; height: 48px; }
+  .today-card .btn { grid-column: 1 / -1; }
+}
