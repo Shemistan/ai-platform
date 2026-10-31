@@ -1,5 +1,5 @@
 // Студия: форма нового выпуска, оценка времени и проверка до запуска, серия и копия выпуска.
-import { $, api, busyClick, confirmAction, countLabel, debounce, fmtNum, h } from "/ui.js";
+import { $, api, busyClick, confirmAction, countLabel, debounce, fill, fmtNum, h } from "/ui.js";
 import { API, CAPTION_LIMIT, scenario, state } from "./state.js";
 import { readSettings, settingsForm } from "./settings.js";
 import { act, alertBox, loadProjects, open, show } from "./app.js";
@@ -66,7 +66,14 @@ export function renderCreate() {
         ]),
   );
   const defaults = { ...state.config.defaults, ...(state.config.scenario_defaults?.[scenario] || {}) };
-  $("create-settings").replaceChildren(settingsForm(defaults, "new"));
+  fill(
+    $("create-settings"),
+    // Откуда умолчания (UX-034): у дайджеста — общие с расписанием, правятся в «Настройках».
+    scenario === "digest"
+      ? h("p", { class: "hint" }, "Умолчания дайджеста — общие с расписанием, меняются в ", h("a", { href: "/settings/" }, "«Настройках»"), ". Здесь — только для этого выпуска.")
+      : null,
+    settingsForm(defaults, "new"),
+  );
   refreshCreateCheck();
 }
 

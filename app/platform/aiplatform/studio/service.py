@@ -21,6 +21,7 @@ from aiplatform.core import events, log, media, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
+from aiplatform.core.settings import DIGEST_RUN
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
@@ -976,8 +977,13 @@ class StudioModule:
             # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
             # по промпту выпуска — постер загружает человек.
             out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8}
+            saved = self.ctx.config.settings.load()
+            # Постер, картинки, ролики, шортс, пауза после текста — одни для выпуска руками и по расписанию
+            # (UX-034): правятся в «Настройках → Дайджест по умолчанию». Автопубликация — только у расписания.
+            plan = saved["schedule"]["digest"]
+            out |= {k: plan[k] for k in DIGEST_RUN if k != "auto_publish" and k in plan}
             # Не дождались своей обложки к сроку — рисуем локально (PRD-002); срок — в «Настройках».
-            deadline = self.ctx.config.settings.load().get("digest_defaults", {}).get("poster_deadline")
+            deadline = saved.get("digest_defaults", {}).get("poster_deadline")
             if deadline:
                 out["poster_deadline"] = deadline
         elif scenario == "post":
