@@ -40,3 +40,7 @@ export const state = {
 export const stepLocked = (id) => Boolean(state.project.steps.find((s) => s.id === id)?.locked);
 
 export const visibleSteps = (project) => project.steps.filter((s) => !HIDDEN_STEPS[project.scenario]?.has(s.id));
+
+// Строка шага (UX-032): у готового и пропущенного свёрнутого шага «Перезапустить» тихая — видна при наведении
+// и фокусе, чтобы десять одинаковых кнопок не спорили с тем, что ждёт тебя. У упавшего, ждущего, раскрытого — всегда.
+export const quietRerun = (step, folded) => folded && (step.status === "done" || step.status === "skipped");
