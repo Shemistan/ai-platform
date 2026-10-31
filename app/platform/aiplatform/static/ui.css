@@ -76,7 +76,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 /* --- Кнопка: один компонент .btn — вариант (--primary/--secondary/--ghost/--danger/--link)
    и размер (--sm/--md/--lg, по умолчанию md). Высота — от --control-h-*, а не от паддингов,
    поэтому кнопки одного размера одной высоты на всех вкладках.
-   .btn--link без .btn — ссылка внутри текста и <summary>: строчная, переносится как текст. */
+   .btn--link без .btn — ссылка внутри текста и <summary>: строчная, переносится как текст.
+   Правило (DS-019): в одной панели не больше одной .btn--primary — то, что человеку делать дальше.
+   Второстепенное — --secondary/--ghost, редкое и опасное — в меню «⋯» (moreMenu из ui.js). */
 .btn {
   display: inline-flex;
   align-items: center;

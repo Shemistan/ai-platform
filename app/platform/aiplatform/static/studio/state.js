@@ -41,6 +41,17 @@ export const stepLocked = (id) => Boolean(state.project.steps.find((s) => s.id =
 
 export const visibleSteps = (project) => project.steps.filter((s) => !HIDDEN_STEPS[project.scenario]?.has(s.id));
 
+// Шапка выпуска (DS-019): одна главная кнопка, остальное — в «⋯». next — nextAction(project) из head.js.
+// → { primary: id | null, visible: [id], menu: [id] }; id: next, run_all, make_final, cancel, clone, archive.
+// Идёт работа — только «Остановить». Делать нечего, а выпуск-черновик — главное «Сделать чистовик».
+export function headPlan(project, next) {
+  if (project.running) return { primary: null, visible: ["cancel"], menu: [] };
+  const draft = Boolean(project.settings.draft);
+  const primary = next ? (next.runAll ? "run_all" : "next") : draft ? "make_final" : null;
+  const menu = ["run_all", draft ? "make_final" : null, "clone", "archive"].filter((id) => id && id !== primary);
+  return { primary, visible: [], menu };
+}
+
 // Строка шага (UX-032): у готового и пропущенного свёрнутого шага «Перезапустить» тихая — видна при наведении
 // и фокусе, чтобы десять одинаковых кнопок не спорили с тем, что ждёт тебя. У упавшего, ждущего, раскрытого — всегда.
 export const quietRerun = (step, folded) => folded && (step.status === "done" || step.status === "skipped");

@@ -1,6 +1,6 @@
 // Студия: шапка выпуска — главное действие по состоянию и степпер шагов.
-import { busyClick, h, STATUS, statusChip, toneOf } from "/ui.js";
-import { state, visibleSteps } from "./state.js";
+import { busyClick, h, moreMenu, STATUS, statusChip, toneOf } from "/ui.js";
+import { headPlan, state, visibleSteps } from "./state.js";
 import { cloneProject, makeFinal } from "./create.js";
 import { publishNow, publishPick } from "./publish.js";
 import { goToStep, rerunStep } from "./steps.js";
@@ -41,33 +41,37 @@ function overallStatus(project) {
   return steps.every((s) => s.status === "done" || s.status === "skipped") ? "done" : "pending";
 }
 
+// Действия шапки по id из headPlan: подпись и что делать.
+function headActions(project, next) {
+  return {
+    next: next && { label: next.label, run: next.run },
+    run_all: { label: "Запустить всё", run: () => act("run", {}) },
+    make_final: { label: "Сделать чистовик", run: makeFinal },  // дорисовать картинки и ролики, собрать в полном кадре
+    cancel: { label: "Остановить", run: () => act("cancel") },
+    clone: { label: "Копия выпуска", run: cloneProject },  // те же настройки и результаты до сборки — другой вариант
+    archive: {
+      label: project.archived ? "Вернуть из архива" : "В архив",
+      run: async () => (await act("archive", { archived: !state.project.archived })) && reloadList(),
+    },
+  };
+}
+
+// Шапка: статус, одна главная кнопка, остальное — в «⋯» (DS-019).
 export function renderHead(project) {
-  const running = project.running;
   const next = nextAction(project);
+  const plan = headPlan(project, next);
+  const actions = headActions(project, next);
+  const button = (id, kind) => h("button", { type: "button", class: `btn btn--${kind}`, onclick: busyClick(actions[id].run) }, actions[id].label);
   return h(
     "div",
     { class: "panel project-head" },
     h("h2", {}, project.title),
     statusChip(overallStatus(project)),
-    running ? h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => act("cancel")) }, "Остановить") : null,
-    next ? h("button", { type: "button", class: "btn btn--primary", onclick: busyClick(next.run) }, next.label) : null,
-    // «Запустить всё» — главное действие, только когда выпуску больше ничего от тебя не нужно.
-    !running && !next?.runAll ? h("button", { type: "button", class: "btn btn--secondary", onclick: busyClick(() => act("run", {})) }, "Запустить всё") : null,
     project.settings.draft ? h("span", { class: "chip tone-warning" }, "черновик") : null,
-    project.settings.draft && !running
-      ? h("button", { type: "button", class: "btn btn--secondary", title: "Дорисовать картинки и ролики и собрать видео в полном кадре", onclick: busyClick(makeFinal) }, "Сделать чистовик")
-      : null,
     project.archived ? h("span", { class: "chip tone-neutral" }, "в архиве") : null,
-    running
-      ? null
-      : h("button", { type: "button", class: "btn btn--link", title: "Те же настройки и готовые результаты до сборки — чтобы попробовать другой вариант, не трогая этот", onclick: busyClick(cloneProject) }, "Копия выпуска"),
-    running
-      ? null
-      : h(
-          "button",
-          { type: "button", class: "btn btn--link", onclick: busyClick(async () => (await act("archive", { archived: !state.project.archived })) && reloadList()) },
-          project.archived ? "Вернуть из архива" : "В архив",
-        ),
+    ...plan.visible.map((id) => button(id, "secondary")),
+    plan.primary ? button(plan.primary, "primary") : null,
+    moreMenu(plan.menu.map((id) => ({ label: actions[id].label, onClick: busyClick(actions[id].run) })), { label: "Ещё действия с выпуском" }),
     h("p", { class: "form-error", id: "project-error", role: "alert", hidden: true }),
   );
 }
