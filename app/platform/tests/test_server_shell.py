@@ -105,6 +105,25 @@ class NavTabsTest(PlatformCase):
         _, body = self.json("GET", "/api/config")
         self.assertEqual(body["advice"], [])  # в демо права каталога не проверяются
 
+    def test_activity_in_status(self):
+        """UX-036: /api/status → activity — идущие задачи всех вкладок со ссылкой; готовые не попадают."""
+        photo = self.app.modules["photo"]
+        jobs = [
+            {"status": "running", "prompt": "кот  в\nшляпе", "progress": {"stage": "Шаг 3/9", "percent": 33.0}},
+            {"status": "done", "prompt": "готово", "progress": {"stage": "Готово", "percent": 100.0}},
+        ]
+        montage = self.app.modules["montage"]
+        queued = [{"id": "m1", "title": "Обзор", "status": "queued"}]
+        with (
+            mock.patch.object(photo.jobs, "list", return_value=jobs),
+            mock.patch.object(montage.projects, "active", return_value=queued),
+        ):
+            _, body = self.json("GET", "/api/status")
+        found = {(a["tab"], a["href"], a["title"], a["status"], a["stage"], a["percent"]) for a in body["activity"]}
+        self.assertIn(("Фото", "/photo/", "кот в шляпе", "running", "Шаг 3/9", 33.0), found)
+        self.assertIn(("Монтаж", "/montage/?id=m1", "Обзор", "queued", "", None), found)
+        self.assertFalse([a for a in body["activity"] if a["title"] == "готово"])
+
     def test_upload_limits_in_module_config(self):
         """FE-003: страница сверяет размер файла с лимитом до отправки — лимиты в /config модулей."""
         from aiplatform.core import uploads

@@ -202,6 +202,12 @@ class MontageProjects:
             project = self._projects.get(pid)
             return self._view(project) if project else None
 
+    def active(self) -> list[dict]:
+        """Идущие и ждущие очереди — для центра активности шапки (UX-036): без копии проекта."""
+        with self._lock:
+            return [{"id": p["id"], "title": p.get("title", ""), "status": p["status"]} for p in self._projects.values()
+                    if p["status"] in ACTIVE]  # fmt: skip
+
     def list(self) -> list[dict]:
         with self._lock:
             items = sorted(self._projects.values(), key=lambda p: p["created_at"], reverse=True)

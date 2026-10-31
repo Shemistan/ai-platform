@@ -81,8 +81,14 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
 .platform-nav .menu.icon-menu > button { padding: var(--sp-2); }
 .platform-nav .menu-list[hidden] { display: none; }
 .platform-nav .menu-list a { border-radius: var(--r-md); }
-.platform-nav .gpu { margin-left: auto; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
-.platform-nav .gpu.busy { color: var(--warn); }
+/* Центр активности (UX-036): кнопка «Задачи: N» и список задач всех вкладок со ссылками. */
+.platform-nav .activity > button { font-size: var(--fs-sm); color: var(--muted); }
+.platform-nav .activity.busy > button { color: var(--warn); }
+.platform-nav .activity-list { left: auto; right: 0; min-width: 280px; max-width: min(420px, 90vw); display: grid; gap: var(--sp-1); }
+.platform-nav .activity-list[hidden] { display: none; }
+.platform-nav .activity-list p { margin: var(--sp-1) var(--sp-2); font-size: var(--fs-sm); }
+.platform-nav .activity-list a { display: grid; gap: 2px; padding: var(--sp-2); border-radius: var(--r-md); color: var(--text); text-decoration: none; font-size: var(--fs-sm); }
+.platform-nav .activity-list a:hover { background: var(--sunken); }
 .platform-nav .version { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
 /* Узкий экран: шапка не липнет, пункты групп переносятся, у меню не пишем текущую вкладку —
    активная группа и так подсвечена. */
@@ -93,7 +99,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
   .platform-nav .tabs a,
   .platform-nav .menu > button { padding: var(--sp-2) var(--sp-2); }
   .platform-nav .menu .current { display: none; }
-  .platform-nav .gpu { flex: none; max-width: 32vw; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); }
+  .platform-nav .activity > button { max-width: 32vw; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); }
   .platform-nav .version { display: none; }
 }
 .platform-problems {

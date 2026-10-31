@@ -894,6 +894,21 @@ class StudioModule:
             return None
         return f"{URL_BASE}/projects/{project_id}/files/{path.name}?v={path.stat().st_mtime_ns}"
 
+    def activity(self) -> list[dict]:
+        """Центр активности шапки (UX-036): выпуски, которые сейчас собираются, — со ссылкой на выпуск."""
+        return [
+            {
+                "tab": SCENARIOS.get(item["scenario"], "Студия"),
+                "href": f"/studio/?scenario={item['scenario']}&project={item['id']}",
+                "title": item["title"],
+                "status": "running",
+                "stage": item["current"] or "",
+                "percent": None,
+            }
+            for item in self.studio.list()
+            if item["running"]
+        ]
+
     def badges(self) -> dict:
         """Для шапки: сколько выпусков ждут человека — по той же группировке, что доска (UX-026)."""
         count = 0

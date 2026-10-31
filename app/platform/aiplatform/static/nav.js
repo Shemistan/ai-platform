@@ -1,5 +1,6 @@
 // Общая шапка платформы: вкладки, состояние GPU и предупреждения — из /api/config.
 // Подключается каждой страницей вкладки: <script type="module" src="/nav.js"></script>.
+import { activityLine, activitySummary } from "/core/activity.js";
 import { currentTab, groupTabs } from "/core/nav-groups.js";
 import { api, icon, loadLast, poller, saveLast } from "/ui.js";
 
@@ -112,7 +113,17 @@ function render() {
   const cached = loadLast(NAV_CACHE)?.data;
   if (Array.isArray(cached)) fillTabs(list, cached);
   nav.append(list);
-  const gpu = el("span", { class: "gpu", id: "platform-gpu", title: "Тяжёлые модели идут по одной" }, "GPU: …");
+  // Центр активности (UX-036): вместо «GPU: свободен» — что идёт во всех вкладках; список — кликом.
+  const gpu = el("span", { class: "menu activity", id: "platform-gpu" });
+  const button = el("button", { type: "button", "aria-expanded": "false", "aria-controls": "platform-activity" }, "…");
+  const panel = el("div", { class: "menu-list activity-list", id: "platform-activity", hidden: "" });
+  button.addEventListener("click", () => {
+    const open = button.getAttribute("aria-expanded") !== "true";
+    closeMenus(button);
+    button.setAttribute("aria-expanded", String(open));
+    panel.hidden = !open;
+  });
+  gpu.append(button, panel);
   nav.append(gpu);
   document.body.prepend(nav);
   // Высота шапки — в --nav-h: под неё встаёт липкий степпер студии.
@@ -152,11 +163,18 @@ function showBadges() {
 function pollGpu(gpu) {
   let busy = false;
   const show = (data) => {
-    busy = Boolean(data.gpu);
+    const summary = activitySummary(data);
+    busy = Boolean(data.gpu) || summary.count > 0;
     gpu.classList.toggle("busy", busy);
-    gpu.textContent = busy
-      ? `GPU: ${data.gpu}${data.waiting ? ` · ждут ${data.waiting}` : ""}`
-      : "GPU: свободен";
+    const [button, panel] = gpu.children;
+    button.textContent = summary.label;
+    button.title = summary.gpu;
+    const items = (data.activity || []).map((item) => {
+      const link = el("a", { href: item.href });
+      link.append(el("strong", {}, item.tab), el("span", {}, item.title || "без названия"), el("span", { class: "muted" }, activityLine(item)));
+      return link;
+    });
+    panel.replaceChildren(el("p", { class: "muted" }, summary.gpu), ...(items.length ? items : [el("p", {}, "Сейчас ничего не идёт.")]));
     counts.attention = data.studio_attention || 0;
     showBadges();
   };
@@ -165,7 +183,7 @@ function pollGpu(gpu) {
     fast: 3000,
     slow: 6000,
     isActive: () => busy,
-    onError: () => (gpu.textContent = "Нет связи с сервисом"),
+    onError: () => (gpu.firstElementChild.textContent = "Нет связи с сервисом"),
   }).start();
 }
 

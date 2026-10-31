@@ -30,6 +30,7 @@ from aiplatform import __version__
 from aiplatform import config as config_module
 from aiplatform.config import Config
 from aiplatform.core import disk, log, media, perms, runner
+from aiplatform.core import jobs as jobs_module
 from aiplatform.core.gate import Gate
 from aiplatform.core.http import HttpError, Request, not_found
 from aiplatform.core.notify import Notifier
@@ -179,6 +180,20 @@ NAV_GROUP_ICONS = {"service": "settings"}
 NAV_GROUP_ORDER = ["releases", "tools", "texts", "service"]
 
 
+def activity_item(tab: str, href: str, job: dict) -> dict:
+    """Строка центра активности: вкладка, ссылка, название задачи, статус и прогресс."""
+    progress = job.get("progress") or {}
+    title = job.get("title") or job.get("prompt") or job.get("kind") or ""
+    return {
+        "tab": tab,
+        "href": href,
+        "title": " ".join(str(title).split())[:80],
+        "status": job.get("status"),
+        "stage": progress.get("stage") or "",
+        "percent": progress.get("percent"),
+    }
+
+
 def nav_order(tabs: list[dict]) -> list[dict]:
     """Вкладки по NAV_GROUP_ORDER; внутри группы — порядок модулей (sorted устойчив)."""
     rank = {g: i for i, g in enumerate(NAV_GROUP_ORDER)}
@@ -325,6 +340,29 @@ class App:
             badges = getattr(module, "badges", None)
             if badges:
                 out |= badges()
+        out["activity"] = self.activity()
+        return out
+
+    def activity(self) -> list[dict]:
+        """Центр активности шапки (UX-036): что идёт и ждёт очереди во всех вкладках.
+
+        Модуль со своим activity() отвечает сам (студия); иначе — очереди jobs/tasks (list) и проекты
+        (active — дёшево, без копии проекта). Элемент: tab, href, title, status, stage, percent.
+        """
+        out: list[dict] = []
+        for module in self.modules.values():
+            own = getattr(module, "activity", None)
+            if own:
+                out.extend(own())
+                continue
+            href = f"/{module.prefix}/"
+            for queue in (getattr(module, "jobs", None), getattr(module, "tasks", None)):
+                for job in getattr(queue, "list", list)():
+                    if job.get("status") in jobs_module.ACTIVE:
+                        out.append(activity_item(module.label, href, job))
+            projects = getattr(module, "projects", None)
+            for project in getattr(projects, "active", list)():
+                out.append(activity_item(module.label, f"{href}?id={project['id']}", project))
         return out
 
     def close(self) -> None:
