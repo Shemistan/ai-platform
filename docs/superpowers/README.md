@@ -17,7 +17,7 @@
 - [Iterative Review & Refinement и панель наблюдаемости «Монтажа» (PRD-028)](specs/2026-10-19-iterative-review-design.md) — реализовано
 - [«Монтаж» по MASTER_SPEC: от записи до смонтированного ролика с раскадровкой, QA и проектом (PRD-027)](specs/2026-10-19-montage-master-spec-design.md) — реализовано
 - [Вкладка «Моушн»: агенты придумывают и рисуют анимации к готовому видео (PRD-026)](specs/2026-10-19-motion-tab-design.md) — реализовано
-- [Три пространства: Генерация, Новости, Статьи (PRD-033)](specs/2026-10-31-three-spaces-design.md) — утверждено
+- [Три пространства: Генерация, Новости, Статьи (PRD-033)](specs/2026-10-31-three-spaces-design.md) — реализовано
 - [Стартовая страница «Сегодня» (UX-031)](specs/2026-10-31-today-home-design.md) — реализовано
 
 ### Планы
@@ -32,6 +32,6 @@
 - [План: Iterative Review и наблюдаемость «Монтажа» (PRD-028)](plans/2026-10-19-iterative-review.md) — завершено
 - [План: «Монтаж» по MASTER_SPEC (PRD-027)](plans/2026-10-19-montage-master-spec.md) — завершено
 - [План: вкладка «Моушн» (PRD-026)](plans/2026-10-19-motion-tab.md) — завершено
-- [План: три пространства (PRD-033)](plans/2026-10-31-three-spaces.md) — в работе
+- [План: три пространства (PRD-033)](plans/2026-10-31-three-spaces.md) — завершено
 - [План: «Сегодня» (UX-031)](plans/2026-10-31-today-home.md) — завершено
 <!-- gate:end spec-plan-index -->

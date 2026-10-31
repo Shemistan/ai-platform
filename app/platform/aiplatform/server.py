@@ -207,9 +207,11 @@ def activity_item(tab: str, href: str, job: dict) -> dict:
     }
 
 
-def space_tabs() -> list[dict]:
-    """Главные страницы пространств — в формате nav_tabs (с подписью группы)."""
-    return [tab | {"group_label": NAV_GROUP_LABELS[tab["group"]]} for tab in SPACE_TABS]
+def space_tabs(tabs: list[dict]) -> list[dict]:
+    """Главные страницы пространств — в формате nav_tabs; только те, в чьей группе есть вкладки модулей
+    (без студии «Новостям» нечего показать)."""
+    groups = {tab["group"] for tab in tabs}
+    return [tab | {"group_label": NAV_GROUP_LABELS[tab["group"]]} for tab in SPACE_TABS if tab["group"] in groups]
 
 
 def nav_order(tabs: list[dict]) -> list[dict]:
@@ -307,7 +309,7 @@ class App:
         return {
             "backend": self.config.backend,
             "version": __version__,
-            "tabs": nav_order(space_tabs() + [tab for m in self.modules.values() for tab in nav_tabs(m)]),
+            "tabs": nav_order(space_tabs(tabs := [tab for m in self.modules.values() for tab in nav_tabs(m)]) + tabs),
             "problems": self.problems(),
             "advice": self.advice(),
         }
