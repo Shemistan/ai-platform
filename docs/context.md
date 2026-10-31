@@ -181,7 +181,7 @@ LLM — ADR 0006, файлы — 0007).
 - Общее: `ui.js` (`api()` с `X-AIP`, `narratorApi`, `h()`, `poller`, `jobProgress`,
   `statusChip`/`toneOf`, `modal`, `toast`, `uploadFile`), `nav.js` (шапка из
   `/api/config` → `tabs`, меню групп — `core/nav-groups.js`, GPU, бейдж `studio_attention` из `/api/status`, баннер `problems`),
-  `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`,
+  `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`, `core/advice.js` (советы `advice`),
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
 - Вкладки: `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `transcribe/` (+`view.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`,
   `review.js`/`review-ui.js` — панель ревью, `progress.js`/`progress-ui.js` — панель прогресса с SSE и виртуализацией логов),

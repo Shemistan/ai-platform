@@ -34,8 +34,8 @@
 .manual-views { display: inline-flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
 .views-input { width: 110px; padding: 2px var(--sp-2); font-size: var(--fs-sm); }
 .views-input[type="datetime-local"] { width: auto; }
-.week-line { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
-.week-line strong { color: var(--text); }
+.board-stats { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
+.board-stats > summary strong { color: var(--text); }
 .variants { display: grid; gap: var(--sp-2); }
 .variants h3 { margin: 0; font-size: var(--fs-md); }
 .response { display: grid; gap: var(--sp-3); }

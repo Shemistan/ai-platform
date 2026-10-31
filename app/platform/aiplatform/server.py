@@ -239,8 +239,6 @@ class App:
                 f"Каталог моделей {models} не найден — внешний диск не примонтирован? "
                 "Подключи его или задай AIP_MODELS_DIR."
             )
-        if not self.config.fake and (loose := perms.warning(self.config.data_dir, "Каталог данных")):
-            out.append(loose)
         for module in self.modules.values():
             out.extend(module.problems())
             # Очереди вкладок: задачи в карантине или записанные более новой версией (BE-008).
@@ -248,12 +246,20 @@ class App:
                 out.extend(getattr(queue, "load_problems", None) or [])
         return list(dict.fromkeys(out))  # общий движок (narrator) жалуется из нескольких вкладок
 
+    def advice(self) -> list[str]:
+        """Советы, которые не мешают работать (UX-030): не баннер на всех страницах, а точка у «Настроек»."""
+        out = []
+        if not self.config.fake and (loose := perms.warning(self.config.data_dir, "Каталог данных")):
+            out.append(loose)
+        return out
+
     def describe(self) -> dict:
         return {
             "backend": self.config.backend,
             "version": __version__,
             "tabs": [tab for m in self.modules.values() for tab in nav_tabs(m)],
             "problems": self.problems(),
+            "advice": self.advice(),
         }
 
     def health(self) -> dict:
@@ -291,7 +297,7 @@ class App:
         if self.stopping:
             check("stopping", False, "сервис останавливается")
         failed = [c["name"] for c in checks if not c["ok"]]
-        return {"ok": not failed, "failed": failed, "checks": checks, "problems": problems}
+        return {"ok": not failed, "failed": failed, "checks": checks, "problems": problems, "advice": self.advice()}
 
     def status(self) -> dict:
         out = {"gpu": self.ctx.gate.holder(), "waiting": self.ctx.gate.waiting()}
@@ -600,7 +606,7 @@ def main() -> None:
     print(f"данные: {config.data_dir}  лог: {log_path}")
     for module in app.modules.values():
         print(f"  вкладка {module.label}: http://{host}:{port}/{module.prefix}/")
-    for problem in app.problems():
+    for problem in app.problems() + app.advice():
         print(f"⚠ {problem}")
         log.event("problem", level=logging.WARNING, error=problem)
     try:

@@ -1,5 +1,6 @@
 // Вкладка «Настройки»: какие модели фото и видео, движки озвучки, голоса и модели расшифровки включены;
 // что стоит из инструментов диктора и моушн-графики; расписание, уведомления, уборка.
+import { adviceCommand } from "/core/advice.js";
 import { $, api, busyClick, chip, fill, h, icon, plural, toast } from "/ui.js";
 
 const API = "/api/settings";
@@ -377,6 +378,34 @@ async function loadHealth() {
   );
 }
 
+// «Советы по настройке» (UX-030): то, что раньше висело баннером на всех страницах, но работать не мешает.
+async function loadAdvice() {
+  let items;
+  try {
+    items = (await api("GET", "/api/config")).advice || [];
+  } catch {
+    return;  // нет ответа — раздел просто не показываем
+  }
+  $("advice-panel").hidden = !items.length;
+  fill(
+    $("advice"),
+    ...items.map((text) => {
+      const command = adviceCommand(text);
+      const copy = async () => {
+        await navigator.clipboard.writeText(command);
+        toast("Команда скопирована");
+      };
+      return h(
+        "li",
+        {},
+        h("span", {}, text),
+        command ? h("button", { type: "button", class: "btn btn--secondary btn--sm", onclick: busyClick(copy) }, "Скопировать команду") : null,
+      );
+    }),
+  );
+}
+
 load();
 loadCleanup();
 loadHealth();
+loadAdvice();

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from aiplatform import config as config_module
 from aiplatform import server as server_module
@@ -84,10 +85,22 @@ class NavTabsTest(PlatformCase):
         self.assertEqual(len(groups), len(set(groups)), "группа вкладок разорвана другой")
         self.assertEqual(ids[:8], ["photo", "video", "audio", "avatar", "montage", "motion", "transcribe", "board"])
         self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
-        self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention"])
+        self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention", "advice"])
         labels = {t["group"]: t["group_label"] for t in tabs}
         self.assertEqual(labels, {"media": "Медиа", "board": "Выпуски", "studio": "Студия", "texts": "Тексты",
                                   "service": "Сервис"})  # fmt: skip
+
+    def test_advice_not_in_problems(self):
+        """UX-030: открытый каталог данных — совет у «Настроек», не баннер на всех страницах и не 503 в /ready."""
+        tip = f"Каталог данных {self.tmp.name} доступен другим пользователям машины — chmod 700 '{self.tmp.name}'."
+        with (
+            mock.patch.object(type(self.config), "fake", new_callable=mock.PropertyMock, return_value=False),
+            mock.patch.object(server_module.perms, "warning", return_value=tip),
+        ):
+            self.assertEqual(self.app.advice(), [tip])
+            self.assertNotIn(tip, self.app.problems())
+        _, body = self.json("GET", "/api/config")
+        self.assertEqual(body["advice"], [])  # в демо права каталога не проверяются
 
     def test_upload_limits_in_module_config(self):
         """FE-003: страница сверяет размер файла с лимитом до отправки — лимиты в /config модулей."""
