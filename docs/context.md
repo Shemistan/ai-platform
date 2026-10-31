@@ -183,7 +183,7 @@ LLM — ADR 0006, файлы — 0007).
   `/api/config` → `tabs`, меню групп — `core/nav-groups.js`, «Задачи: N» и бейдж `studio_attention` из `/api/status`, баннер `problems`),
   `core/format.js` (`seconds`, `minutes`, `plural`…), `core/consent.js`, `core/advice.js` (советы `advice`), `core/activity.js` (центр активности),
   `tokens.css` (все цвета/размеры), `ui.css` (компоненты), `common.css` (шапка, база).
-- Вкладки: `today/` «Сегодня» (+`core/today.js`), пространства (PRD-033) `generate/`, `newsroom/` (альбом — `core/album.js`, выпуски — `core/releases.js`), `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `transcribe/` (+`view.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`,
+- Вкладки: `today/` «Сегодня» (+`core/today.js`), пространства (PRD-033) `generate/`, `newsroom/`, `articles/` (альбом — `core/album.js`, выпуски — `core/releases.js`), `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `transcribe/` (+`view.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`,
   `review.js`/`review-ui.js` — панель ревью, `progress.js`/`progress-ui.js` — панель прогресса с SSE и виртуализацией логов),
   `board/` «Выпуски», `studio/` (`state.js`, `create.js`, `steps.js`, `head.js`,
   `media.js`, `publish.js`, `settings.js`), `library/` «Статьи», `news/`,

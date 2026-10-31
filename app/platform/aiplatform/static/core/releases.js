@@ -31,7 +31,8 @@ function card(item) {
   const p = item.project;
   const facts = [p.scenario_label, p.video_s ? minutes(p.video_s) : null, PUBLISHED.has(p.group) ? "опубликован" : p.group === "attention" ? "ждёт тебя" : null];
   return [
-    h("div", { class: "album-thumb" }, p.poster ? h("img", { src: p.poster, alt: "", loading: "lazy" }) : null),
+    // Постер статьи — кадр 16:9, дайджеста и поста — квадрат: плитка по форме постера, без обрезки текста.
+    h("div", { class: `album-thumb${p.scenario === "article" ? " album-thumb--wide" : ""}` }, p.poster ? h("img", { src: p.poster, alt: "", loading: "lazy" }) : null),
     h("span", { class: "album-caption" }, p.title),
     h("span", { class: "muted small" }, facts.filter(Boolean).join(" · ")),
   ];
