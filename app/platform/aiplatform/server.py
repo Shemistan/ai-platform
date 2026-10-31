@@ -155,29 +155,42 @@ def default_modules(ctx: Context) -> list[Module]:
     ]
 
 
-# Группы вкладок шапки (UX-037): три раздела — Выпуски, Инструменты, Тексты — и сервисное за иконкой
-# справа. Модуль без записи — сам себе группа.
+# Шапка — три пространства (PRD-033): Генерация, Новости, Статьи; перед ними «Сегодня», сервисное — за
+# иконкой справа. Модуль без записи — сам себе группа; вкладка может задать свою group (студия).
 NAV_GROUPS = {
-    "photo": "tools",
-    "video": "tools",
-    "audio": "tools",
-    "avatar": "tools",
-    "montage": "tools",
-    "motion": "tools",
-    "transcribe": "tools",
-    "studio": "releases",
-    "library": "texts",
-    "news": "texts",
+    "photo": "generate",
+    "video": "generate",
+    "audio": "generate",
+    "avatar": "generate",
+    "montage": "generate",
+    "motion": "generate",
+    "transcribe": "generate",
+    "news": "newsroom",
+    "library": "articles",
     "channels": "service",
     "updates": "service",
     "settings": "service",
 }
 # Подписи групп — меню шапки (UX-028); группа из одной вкладки рисуется простой ссылкой.
-NAV_GROUP_LABELS = {"tools": "Инструменты", "releases": "Выпуски", "texts": "Тексты", "service": "Сервис"}
+NAV_GROUP_LABELS = {
+    "today": "Сегодня",
+    "generate": "Генерация",
+    "newsroom": "Новости",
+    "articles": "Статьи",
+    "service": "Сервис",
+}
 # Группа-иконка: кнопка без подписи справа в шапке (имя ICONS из ui.js), подпись — для скринридера.
 NAV_GROUP_ICONS = {"service": "settings"}
 # Порядок разделов в шапке: главное — первым; группы вне списка — после, в порядке модулей.
-NAV_GROUP_ORDER = ["releases", "tools", "texts", "service"]
+NAV_GROUP_ORDER = ["today", "generate", "newsroom", "articles", "service"]
+# Подпись вкладки модуля в меню пространства, если своя сбивает: «Новости» внутри «Новостей».
+NAV_LABELS = {"news": "Источники новостей", "library": "Библиотека статей"}
+# Главные страницы пространств — статика без своего модуля (static/<id>/): первыми в своём меню.
+SPACE_TABS = [
+    {"id": "generate", "label": "Генерация", "href": "/generate/", "group": "generate", "home": True},
+    {"id": "newsroom", "label": "Новости", "href": "/newsroom/", "group": "newsroom", "home": True},
+    {"id": "articles", "label": "Статьи", "href": "/articles/", "group": "articles", "home": True},
+]
 
 
 def activity_item(tab: str, href: str, job: dict) -> dict:
@@ -192,6 +205,11 @@ def activity_item(tab: str, href: str, job: dict) -> dict:
         "stage": progress.get("stage") or "",
         "percent": progress.get("percent"),
     }
+
+
+def space_tabs() -> list[dict]:
+    """Главные страницы пространств — в формате nav_tabs (с подписью группы)."""
+    return [tab | {"group_label": NAV_GROUP_LABELS[tab["group"]]} for tab in SPACE_TABS]
 
 
 def nav_order(tabs: list[dict]) -> list[dict]:
@@ -210,7 +228,8 @@ def nav_tabs(module: Module) -> list[dict]:
     Вкладка может задать свою group.
     """
     own = getattr(module, "nav", None)
-    tabs = own() if own else [{"id": module.prefix, "label": module.label, "href": f"/{module.prefix}/"}]
+    label = NAV_LABELS.get(module.prefix, module.label)
+    tabs = own() if own else [{"id": module.prefix, "label": label, "href": f"/{module.prefix}/"}]
     group = NAV_GROUPS.get(module.prefix, module.prefix)
     out = [{"group": group} | tab for tab in tabs]
     out = [tab | {"group_label": NAV_GROUP_LABELS.get(tab["group"], tab["label"])} for tab in out]
@@ -288,7 +307,7 @@ class App:
         return {
             "backend": self.config.backend,
             "version": __version__,
-            "tabs": nav_order([tab for m in self.modules.values() for tab in nav_tabs(m)]),
+            "tabs": nav_order(space_tabs() + [tab for m in self.modules.values() for tab in nav_tabs(m)]),
             "problems": self.problems(),
             "advice": self.advice(),
         }

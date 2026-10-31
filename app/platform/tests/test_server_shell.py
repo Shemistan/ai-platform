@@ -83,15 +83,24 @@ class NavTabsTest(PlatformCase):
         self.assertEqual(len(ids), len(set(ids)))
         groups = [g for i, g in enumerate(t["group"] for t in tabs) if not i or tabs[i - 1]["group"] != g]
         self.assertEqual(len(groups), len(set(groups)), "группа вкладок разорвана другой")
-        # Три раздела (UX-037): Выпуски (доска и сценарии) первыми, потом Инструменты.
-        self.assertEqual(ids[:7], ["today", "board", "digest", "weekly", "monthly", "article", "post"])
-        self.assertEqual([t["id"] for t in tabs if t.get("home")], ["today"])
+        # Три пространства (PRD-033): «Сегодня», Генерация, Новости, Статьи, сервисное — за иконкой.
+        self.assertEqual(groups, ["today", "generate", "newsroom", "articles", "service"])
+        by_group = {g: [t["id"] for t in tabs if t["group"] == g] for g in groups}
+        self.assertEqual(by_group["today"], ["today"])
+        self.assertEqual(by_group["generate"][:4], ["generate", "photo", "video", "audio"])
+        self.assertEqual(by_group["newsroom"], ["newsroom", "digest", "weekly", "monthly", "news"])
+        self.assertEqual(by_group["articles"], ["articles", "article", "post", "library"])
+        self.assertEqual(by_group["service"], ["board", "channels", "updates", "settings"])
+        self.assertEqual([t["id"] for t in tabs if t.get("home")], ["generate", "newsroom", "articles"])
         self.assertEqual({t["group_icon"] for t in tabs if t.get("group_icon")}, {"settings"})
         self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
         self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention", "advice"])
         labels = {t["group"]: t["group_label"] for t in tabs}
-        want = {"releases": "Выпуски", "tools": "Инструменты", "texts": "Тексты", "service": "Сервис"}
+        want = {"today": "Сегодня", "generate": "Генерация", "newsroom": "Новости", "articles": "Статьи",
+                "service": "Сервис"}  # fmt: skip
         self.assertEqual(labels, want)
+        self.assertEqual({t["id"]: t["label"] for t in tabs if t["id"] in ("news", "library")},
+                         {"news": "Источники новостей", "library": "Библиотека статей"})  # fmt: skip
 
     def test_advice_not_in_problems(self):
         """UX-030: открытый каталог данных — совет у «Настроек», не баннер на всех страницах и не 503 в /ready."""

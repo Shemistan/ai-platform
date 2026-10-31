@@ -110,7 +110,7 @@ function card(p) {
     "article",
     { class: "today-card" },
     p.poster ? h("img", { src: p.poster, alt: "" }) : h("div", { class: "ph" }),
-    h("div", {}, h("h3", {}, p.title), h("p", {}, p.attention || p.scenario_label)),
+    h("div", {}, h("h3", {}, p.title), h("p", {}, p.attention?.text || p.scenario_label)),  // attention — {step, label, text}
     h("a", { class: "btn btn--secondary btn--sm", href: studioHref(p) }, "Открыть"),
   );
 }

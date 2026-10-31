@@ -57,6 +57,8 @@ SCENARIOS = {
 # Новости (PRD-033): день, неделя, месяц — с ориентиром длины видео в минутах (target_minutes): не потолок.
 # Материал — период: день дайджеста, неделя ГГГГ-Wнн, месяц ГГГГ-ММ.
 NEWS_MINUTES = {"digest": 10, "weekly": 20, "monthly": 40}
+# Пространство шапки сценария (PRD-033): новости — в «Новостях», статья и пост — в «Статьях».
+SCENARIO_SPACE = {k: "newsroom" for k in NEWS_MINUTES} | {"article": "articles", "post": "articles"}
 PERIODIC = tuple(NEWS_MINUTES)
 DIGEST_CHANNEL = "tg-voice-news"  # канал дайджеста у narrator (NEWS_CHANNEL = VOICE_NEWS)
 OFFER_DAYS, OFFER_MANUAL = 3, 2  # ≥2 дайджеста руками за 3 дня — предложить расписание (PRD-003)
@@ -307,15 +309,16 @@ class StudioModule:
     label = "Сценарии"
 
     def nav(self) -> list[dict]:
-        """Вкладки шапки: доска «Выпуски» со счётчиком ждущих и по вкладке на сценарий."""
-        # Раздел «Выпуски» (UX-037): «Сегодня» — главная вкладка и стартовая страница (UX-031), доска и сценарии.
-        today = {"id": "today", "label": "Сегодня", "href": "/today/", "home": True}
-        board = {"id": "board", "label": "Все выпуски", "href": "/board/", "badge": "attention"}
+        """Вкладки шапки (PRD-033): «Сегодня» со счётчиком ждущих, сценарии — в своих пространствах,
+        доска «Все выпуски» — в сервисном меню."""
+        today = {"id": "today", "label": "Сегодня", "href": "/today/", "badge": "attention", "group": "today"}
+        board = {"id": "board", "label": "Все выпуски", "href": "/board/", "group": "service"}
         scenarios = [
-            {"id": k, "label": v, "href": f"/studio/?scenario={k}"} | ({"default": True} if k == "article" else {})
+            {"id": k, "label": v, "href": f"/studio/?scenario={k}", "group": SCENARIO_SPACE[k]}
+            | ({"default": True} if k == "article" else {})
             for k, v in SCENARIOS.items()
         ]
-        return [today, board, *scenarios]
+        return [today, *scenarios, board]
 
     def __init__(self, ctx) -> None:
         self.ctx = ctx
