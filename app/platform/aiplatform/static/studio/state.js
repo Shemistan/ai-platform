@@ -3,7 +3,7 @@
 export const API = "/api/studio";
 
 // Сценарий из адреса; неизвестный — «article». Названия сценариев — из /api/studio/config (FE-007).
-const KNOWN_SCENARIOS = new Set(["digest", "article", "post"]);
+const KNOWN_SCENARIOS = new Set(["digest", "weekly", "monthly", "article", "post"]);
 
 const wantedScenario = new URLSearchParams(location.search).get("scenario");
 
@@ -17,6 +17,10 @@ export const CAPTION_LIMIT = 1024;
 export const HINTS = {
   digest:
     "narrator собирает свежие новости и пишет пересказ → постер → слайды с картинками → озвучка → видео 16:9 (и шортс 9:16) → публикация.",
+  weekly:
+    "агент narrator отбирает события недели и пишет обзор (около 20 минут, это ориентир) → постер → слайды → озвучка → видео → публикация.",
+  monthly:
+    "агент narrator отбирает события месяца и пишет обзор (около 40 минут, это ориентир) → постер → слайды → озвучка → видео → публикация.",
   article: "Вставь готовую статью → постер → слайды с картинками → озвучка → видео 16:9 (и шортс 9:16) → публикация.",
   post: "Свой постер, своя озвучка (или озвучка подписи) и подпись → одно видео с постером под звук или картинка с аудио → в каналы.",
 };

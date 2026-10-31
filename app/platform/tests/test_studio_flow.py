@@ -251,7 +251,7 @@ class TelegramWithoutTokenTest(StudioCase):
 class ValidationTest(StudioCase):
     def test_bad_requests(self):
         cases = [
-            ({"scenario": "x"}, "digest, article или post"),
+            ({"scenario": "x"}, "digest, weekly, monthly, article, post"),
             ({"scenario": "article", "text": "  "}, "текст"),
             ({"scenario": "digest", "day": "2999-01-01"}, "не наступил"),
             ({"scenario": "article", "text": "т", "settings": {"poster_mode": "x"}}, "Некорректный запрос"),
@@ -294,7 +294,7 @@ class ValidationTest(StudioCase):
     def test_config(self):
         status, cfg = self.json("GET", "/api/studio/config")
         self.assertEqual(status, 200)
-        self.assertEqual([s["id"] for s in cfg["scenarios"]], ["digest", "article", "post"])
+        self.assertEqual([s["id"] for s in cfg["scenarios"]], ["digest", "weekly", "monthly", "article", "post"])
         self.assertEqual(cfg["defaults"]["image_model"], "z-image-turbo")
         self.assertEqual([c["id"] for c in cfg["channels"]], ["download-16x9", "download-9x16"])
         self.assertTrue(cfg["llm"]["ok"])

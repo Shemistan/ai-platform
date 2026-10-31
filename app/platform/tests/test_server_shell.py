@@ -84,7 +84,7 @@ class NavTabsTest(PlatformCase):
         groups = [g for i, g in enumerate(t["group"] for t in tabs) if not i or tabs[i - 1]["group"] != g]
         self.assertEqual(len(groups), len(set(groups)), "группа вкладок разорвана другой")
         # Три раздела (UX-037): Выпуски (доска и сценарии) первыми, потом Инструменты.
-        self.assertEqual(ids[:6], ["today", "board", "digest", "article", "post", "photo"])
+        self.assertEqual(ids[:7], ["today", "board", "digest", "weekly", "monthly", "article", "post"])
         self.assertEqual([t["id"] for t in tabs if t.get("home")], ["today"])
         self.assertEqual({t["group_icon"] for t in tabs if t.get("group_icon")}, {"settings"})
         self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])

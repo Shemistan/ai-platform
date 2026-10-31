@@ -80,7 +80,7 @@
 
 ## Студия `studio/`
 
-Сценарии (`service.py` `SCENARIOS`): `digest` — дайджест новостей (материал = день,
+Сценарии (`SCENARIOS`; `weekly`/`monthly` — обзоры narrator `news.review`, PRD-033): `digest` — дайджест (материал = день,
 текст собирает narrator: `make news-collect news-agent news-judge`), `article` —
 видео по статье (вкладка по умолчанию), `post` — пост в канал (видео = постер под
 озвучку, подпись в `post.md`).

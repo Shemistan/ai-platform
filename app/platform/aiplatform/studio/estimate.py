@@ -13,9 +13,8 @@ import statistics
 from dataclasses import dataclass, field
 
 from aiplatform.studio import slides
-from aiplatform.studio.steps import MAX_CLIPS, SHORT_WORDS
+from aiplatform.studio.steps import MAX_CLIPS, SHORT_WORDS, WORDS_PER_MIN
 
-WORDS_PER_MIN = 130  # как в логе шага «Текст»
 LONG_VOICE_S = 12 * 60  # дольше — предлагаем серию или выжимку
 IMAGE_SHARE = 0.5  # до плана: примерно половина слайдов — картинки
 DEFAULTS = {

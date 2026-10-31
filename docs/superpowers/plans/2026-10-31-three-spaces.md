@@ -14,7 +14,7 @@
    JS-тест) и стили в `ui.css`.
 2. **Генерация** — `static/generate/`: входы и альбом по задачам фото, видео, аудио.
 3. **Сценарии новостей** — `studio`: `weekly`, `monthly` (шаг «текст» через narrator,
-   `studio/news.py`), `max_minutes` у `digest`/`weekly`/`monthly` и ужатие текста;
+   `studio/news.py`), ориентир длины `target_minutes` у `digest`/`weekly`/`monthly`;
    тесты на фейках (`fake_narrate`).
 4. **Новости** — `static/newsroom/`: три входа и альбом выпусков.
 5. **Статьи** — `static/articles/`: вход и альбом выпусков `article`/`post`.
