@@ -340,7 +340,7 @@ details.more-menu > summary::-webkit-details-marker { display: none; }
   cursor: pointer;
 }
 .more-menu-item:hover:not(:disabled), .more-menu-item:focus-visible { background: var(--sunken); outline: none; }
-.more-menu-item.danger { color: var(--danger); }
+.more-menu-item--danger { color: var(--danger); }
 .more-menu-item:disabled { opacity: 0.5; cursor: default; }
 
 dialog.modal {

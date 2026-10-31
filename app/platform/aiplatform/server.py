@@ -154,15 +154,17 @@ def default_modules(ctx: Context) -> list[Module]:
     ]
 
 
-# Группы вкладок шапки: между группами — разделитель. Модуль без записи — сам себе группа.
+# Группы вкладок шапки (UX-037): три раздела — Выпуски, Инструменты, Тексты — и сервисное за иконкой
+# справа. Модуль без записи — сам себе группа.
 NAV_GROUPS = {
-    "photo": "media",
-    "video": "media",
-    "audio": "media",
-    "avatar": "media",
-    "montage": "media",
-    "motion": "media",
-    "transcribe": "media",
+    "photo": "tools",
+    "video": "tools",
+    "audio": "tools",
+    "avatar": "tools",
+    "montage": "tools",
+    "motion": "tools",
+    "transcribe": "tools",
+    "studio": "releases",
     "library": "texts",
     "news": "texts",
     "channels": "service",
@@ -170,7 +172,17 @@ NAV_GROUPS = {
     "settings": "service",
 }
 # Подписи групп — меню шапки (UX-028); группа из одной вкладки рисуется простой ссылкой.
-NAV_GROUP_LABELS = {"media": "Медиа", "studio": "Студия", "texts": "Тексты", "service": "Сервис"}
+NAV_GROUP_LABELS = {"tools": "Инструменты", "releases": "Выпуски", "texts": "Тексты", "service": "Сервис"}
+# Группа-иконка: кнопка без подписи справа в шапке (имя ICONS из ui.js), подпись — для скринридера.
+NAV_GROUP_ICONS = {"service": "settings"}
+# Порядок разделов в шапке: главное — первым; группы вне списка — после, в порядке модулей.
+NAV_GROUP_ORDER = ["releases", "tools", "texts", "service"]
+
+
+def nav_order(tabs: list[dict]) -> list[dict]:
+    """Вкладки по NAV_GROUP_ORDER; внутри группы — порядок модулей (sorted устойчив)."""
+    rank = {g: i for i, g in enumerate(NAV_GROUP_ORDER)}
+    return sorted(tabs, key=lambda t: rank.get(t["group"], len(rank)))
 
 
 def nav_tabs(module: Module) -> list[dict]:
@@ -178,13 +190,17 @@ def nav_tabs(module: Module) -> list[dict]:
 
     По умолчанию — одна вкладка /<prefix>/; модуль с под-вкладками (студия) отдаёт свои через nav().
     Поля: id, label, href, group, group_label (подпись меню группы); необязательные badge (счётчик в
-    шапке) и default (активна, если в адресе нет своего параметра). Вкладка может задать свою group.
+    шапке), default (активна, если в адресе нет своего параметра), home (главная вкладка группы: на ней
+    к подписи группы не дописывается название вкладки), group_icon (группа рисуется иконкой).
+    Вкладка может задать свою group.
     """
     own = getattr(module, "nav", None)
     tabs = own() if own else [{"id": module.prefix, "label": module.label, "href": f"/{module.prefix}/"}]
     group = NAV_GROUPS.get(module.prefix, module.prefix)
     out = [{"group": group} | tab for tab in tabs]
-    return [tab | {"group_label": NAV_GROUP_LABELS.get(tab["group"], tab["label"])} for tab in out]
+    out = [tab | {"group_label": NAV_GROUP_LABELS.get(tab["group"], tab["label"])} for tab in out]
+    icon = NAV_GROUP_ICONS.get
+    return [tab | ({"group_icon": icon(tab["group"])} if icon(tab["group"]) else {}) for tab in out]
 
 
 class App:
@@ -257,7 +273,7 @@ class App:
         return {
             "backend": self.config.backend,
             "version": __version__,
-            "tabs": [tab for m in self.modules.values() for tab in nav_tabs(m)],
+            "tabs": nav_order([tab for m in self.modules.values() for tab in nav_tabs(m)]),
             "problems": self.problems(),
             "advice": self.advice(),
         }

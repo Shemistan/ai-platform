@@ -1,7 +1,7 @@
 // Общая шапка платформы: вкладки, состояние GPU и предупреждения — из /api/config.
 // Подключается каждой страницей вкладки: <script type="module" src="/nav.js"></script>.
 import { currentTab, groupTabs } from "/core/nav-groups.js";
-import { api, loadLast, poller, saveLast } from "/ui.js";
+import { api, icon, loadLast, poller, saveLast } from "/ui.js";
 
 // Раздел «Если не работает при установке» (app/platform/README.md) — ссылка из баннера проблем.
 const HELP_URL =
@@ -44,10 +44,18 @@ function closeMenus(except = null) {
 function menu(group, current, index) {
   const id = `nav-menu-${index}`;
   const button = el("button", { type: "button", "aria-expanded": "false", "aria-controls": id });
-  button.append(el("span", {}, group.label));
-  if (group.current) button.append(el("span", { class: "current" }, ` · ${group.current.label}`));
+  if (group.icon) {
+    // Сервисное — иконкой справа (UX-037): имя кнопке даёт aria-label.
+    button.setAttribute("aria-label", group.label);
+    button.title = group.label;
+    button.append(icon(group.icon, { size: 18 }));
+  } else {
+    button.append(el("span", {}, group.label));
+    // На главной вкладке группы («Все выпуски») подпись группы и так говорит, где ты.
+    if (group.current && !group.current.home) button.append(el("span", { class: "current" }, ` · ${group.current.label}`));
+  }
   if (group.badge) button.append(badgeEl(group.badge));  // меню закрыто — счётчик виден на кнопке
-  button.append(el("span", { class: "caret", "aria-hidden": "true" }, "▾"));
+  if (!group.icon) button.append(el("span", { class: "caret", "aria-hidden": "true" }, "▾"));
   const list = el("ul", { class: "menu-list", id, hidden: "" });
   for (const tab of group.tabs) {
     const item = el("li");
@@ -79,7 +87,7 @@ function menu(group, current, index) {
       button.focus();
     }
   });
-  const item = el("li", { class: `menu${group.active ? " active" : ""}` });
+  const item = el("li", { class: `menu${group.active ? " active" : ""}${group.icon ? " icon-menu" : ""}` });
   item.append(button, list);
   return item;
 }

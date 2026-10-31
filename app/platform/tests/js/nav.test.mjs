@@ -29,3 +29,11 @@ test("группы по порядку, одиночная — ссылка, а�
   assert.equal(groups[1].badge, "attention");
   assert.ok(groups.slice(1).every((g) => !g.active && g.current === null));
 });
+
+test("группа-иконка (UX-037): icon из group_icon вкладки, у остальных — null", () => {
+  const tabs = [...TABS, { id: "settings", label: "Настройки", href: "/settings/", group: "service", group_label: "Сервис", group_icon: "settings", badge: "advice" }];
+  const groups = groupTabs(tabs, "settings");
+  assert.equal(groups.at(-1).icon, "settings");
+  assert.equal(groups.at(-1).badge, "advice");
+  assert.ok(groups.slice(0, -1).every((g) => g.icon === null));
+});

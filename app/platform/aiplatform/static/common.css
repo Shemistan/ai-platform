@@ -76,6 +76,9 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-md)/
   box-shadow: var(--shadow-menu);
 }
 .platform-nav .tabs > li:last-child .menu-list { left: auto; right: 0; }  /* у края экрана — влево */
+/* Сервисное меню-иконка (UX-037) — в конце строки вкладок, рядом с GPU. */
+.platform-nav .menu.icon-menu { margin-left: auto; }
+.platform-nav .menu.icon-menu > button { padding: var(--sp-2); }
 .platform-nav .menu-list[hidden] { display: none; }
 .platform-nav .menu-list a { border-radius: var(--r-md); }
 .platform-nav .gpu { margin-left: auto; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }

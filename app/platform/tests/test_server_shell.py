@@ -83,12 +83,15 @@ class NavTabsTest(PlatformCase):
         self.assertEqual(len(ids), len(set(ids)))
         groups = [g for i, g in enumerate(t["group"] for t in tabs) if not i or tabs[i - 1]["group"] != g]
         self.assertEqual(len(groups), len(set(groups)), "группа вкладок разорвана другой")
-        self.assertEqual(ids[:8], ["photo", "video", "audio", "avatar", "montage", "motion", "transcribe", "board"])
+        # Три раздела (UX-037): Выпуски (доска и сценарии) первыми, потом Инструменты.
+        self.assertEqual(ids[:5], ["board", "digest", "article", "post", "photo"])
+        self.assertEqual([t["id"] for t in tabs if t.get("home")], ["board"])
+        self.assertEqual({t["group_icon"] for t in tabs if t.get("group_icon")}, {"settings"})
         self.assertEqual([t["id"] for t in tabs if t.get("default")], ["article"])
         self.assertEqual([t["badge"] for t in tabs if t.get("badge")], ["attention", "advice"])
         labels = {t["group"]: t["group_label"] for t in tabs}
-        self.assertEqual(labels, {"media": "Медиа", "board": "Выпуски", "studio": "Студия", "texts": "Тексты",
-                                  "service": "Сервис"})  # fmt: skip
+        want = {"releases": "Выпуски", "tools": "Инструменты", "texts": "Тексты", "service": "Сервис"}
+        self.assertEqual(labels, want)
 
     def test_advice_not_in_problems(self):
         """UX-030: открытый каталог данных — совет у «Настроек», не баннер на всех страницах и не 503 в /ready."""

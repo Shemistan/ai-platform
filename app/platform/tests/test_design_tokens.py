@@ -148,9 +148,10 @@ class DisclosureTest(unittest.TestCase):
                     found.append(f"{p.relative_to(STATIC)}:{n}")
         for p in sorted(STATIC.rglob("*.js")):
             text = p.read_text(encoding="utf-8")
-            # h("details", {…}) — класс в объекте атрибутов сразу после тега.
+            # h("details", {…}) — класс в объекте атрибутов сразу после тега. Меню «⋯» (moreMenu, DS-019) —
+            # другой компонент на том же <details>: список действий, а не раскрывающийся блок.
             for m in re.finditer(r'h\(\s*"details",\s*(\{[^}]*\})', text):
-                if "disclosure" not in m.group(1):
+                if "disclosure" not in m.group(1) and "more-menu" not in m.group(1):
                     found.append(f"{p.relative_to(STATIC)}:{text.count(chr(10), 0, m.start()) + 1}")
         self.assertEqual(found, [])
 
