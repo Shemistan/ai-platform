@@ -2,9 +2,9 @@
 
 Поток раз в AIP_SCHEDULE_TICK_S секунд (по умолчанию 30) зовёт tick(сейчас).
 Наступило время из настроек, а сегодня дайджест ещё не удался — создать
-выпуск за вчера (или за сегодня) с параметрами запуска из настроек (постер,
-картинки, ролики, шортс, проверка текста, автопубликация — PRD-030) и запустить. Если платформа была выключена
-во время запуска, он догоняется в тот же день, но не на следующий.
+выпуск за вчера (или за сегодня) с «Настройками дайджеста» (scenario_defaults, PRD-034) и автопубликацией
+из расписания (PRD-030) и запустить. Если платформа была выключена во время запуска, он догоняется в тот же
+день, но не на следующий.
 
 Итог дайджеста — в `<data>/studio/schedule.json`:
 `{"digest": {"day", "result": "ok|failed", "error", "at", "attempts"}}`. День
@@ -34,7 +34,6 @@ from aiplatform.config import pick
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError
 from aiplatform.core.log import event as log_event
-from aiplatform.core.settings import DIGEST_RUN
 
 STATE = "schedule.json"
 DEFAULT_TICK_S = 30.0
@@ -198,7 +197,7 @@ class Scheduler:
             if archived:  # убранный в архив выпуск за этот день — решение человека, заново не собираем
                 finish(None)
                 return f"дайджест за {day}: есть в архиве"
-            run_settings = {k: plan[k] for k in DIGEST_RUN if k in plan}  # параметры запуска (PRD-030)
+            run_settings = {"auto_publish": plan["auto_publish"]}  # остальное — умолчания сценария (PRD-034)
             project = self.module.create({"scenario": "digest", "day": day, "run": True, "settings": run_settings})
         except HttpError as exc:
             existing = exc.extra.get("existing")

@@ -88,7 +88,7 @@ class NavTabsTest(PlatformCase):
         by_group = {g: [t["id"] for t in tabs if t["group"] == g] for g in groups}
         self.assertEqual(by_group["today"], ["today"])
         self.assertEqual(by_group["generate"][:4], ["generate", "photo", "video", "audio"])
-        self.assertEqual(by_group["newsroom"], ["newsroom", "digest", "weekly", "monthly", "news"])
+        self.assertEqual(by_group["newsroom"], ["newsroom", "digest", "weekly", "monthly", "news", "digest-settings"])
         self.assertEqual(by_group["articles"], ["articles", "article", "post", "library"])
         self.assertEqual(by_group["service"], ["board", "channels", "updates", "settings"])
         self.assertEqual([t["id"] for t in tabs if t.get("home")], ["generate", "newsroom", "articles"])

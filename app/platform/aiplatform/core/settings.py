@@ -19,7 +19,7 @@ from aiplatform.core import schema
 from aiplatform.core.fsutil import atomic_write
 
 FILE = "settings.json"
-SCHEMA = 1  # схема settings.json (core/schema.py, ADR 0009); 1 — поле schema, формат как в схеме 0
+SCHEMA = 2  # схема settings.json (core/schema.py, ADR 0009); 2 — умолчания дайджеста в digest_defaults
 KINDS = ("photo", "video", "audio", "asr")  # модели фото, модели видео, движки озвучки, расшифровка монтажа
 _STORES: dict[Path, Settings] = {}
 _STORES_LOCK = threading.Lock()
@@ -36,17 +36,46 @@ def at(data_dir: Path) -> Settings:
 
 
 DIGEST_DAYS = ("yesterday", "today")  # дайджест по расписанию — за вчера или за сегодня
-# Параметры запуска дайджеста по расписанию (PRD-030): уходят в settings выпуска; по умолчанию —
-# как у дайджеста, созданного руками (обложку ждём свою, картинки рисуем, остальное выключено).
-DIGEST_RUN = {
+# Умолчания дайджеста (PRD-034): «Настройки дайджеста», для выпуска руками и по расписанию.
+# None у модели и движка — не выбрано, берётся общее умолчание студии (модели зависят от машины).
+DIGEST_DEFAULTS = {
     "poster_mode": "upload",
+    "poster_deadline": "",  # до скольких ждать свою обложку, потом рисовать локально (PRD-002)
     "draw_images": True,
+    "images_mode": "local",
+    "image_model": None,
+    "upscale_images": "none",
     "clips": False,
+    "clips_mode": "local",
+    "video_model": None,
+    "voice_mode": "tts",
+    "engine": None,
+    "voice": "",
+    "tempo": 1.25,
     "shorts": False,
+    "slide_s": 8,
+    "reading": "normal",
+    "slide_motion": True,
+    "frame": "poster",
+    "branding": True,
+    "ai_badge": True,
+    "disclaimers": True,
     "review_text": False,
-    "auto_publish": False,
 }
-POSTER_MODES = ("local", "upload")  # как studio.service.POSTER_MODES
+# Допустимые значения — как в studio (service, steps, slides); совпадение держит тест.
+DIGEST_CHOICES = {
+    "poster_mode": ("local", "upload"),
+    "images_mode": ("local", "upload"),
+    "clips_mode": ("local", "upload"),
+    "voice_mode": ("tts", "upload"),
+    "upscale_images": ("none", "2k", "4k"),
+    "tempo": (0.75, 1.0, 1.25, 1.5, 1.75, 2.0),
+    "slide_s": (4, 6, 8, 10, 12),
+    "reading": ("off", "normal", "slow"),
+    "frame": ("landscape", "square", "poster"),
+}
+_DIGEST_NAMES = ("image_model", "video_model", "engine")  # имя из каталога; проверяет studio.check_settings
+_SCHEDULE_MOVED = ("poster_mode", "draw_images", "clips", "shorts", "review_text")  # схема 1 → 2
 _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 CLEANUP_DAYS = (7, 14, 30, 60, 90)
 _CHAT = re.compile(r"-?\d+|@\w+")  # личный чат владельца: id или @username
@@ -61,7 +90,8 @@ SCENARIO_IDS = ("digest", "article", "post")  # как studio.service.SCENARIOS
 def _empty() -> dict:
     return {
         "disabled": {**{kind: [] for kind in KINDS}, "voices": {}},
-        "schedule": {"digest": {"enabled": False, "time": "07:00", "day": "yesterday", **DIGEST_RUN}},
+        # auto_publish — только у выпуска по расписанию (PRD-030).
+        "schedule": {"digest": {"enabled": False, "time": "07:00", "day": "yesterday", "auto_publish": False}},
         "notify": {"enabled": False, "telegram_chat": ""},
         "stats": {"auto": True},
         # Уборка (core/cleanup.py): days — задачи вкладок, кэш, архив и загрузки старше; trim_days —
@@ -80,9 +110,7 @@ def _empty() -> dict:
         # Каналы по умолчанию по сценариям (PRD-005): id из channels.json; None — не заданы
         # (у дайджеста тогда VOICE_NEWS движка, если такой канал есть).
         "default_channels": {s: None for s in SCENARIO_IDS},
-        # Дайджест по умолчанию: до скольких (ЧЧ:ММ) ждать свою обложку, потом рисовать локально;
-        # пусто — ждать без срока (PRD-002).
-        "digest_defaults": {"poster_deadline": ""},
+        "digest_defaults": dict(DIGEST_DEFAULTS),
         # Предложения на доске: false — человек нажал «Не предлагать» (PRD-003).
         "offers": {"digest_autopilot": True},
         # Реестр запрещённых организаций: ежедневная сверка в фоне и порог свежести, дни (CMP-013).
@@ -127,6 +155,36 @@ def _strings(value: object) -> list[str]:
     return sorted({v for v in value if isinstance(v, str)}) if isinstance(value, list) else []
 
 
+def _digest_defaults(raw: dict) -> dict:
+    out = dict(DIGEST_DEFAULTS)
+    for name, default in DIGEST_DEFAULTS.items():
+        value = raw.get(name)
+        if isinstance(default, bool):
+            out[name] = _flag(value, default)
+        elif name in DIGEST_CHOICES:
+            if not isinstance(value, bool) and value in DIGEST_CHOICES[name]:
+                out[name] = value
+        elif name in _DIGEST_NAMES:
+            out[name] = value if isinstance(value, str) and value else None
+    if isinstance(raw.get("voice"), str):
+        out["voice"] = raw["voice"]
+    deadline = raw.get("poster_deadline")
+    if isinstance(deadline, str) and _TIME.match(deadline):
+        out["poster_deadline"] = deadline
+    return out
+
+
+def _move_digest_defaults(data: dict) -> dict:
+    """Схема 1 → 2: постер, картинки, ролики, шортс и пауза переехали из schedule.digest в digest_defaults."""
+    plan = _section(_section(data, "schedule"), "digest")
+    defaults = _section(data, "digest_defaults")
+    for name in _SCHEDULE_MOVED:
+        if name in plan:
+            defaults.setdefault(name, plan.pop(name))
+    data["digest_defaults"] = defaults
+    return data
+
+
 def normalize(raw: object) -> dict:
     """Чужие ключи и мусор отбрасываются: битый файл не роняет платформу."""
     out = _empty()
@@ -137,10 +195,7 @@ def normalize(raw: object) -> dict:
         plan["time"] = digest["time"]
     if digest.get("day") in DIGEST_DAYS:
         plan["day"] = digest["day"]
-    if digest.get("poster_mode") in POSTER_MODES:
-        plan["poster_mode"] = digest["poster_mode"]
-    for name in ("draw_images", "clips", "shorts", "review_text", "auto_publish"):
-        plan[name] = _flag(digest.get(name), DIGEST_RUN[name])
+    plan["auto_publish"] = _flag(digest.get("auto_publish"), False)
     notify = _section(raw, "notify")
     chat = notify.get("telegram_chat")
     out["notify"]["telegram_chat"] = chat.strip() if isinstance(chat, str) and _CHAT.fullmatch(chat.strip()) else ""
@@ -158,9 +213,7 @@ def normalize(raw: object) -> dict:
     if _number(cleanup.get("min_free_gb"), MAX_FREE_GB):
         out["cleanup"]["min_free_gb"] = cleanup["min_free_gb"]
     out["offers"]["digest_autopilot"] = _flag(_section(raw, "offers").get("digest_autopilot"), True)
-    deadline = _section(raw, "digest_defaults").get("poster_deadline")
-    if isinstance(deadline, str) and _TIME.match(deadline):
-        out["digest_defaults"]["poster_deadline"] = deadline
+    out["digest_defaults"] = _digest_defaults(_section(raw, "digest_defaults"))
     chosen = _section(raw, "default_channels")
     for scenario in SCENARIO_IDS:
         value = chosen.get(scenario)
@@ -207,7 +260,7 @@ class Settings:
         self.problem = None
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-            schema.upgrade(raw if isinstance(raw, dict) else {}, SCHEMA, where=FILE)
+            schema.upgrade(raw if isinstance(raw, dict) else {}, SCHEMA, {1: _move_digest_defaults}, where=FILE)
         except schema.TooNew as exc:  # читаем как есть, но не пишем: правки — в той, новой версии
             self.problem = f"Настройки: {exc}."
         except (OSError, ValueError):
