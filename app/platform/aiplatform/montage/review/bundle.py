@@ -83,7 +83,7 @@ def argv(config: MontageConfig, video: Path, out: Path, points: list[dict], *, p
         "-map", "0:v", "-map", "0:a?", "-vf", f"scale={PROXY_W}:-2", "-c:v", "libx264", "-preset", "veryfast",
         "-crf", "28", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart",
         str(out / "proxy.mp4"),
-        "-map", "0:v", "-vf", f"select='{select}',scale={FRAME_W}:-2", "-vsync", "0", "-q:v", "4",
+        "-map", "0:v", "-vf", f"select='{select}',scale={FRAME_W}:-2", "-fps_mode", "passthrough", "-q:v", "4",
         str(out / "frames" / "x%06d.jpg"),
         "-map", "0:v", "-vf", f"fps={STATS_FPS},scale=160:-2,signalstats,metadata=print:file={stats}", "-f", "null", "-",
         "-map", "0:a?", "-af", audio, "-f", "null", "-",
