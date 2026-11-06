@@ -24,6 +24,8 @@ cd "$(dirname "$0")/.." || exit 1  # app/platform
 
 # Версии пайплайнов. Вкладка «Обновления» подсказывает поднимать их здесь.
 MFLUX_VERSION=0.22.0
+# mflux не ограничивает Pillow сверху, а Pillow 13 на Python 3.12 падает при импорте (numbers._IntegralLike).
+MFLUX_PILLOW="pillow<13"
 FLUX2_VERSION=v3.1.0
 FLUX2_URL="https://github.com/VincentGourbin/flux-2-swift-mlx/releases/download/$FLUX2_VERSION/Flux2CLI-$FLUX2_VERSION-macOS.zip"
 LTX_VERSION=v0.16.2
@@ -157,12 +159,14 @@ token_help() {
 
 # --- фото: mflux (Qwen, Z-Image, Krea, Ideogram) и Flux2CLI (FLUX.2) ---
 
+# Готовность — по запуску, а не по файлу: зависимость может встать и не импортироваться.
 install_mflux() {
-  [ ! -x "$MFLUX_ENV/bin/mflux-generate-qwen" ] || return 0
+  ! "$MFLUX_ENV/bin/mflux-generate-qwen" --help >/dev/null 2>&1 || return 0
   echo "→ ставлю mflux $MFLUX_VERSION в $MFLUX_ENV"
   mkdir -p "$PHOTO_HOME"
-  uv venv --quiet --python 3.12 "$MFLUX_ENV"
-  uv pip install --quiet --python "$MFLUX_ENV/bin/python" "mflux==$MFLUX_VERSION"
+  uv venv --quiet --allow-existing --python 3.12 "$MFLUX_ENV"
+  uv pip install --quiet --python "$MFLUX_ENV/bin/python" "mflux==$MFLUX_VERSION" "$MFLUX_PILLOW"
+  "$MFLUX_ENV/bin/mflux-generate-qwen" --help >/dev/null || fail "mflux не запускается в своём окружении — вывод выше"
 }
 
 install_flux2() {
@@ -218,11 +222,14 @@ install_photo() {
   set -- $(echo "$PHOTO_CATALOG" | grep "^$1 ")
   id="$1" backend="$2" dir="$MODELS_DIR/$3" marker="$MODELS_DIR/$3/$4" source="$5" quant="$6" encoder="$7"
   if [ -f "$marker" ]; then
+    # Веса на внешнем диске переживают смену машины, а пайплайн в ~/.local/share — нет.
     # Поставленной раньше FLUX.2 докладываем то, чего старый скрипт не ставил.
     if [ "$backend" = "flux2" ]; then
       install_flux2
       ensure_metallib
       preload_encoder "$encoder"
+    else
+      install_mflux
     fi
     echo "✓ $id уже установлена"
     return 0

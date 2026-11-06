@@ -125,6 +125,74 @@ def fake_tree(root: Path) -> None:
     shutil.copy(SCRIPT, root / "tools" / SCRIPT.name)
 
 
+@unittest.skipUnless(platform.system() == "Darwin" and platform.machine() == "arm64", "только Mac на Apple Silicon")
+class MfluxEnvTest(unittest.TestCase):
+    """Веса пережили смену машины, а окружения mflux нет или оно не запускается — ставится заново (на фейках)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        fake_tree(self.root)
+        models_dir = self.root / "models"
+        model = next(m for m in photo_models.CATALOG if m.id == "z-image-turbo")
+        (models_dir / model.weights).mkdir(parents=True)
+        (models_dir / model.weights / photo_models.MARKER).touch()
+        self.mflux_bin = self.root / "photogen" / "mflux-0.22.0" / "bin"
+        self.calls = self.root / "uv-calls"
+        fake_bin = self.root / "bin"
+        fake_bin.mkdir()
+        # uv запоминает аргументы, а на pip install кладёт в окружение рабочую команду mflux.
+        (fake_bin / "uv").write_text(
+            f'#!/bin/sh\necho "$*" >> "{self.calls}"\n'
+            f'[ "$1" = pip ] || exit 0\nmkdir -p "{self.mflux_bin}"\n'
+            f'printf "#!/bin/sh\\n" > "{self.mflux_bin}/mflux-generate-qwen"\n'
+            f'chmod +x "{self.mflux_bin}/mflux-generate-qwen"\n'
+        )
+        (fake_bin / "uv").chmod(0o755)
+        self.env = {
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "AIP_MODELS_DIR": str(models_dir),
+            "PHOTOGEN_HOME": str(self.root / "photogen"),
+            "VIDEOGEN_HOME": str(self.root / "videogen"),
+        }
+
+    def install(self) -> subprocess.CompletedProcess:
+        proc = run("z-image-turbo", cwd=self.root, env=self.env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("z-image-turbo уже установлена", proc.stdout)
+        return proc
+
+    def test_installs_env_for_existing_weights_once(self):
+        self.install()
+
+        calls = self.calls.read_text().splitlines()
+        self.assertIn("mflux==0.22.0 pillow<13", calls[-1])
+        self.assertIn(f"AIP_PHOTO_MFLUX_BIN={self.mflux_bin}", (self.root / "local.mk").read_text())
+
+        self.install()
+        self.assertEqual(self.calls.read_text().splitlines(), calls, "второй прогон ничего не ставит")
+
+    def test_broken_env_is_reinstalled(self):
+        self.mflux_bin.mkdir(parents=True)
+        (self.mflux_bin / "mflux-generate-qwen").write_text("#!/bin/sh\nexit 1\n")
+        (self.mflux_bin / "mflux-generate-qwen").chmod(0o755)
+
+        self.install()
+
+        self.assertIn("mflux==0.22.0 pillow<13", self.calls.read_text())
+
+    def test_env_that_still_fails_stops_the_install(self):
+        uv = self.root / "bin" / "uv"
+        uv.write_text(uv.read_text().replace('printf "#!/bin/sh\\n"', 'printf "#!/bin/sh\\nexit 1\\n"'))
+
+        proc = run("z-image-turbo", cwd=self.root, env=self.env)
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("mflux не запускается", proc.stderr)
+        self.assertFalse((self.root / "local.mk").exists())
+
+
 class MoveToTest(unittest.TestCase):
     """--move-to переносит веса целиком и правит AIP_MODELS_DIR в local.mk (без сети и uv)."""
 
