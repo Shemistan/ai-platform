@@ -65,7 +65,7 @@
 | `news/` | `/api/news/` | источники, главное за день, добор упавших, обзоры недели/месяца |
 | `channels/` | `/api/channels/` | каналы публикации (`channels.json`, `store.py`), бот, подписчики, `narrate bot serve` |
 | `updates/` | `/api/updates/` | версии моделей (PyPI/GitHub/HF), реестр запрещённых организаций и иноагентов |
-| `settings/` | `/api/settings/` | `settings.json`: выключенные модели (фото, видео, расшифровка)/голоса, состояние диктора и HyperFrames, расписание, уведомления, уборка |
+| `settings/` | `/api/settings/` | `settings.json`: выключенные модели (фото, видео, расшифровка)/голоса, состояние диктора и HyperFrames, расписание, уведомления, уборка, умолчания дайджеста (`digest_defaults`, PRD-034) |
 | `core/` | — | общие механизмы (ниже) |
 | `fakes/` | — | имитации CLI для `make demo` и тестов (`fake_narrate.py`, `fake_gen.py`, `fake_ltx.py`, `fake_sadtalker.py`, `fake_llm.py`…) |
 | `static/` | — | фронтенд (ниже) |
@@ -186,8 +186,8 @@ LLM — ADR 0006, файлы — 0007).
 - Вкладки: `today/` «Сегодня» (+`core/today.js`), пространства (PRD-033) `generate/`, `newsroom/`, `articles/` (альбом — `core/album.js`, выпуски — `core/releases.js`), `photo/` (+`exif.js`, `geometry.js`), `video/` (+`frames.js`), `audio/`, `avatar/` (+`form.js`), `transcribe/` (+`view.js`), `montage/` (+`plan.js`, `stages.js`, `storyboard.js`,
   `review.js`/`review-ui.js` — панель ревью, `progress.js`/`progress-ui.js` — панель прогресса с SSE и виртуализацией логов),
   `board/` «Выпуски», `studio/` (`state.js`, `create.js`, `steps.js`, `head.js`,
-  `media.js`, `publish.js`, `settings.js`), `library/` «Статьи», `news/`,
-  `channels/`, `updates/`, `settings/`.
+  `media.js`, `publish.js`, `settings.js`, `fields.js` — поля настроек, общие с «Настройками дайджеста»), `library/` «Статьи», `news/`,
+  `channels/`, `updates/`, `settings/` (+`settings/digest/` «Настройки дайджеста», меню «Новости»).
 - Тесты фронта: `app/platform/tests/js/*.test.mjs` (`node --test`, в `make lint`).
 
 ## Мост к narrator

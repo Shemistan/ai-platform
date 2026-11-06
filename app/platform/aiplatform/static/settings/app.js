@@ -129,6 +129,11 @@ function checkRow(label, hint, checked, onchange) {
   );
 }
 
+// Умолчания дайджеста — на своей странице (PRD-034).
+function digestLink(text) {
+  return h("p", { class: "hint" }, text, h("a", { href: "/settings/digest/" }, "«Настройках дайджеста»"), ".");
+}
+
 function renderSchedule(data) {
   const plan = data.schedule;
   // schedule.json: {day, result, error, at, attempts}; старая запись — строка-дата.
@@ -155,33 +160,8 @@ function renderSchedule(data) {
             h("option", { value: "today", selected: plan.day === "today" }, "за сегодня"),
           ),
         ),
-        h(
-          "label",
-          { class: "field" },
-          h("span", { class: "hint" }, "Постер"),
-          h(
-            "select",
-            { onchange: (e) => section("schedule", { poster_mode: e.target.value }) },
-            h("option", { value: "upload", selected: plan.poster_mode === "upload" }, "жду свою обложку"),
-            h("option", { value: "local", selected: plan.poster_mode === "local" }, "рисовать локально"),
-          ),
-        ),
       ),
-      // Умолчания дайджеста (PRD-030, UX-034): одни для выпуска по расписанию и созданного руками в «Студии».
-      h(
-        "fieldset",
-        { class: "settings-stack" },
-        h("legend", { class: "hint" }, "Дайджест по умолчанию — по расписанию и вручную в «Студии»"),
-        h(
-          "div",
-          { class: "settings-stack" },
-          checkRow("Картинки на слайдах", "Локальной моделью; иначе фон слайдов — градиент.", plan.draw_images, (v) => section("schedule", { draw_images: v })),
-          checkRow("Ролики", "До трёх коротких роликов локальной моделью видео — долго.", plan.clips, (v) => section("schedule", { clips: v })),
-          checkRow("Вертикальное видео 9:16", "Шортс для YouTube Shorts, TikTok, Reels.", plan.shorts, (v) => section("schedule", { shorts: v })),
-          checkRow("Пауза после текста", "Выпуск ждёт, пока я проверю текст, и только потом генерирует.", plan.review_text, (v) => section("schedule", { review_text: v })),
-          checkRow("Публиковать сам", "Только по расписанию: готовое видео уходит в каналы дайджеста без моего нажатия.", plan.auto_publish, (v) => section("schedule", { auto_publish: v })),
-        ),
-      ),
+      digestLink("Как готовить выпуск — постер, картинки, ролики, озвучка, плашки, каналы, автопубликация — в "),
       last ? h("p", { class: "hint" }, `Последний запуск по расписанию: ${last}. Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день.`) : h("p", { class: "hint" }, "Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день."),
       checkRow("Уведомлять меня", "Когда выпуск ждёт тебя, упал или опубликован. В Telegram — если указан чат ниже; на Mac — системное уведомление; своя команда — AIP_NOTIFY_CMD.", data.notify.enabled, (v) => section("notify", { enabled: v })),
       h(
@@ -285,10 +265,10 @@ function renderDefaults(data) {
   const box = $("defaults");
   if (!box) return;
   if (!data.channels?.length) {
-    fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Каналов публикации пока нет — добавь их во вкладке ", h("a", { href: "/channels/" }, "«Каналы»"), "."), posterDeadline(data)));
+    fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Каналов публикации пока нет — добавь их во вкладке ", h("a", { href: "/channels/" }, "«Каналы»"), ".")));
     return;
   }
-  const rows = (data.scenarios || []).map((s) => {
+  const rows = (data.scenarios || []).filter((s) => s.id !== "digest").map((s) => {
     const current = new Set(s.channels);
     const save = (id, on) => {
       const next = data.channels.map((c) => c.id).filter((c) => (c === id ? on : current.has(c)));
@@ -302,17 +282,7 @@ function renderDefaults(data) {
       current.size ? null : h("p", { class: "hint" }, "Не заданы — каналы выбираются у каждого выпуска."),
     );
   });
-  fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Новый выпуск сразу получает каналы своего сценария; у выпусков без каналов доска предлагает опубликовать в них."), ...rows, posterDeadline(data)));
-}
-
-// Дайджест: свою обложку (ChatGPT) ждать до срока, потом рисовать локально (PRD-002).
-function posterDeadline(data) {
-  return h(
-    "label",
-    { class: "field" },
-    h("span", { class: "hint" }, "Дайджест: своя обложка не пришла к этому времени — нарисовать локально и продолжить (пусто — ждать)"),
-    h("input", { type: "time", value: data.digest_defaults?.poster_deadline || "", onchange: (e) => section("digest_defaults", { poster_deadline: e.target.value }) }),
-  );
+  fill(box, h("div", { class: "settings-stack" }, h("p", { class: "hint" }, "Новый выпуск сразу получает каналы своего сценария; у выпусков без каналов доска предлагает опубликовать в них."), ...rows, digestLink("Каналы дайджеста — в ")));
 }
 
 function render(data) {

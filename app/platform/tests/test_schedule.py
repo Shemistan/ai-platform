@@ -1,5 +1,6 @@
 """Дайджест по расписанию, уведомления о выпусках и разделы настроек."""
 
+import json
 from datetime import datetime, time, timedelta
 from unittest import mock
 
@@ -28,19 +29,15 @@ class ScheduleTest(StudioCase):
         self.assertEqual(status, 200, body)
         self.assertEqual(
             body["schedule"],
-            {
-                "enabled": True, "time": "06:30", "day": "today", "poster_mode": "upload", "draw_images": True,
-                "clips": False, "shorts": False, "review_text": False, "auto_publish": False,
-            },
-        )  # fmt: skip
+            {"enabled": True, "time": "06:30", "day": "today", "auto_publish": False},
+        )
         bad_values = (
             {"time": "25:00"},
             {"day": "завтра"},
             {"enabled": "да"},
             {"nope": 1},
             {},
-            {"poster_mode": "ai"},
-            {"clips": "да"},
+            {"poster_mode": "local"},  # умолчания выпуска — в digest_defaults (PRD-034)
         )
         for bad in bad_values:
             status, body = self.section("schedule", bad)
@@ -73,16 +70,22 @@ class ScheduleTest(StudioCase):
         self.assertIn("Дайджест запущен по расписанию", log)
 
     def test_digest_runs_with_chosen_options(self):
-        """Параметры запуска из «Настроек» становятся настройками выпуска (PRD-030)."""
+        """«Настройки дайджеста» и автопубликация расписания становятся настройками выпуска (PRD-030, PRD-034)."""
         self.section("stats", {"auto": False})
         options = {
             "poster_mode": "local",
             "draw_images": False,
             "shorts": True,
             "review_text": True,
-            "auto_publish": True,
+            "ai_badge": False,
+            "branding": False,
+            "slide_motion": False,
+            "tempo": 1.5,
+            "frame": "square",
         }
-        status, body = self.section("schedule", {"enabled": True, "time": "07:00", **options})
+        status, body = self.section("digest_defaults", options)
+        self.assertEqual(status, 200, body)
+        status, body = self.section("schedule", {"enabled": True, "time": "07:00", "auto_publish": True})
         self.assertEqual(status, 200, body)
         create = self.studio.create
         calls = []
@@ -94,30 +97,126 @@ class ScheduleTest(StudioCase):
         with mock.patch.object(self.studio, "create", spy):
             done = self.studio.scheduler.tick(datetime.combine(TODAY, time(8, 0)))
         self.assertIn("запущен", done[0])
-        self.assertEqual(calls[0]["settings"], options | {"clips": False})
+        self.assertEqual(calls[0]["settings"], {"auto_publish": True})
         project = self.json("GET", "/api/studio/projects?scenario=digest")[1]["projects"][0]
         self.settle(project["id"])
         settings = self.studio.studio.get(project["id"])["settings"]
         self.assertEqual({k: settings[k] for k in options}, options)
-        self.assertTrue(settings["branding"])  # остальное — по умолчанию сценария
+        self.assertTrue(settings["auto_publish"])
+        self.assertTrue(settings["disclaimers"])  # остальное — по умолчанию сценария
 
-    def test_old_settings_keep_digest_defaults(self):
-        """settings.json без параметров запуска читается с прежним поведением."""
-        from aiplatform.core.settings import DIGEST_RUN, normalize
-
-        plan = normalize({"schedule": {"digest": {"enabled": True, "time": "07:00", "day": "today"}}})["schedule"][
-            "digest"
-        ]
-        self.assertEqual({k: plan[k] for k in DIGEST_RUN}, DIGEST_RUN)
+    def test_digest_defaults_without_file_are_as_before(self):
+        """Без настроек дайджест прежний: своя обложка, оформление канала, ×1,25, кадр по постеру."""
         base = self.studio.defaults() | self.studio.scenario_defaults("digest")
-        self.assertEqual({k: base[k] for k in DIGEST_RUN}, DIGEST_RUN)
+        want = {"poster_mode": "upload", "branding": True, "tempo": 1.25, "frame": "poster", "slide_s": 8,
+                "draw_images": True, "clips": False, "shorts": False, "review_text": False, "ai_badge": True,
+                "target_minutes": 10}  # fmt: skip
+        self.assertEqual({k: base[k] for k in want}, want)
+        self.assertEqual(base["image_model"], self.studio.default_image_model())
+        self.assertEqual(base["engine"], self.studio.defaults()["engine"])
+
+    def test_old_settings_file_moves_to_digest_defaults(self):
+        """Схема 1: выбранное человеком в schedule.digest переезжает в умолчания и не теряется (PRD-034)."""
+        store = self.app.ctx.config.settings
+        store.path.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "schedule": {
+                        "digest": {
+                            "enabled": True,
+                            "time": "06:00",
+                            "poster_mode": "local",
+                            "draw_images": False,
+                            "clips": True,
+                            "auto_publish": True,
+                        }
+                    },
+                    "digest_defaults": {"poster_deadline": "08:30"},
+                }
+            ),  # fmt: skip
+            encoding="utf-8",
+        )
+        data = store.load()
+        plan = {"enabled": True, "time": "06:00", "day": "yesterday", "auto_publish": True}
+        self.assertEqual(data["schedule"]["digest"], plan)
+        got = data["digest_defaults"]
+        self.assertEqual((got["poster_mode"], got["draw_images"], got["clips"]), ("local", False, True))
+        self.assertEqual(got["poster_deadline"], "08:30")
+        self.assertTrue(got["ai_badge"])
+        self.section("stats", {"auto": False})  # запись — уже в новой схеме, значения те же
+        saved = json.loads(store.path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["schema"], 2)
+        self.assertNotIn("draw_images", saved["schedule"]["digest"])
+        self.assertFalse(saved["digest_defaults"]["draw_images"])
+
+    def test_digest_defaults_choices_match_studio(self):
+        from aiplatform.core import settings as core
+        from aiplatform.studio import service, slides, steps
+
+        self.assertEqual(core.DIGEST_CHOICES["poster_mode"], service.POSTER_MODES)
+        self.assertEqual(core.DIGEST_CHOICES["images_mode"], service.IMAGES_MODES)
+        self.assertEqual(core.DIGEST_CHOICES["clips_mode"], service.CLIPS_MODES)
+        self.assertEqual(core.DIGEST_CHOICES["voice_mode"], service.VOICE_MODES)
+        self.assertEqual(core.DIGEST_CHOICES["upscale_images"], service.UPSCALE_CHOICES)
+        self.assertEqual(core.DIGEST_CHOICES["tempo"], steps.TEMPOS)
+        self.assertEqual(core.DIGEST_CHOICES["slide_s"], slides.SLIDE_SECONDS)
+        self.assertEqual(set(core.DIGEST_CHOICES["reading"]), set(slides.READING))
+        self.assertEqual(set(core.DIGEST_CHOICES["frame"]), set(steps.FRAMES))
+        self.assertLessEqual(set(core.DIGEST_DEFAULTS), set(service.SETTING_STEPS))
+
+    def test_digest_defaults_validation(self):
+        bad_values = (
+            {"poster_mode": "ai"},
+            {"clips": "да"},
+            {"tempo": True},
+            {"tempo": 3},
+            {"slide_s": 5},
+            {"frame": "circle"},
+            {"poster_deadline": "25:00"},
+            {"image_model": "нет-такой"},
+            {"video_model": "нет-такой"},
+            {"engine": "нет-такого"},
+            {"voice": "нет-такого"},
+            {"auto_publish": True},  # только у расписания
+            {"nope": 1},
+        )
+        for bad in bad_values:
+            status, body = self.section("digest_defaults", bad)
+            self.assertEqual(status, 400, (bad, body))
+        self.assertEqual(self.json("GET", "/api/settings/state")[1]["digest_defaults"]["poster_mode"], "upload")
 
     def test_manual_digest_uses_settings_defaults(self):
-        """UX-034: умолчания дайджеста одни — «Настройки» меняют и выпуск по расписанию, и форму студии."""
-        self.section("schedule", {"poster_mode": "local", "draw_images": False, "shorts": True, "auto_publish": True})
+        """Умолчания дайджеста одни — страница меняет и выпуск по расписанию, и форму студии (UX-034, PRD-034)."""
+        self.section("digest_defaults", {"draw_images": False, "clips": False, "ai_badge": False, "shorts": True})
+        self.section("schedule", {"auto_publish": True})
         form = self.json("GET", "/api/studio/config")[1]["scenario_defaults"]["digest"]
-        self.assertEqual((form["poster_mode"], form["draw_images"], form["shorts"]), ("local", False, True))
+        self.assertEqual((form["draw_images"], form["ai_badge"], form["shorts"]), (False, False, True))
         self.assertNotIn("auto_publish", form)  # публиковать сам — только выпуск по расписанию
+        # «День» в «Новостях» создаёт выпуск без настроек — он тоже берёт умолчания.
+        status, project = self.json("POST", "/api/studio/projects", {"scenario": "digest", "day": "2026-10-01"})
+        self.assertIn(status, (200, 201), project)
+        settings = project["settings"]
+        self.assertEqual((settings["draw_images"], settings["ai_badge"], settings["shorts"]), (False, False, True))
+        self.assertFalse(settings["auto_publish"])
+
+    def test_disabled_model_in_defaults_does_not_break_digest(self):
+        """Модель из умолчаний потом выключили — выпуск берёт общее умолчание, а не падает с 400."""
+        self.section("stats", {"auto": False})
+        chosen = self.studio.image_models()[0]["id"]
+        self.assertEqual(self.section("digest_defaults", {"image_model": chosen})[0], 200)
+        self.json("POST", "/api/settings/toggle", {"kind": "photo", "id": chosen, "enabled": False})
+        self.section("schedule", {"enabled": True, "time": "07:00"})
+        done = self.studio.scheduler.tick(datetime.combine(TODAY, time(8, 0)))
+        self.assertIn("запущен", done[0])
+        project = self.json("GET", "/api/studio/projects?scenario=digest")[1]["projects"][0]
+        self.settle(project["id"])
+        self.assertNotEqual(self.studio.studio.get(project["id"])["settings"]["image_model"], chosen)
+
+    def test_digest_settings_page_is_served_and_in_menu(self):
+        tabs = self.json("GET", "/api/config")[1]["tabs"]
+        tab = next(t for t in tabs if t["id"] == "digest-settings")
+        self.assertEqual((tab["href"], tab["group"]), ("/settings/digest/", "newsroom"))
 
     def test_digest_failure_is_reported_and_retried(self):
         self.section("stats", {"auto": False})

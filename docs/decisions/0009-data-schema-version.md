@@ -1,7 +1,7 @@
 ---
 тип: adr
 статус: принято
-обновлено: 2026-10-17
+обновлено: 2026-11-06
 ---
 
 # 0009. Версия схемы у файлов данных, миграции при чтении, карантин битых записей
@@ -24,7 +24,8 @@
   (данные до BE-008). Номер свой у каждого вида файла: `PROJECT_SCHEMA`
   (`studio/pipeline.py`), `JOB_SCHEMA` (`core/schema.py`), `TASK_SCHEMA`
   (`core/tasks.py`), `PUBLISHED_SCHEMA` (`studio/steps.py`), `SCHEMA`
-  (`core/settings.py`), `CHANNELS_SCHEMA` (`studio/publish.py`). Сейчас у всех 1.
+  (`core/settings.py`), `CHANNELS_SCHEMA` (`studio/publish.py`). Сначала у всех 1;
+  `settings.json` — 2 с PRD-034 (умолчания дайджеста переехали в `digest_defaults`).
 - **Списки — в обёртке.** `published.json` — `{"schema": 1, "records": [...]}`,
   `channels.json` — `{"schema": 1, "channels": [...]}`. Голый список читается
   как схема 0.

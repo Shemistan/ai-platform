@@ -43,7 +43,7 @@ SECTIONS = {
     "stats": ("stats",),
     "cleanup": ("cleanup",),
     "default_channels": ("default_channels",),  # каналы по умолчанию по сценариям (PRD-005)
-    "digest_defaults": ("digest_defaults",),  # срок своей обложки дайджеста (PRD-002)
+    "digest_defaults": ("digest_defaults",),  # «Настройки дайджеста»: умолчания выпусков (PRD-034)
     "offers": ("offers",),  # предложения на доске: «Не предлагать» (PRD-003)
 }
 
@@ -80,7 +80,11 @@ class SettingsModule:
 
     def nav(self) -> list[dict]:
         """Вкладка с badge: "advice" — число советов по настройке (App.advice, UX-030) у «Настроек»."""
-        return [{"id": PREFIX, "label": self.label, "href": f"/{PREFIX}/", "badge": "advice"}]
+        tabs = [{"id": PREFIX, "label": self.label, "href": f"/{PREFIX}/", "badge": "advice"}]
+        if "studio" in self.ctx.modules:  # страница умолчаний дайджеста — в меню «Новости» (PRD-034)
+            tabs.insert(0, {"id": "digest-settings", "label": "Настройки дайджеста", "href": f"/{PREFIX}/digest/",
+                            "group": "newsroom"})  # fmt: skip
+        return tabs
 
     def describe(self) -> dict:
         return {"file": str(self.settings.path)}
@@ -249,6 +253,10 @@ class SettingsModule:
         wrong = [k for k in payload if checked[k] != payload[k]]
         if wrong:
             raise bad_request(f"Неверное значение: {', '.join(wrong)}.")
+        studio = self.ctx.modules.get("studio")
+        if name == "digest_defaults" and studio is not None:  # модели и голоса — по каталогам студии
+            chosen = {k: v for k, v in payload.items() if v is not None}
+            studio.check_settings(chosen, studio.defaults() | studio.scenario_defaults("digest"))
         changes = dict(payload)
         if name == "notify" and payload.get("telegram_chat") and not current["telegram_chat"]:
             changes.setdefault("enabled", True)  # чат задали впервые — уведомления включаются сами

@@ -21,7 +21,6 @@ from aiplatform.core import events, log, media, schema
 from aiplatform.core import uploads as uploads_module
 from aiplatform.core.fsutil import atomic_write
 from aiplatform.core.http import HttpError, Request, bad_request, malformed, not_found
-from aiplatform.core.settings import DIGEST_RUN
 from aiplatform.photo import models as photo_models
 from aiplatform.studio import config as studio_config
 from aiplatform.studio import estimate as estimate_module
@@ -1023,19 +1022,8 @@ class StudioModule:
         """Чем настройки сценария отличаются от общих: их и показывает форма нового выпуска."""
         out: dict = {}
         if scenario == "digest":
-            # Как в narrator: оформление канала (плашка «подпишись», плей) и обложка из ChatGPT
-            # по промпту выпуска — постер загружает человек.
-            out = {"branding": True, "poster_mode": "upload", "tempo": 1.25, "frame": "poster", "slide_s": 8,
-                   "target_minutes": NEWS_MINUTES["digest"]}  # fmt: skip
-            saved = self.ctx.config.settings.load()
-            # Постер, картинки, ролики, шортс, пауза после текста — одни для выпуска руками и по расписанию
-            # (UX-034): правятся в «Настройках → Дайджест по умолчанию». Автопубликация — только у расписания.
-            plan = saved["schedule"]["digest"]
-            out |= {k: plan[k] for k in DIGEST_RUN if k != "auto_publish" and k in plan}
-            # Не дождались своей обложки к сроку — рисуем локально (PRD-002); срок — в «Настройках».
-            deadline = saved.get("digest_defaults", {}).get("poster_deadline")
-            if deadline:
-                out["poster_deadline"] = deadline
+            # Одни для выпуска руками и по расписанию (UX-034, PRD-034): правятся в «Настройках дайджеста».
+            out = {"target_minutes": NEWS_MINUTES["digest"]} | self._digest_choices()
         elif scenario in ("weekly", "monthly"):
             # Обзор — длиннее дайджеста: оформление канала, кадр 16:9, ориентир 20 или 40 минут (PRD-033).
             out = {"branding": True, "target_minutes": NEWS_MINUTES[scenario]}
@@ -1054,6 +1042,21 @@ class StudioModule:
         if chosen:
             out["channels"] = chosen
         return out
+
+    def _digest_choices(self) -> dict:
+        """Умолчания дайджеста из настроек. Модель или голос с тех пор выключили — вместо них общее
+        умолчание: иначе create отказал бы и дайджест по расписанию не вышел."""
+        chosen = {k: v for k, v in self.ctx.config.settings.load()["digest_defaults"].items() if v is not None}
+        if chosen.get("image_model") not in {m["id"] for m in self.image_models()}:
+            chosen.pop("image_model", None)
+        if chosen.get("video_model") not in {m["id"] for m in self.video_models()}:
+            chosen.pop("video_model", None)
+        engine = self.ctx.modules["audio"].config.engines().get(chosen.get("engine"))
+        if engine is None:
+            chosen.pop("engine", None)
+        if engine is None or chosen["voice"] not in engine.voices:
+            chosen.pop("voice")
+        return chosen
 
     def default_channels(self, scenario: str) -> list[str]:
         """Каналы по умолчанию сценария (PRD-005): из настроек, только существующие; не заданы —
@@ -1094,7 +1097,7 @@ class StudioModule:
 
     def _digest_channels(self) -> list[publish.Channel]:
         """Каналы Telegram, куда по умолчанию публикуется дайджест."""
-        chosen = set(self.scenario_defaults("digest").get("channels") or [])
+        chosen = set(self.default_channels("digest"))
         return [c for c in self.channels() if c.id in chosen and c.type == publish.TELEGRAM]
 
     def health_stats(self) -> dict:

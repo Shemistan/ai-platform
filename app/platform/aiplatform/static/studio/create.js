@@ -72,9 +72,9 @@ export function renderCreate() {
   const defaults = { ...state.config.defaults, ...(state.config.scenario_defaults?.[scenario] || {}) };
   fill(
     $("create-settings"),
-    // Откуда умолчания (UX-034): у дайджеста — общие с расписанием, правятся в «Настройках».
+    // Откуда умолчания (UX-034, PRD-034): у дайджеста — общие с расписанием, своя страница.
     scenario === "digest"
-      ? h("p", { class: "hint" }, "Умолчания дайджеста — общие с расписанием, меняются в ", h("a", { href: "/settings/" }, "«Настройках»"), ". Здесь — только для этого выпуска.")
+      ? h("p", { class: "hint" }, "Умолчания дайджеста — общие с расписанием, меняются в ", h("a", { href: "/settings/digest/" }, "«Настройках дайджеста»"), ". Здесь — только для этого выпуска.")
       : null,
     settingsForm(defaults, "new"),
   );
