@@ -7,8 +7,9 @@ channels.example.json. Пока файла нет, каналы — пакеты
 Добавленный со страницы канал записывает channels.json целиком.
 
 Токен бота: из переменной канала (token_env), иначе — как у narrator:
-$NARRATOR_TELEGRAM_TOKEN, файл $NARRATOR_TELEGRAM_TOKEN_FILE или bot_token.md
-narrator. В файлы, лог и ответы API он не попадает. YouTube / TikTok /
+$NARRATOR_TELEGRAM_TOKEN. Обе обычно лежат в .env в корне репозитория — его
+читает сервер при старте (config.load_env_file). В файлы, лог и ответы API
+токен не попадает. YouTube / TikTok /
 Instagram требуют OAuth-приложений — для них канал типа manual: готовый
 mp4 + заголовок + описание в папке.
 """
@@ -59,8 +60,6 @@ TOKEN_ENV_NAMES = "AIP_TG_<ИМЯ>, AIP_TELEGRAM_TOKEN или NARRATOR_TELEGRAM_
 TOKEN_ENV_HINT = f"Переменная токена — {TOKEN_ENV_NAMES}."
 NARRATOR_CHANNELS = "telegram_tems.md"
 NARRATOR_TOKEN_ENV = "NARRATOR_TELEGRAM_TOKEN"
-NARRATOR_TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"
-NARRATOR_TOKEN_FILE = "bot_token.md"
 GENERAL_THREAD = 1  # тема General: в неё пишут без message_thread_id
 
 
@@ -72,34 +71,23 @@ class Channel:
     format: str = LANDSCAPE
     chat_id: str = ""
     token_env: str = ""
-    token_file: str = ""  # bot_token.md narrator — если у канала нет своей переменной
 
     def public(self) -> dict:
         data = asdict(self)
-        data.pop("token_file")
         data["ready"] = self.problem() is None
         data["problem"] = self.problem()
         return data
 
     def stored(self) -> dict:
         """Как канал записывается в channels.json."""
-        data = {k: v for k, v in asdict(self).items() if v and k != "token_file"}
+        data = {k: v for k, v in asdict(self).items() if v}
         return data | {"format": self.format}
 
     def token(self) -> str:
         """Токен бота; пусто — не найден, имя переменной не из разрешённых или значение не токен."""
-        if self.token_env:
-            value = os.environ.get(self.token_env, "").strip() if token_env_allowed(self.token_env) else ""
-            return value if _TOKEN.fullmatch(value) else ""
-        if os.environ.get(NARRATOR_TOKEN_ENV, "").strip():
-            value = os.environ[NARRATOR_TOKEN_ENV].strip()
-            return value if _TOKEN.fullmatch(value) else ""
-        path = os.environ.get(NARRATOR_TOKEN_FILE_ENV) or self.token_file
-        try:
-            found = _TOKEN.search(Path(path).read_text(encoding="utf-8")) if path else None
-        except OSError:
-            found = None
-        return found.group(0) if found else ""
+        name = self.token_env or NARRATOR_TOKEN_ENV
+        value = os.environ.get(name, "").strip() if token_env_allowed(name) else ""
+        return value if _TOKEN.fullmatch(value) else ""
 
     def target(self) -> dict[str, str]:
         """chat_id и, если канал — тема в группе (`<id>_<тема>`), message_thread_id."""
@@ -122,7 +110,7 @@ class Channel:
                     return f"токен в переменной {env} не похож на токен бота"
                 if self.token_env:
                     return f"нет токена в переменной {self.token_env}"
-                return f"нет токена бота: ${NARRATOR_TOKEN_ENV} или {NARRATOR_TOKEN_FILE} в narrator"
+                return f"нет токена бота: строка {NARRATOR_TOKEN_ENV}=<токен> в .env в корне проекта"
         return None
 
 
@@ -158,7 +146,6 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
         raw = list(DEFAULT_CHANNELS) + (narrator_channels(narrator_dir) if narrator_dir else [])
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"{path}: не читается как JSON ({exc})") from exc
-    token_file = str(narrator_dir / NARRATOR_TOKEN_FILE) if narrator_dir else ""
     if isinstance(raw, dict) and isinstance(raw.get("channels"), list):  # схема 1: {"schema", "channels"}
         raw = raw["channels"]
     if not isinstance(raw, list):
@@ -182,7 +169,6 @@ def load_channels(path: Path, narrator_dir: Path | None = None) -> list[Channel]
                 format=fmt,
                 chat_id=str(item.get("chat_id", "")),
                 token_env=str(item.get("token_env", "")),
-                token_file=token_file,
             )
         )
     if len({c.id for c in out}) != len(out):
@@ -244,7 +230,7 @@ def edit_channel(existing: list[Channel], channel_id: str, changes: dict) -> lis
             raise ValueError("Формат — landscape или vertical.")
         if token_env and not token_env_allowed(token_env):
             raise ValueError(TOKEN_ENV_HINT)
-        out.append(Channel(c.id, label, c.type, fmt, c.chat_id, token_env, c.token_file))
+        out.append(Channel(c.id, label, c.type, fmt, c.chat_id, token_env))
     if not found:
         raise LookupError("Нет такого канала.")
     return out

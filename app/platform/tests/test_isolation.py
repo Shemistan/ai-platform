@@ -30,6 +30,13 @@ class IsolationTest(unittest.TestCase):
         self.assertEqual(video_config.load(config).models_dir, models_dir)
         self.assertEqual(photo_config.load(config).models_dir, models_dir)
 
+    def test_env_file_points_away_from_repo(self):
+        path = platform_config.env_file(os.environ)
+        self.assertNotEqual(path, platform_config.REPO_DIR / platform_config.ENV_FILE)
+        self.assertFalse(path.exists())
+        self.assertEqual(platform_config.env_file({}), platform_config.REPO_DIR / platform_config.ENV_FILE)
+        self.assertTrue((platform_config.REPO_DIR / "app" / "platform").is_dir())
+
     def test_explicit_values_are_kept(self):
         env = isolated_config({"AIP_DATA_DIR": "/tmp/x", "PHOTOGEN_MODELS_DIR": ""})
         self.assertEqual(env, {"AIP_DATA_DIR": "/tmp/x", "PHOTOGEN_MODELS_DIR": ""})

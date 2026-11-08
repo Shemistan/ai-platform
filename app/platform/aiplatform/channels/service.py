@@ -21,7 +21,7 @@ from http import HTTPStatus
 from pathlib import Path
 
 from aiplatform.channels.store import ChannelsBroken
-from aiplatform.config import pick
+from aiplatform.config import env_file, pick
 from aiplatform.core import log, perms, runner
 from aiplatform.core import narrator as narrator_module
 from aiplatform.core.http import HttpError, Request, bad_request, not_found
@@ -30,8 +30,6 @@ from aiplatform.studio import config as studio_config
 from aiplatform.studio import publish, stats
 
 PREFIX = "channels"
-TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"  # как narrator.telegram.TOKEN_FILE_ENV
-TOKEN_FILE = "bot_token.md"  # как narrator.telegram.TOKEN_FILE
 LIBRARY_ENV = "NARRATOR_LIBRARY"  # как narrator.library.library_root
 SERVE_LOCK = "telegram.serve.lock"  # как narrator.telegram.SERVE_LOCK
 LOG_TAIL = 200
@@ -180,11 +178,10 @@ class ChannelsModule:
         return out
 
     def secret_files(self) -> list[tuple[Path, str]]:
-        """Файлы движка с токеном, каналами и подписчиками — им нужны права 0600 (SEC-010)."""
+        """Файлы с токеном, каналами и подписчиками — им нужны права 0600 (SEC-010)."""
         home = self.narrator.home
-        token = pick(self.env, TOKEN_FILE_ENV) or str(home / TOKEN_FILE)
         return [
-            (Path(token).expanduser(), "Файл токена бота"),
+            (env_file(self.env), "Файл токена бота (.env)"),
             (home / "telegram_tems.md", "Список каналов"),
             (home / "library" / "telegram.json", "Файл подписчиков бота"),
             (self.config.channels_file, "Файл каналов публикации"),

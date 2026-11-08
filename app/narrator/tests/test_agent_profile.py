@@ -54,6 +54,7 @@ def test_agent_runs_with_narrow_profile(target):
     for denied in (
         "Bash(gh *)",
         "Bash(curl *)",
+        f"Read(/{ROOT.parents[1] / '.env'})",
         "Read(./bot_token.md)",
         "Bash(./narrate news publish *)",
     ):

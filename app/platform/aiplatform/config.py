@@ -10,7 +10,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,6 +27,42 @@ FONT_CANDIDATES = (
 )
 PACKAGE_DIR = Path(__file__).resolve().parent
 SERVICE_DIR = PACKAGE_DIR.parent  # app/platform
+REPO_DIR = SERVICE_DIR.parents[1]  # корень репозитория (у живого сервиса — его checkout)
+ENV_FILE = ".env"  # секреты (токены ботов) в корне репозитория, в .gitignore; как narrator.telegram.ENV_FILE
+ENV_FILE_ENV = "AIP_ENV_FILE"
+_ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def env_file(env: Mapping[str, str]) -> Path:
+    return Path(pick(env, ENV_FILE_ENV) or REPO_DIR / ENV_FILE).expanduser()
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    """Строки KEY=VALUE файла .env (как narrator.telegram.read_env_file): # и мусор пропускаются,
+    `export ` и кавычки снимаются; файла нет — пусто."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    out = {}
+    for line in lines:
+        key, sep, value = line.strip().removeprefix("export ").partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not _ENV_KEY.fullmatch(key):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        out[key] = value
+    return out
+
+
+def load_env_file(environ: MutableMapping[str, str]) -> Path:
+    """Дописывает в окружение процесса переменные из .env; заданные снаружи главнее.
+    Подпроцессы (narrator, bot serve) наследуют их вместе с окружением."""
+    path = env_file(environ)
+    for key, value in read_env_file(path).items():
+        environ.setdefault(key, value)
+    return path
 
 
 def pick(env: Mapping[str, str], *names: str, default: str = "") -> str:

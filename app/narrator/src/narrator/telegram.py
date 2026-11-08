@@ -18,9 +18,9 @@
 подписки и тема (CMP-007); /stop и блокировка бота удаляют запись (CMP-006).
 В логах chat_id — маской `mask()`.
 
-Токен бота берётся из `$NARRATOR_TELEGRAM_TOKEN`, иначе из файла
-`$NARRATOR_TELEGRAM_TOKEN_FILE`, иначе из `bot_token.md` в корне репозитория.
-В git токену нельзя — `bot_token.md` в .gitignore.
+Токен бота берётся из `$NARRATOR_TELEGRAM_TOKEN`, иначе из строки
+`NARRATOR_TELEGRAM_TOKEN=…` файла `.env` в корне репозитория (другой файл —
+`$NARRATOR_ENV_FILE`). В git токену нельзя — `.env` в .gitignore.
 
 Сеть нужна только здесь: остальной narrator работает офлайн. Запросы к
 api.telegram.org идут через `Bot.transport`, в тестах вместо него подставляют
@@ -52,8 +52,9 @@ from narrator import audit, library, registry
 from narrator.library import Entry, article_id, audio_name, format_duration
 
 TOKEN_ENV = "NARRATOR_TELEGRAM_TOKEN"
-TOKEN_FILE_ENV = "NARRATOR_TELEGRAM_TOKEN_FILE"
-TOKEN_FILE = "bot_token.md"
+ENV_FILE_ENV = "NARRATOR_ENV_FILE"
+ENV_FILE = ".env"  # в корне репозитория, как у платформы (aiplatform.config.ENV_FILE)
+REPO_DIR = Path(__file__).resolve().parents[4]  # src/narrator → app/narrator → корень
 CHANNELS_FILE = "telegram_tems.md"  # все каналы и темы: строки ИМЯ=id
 CHANNEL_ENV = "NARRATOR_TELEGRAM_CHANNEL"
 ARTICLE_CHANNEL = "HISTORY_CHAN"  # имя канала с озвученными статьями
@@ -78,6 +79,7 @@ SEND_RATE = 25  # сообщений в секунду на бота: ниже �
 _TOKEN_RE = re.compile(r"\d{6,}:[A-Za-z0-9_-]{30,}")
 _CHAT_RE = re.compile(r"-?\d{5,}(?:_\d+)?|@\w{4,}")
 _NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _OFF = ("", "off", "none", "no")
 GENERAL_THREAD = 1  # тема General: в неё пишут без message_thread_id
 
@@ -134,20 +136,44 @@ class NotSent(TelegramError):  # noqa: N818 — не сбой ответа, а �
     """Запрос не ушёл (соединение не открылось, тело не отправлено) — повтор безопасен."""
 
 
+def env_file() -> Path:
+    path = os.environ.get(ENV_FILE_ENV)
+    return Path(path).expanduser() if path else REPO_DIR / ENV_FILE
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    """Строки KEY=VALUE файла .env: пустые и с # пропускаются, `export ` и кавычки снимаются."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    out = {}
+    for line in lines:
+        key, sep, value = line.strip().removeprefix("export ").partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not _ENV_KEY_RE.fullmatch(key):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        out[key] = value
+    return out
+
+
 def read_token() -> str:
-    """Токен бота из переменной окружения или файла; иначе TelegramError."""
+    """Токен бота из переменной окружения, иначе из .env; иначе TelegramError."""
     env = os.environ.get(TOKEN_ENV, "").strip()
     if env:
         return env
-    path = Path(os.environ.get(TOKEN_FILE_ENV) or library.library_root().parent / TOKEN_FILE)
-    if path.exists():
-        found = _TOKEN_RE.search(path.read_text(encoding="utf-8"))
-        if found:
-            return found.group(0)
-        raise TelegramError(f"{path}: токен не найден, ждём строку вида 123456:AA…")
-    raise TelegramError(
-        f"токен бота неизвестен: положи его в {path} или в ${TOKEN_ENV} (получить — у @BotFather)"
-    )
+    path = env_file()
+    value = read_env_file(path).get(TOKEN_ENV, "").strip()
+    if not value:
+        raise TelegramError(
+            f"токен бота неизвестен: запиши строку {TOKEN_ENV}=<токен> в {path} "
+            "(получить — у @BotFather)"
+        )
+    if not _TOKEN_RE.fullmatch(value):
+        raise TelegramError(f"{path}: {TOKEN_ENV} не похож на токен бота, ждём вида 123456:AA…")
+    return value
 
 
 def channels_path() -> Path:

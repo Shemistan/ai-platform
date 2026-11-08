@@ -24,8 +24,10 @@ make skills        # skill youtube-news для обзоров недели и м
 ### Перенос со старого narrator
 
 Данные — личные и в git не идут: `library/` (статьи, база новостей,
-подписчики бота), `telegram_tems.md` (каналы), `bot_token.md` (токен бота).
-Со старого каталога их забирает один скрипт, он только копирует:
+подписчики бота), `telegram_tems.md` (каналы), токен бота — строка
+`NARRATOR_TELEGRAM_TOKEN=…` в `.env` в корне репозитория. Со старого каталога
+их забирает один скрипт (старый `bot_token.md` он переносит в `.env`), он
+только копирует:
 
 ```sh
 sh tools/import-old.sh <old-narrator-dir>   # каталог старого narrator с library/

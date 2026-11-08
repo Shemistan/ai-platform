@@ -112,9 +112,9 @@ grep -E 'process.timeout|task.failed|step.failed' <data>/logs/platform.log | tai
 
 - **Токен** («нет токена бота», «Unauthorized», `ready.token`): токен ищется
   в переменной из `token_env` канала (`channels.json`), иначе
-  `NARRATOR_TELEGRAM_TOKEN`, иначе файл `NARRATOR_TELEGRAM_TOKEN_FILE` /
-  `app/narrator/bot_token.md` (у живого — в `AIP_NARRATOR_DIR`). Под launchd
-  `.zshrc` не читается: переменная должна быть в `local.mk` или файле.
+  `NARRATOR_TELEGRAM_TOKEN`. Обе — строками в `.env` в корне checkout
+  сервиса (у живого — `~/apps/aiplatform/.env`), сервер читает его при
+  старте. Под launchd `.zshrc` не читается — только `.env` или `local.mk`.
   Перевыпущенный в BotFather токен — записать туда же и перезапустить
   сервис. Значение токена в чат, лог и коммиты не писать.
 - **429 Too Many Requests: retry after N** — подождать N секунд и нажать
@@ -243,10 +243,10 @@ git), `<data>/settings.json` (вкладка «Настройки» и ручн�
 | `AIP_AGENTS_DIR`, `AIP_LOG_DIR`, `AIP_AGENT_LABEL`, `AIP_CHECK_LABEL`, `AIP_BACKUP_LABEL`, `AIP_BACKUP_AT` | `tools/agent.sh` | `~/Library/LaunchAgents`, `~/Library/Logs/aiplatform`, метки `com.aiplatform.*`, `03:30` | нет |
 | `AIP_TEST_GUARD` | тесты | — | никогда |
 | `AIP_TELEGRAM_API` | публикация, уведомления; тесты | `https://api.telegram.org` | нет: в бою не задавать |
-| `AIP_TELEGRAM_TOKEN`, `AIP_TG_<ИМЯ>` (имя — из `token_env` канала) | публикация | — | в `local.mk`, не в git |
+| `AIP_TELEGRAM_TOKEN`, `AIP_TG_<ИМЯ>` (имя — из `token_env` канала) | публикация | — | в `.env` в корне, не в git |
 
-Переменные narrator: `NARRATOR_TELEGRAM_TOKEN`, `NARRATOR_TELEGRAM_TOKEN_FILE`
-(`bot_token.md`), `NARRATOR_TELEGRAM_CHANNEL`, `NARRATOR_LIBRARY`
+Переменные narrator: `NARRATOR_TELEGRAM_TOKEN` (строкой в `.env` в корне),
+`NARRATOR_ENV_FILE`, `NARRATOR_TELEGRAM_CHANNEL`, `NARRATOR_LIBRARY`
 (библиотека: по умолчанию `<AIP_NARRATOR_DIR>/library` основного checkout),
 `NARRATOR_MODELS_DIR`, `NARRATOR_ENGINE` — их читает движок (README
 движка).
@@ -261,7 +261,8 @@ git), `<data>/settings.json` (вкладка «Настройки» и ручн�
 | `schedule.json` | `<data>/studio/` | расписание | последний тик и итог дайджеста |
 | `backup.json` | `<data>/` | `make backup` | время и файл последнего бэкапа |
 | `events.jsonl` | `<data>/` | выпуски, публикации, отклик | журнал событий (AN-002): по нему считается «Здоровье» |
-| `bot_token.md`, `telegram_tems.md` | `AIP_NARRATOR_DIR` | человек | токен бота (секрет), каналы статей |
+| `.env` | корень checkout | человек | токены ботов (секрет), права 0600 |
+| `telegram_tems.md` | `AIP_NARRATOR_DIR` | человек | каналы статей |
 | `library/telegram.json` | библиотека narrator | бот | подписчики, курсор `getUpdates` |
 | Keychain `aiplatform-digest-check` | Keychain входа | человек | токен и чат внешнего чекера |
 

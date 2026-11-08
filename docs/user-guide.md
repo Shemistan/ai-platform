@@ -552,8 +552,9 @@ HyperFrames (`make models M=hyperframes`, Node 22+) и claude CLI.
 группе, уходит как `message_thread_id`). «Добавить канал Telegram» в
 шаге «Публикация» или в настройках выпуска (название, id, 16:9 или 9:16) записывает список целиком в
 `channels.json` (`AIP_CHANNELS`); дальше каналы берутся оттуда, «убрать» —
-удаляет. Токен бота — как у narrator: `$NARRATOR_TELEGRAM_TOKEN`, файл
-`$NARRATOR_TELEGRAM_TOKEN_FILE` или `bot_token.md` в каталоге narrator; у
+удаляет. Токен бота — строка `NARRATOR_TELEGRAM_TOKEN=<токен>` в файле
+`.env` в корне проекта (после правки — перезапусти сервис; подробнее —
+[configuration.md](configuration.md#секреты-env-в-корне)); у
 канала можно задать свою переменную `token_env` — только с именем
 `AIP_TG_<ИМЯ>`, `AIP_TELEGRAM_TOKEN` или `NARRATOR_TELEGRAM_TOKEN[_<ИМЯ>]`
 (чужие секреты окружения вроде `HF_TOKEN` в URL Telegram не уйдут), а её
@@ -567,7 +568,7 @@ HyperFrames (`make models M=hyperframes`, Node 22+) и claude CLI.
 иначе платформа покажет предупреждение:
 
 ```sh
-chmod 600 app/narrator/bot_token.md app/narrator/telegram_tems.md
+chmod 600 .env app/narrator/telegram_tems.md
 chmod 600 app/platform/local.mk   # если в нём AIP_AUTH_TOKEN или токены каналов
 chmod 700 app/platform/data
 ```
