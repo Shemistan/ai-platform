@@ -70,27 +70,48 @@ def article(tmp_path: Path, engine: str = "silero", size: int = 2048) -> tuple[P
 FAKE_TOKEN = "123456:" + "A" * 35
 
 
-def test_read_token_from_file_ignoring_markdown(tmp_path, monkeypatch):
+def test_read_token_from_env_file(tmp_path, monkeypatch):
     monkeypatch.delenv(telegram.TOKEN_ENV, raising=False)
-    path = tmp_path / "bot_token.md"
+    path = tmp_path / "env"
     # Синтетический токен: настоящий в тестах держать нельзя (SEC-001).
-    path.write_text(f"# токен бота\n\n`{FAKE_TOKEN}`\n")
-    monkeypatch.setenv(telegram.TOKEN_FILE_ENV, str(path))
+    path.write_text(f"# секреты\nOTHER=1\nexport {telegram.TOKEN_ENV}='{FAKE_TOKEN}'\n")
+    monkeypatch.setenv(telegram.ENV_FILE_ENV, str(path))
     assert telegram.read_token() == FAKE_TOKEN
+
+
+def test_read_env_file_skips_junk(tmp_path):
+    path = tmp_path / "env"
+    path.write_text('\n# A=1\nбез равно\n1BAD=x\nB = "два слова"\nC=\n')
+    assert telegram.read_env_file(path) == {"B": "два слова", "C": ""}
+    assert telegram.read_env_file(tmp_path / "нет") == {}
+
+
+def test_read_token_env_file_not_a_token(tmp_path, monkeypatch):
+    monkeypatch.delenv(telegram.TOKEN_ENV, raising=False)
+    path = tmp_path / "env"
+    path.write_text(f"{telegram.TOKEN_ENV}=вставь-сюда\n")
+    monkeypatch.setenv(telegram.ENV_FILE_ENV, str(path))
+    with pytest.raises(telegram.TelegramError, match="не похож"):
+        telegram.read_token()
 
 
 def test_read_token_prefers_env(tmp_path, monkeypatch):
     monkeypatch.setenv(telegram.TOKEN_ENV, "111:AAAA")
-    monkeypatch.setenv(telegram.TOKEN_FILE_ENV, str(tmp_path / "нет.md"))
+    monkeypatch.setenv(telegram.ENV_FILE_ENV, str(tmp_path / "нет"))
     assert telegram.read_token() == "111:AAAA"
 
 
 def test_read_token_without_source_raises(tmp_path, monkeypatch):
     monkeypatch.delenv(telegram.TOKEN_ENV, raising=False)
-    monkeypatch.setenv(telegram.TOKEN_FILE_ENV, str(tmp_path / "нет.md"))
-    monkeypatch.setenv("NARRATOR_LIBRARY", str(tmp_path / "library"))
-    with pytest.raises(telegram.TelegramError, match="токен"):
+    monkeypatch.setenv(telegram.ENV_FILE_ENV, str(tmp_path / "нет"))
+    with pytest.raises(telegram.TelegramError, match=f"{telegram.TOKEN_ENV}=<токен>"):
         telegram.read_token()
+
+
+def test_env_file_default_is_repo_root(monkeypatch):
+    monkeypatch.delenv(telegram.ENV_FILE_ENV, raising=False)
+    assert telegram.env_file() == telegram.REPO_DIR / telegram.ENV_FILE
+    assert (telegram.REPO_DIR / "app" / "narrator").is_dir()
 
 
 # --- состояние -----------------------------------------------------------
@@ -842,7 +863,7 @@ def test_cli_send_without_token_reports_instead_of_crash(tmp_path, monkeypatch, 
 
     monkeypatch.setenv("NARRATOR_LIBRARY", str(tmp_path))
     monkeypatch.delenv(telegram.TOKEN_ENV, raising=False)
-    monkeypatch.setenv(telegram.TOKEN_FILE_ENV, str(tmp_path / "нет.md"))
+    monkeypatch.setenv(telegram.ENV_FILE_ENV, str(tmp_path / "нет"))
     article(tmp_path)
     assert main(["bot", "send", "2026-09-18/triple-debt"]) == 4
     assert "токен" in capsys.readouterr().err

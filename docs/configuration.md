@@ -99,8 +99,8 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `NARRATOR_ENGINE` | — | запасное имя для `AIP_AUDIO_ENGINE`; его же читает Makefile движка |
 | `NARRATOR_MODELS_DIR` | `/Volumes/External SSD/local_models` (у автора — внешний диск) | папка моделей озвучки; читает движок `app/narrator`; диска нет — свой каталог |
 | `AIP_TELEGRAM_TOKEN` (или другое имя) | — | токен бота канала: имя переменной задаёт `token_env` в `channels.json`, см. [«Каналы публикации»](../app/platform/README.md#каналы-публикации); значение не в git |
-| `NARRATOR_TELEGRAM_TOKEN` | — | токен бота движка для каналов без своего `token_env`; значение не в git |
-| `NARRATOR_TELEGRAM_TOKEN_FILE` | `app/narrator/bot_token.md` | файл с токеном бота, если переменная выше пуста |
+| `NARRATOR_TELEGRAM_TOKEN` | — | токен бота движка для каналов без своего `token_env`; место — `.env` в корне (ниже), значение не в git |
+| `AIP_ENV_FILE`, `NARRATOR_ENV_FILE` | `.env` в корне репозитория | файл секретов для сервера и для движка, запущенного отдельно; тесты подменяют его несуществующим |
 | `NARRATOR_BOT_MAX_SUBSCRIBERS` | `1000` | бот не подписывает сверх этого числа; `0` — без ограничения |
 | `NARRATOR_BOT_INVITE` | — | инвайт-код: подписка только по `/start <код>` (ссылка `t.me/<бот>?start=<код>`; с меткой источника — `<код>__<метка>`) |
 | `NARRATOR_BOT_USERNAME` | — | имя бота без `@`: в посте статьи ссылка «Подписаться на озвучки» `t.me/<бот>?start=<метка статьи>` — источник подписки в `./narrate bot audience` (AN-011) |
@@ -110,9 +110,27 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 
 Имена `NARRATOR_CHANNELS`, `NARRATOR_COVER`, `NARRATOR_COVER_EXT`,
 `NARRATOR_FOLDER`, `NARRATOR_PROMPT`, `NARRATOR_REVIEW`,
-`NARRATOR_TOKEN_ENV`, `NARRATOR_TOKEN_FILE`, `NARRATOR_TOKEN_FILE_ENV` в
-коде — константы (имена файлов и переменных выше), а не переменные
-окружения: задавать их не нужно.
+`NARRATOR_TOKEN_ENV` в коде — константы (имена файлов и переменных выше),
+а не переменные окружения: задавать их не нужно.
+
+### Секреты: `.env` в корне
+
+Токены ботов живут в файле `.env` в корне репозитория (в .gitignore, в
+бэкап не идёт), у живого сервиса — в корне его checkout (`~/apps/aiplatform/.env`):
+
+```sh
+NARRATOR_TELEGRAM_TOKEN=123456:ABC…   # бот движка и каналов без своего token_env
+AIP_TG_SHORTS=…                       # токен канала с token_env, если нужен свой бот
+```
+
+Строки `ИМЯ=значение`, `#` — комментарий, кавычки и `export ` можно. Сервер
+читает файл при старте (кроме `make demo`) и передаёт переменные
+подпроцессам narrator; заданное в окружении или `local.mk` главнее.
+Поменял токен — перезапусти сервис. `./narrate` из терминала читает
+`.env` сам. Права — 0600 (`chmod 600 .env`), иначе «Каналы» покажут
+предупреждение. Старый `bot_token.md` больше не читается: перенеси
+токен строкой `NARRATOR_TELEGRAM_TOKEN=…` (это делает и
+`app/narrator/tools/import-old.sh`) и удали файл.
 
 Старые `local.mk` от `setup-model.sh` прежних репозиториев photogen и videogen подходят как есть:
 платформа читает их `PHOTOGEN_*` / `VIDEOGEN_*`, если `AIP_*` не заданы.

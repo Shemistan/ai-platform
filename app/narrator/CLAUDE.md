@@ -46,7 +46,8 @@ WebFetch и WebSearch, `source.md`, аннотации в базе пишут п
 - Сырой текст в произношение переводит `src/narrator/normalize.py`.
   Посмотреть результат — `./narrate normalize <файл>`.
 - Данные — `library/` (статьи, `news/news.db`, `telegram.json`),
-  `telegram_tems.md` и `bot_token.md` рядом с ней. Всё в .gitignore.
+  `telegram_tems.md` рядом с ней, токен бота — в `.env` в корне репозитория.
+  Всё в .gitignore.
   Перенос со старого каталога — `sh tools/import-old.sh <каталог>`.
 - Правила текста для озвучки — `docs/tts-guide.md`.
 
@@ -122,8 +123,8 @@ WebFetch и WebSearch, `source.md`, аннотации в базе пишут п
 уйдёт, бот ответит ошибкой. Можно отправить только аннотацию — `summary`
 (не больше пятой части статьи) со ссылкой на оригинал: `./narrate bot send
 <каталог> --annotation`. Поэтому `summary` в `meta.json` — это текст, который
-люди прочитают перед прослушиванием. Токен бота — `bot_token.md` в корне
-(в .gitignore), подписчики — `library/telegram.json`. Команды: `./narrate bot
+люди прочитают перед прослушиванием. Токен бота — `NARRATOR_TELEGRAM_TOKEN`
+в `.env` в корне репозитория (в .gitignore), подписчики — `library/telegram.json`. Команды: `./narrate bot
 subscribers`, `./narrate bot send <каталог>`, `./narrate bot serve`. Сети к
 api.telegram.org в sandbox нет, поэтому рассылка идёт при `make render` в
 обычном терминале; отключить — `--no-send`.

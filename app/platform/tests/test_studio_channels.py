@@ -42,18 +42,15 @@ class NarratorChannelsTest(unittest.TestCase):
             publish.load_channels(self.dir / "channels.json", self.dir)
 
     def test_token_like_narrator(self):
-        channel = publish.load_channels(self.dir / "c.json", self.dir)[0]
-        tg = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="-1002629071990", token_file=channel.token_file)
+        tg = publish.Channel("tg", "TG", publish.TELEGRAM, chat_id="-1002629071990")
         with mock.patch.dict(os.environ, {}, clear=False):
-            for key in (publish.NARRATOR_TOKEN_ENV, publish.NARRATOR_TOKEN_FILE_ENV):
-                os.environ.pop(key, None)
-            self.assertIn("bot_token.md", tg.problem())
-            (self.dir / "bot_token.md").write_text(f"токен: {TOKEN}\n", encoding="utf-8")
+            os.environ.pop(publish.NARRATOR_TOKEN_ENV, None)
+            self.assertIn(f"{publish.NARRATOR_TOKEN_ENV}=<токен> в .env", tg.problem())
+            os.environ[publish.NARRATOR_TOKEN_ENV] = "не токен"
+            self.assertIn("не похож", tg.problem())
+            os.environ[publish.NARRATOR_TOKEN_ENV] = TOKEN
             self.assertEqual(tg.token(), TOKEN)
             self.assertIsNone(tg.problem())
-            os.environ[publish.NARRATOR_TOKEN_ENV] = "999999:" + "B" * 35
-            self.assertTrue(tg.token().startswith("999999:"))
-        self.assertNotIn("token_file", tg.public())
 
     def test_new_channel_and_storage(self):
         existing = publish.load_channels(self.dir / "c.json")

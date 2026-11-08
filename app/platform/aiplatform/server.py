@@ -666,6 +666,8 @@ def request_stop(server: ThreadingHTTPServer, app: App, reason: str) -> None:
 
 
 def main() -> None:
+    if os.environ.get("AIP_BACKEND") != "fake":  # демо не получает боевых токенов
+        config_module.load_env_file(os.environ)
     try:
         config = config_module.load()
     except config_module.ConfigError as exc:

@@ -56,7 +56,8 @@ class ChannelsPermsTest(PlatformCase):
         home.mkdir()
         module = self.app.modules["channels"]
         module.narrator = narrator.Narrator(("/нет/такой/narrate",), home)
-        token = home / "bot_token.md"
+        token = home / "env"
+        module.env = {**module.env, "AIP_ENV_FILE": str(token)}
         token.write_text("не настоящий токен", encoding="utf-8")
         token.chmod(0o644)
         self.assertTrue(any("токена бота" in p and "chmod 600" in p for p in module.problems()), module.problems())

@@ -65,7 +65,7 @@ def main(argv):
           file=sys.stderr)
     for path, lineno, mask in hits:
         print(f"  {path}:{lineno}  {mask}", file=sys.stderr)
-    print("  Настоящий токен — только в bot_token.md/env (вне git). В тестах —\n"
+    print("  Настоящий токен — только в .env в корне или в окружении (вне git). В тестах —\n"
           "  синтетика вида `123456:` + 35×`A`. Утёк в историю — отзывай в"
           " @BotFather.", file=sys.stderr)
     return 1

@@ -220,8 +220,8 @@ render, index, news …, bot …, bridge). Проверки — `make check` (ru
   (CPU), mlx-движки; Higgs (MLX) — движок дайджеста. Голоса: Charon, M1, Shem, Shem-v2, Shem-v3.
 - Данные движка (вне git): `library/<год>/<мес>/<день>/<slug>/` (source.md,
   script.txt, meta.json, check.md, mp3), `library/news/news.db`,
-  `library/telegram.json` (подписчики), `telegram_tems.md` (каналы), `bot_token.md`.
-  Токен и каналы агент не читает.
+  `library/telegram.json` (подписчики), `telegram_tems.md` (каналы). Токен бота — `NARRATOR_TELEGRAM_TOKEN`
+  в `.env` корня (сервер грузит при старте, `config.load_env_file`); токен и каналы агент не читает.
 
 ## Данные платформы (`AIP_DATA_DIR`)
 

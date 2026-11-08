@@ -426,7 +426,6 @@ class ReadyTest(PlatformCase):
         studio = self.app.modules["studio"]
         with mock.patch.object(type(studio), "_digest_channels", lambda _self: [channel]), mock.patch.dict(os.environ):
             os.environ.pop(publish.NARRATOR_TOKEN_ENV, None)
-            os.environ.pop(publish.NARRATOR_TOKEN_FILE_ENV, None)
             status, body = self.ready()
             self.assertIn("нет токена", "; ".join(studio.problems()))
         self.assertEqual(status, 503)

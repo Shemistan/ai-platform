@@ -13,3 +13,9 @@ def isolated_audit(tmp_path, monkeypatch):
 def isolated_platform_registry(tmp_path, monkeypatch):
     """Реестр платформы (CMP-022) — пустой временный каталог, а не настоящий с этой машины."""
     monkeypatch.setenv("AIP_DATA_DIR", str(tmp_path / "platform-data"))
+
+
+@pytest.fixture(autouse=True)
+def isolated_env_file(tmp_path, monkeypatch):
+    """Файл с токеном бота — несуществующий, а не настоящий .env из корня репозитория."""
+    monkeypatch.setenv("NARRATOR_ENV_FILE", str(tmp_path / "no-env"))

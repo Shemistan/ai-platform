@@ -4,6 +4,7 @@
 во вкладке «Настройки», а без AIP_MODELS_DIR — внешний диск с весами. Тесты не
 должны ни зависеть от них, ни писать туда: каталог данных — временный, каталог
 моделей — несуществующий, а config.load под AIP_TEST_GUARD откажет на боевом пути.
+Файл секретов .env — тоже несуществующий.
 """
 
 import atexit
@@ -23,3 +24,5 @@ for _key, _value in (("AIP_DATA_DIR", _DATA_DIR), ("AIP_MODELS_DIR", MISSING_MOD
     if not os.environ.get(_key):
         os.environ[_key] = _value
 os.environ["AIP_TEST_GUARD"] = "1"
+# Настоящий .env с токенами ботов тесты не читают — ни сервер, ни narrator в подпроцессах.
+os.environ["AIP_ENV_FILE"] = os.environ["NARRATOR_ENV_FILE"] = os.path.join(_DATA_DIR, "no-env")

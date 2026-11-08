@@ -453,8 +453,7 @@ class StudioModule:
         chat = self.ctx.config.settings.load()["notify"]["telegram_chat"]
         if not chat:
             return None
-        token_file = "" if self.config.fake else str(self.config.narrator_dir / publish.NARRATOR_TOKEN_FILE)
-        return publish.Channel(id="owner", label="Владелец", type=publish.TELEGRAM, chat_id=chat, token_file=token_file)
+        return publish.Channel(id="owner", label="Владелец", type=publish.TELEGRAM, chat_id=chat)
 
     def owner_telegram(self) -> tuple[str, dict[str, str]] | None:
         """Для Notifier: (токен, чат) или None. В демо не шлём ничего наружу."""

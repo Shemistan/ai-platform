@@ -57,7 +57,7 @@ AGENT_FLAGS = --setting-sources project --strict-mcp-config --permission-mode do
 	  "Bash(./narrate news publish *)" "Bash(make *)" "Bash(python *)" "Bash(python3 *)" \
 	  "Bash(uv *)" "Bash(sh *)" "Bash(bash *)" "Bash(zsh *)" "Bash(node *)" "Bash(perl *)" \
 	  "Bash(ruby *)" "Bash(nc *)" "Bash(ssh *)" "Bash(scp *)" "Bash(env *)" \
-	  "Read(./bot_token.md)" "Read(./telegram_tems.md)" "Read(~/.config/gh/**)" \
+	  "Read(/$(abspath $(CURDIR)/../../.env))" "Read(./bot_token.md)" "Read(./telegram_tems.md)" "Read(~/.config/gh/**)" \
 	  "Write(./src/**)" "Edit(./src/**)" "Write(./tests/**)" "Edit(./tests/**)" \
 	  "Write(./config/**)" "Edit(./config/**)" "Write(./.claude/**)" "Edit(./.claude/**)" \
 	  "Edit(./CLAUDE.md)" "Edit(./Makefile)" "Edit(./narrate)" "mcp__*"

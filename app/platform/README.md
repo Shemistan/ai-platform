@@ -75,8 +75,8 @@ PATH под launchd, перезапуск, логи, время чекера, п
 ### Переезд со старого narrator
 
 Один раз, из основного checkout: `sh app/narrator/tools/import-old.sh <old-narrator-dir>`
-(каталог с `library/`, `telegram_tems.md`, `bot_token.md`). Скрипт их копирует и
-ничего не удаляет; проверь «Статьи», «Новости», «Каналы» — и старый каталог можно удалить.
+(каталог с `library/`, `telegram_tems.md`, `bot_token.md`). Скрипт их копирует, токен
+дописывает в `.env` в корне и ничего не удаляет; проверь «Статьи», «Новости», «Каналы» — и старый каталог можно удалить.
 
 ### Если не работает при установке
 
@@ -168,7 +168,7 @@ FLUX.2 сам докладывает `mlx.metallib` к Flux2CLI и ставит 
 
 - `telegram` — видео ботом (`sendVideo`, до 50 МБ) с подписью из шага
   «Публикация». Токен — в переменной из `token_env` (`AIP_TG_…`,
-  `AIP_TELEGRAM_TOKEN` или `NARRATOR_TELEGRAM_TOKEN…`), в файлы и логи не пишется.
+  `AIP_TELEGRAM_TOKEN` или `NARRATOR_TELEGRAM_TOKEN…`) в [`.env` в корне](../../docs/configuration.md#секреты-env-в-корне).
 - `manual` — пакет `video.mp4`, `title.txt`, `description.txt` в
   `data/studio/projects/<id>/publish/<канал>/` для YouTube, TikTok, Instagram
   (почему не OAuth — [ADR 0008](../../docs/decisions/0008-manual-channels-not-oauth.md)).

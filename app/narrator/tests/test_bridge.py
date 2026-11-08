@@ -16,7 +16,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("NARRATOR_LIBRARY", str(root))
     monkeypatch.setenv("NARRATOR_MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.delenv("NARRATOR_TELEGRAM_TOKEN", raising=False)
-    monkeypatch.setenv("NARRATOR_TELEGRAM_TOKEN_FILE", str(tmp_path / "нет-токена.md"))
+    monkeypatch.setenv("NARRATOR_ENV_FILE", str(tmp_path / "нет-токена"))
     return root
 
 
