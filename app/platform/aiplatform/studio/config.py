@@ -22,8 +22,9 @@ ASSETS = Path(__file__).resolve().parent / "assets"  # плашка «подпи
 LLM_ISOLATION = "--setting-sources project --strict-mcp-config"
 DEFAULT_LLM_CMD = f'claude -p --tools "" {LLM_ISOLATION}'
 DEFAULT_IMAGE_MODEL = "z-image-turbo"  # быстрая и лёгкая: картинок на ролик много
-# {narrator} и {day} подставляются; команда сбора — как `make news DAY=…` в narrator.
-DEFAULT_NEWS_CMD = "make -C {narrator} news-collect news-agent news-judge DAY={day}"
+# {narrator}, {day} и {window} подставляются; команда сбора — как `make news DAY=…` в narrator.
+# {window}: пусто — сутки day, evening — «с вечера» (окно от прошлого выпуска до сбора).
+DEFAULT_NEWS_CMD = "make -C {narrator} news-collect news-agent news-judge DAY={day} WINDOW={window}"
 DEFAULT_NEWS_WHERE = "{narrator}/narrate news where --date {day}"
 # Обзор недели или месяца (PRD-033): {kind} — weekly|monthly, {period} — месяц ГГГГ-ММ (неделе не нужен).
 # Где лежит обзор — JSON моста: {"reviews": [{kind, folder, …}]}.
@@ -70,8 +71,8 @@ class StudioConfig:
     def llm_available(self) -> bool:
         return self.fake or shutil.which(self.llm_cmd[0]) is not None
 
-    def news_argv(self, template: str, day: str) -> list[str]:
-        return [part.format(narrator=self.narrator_dir, day=day) for part in shlex.split(template)]
+    def news_argv(self, template: str, day: str, window: str = "") -> list[str]:
+        return [part.format(narrator=self.narrator_dir, day=day, window=window) for part in shlex.split(template)]
 
     def review_argv(self, template: str, kind: str, period: str) -> list[str]:
         return [part.format(narrator=self.narrator_dir, kind=kind, period=period) for part in shlex.split(template)]

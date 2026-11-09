@@ -14,7 +14,7 @@ from pathlib import Path
 from narrator import library, registry
 from narrator.library import META_NAME, Entry
 from narrator.news import designs, digest, feeds, sources
-from narrator.news.store import RETENTION_DAYS, Store, db_path, now_utc
+from narrator.news.store import RETENTION_DAYS, Store, db_path, iso, now_utc
 
 EVENTS = "events.md"
 POST = "post.md"
@@ -27,6 +27,10 @@ MATERIALS = "materials.md"  # что вставить при монтаже по
 # Вид поста дайджеста: video — mp4 одним постом, photo — обложка, затем аудио.
 POST_FORMATS = ("video", "photo")
 POST_ENV = "NARRATOR_NEWS_POST"
+# Выпуск «с вечера» (--evening): окно не по суткам, а от конца окна вчерашнего выпуска
+# до начала последнего сбора. Обе отметки — в memo базы.
+COLLECT_STARTED = "news:collect_started"  # начало последнего сбора, где ответил хоть кто-то
+EVENING_WINDOW = "news:evening:"  # + день выпуска → "since|until" (ISO, UTC)
 MONTHS = (
     "января февраля марта апреля мая июня июля августа сентября октября ноября декабря"
 ).split()
@@ -101,6 +105,7 @@ def load_sources() -> list[sources.Source]:
 
 
 def cmd_collect(args) -> int:
+    started = now_utc()
     day = parse_day(args.date)
     if day is not None:  # материал нужного дня не должен уйти в архив как старый
         args.days = max(args.days, (date.today() - day).days + 2)
@@ -131,6 +136,8 @@ def cmd_collect(args) -> int:
             store.log_run(src.id, now, ok=True, found=len(items), new=fresh)
             total_new += fresh
             print(f"  ок    {src.id:<26} материалов {len(items):>3}, новых {fresh}", flush=True)
+        if len(failed) < len(srcs):  # сбор без единого ответа не сдвигает конец окна «с вечера»
+            memo[COLLECT_STARTED] = iso(started)
         store.save_memo(memo)
         pruned = store.prune(now_utc())  # ретенция в ежедневном сборе (CMP-016)
     if pruned:
@@ -437,17 +444,54 @@ def day_bounds(day: date) -> tuple[datetime, datetime]:
     return start.astimezone(), (start + timedelta(days=1)).astimezone()
 
 
+def evening_bounds(store: Store, day: date) -> tuple[datetime, datetime]:
+    """Окно выпуска «с вечера» за day: от конца окна вчерашнего выпуска «с вечера» до начала
+    последнего сбора. Вчера выпуска «с вечера» не было (режим только включили) — от полуночи day.
+
+    Так соседние выпуски стыкуются без дыр и повторов, а охват — около суток. Повторный запуск
+    за тот же день берёт начало своего прошлого окна: судья видит то же, что агент."""
+    memo = store.memo()
+    own = memo.get(EVENING_WINDOW + day.isoformat())
+    before = memo.get(EVENING_WINDOW + (day - timedelta(days=1)).isoformat())
+    if own:
+        since = datetime.fromisoformat(own.split("|")[0])
+    elif before:
+        since = datetime.fromisoformat(before.split("|")[1])
+    else:
+        since = day_bounds(day)[0]
+    started = memo.get(COLLECT_STARTED)
+    until = datetime.fromisoformat(started) if started else now_utc()
+    return since, max(since, until)
+
+
+def issue_bounds(args, store: Store, day: date | None) -> tuple[datetime, datetime] | None:
+    """Окно выпуска по дате публикации: «с вечера», сутки day или None — окно сбора --hours."""
+    if getattr(args, "evening", False):
+        return evening_bounds(store, day or date.today())
+    return day_bounds(day) if day is not None else None
+
+
 def issue_rows(
-    store: Store, hours: float, mark: str | None, column="digest", day: date | None = None
+    store: Store,
+    hours: float,
+    mark: str | None,
+    column="digest",
+    day: date | None = None,
+    bounds: tuple[datetime, datetime] | None = None,
 ) -> list[dict]:
-    """Материалы выпуска: опубликованные в день day или, без него, собранные за hours."""
-    if day is not None:
-        return [dict(r) for r in store.assessed_on(*day_bounds(day), mark, column)]
+    """Материалы выпуска: опубликованные в окне bounds или в день day, иначе собранные за hours."""
+    if bounds is None and day is not None:
+        bounds = day_bounds(day)
+    if bounds is not None:
+        return [dict(r) for r in store.assessed_on(*bounds, mark, column)]
     since = now_utc() - timedelta(hours=hours)
     return [dict(r) for r in store.assessed_since(since, mark, column)]
 
 
-def window(args, day: date | None) -> str:
+def window(args, day: date | None, bounds: tuple[datetime, datetime] | None = None) -> str:
+    if getattr(args, "evening", False) and bounds:
+        since, until = (b.astimezone() for b in bounds)
+        return f"с {since:%d.%m %H:%M} по {until:%d.%m %H:%M}"
     return f"за {day.isoformat()}" if day else f"за {args.hours:g} ч"
 
 
@@ -455,9 +499,10 @@ def cmd_top(args) -> int:
     srcs = sources.by_id(load_sources())
     day = parse_day(args.date)
     with open_store() as store:
-        events = digest.group_events(issue_rows(store, args.hours, None, day=day))
+        bounds = issue_bounds(args, store, day)
+        events = digest.group_events(issue_rows(store, args.hours, None, bounds=bounds))
     if not events:
-        print(f"{window(args, day)} оценённых событий нет")
+        print(f"{window(args, day, bounds)} оценённых событий нет")
         return 0
     for ev in events[: args.limit]:
         lead = ev.lead
@@ -472,7 +517,7 @@ def digest_title(day: date) -> str:
 
 
 def cmd_digest(args) -> int:
-    """Выпуск за день --date (по дате публикации) или, без него, за --hours сбора."""
+    """Выпуск за день --date (по дате публикации), «с вечера» (--evening) или за --hours сбора."""
     by_day = parse_day(args.date)
     day = by_day or date.today()
     root = library.library_root()
@@ -480,15 +525,18 @@ def cmd_digest(args) -> int:
     digest_id = library.article_id(path)
     srcs = sources.by_id(load_sources())
     with open_store() as store:
+        bounds = issue_bounds(args, store, by_day)
+        if args.evening:  # окно занято и без событий: завтрашний выпуск начнётся с его конца
+            store.save_memo({EVENING_WINDOW + day.isoformat(): "|".join(iso(b) for b in bounds)})
         sections = digest.select_sections(
-            digest.group_events(issue_rows(store, args.hours, digest_id, day=by_day)),
+            digest.group_events(issue_rows(store, args.hours, digest_id, bounds=bounds)),
             srcs,
             top=args.top,
             recent=recent_vendors(store, srcs, day),
         )
         events = [ev for _, part in sections for ev in part]
         if not events:
-            print(f"дайджеста нет: {window(args, by_day)} нет событий для выпуска")
+            print(f"дайджеста нет: {window(args, by_day, bounds)} нет событий для выпуска")
             return 3
         if not (path / META_NAME).exists():
             entry = Entry(title=digest_title(day), added=day.isoformat(), kind="digest")
@@ -986,11 +1034,21 @@ def add_parser(sub) -> None:
     n = news.add_parser("top", help="события по важности за день или последние часы")
     n.add_argument("--hours", type=float, default=30)
     n.add_argument("--date", help="опубликованные в этот день: ГГГГ-ММ-ДД, today, yesterday")
+    n.add_argument(
+        "--evening",
+        action="store_true",
+        help="«с вечера»: от конца окна вчерашнего выпуска (или полуночи) до последнего сбора",
+    )
     n.add_argument("--limit", type=int, default=15)
     n.set_defaults(func=cmd_top)
 
     n = news.add_parser("digest", help="каталог дайджеста дня с events.md")
     n.add_argument("--hours", type=float, default=30, help="без --date: окно сбора, ч")
+    n.add_argument(
+        "--evening",
+        action="store_true",
+        help="«с вечера»: от конца окна вчерашнего выпуска (или полуночи) до последнего сбора",
+    )
     n.add_argument(
         "--top",
         type=int,

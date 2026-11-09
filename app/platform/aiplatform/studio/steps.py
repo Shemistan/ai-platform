@@ -397,8 +397,11 @@ def step_text(ctx: StepContext) -> None:
         return
     if ctx.project["scenario"] == "digest":
         day = ctx.project["day"]
-        ctx.progress(f"narrator собирает новости за {day}…")
-        folder = news.collect(day, services(ctx).config, ctx.cancel, lambda line: line.strip() and ctx.log(line))
+        ctx.progress(f"narrator собирает новости {'с вечера' if ctx.settings.get('evening') else 'за ' + day}…")
+        window = "evening" if ctx.settings.get("evening") else ""
+        folder = news.collect(
+            day, services(ctx).config, ctx.cancel, lambda line: line.strip() and ctx.log(line), window=window
+        )
         ctx.write(TEXT, (folder / news.NARRATION).read_text(encoding="utf-8"))
         post = folder / news.POST
         if post.is_file():

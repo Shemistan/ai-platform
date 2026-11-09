@@ -186,6 +186,23 @@ class ScheduleTest(StudioCase):
             self.assertEqual(status, 400, (bad, body))
         self.assertEqual(self.json("GET", "/api/settings/state")[1]["digest_defaults"]["poster_mode"], "upload")
 
+    def test_evening_digest_is_for_today_and_asks_narrator_for_evening_window(self):
+        """«Собирать с вечера»: выпуск за сегодня, что бы ни выбрали днём; narrator получает WINDOW=evening."""
+        from datetime import date
+
+        from aiplatform.studio.config import DEFAULT_NEWS_CMD
+
+        status, body = self.section("digest_defaults", {"evening": True})
+        self.assertEqual(status, 200, body)
+        self.assertTrue(self.json("GET", "/api/studio/config")[1]["scenario_defaults"]["digest"]["evening"])
+        status, project = self.json("POST", "/api/studio/projects", {"scenario": "digest", "day": "2026-10-01"})
+        self.assertIn(status, (200, 201), project)
+        self.assertEqual(project["day"], date.today().isoformat())
+        self.assertTrue(project["settings"]["evening"])
+        argv = self.studio.config.news_argv(DEFAULT_NEWS_CMD, "2026-10-01", "evening")
+        self.assertEqual(argv[-2:], ["DAY=2026-10-01", "WINDOW=evening"])
+        self.assertEqual(self.section("digest_defaults", {"evening": "да"})[0], 400)
+
     def test_manual_digest_uses_settings_defaults(self):
         """Умолчания дайджеста одни — страница меняет и выпуск по расписанию, и форму студии (UX-034, PRD-034)."""
         self.section("digest_defaults", {"draw_images": False, "clips": False, "ai_badge": False, "shorts": True})

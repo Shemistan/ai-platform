@@ -149,17 +149,20 @@ function renderSchedule(data) {
         "div",
         { class: "inline-fields" },
         h("label", { class: "field" }, h("span", { class: "hint" }, "Время"), h("input", { type: "time", value: plan.time, onchange: (e) => section("schedule", { time: e.target.value }) })),
-        h(
-          "label",
-          { class: "field" },
-          h("span", { class: "hint" }, "Новости"),
-          h(
-            "select",
-            { onchange: (e) => section("schedule", { day: e.target.value }) },
-            h("option", { value: "yesterday", selected: plan.day === "yesterday" }, "за вчера"),
-            h("option", { value: "today", selected: plan.day === "today" }, "за сегодня"),
-          ),
-        ),
+        // «Собирать с вечера» (настройки дайджеста): выпуск за сегодня с момента вчерашнего сбора — день не выбирается.
+        data.digest_defaults?.evening
+          ? h("p", { class: "field hint" }, "Новости: с вечера — с момента сбора вчерашнего выпуска")
+          : h(
+              "label",
+              { class: "field" },
+              h("span", { class: "hint" }, "Новости"),
+              h(
+                "select",
+                { onchange: (e) => section("schedule", { day: e.target.value }) },
+                h("option", { value: "yesterday", selected: plan.day === "yesterday" }, "за вчера"),
+                h("option", { value: "today", selected: plan.day === "today" }, "за сегодня"),
+              ),
+            ),
       ),
       digestLink("Как готовить выпуск — постер, картинки, ролики, озвучка, плашки, каналы, автопубликация — в "),
       last ? h("p", { class: "hint" }, `Последний запуск по расписанию: ${last}. Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день.`) : h("p", { class: "hint" }, "Если платформа была выключена в это время, дайджест соберётся, как только она запустится, — в тот же день."),

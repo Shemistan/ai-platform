@@ -42,6 +42,9 @@ export const refreshCreateCheck = debounce(async () => {
 
 export function renderCreate() {
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  // «Собирать с вечера» в настройках дайджеста: выпуск всегда сегодняшний, день не выбирается.
+  const evening = Boolean(state.config?.scenario_defaults?.digest?.evening);
   $("source-fields").replaceChildren(
     ...(scenario === "digest"
       ? [
@@ -49,8 +52,14 @@ export function renderCreate() {
             "label",
             { class: "field" },
             h("span", { class: "field-label" }, "День выпуска"),
-            h("input", { type: "date", id: "day", value: yesterday, max: new Date().toISOString().slice(0, 10) }),
-            h("span", { class: "hint" }, "narrator обойдёт источники и напишет пересказ дня — это занимает несколько минут."),
+            h("input", { type: "date", id: "day", value: evening ? today : yesterday, max: today, disabled: evening }),
+            h(
+              "span",
+              { class: "hint" },
+              evening
+                ? "Собираем с вечера: в выпуск войдут новости с момента сбора вчерашнего выпуска. Выключается в «Настройках дайджеста»."
+                : "narrator обойдёт источники и напишет пересказ дня — это занимает несколько минут.",
+            ),
           ),
         ]
       : scenario === "monthly"

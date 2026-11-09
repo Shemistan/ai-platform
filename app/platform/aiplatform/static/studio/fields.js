@@ -192,6 +192,13 @@ export function fieldsOf(values, prefix, cfg) {
     erid: () =>
       h("label", { class: "field" }, h("span", { class: "hint" }, "erid — токен от оператора рекламных данных (ОРД)"), h("input", { type: "text", id: id("erid"), value: values.erid || "", placeholder: "2Vtzqx…" })),
     review_text: () => check("review_text", "Пауза после текста — проверю его перед генерацией", null, values.review_text),
+    evening: () =>
+      check(
+        "evening",
+        "Собирать с вечера",
+        "Выпуск за сегодня: новости с момента сбора вчерашнего выпуска — охват те же сутки. В первый раз — с полуночи.",
+        values.evening,
+      ),
     // Статья через LLM по правилам озвучки: код — на экран, а не в озвучку (PRD-029).
     adapt_text: () =>
       check(

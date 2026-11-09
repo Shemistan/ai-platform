@@ -1288,6 +1288,60 @@ def test_digest_for_a_given_day_takes_only_that_days_news(lib, capsys):
     assert end - start == timedelta(days=1)
 
 
+def test_evening_digest_takes_news_since_last_evening_window(lib, capsys):
+    """«С вечера»: первый выпуск — с полуночи до сбора, следующий — с конца окна вчерашнего."""
+    from narrator.news.cli import COLLECT_STARTED, EVENING_WINDOW, day_bounds, evening_bounds
+    from narrator.news.store import db_path, iso
+
+    today = date.today()
+    midnight = day_bounds(today)[0]
+    collect = midnight + timedelta(hours=19)
+    with Store(db_path(lib)) as store:
+        for key, at in (
+            ("before-midnight", midnight - timedelta(hours=2)),
+            ("morning", midnight + timedelta(hours=9)),
+            ("after-collect", collect + timedelta(minutes=5)),
+        ):
+            seed(store, key, f"ev-{key}", 8, at)
+            store.db.execute("UPDATE items SET published = ? WHERE id = ?", (iso(at), key))
+        store.commit()
+        store.save_memo({COLLECT_STARTED: iso(collect)})
+
+    # Режим только включили: вчера окна «с вечера» нет — от полуночи до начала сбора.
+    assert main(["news", "digest", "--date", "today", "--evening"]) == 0
+    path = Path(capsys.readouterr().out.strip().splitlines()[-1])
+    events = (path / "events.md").read_text(encoding="utf-8")
+    assert "ev-morning" in events
+    assert "ev-before-midnight" not in events and "ev-after-collect" not in events
+    with Store(db_path(lib)) as store:
+        saved = store.memo()[EVENING_WINDOW + today.isoformat()]
+        assert saved == f"{iso(midnight)}|{iso(collect)}"
+        # Повторный запуск за тот же день — то же начало окна, конец — новый сбор.
+        later = collect + timedelta(hours=1)
+        store.save_memo({COLLECT_STARTED: iso(later)})
+        assert evening_bounds(store, today) == (midnight, later.astimezone(UTC))
+
+        # Завтра окно начнётся там, где сегодняшнее закончилось: сутки без дыр.
+        store.save_memo({EVENING_WINDOW + today.isoformat(): f"{iso(midnight)}|{iso(collect)}"})
+        tomorrow = today + timedelta(days=1)
+        store.save_memo({COLLECT_STARTED: iso(collect + timedelta(days=1))})
+        since, until = evening_bounds(store, tomorrow)
+        assert since == collect.astimezone(UTC) and until - since == timedelta(days=1)
+
+
+def test_failed_collect_does_not_move_evening_window(lib, monkeypatch):
+    from narrator.news.cli import COLLECT_STARTED
+    from narrator.news.store import db_path
+
+    def down(src, get=None, memo=None):
+        raise feeds.FetchError("HTTP 503")
+
+    monkeypatch.setattr(feeds, "fetch", down)
+    assert main(["news", "collect"]) == 2
+    with Store(db_path(lib)) as store:
+        assert COLLECT_STARTED not in store.memo()
+
+
 needs_ffmpeg = pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="нет ffmpeg")
 
 
