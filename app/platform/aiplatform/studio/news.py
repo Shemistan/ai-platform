@@ -59,13 +59,21 @@ def collect(
     on_line: Callable[[str], None],
     *,
     skip_collect: bool = False,
+    window: str = "",
 ) -> Path:
-    """Собрать выпуск дня (если нужно) и вернуть его каталог с narration.md."""
+    """Собрать выпуск дня (если нужно) и вернуть его каталог с narration.md.
+
+    window="evening" — «с вечера»: в выпуске новости от конца окна вчерашнего выпуска до сбора."""
     cwd = config.narrator_dir if config.narrator_dir.is_dir() else None
     if not skip_collect:
         try:
             runner.run(
-                config.news_argv(config.news_cmd, day), on_line, cancel, cwd=cwd, missing_hint=INSTALL_HINT, kind="news"
+                config.news_argv(config.news_cmd, day, window),
+                on_line,
+                cancel,
+                cwd=cwd,
+                missing_hint=INSTALL_HINT,
+                kind="news",
             )
         except runner.RunFailed as exc:
             raise StudioError(f"Сбор новостей: {exc}") from exc

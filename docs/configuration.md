@@ -66,7 +66,7 @@ export AIP_HOST=0.0.0.0 AIP_ALLOWED_HOSTS=box.local
 | `AIP_AUDIO_ENGINE` | первый с весами: `higgs` → `espeech` → `silero` | движок озвучки по умолчанию; не задан — первый, чьи веса стоят (после одного `make models` — `espeech`, higgs ставит `make models-mlx E=higgs`). Нет весов у движка по умолчанию — баннер «Проблемы» с командой установки |
 | `AIP_LLM_CMD` | `claude -p --tools "" --setting-sources project --strict-mcp-config` | LLM для промптов и слайдов: промпт на stdin, ответ в stdout. Без инструментов, MCP и пользовательских настроек: модель читает чужой текст, prompt injection не должен дотянуться до файлов и сети |
 | `AIP_UPDATES_LLM_CMD` | `claude -p --tools WebSearch,WebFetch --setting-sources project --strict-mcp-config --settings '{"permissions": …}'` | LLM со свежим вебом для сверки списка запрещённых организаций: только поиск и чтение веба |
-| `AIP_NEWS_CMD` | `make -C {narrator} news-collect news-agent news-judge DAY={day}` | сбор дайджеста |
+| `AIP_NEWS_CMD` | `make -C {narrator} news-collect news-agent news-judge DAY={day} WINDOW={window}` | сбор дайджеста; `{window}` — `evening` при «Собирать с вечера», иначе пусто |
 | `AIP_NEWS_WHERE` | `{narrator}/narrate news where --date {day}` | где лежит выпуск |
 | `AIP_STUDIO_IMAGE_MODEL` | `z-image-turbo` | модель постера и картинок по умолчанию |
 | `AIP_STUDIO_STICKER`, `AIP_STUDIO_PLAY` | `aiplatform/studio/assets/subscribe.png`, `play.png` | плашка «подпишись» и кнопка «плей» (PNG с прозрачностью) |

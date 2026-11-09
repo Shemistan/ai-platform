@@ -9,7 +9,7 @@ const API = "/api/settings/section";
 const DEFAULTS = [
   "poster_mode", "poster_deadline", "draw_images", "images_mode", "image_model", "upscale_images", "clips", "clips_mode",
   "video_model", "voice_mode", "engine", "tempo", "shorts", "slide_s", "reading", "slide_motion", "frame", "branding",
-  "ai_badge", "disclaimers", "review_text",
+  "ai_badge", "disclaimers", "review_text", "evening",
 ]; // prettier-ignore
 const NAMES = [...DEFAULTS, "channels", "auto_publish"];
 
@@ -26,6 +26,7 @@ function form(values, cfg) {
   return h(
     "form",
     { class: "settings-form", onchange: save, onsubmit: (e) => e.preventDefault() },
+    group("Новости", f.evening()),
     group("Постер — первый кадр", f.poster_mode(), f.poster_deadline()),
     group("Картинки слайдов", f.draw_images(), f.images_mode(), f.image_model(), f.upscale_images()),
     group("Ролики", f.clips(), f.clips_mode(), f.video_model()),

@@ -65,7 +65,7 @@
 | `news/` | `/api/news/` | источники, главное за день, добор упавших, обзоры недели/месяца |
 | `channels/` | `/api/channels/` | каналы публикации (`channels.json`, `store.py`), бот, подписчики, `narrate bot serve` |
 | `updates/` | `/api/updates/` | версии моделей (PyPI/GitHub/HF), реестр запрещённых организаций и иноагентов |
-| `settings/` | `/api/settings/` | `settings.json`: выключенные модели (фото, видео, расшифровка)/голоса, состояние диктора и HyperFrames, расписание, уведомления, уборка, умолчания дайджеста (`digest_defaults`, PRD-034) |
+| `settings/` | `/api/settings/` | `settings.json`: выключенные модели (фото, видео, расшифровка)/голоса, состояние диктора и HyperFrames, расписание, уведомления, уборка, умолчания дайджеста (`digest_defaults`, PRD-034; `evening` — «Собирать с вечера») |
 | `core/` | — | общие механизмы (ниже) |
 | `fakes/` | — | имитации CLI для `make demo` и тестов (`fake_narrate.py`, `fake_gen.py`, `fake_ltx.py`, `fake_sadtalker.py`, `fake_llm.py`…) |
 | `static/` | — | фронтенд (ниже) |
@@ -80,8 +80,8 @@
 
 ## Студия `studio/`
 
-Сценарии (`SCENARIOS`; `weekly`/`monthly` — обзоры narrator `news.review`, PRD-033): `digest` — дайджест (материал = день,
-текст собирает narrator: `make news-collect news-agent news-judge`), `article` —
+Сценарии (`SCENARIOS`; `weekly`/`monthly` — обзоры narrator `news.review`, PRD-033): `digest` — дайджест (материал = день, текст собирает
+narrator: `make news-collect news-agent news-judge`; «с вечера» — `WINDOW=evening`, `news digest --evening`), `article` —
 видео по статье (вкладка по умолчанию), `post` — пост в канал (видео = постер под
 озвучку, подпись в `post.md`).
 

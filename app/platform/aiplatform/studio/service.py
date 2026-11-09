@@ -97,6 +97,7 @@ SETTING_STEPS = {
     "draft": ("images", "clips", "render", "short"),  # черновик: без картинок и роликов, половинный кадр
     "frame": "render",  # готовые картинки остаются — кадр берёт их с обрезкой; новые рисуются под кадр
     "review_text": None,
+    "evening": "text",  # дайджест «с вечера»: окно новостей от прошлого выпуска до сбора, выпуск за сегодня
     "adapt_text": "text",  # статья через LLM: текст для озвучки и код на экран (PRD-029)
     "target_minutes": "text",  # ориентир длины видео для LLM, 0 — без него; не потолок (PRD-033)
     # «Видео по статье»: источник — в конце поста и на последнем слайде (CMP-005).
@@ -996,6 +997,7 @@ class StudioModule:
             "speed": None,
             "shorts": False,
             "review_text": False,
+            "evening": False,
             "adapt_text": True,
             "target_minutes": 0,
             "draft": False,
@@ -1163,7 +1165,7 @@ class StudioModule:
             raise bad_request(malformed("upscale_images — none, 2k или 4k."))
         bools = (
             "draw_images", "clips", "shorts", "review_text", "auto_publish", "disclaimers", "ai_badge", "branding",
-            "draft", "adapt_text", "slide_motion",
+            "draft", "adapt_text", "slide_motion", "evening",
         )  # fmt: skip
         for key in bools:
             if not isinstance(out[key], bool):
@@ -1247,7 +1249,8 @@ class StudioModule:
             raise bad_request(malformed("force_new — true или false."))
         if scenario == "digest":
             try:
-                day = news.parse_day(payload.get("day"))
+                # «С вечера» выпуск всегда сегодняшний: его окно кончается на сборе, а не в полночь.
+                day = date.today() if settings["evening"] else news.parse_day(payload.get("day"))
             except ValueError as exc:
                 raise bad_request(str(exc)) from exc
             extra["day"] = day.isoformat()

@@ -61,6 +61,8 @@ DIGEST_DEFAULTS = {
     "ai_badge": True,
     "disclaimers": True,
     "review_text": False,
+    # «Собирать с вечера»: выпуск за сегодня, новости — от конца окна вчерашнего выпуска до сбора.
+    "evening": False,
 }
 # Допустимые значения — как в studio (service, steps, slides); совпадение держит тест.
 DIGEST_CHOICES = {
